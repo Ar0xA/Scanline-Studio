@@ -1508,6 +1508,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 var pttLockedAtEntry = _pttLocked;
                 var rigIsRealAtKeyTime = _radioSession.RigId != "none";
 
+                // Round-25 finding (risk): baselined on pttLockedAtEntry BEFORE the rigIsRealAtKeyTime
+                // branch below -- an already-engaged lock means the rig is genuinely keyed independent
+                // of THIS call's own RigId observation, even once RigId has since gone to "none"
+                // (RadioController.DisconnectAsync's own documented no-unkey-on-disconnect behavior,
+                // the file's own blocker-2 premise). Previously this stayed false whenever
+                // rigIsRealAtKeyTime was false, silently disabling the cleanup Critical log AND the
+                // round-18 retry for a call that entered on a rig genuinely keyed by an EARLIER
+                // SetPttLockAsync call whose RigId has since gone stale -- an SWR cutoff/manual Stop TX
+                // on that call then un-keyed with no Critical, no retry, just a Debug "no radio
+                // configured" line. The branch below still unconditionally sets this true for the case
+                // THIS call keys/re-keys the rig itself, a strict superset of this baseline.
+                pttKeyedOnRealRig = pttLockedAtEntry;
+
                 if (rigIsRealAtKeyTime)
                 {
                     // Published BEFORE the key command goes out and cleared only once this method's own
@@ -1554,6 +1567,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // still below this block. Only an already-engaged lock could have the rig keyed
                         // independent of this call, and pttLockedAtEntry covers exactly that -- keeps the
                         // cleanup un-key's Critical-vs-Debug classification honest in the finally below.
+                        // (Round 25: this is now the same value the baseline just above the outer `if`
+                        // already assigned -- restated here so this branch stays self-explanatory without
+                        // relying on the reader tracking a value from outside it.)
                         pttKeyedOnRealRig = pttLockedAtEntry;
                         // Round-4 nit: GetType().FullName, not nameof(SstvSessionService), to match the
                         // ObjectName ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in
@@ -1702,16 +1718,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
             {
                 try
                 {
-                    // Risk B (Tier A Batch 3 chunk 3a): _pttLocked read ONCE for this whole decision.
-                    // The old code read it at the skip computation and AGAIN at the deferred-resume
-                    // branch below; a SetPttLockAsync(false) landing between the two made those two reads
-                    // disagree, taking the "leaveKeyedAfterCall residual" branch on a call that had
-                    // actually paused RX -- RX stranded stopped forever with nothing left to resume it.
-                    var pttLockedAtCleanup = _pttLocked;
-
-                    // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
-                    // method's own doc comment for why an abnormal termination always overrides both.
-                    var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || pttLockedAtCleanup);
                     var unkeyAlreadyAttempted = false;
                     var unkeyConfirmed = false;
 
@@ -1765,6 +1771,34 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     {
                         SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback", ex));
                     }
+
+                    // Risk B (Tier A Batch 3 chunk 3a, round 19): _pttLocked read ONCE for this whole
+                    // decision, not independently at the skip computation and again at the deferred-
+                    // resume branch below -- two independent reads let a SetPttLockAsync(false) landing
+                    // between them disagree, taking the "leaveKeyedAfterCall residual" branch on a call
+                    // that had actually paused RX, stranding it with nothing left to resume it.
+                    //
+                    // Round-25 finding (risk): round 19's fix took this ONE read too early -- at the
+                    // very top of this finally, BEFORE StopPlaybackWithWatchdogAsync's own await (up to
+                    // playbackStopWaitBudget). A SetPttLockAsync(true) that completes DURING that drain
+                    // wait -- engaging a genuine operator lock seconds after this transmit's own body
+                    // finished -- was invisible to a snapshot already taken before the drain even
+                    // started: this call's own un-key below then ran unconditionally and silently
+                    // defeated that just-engaged lock, with UnkeyForCleanupAsync's own epoch guard
+                    // unable to catch it either (that guard protects against a newer key completing
+                    // WHILE the un-key call itself is in flight, not one that already completed before
+                    // the un-key call was even entered). Moved here, immediately before this same read's
+                    // first actual use -- still exactly ONE read shared by every decision below (round
+                    // 19's own property is preserved), just taken as late as StopPlaybackWithWatchdogAsync
+                    // allows rather than long before it. Shrinks the race to the residual, instruction-
+                    // scale window between this read and the un-key command actually reaching the wire
+                    // just below -- the same class of accepted residual this file already documents at
+                    // its other epoch-guarded sites, not eliminated outright.
+                    var pttLockedAtCleanup = _pttLocked;
+
+                    // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
+                    // method's own doc comment for why an abnormal termination always overrides both.
+                    var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || pttLockedAtCleanup);
 
                     // Round-18 finding: UnkeyForCleanupAsync's own bool return (whether the un-key was
                     // actually CONFIRMED, not just attempted) used to be discarded here -- an urgent

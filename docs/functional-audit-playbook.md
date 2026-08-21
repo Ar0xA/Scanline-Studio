@@ -2633,3 +2633,97 @@ OTHER than an unwrapped `SafeLog` site, confirming the agent's own read that the
 is genuinely close to exhausted while the broader file is not yet clean. Does NOT count as chunk 3a's 1st
 clean round -- round 25 is now the earliest round that can. Twenty-three consecutive rounds (2-24) have
 now each found something real in this file.
+
+**Chunk 3a round 25** (2026-08-21, independent agent, fresh context, agent `ab1124ed5a3c48f5f`). Verdict
+EQUIVALENT-WITH-RISKS. Explicitly steered to keep pivoting away from SafeLog-coverage (round 24's own
+verdict: exhausted) into deeper PTT state-machine interleavings not yet traced -- both findings landed
+exactly there. **(1) [risk]** `pttKeyedOnRealRig` (`PlayWithPttAsync`'s own local) stayed `false` whenever
+`RigId == "none"` AT THIS CALL'S OWN key time, even when a PTT lock was already engaged on a real rig
+BEFORE the CAT link dropped -- the `if (_disposed)` sub-branch already correctly reasons about exactly
+this ("only an already-engaged lock could have the rig keyed independent of this call, and
+`pttLockedAtEntry` covers exactly that"), but that correction only applied INSIDE
+`if (rigIsRealAtKeyTime)`, never reached when `RigId` was already `"none"` at entry. Concrete sequence:
+`SetPttLockAsync(true)` succeeds on a real rig -> CAT link drops (`RadioController.DisconnectAsync` sets
+`RigId` to `"none"` WITHOUT un-keying) -> operator starts a Transmit/Tune, which correctly skips its OWN
+key command (rig already keyed) but ALSO now incorrectly believes the rig was never real -> an SWR
+cutoff/manual Stop TX fires the urgent un-key with `pttKeyedOnRealRig` false -> `_pttUnkeyFailedOnRealRig`
+never latches, the un-key's own failure logs at Debug ("no radio backend configured") instead of Critical,
+and the round-18 retry gate never fires either. Not a shutdown leak (`_pttLocked` still correctly stays
+true, so `DisposeAsync`'s backstop still eventually fires), but the operator's own immediate signal for a
+still-keyed transmitter was silently downgraded to a routine Debug line. **(2) [risk]**
+`pttLockedAtCleanup` (the flag deciding whether this call's own cleanup skips un-keying/RX-resume because
+a lock is engaged) was snapshotted at the very TOP of the cleanup `finally`, BEFORE
+`StopPlaybackWithWatchdogAsync`'s own drain wait (up to `playbackStopWaitBudget`) -- a
+`SetPttLockAsync(true)` completing DURING that drain (a genuine operator lock engaged seconds after this
+transmit's own body finished) was invisible to the stale snapshot, so this transmit's own
+normal-completion cleanup silently un-keyed the just-engaged lock moments later. `UnkeyForCleanupAsync`'s
+own epoch guard cannot catch this either -- that guard protects against a NEWER key completing WHILE the
+un-key call itself is in flight, not one that already completed before the un-key call was even entered.
+A genuinely different interleaving/victim than the already-documented "Known, accepted race" (that one is
+unlock-racing-transmit-ENTRY, victim the transmission; this is lock-engage-racing-transmit-CLEANUP,
+victim the lock), and the window is seconds wide (a full playback drain), not instruction-scale like the
+residuals this file already accepts elsewhere. Safe direction (rig ends off, not on), so risk not
+blocker.
+
+Explicitly checked and confirmed already-handled this round, stated rather than left silent: a fresh
+`Log.*` enumeration (64 sites by this agent's count) reconfirmed nothing new -- round 24's "mined out"
+call holds; both orderings of two overlapping `SetPttLockAsync` calls traced through `_pttLockGate` and
+found safe; `DisposeAsync` racing `SetPttLockAsync` specifically (as opposed to `PlayWithPttAsync`, which
+round 24 already covered) traced through 4 sub-cases, all converging on the rig ending un-keyed with
+belief flags correct or conservative; `_rxPendingResumeAfterUnlock`'s non-atomic test-and-clear
+independently re-verified as touching no PTT field at all, confirming round 24's off-scope classification
+(RX double-subscription only); cross-timeout budget composition re-checked -- max `_pttLockGate` hold
+~10s, `_transmitInFlight`/`_pttLockGate` never both held by the same call, no starvation cycle found
+beyond finding 2 above; `WaitAsync` bounds re-verified real (no `JsonSettingsStore`-style blocking
+synchronous prefix) on all 4 `SetPttAsync` implementations directly against `HamlibRadioProtocol`/
+`RigctldClientProtocol`/`RadioController` source; unguarded non-log operations in catch/cleanup/finally
+re-enumerated across all such blocks, none found beyond the already-accepted `CancellationTokenSource`
+constructors/`Cancel()` calls (only registration is `Task.Delay`'s own); cancellation wiring on non-PTT
+operations (device resolution, settings, RX-resume) re-checked -- unwrapped public-API callers hold
+neither `_transmitInFlight` nor `_pttLockGate`, so a hang there cannot cause permanent lockout.
+
+Nits: `_keyedTransmitCount` decremented AFTER `_pttLockGate.Release()`, so round 12's `== 1` recovery
+guard can transiently read a stale registration -- traced as instruction-scale and benign either way, not
+fixed; `RaiseCapturePausedForTransmitChanged(false)` invokes arbitrary subscriber code while holding
+`_pttLockGate` -- safe today (the one production subscriber posts to the UI thread non-blocking), flagged
+as a latent class-3 risk if a future subscriber ever blocks synchronously, not fixed (no reachable bug
+today); the 2 stale-arithmetic sizing comments (round 22's `InFlightKeyedTransmitWait`, round 24's
+`DisposeAsync` backstop) reconfirmed still accurate as flags, no new staleness found.
+
+**Chunk 3a round 25 fixes applied** (2026-08-21, commit pending). Finding 1 fixed: `pttKeyedOnRealRig`
+now baselined on `pttLockedAtEntry` immediately after that value is computed, BEFORE the
+`rigIsRealAtKeyTime` branch -- the branch's own unconditional `pttKeyedOnRealRig = true` for the
+this-call-keys-it case remains a strict superset, and the `if (_disposed)` sub-branch's own
+`pttKeyedOnRealRig = pttLockedAtEntry` write becomes a restatement of the same value rather than the ONLY
+place it was previously ever applied. Finding 2 fixed: the `pttLockedAtCleanup`/`skipUnkeyAndRxResume`
+snapshot moved from the top of the cleanup `finally` to immediately before its own first actual use (right
+after `StopPlaybackWithWatchdogAsync`'s await returns, just before the un-key retry decision) -- still
+exactly ONE read shared by every decision point below it (round 19's own "read once" property, the reason
+that fix existed in the first place, is preserved), just taken as late as the drain allows rather than
+long before it. Shrinks finding 2's race to the same instruction-scale residual class this file already
+accepts at its other epoch-guarded sites, not eliminated outright (documented as such in the moved
+comment).
+
+2 new regression tests:
+`Round25_PlayWithPttAsync_LockEngagedThenCatLinkDrops_AbnormalTerminationStillLatchesCritical` (finding 1
+-- locks on a real rig, drops RigId to `"none"`, makes an abnormal-termination transmit's own un-key
+fail, asserts the Critical "MAY STILL BE KEYED" log fires rather than a benign Debug line) and
+`Round25_PlayWithPttAsync_LockEngagedDuringStopPlaybackDrain_CleanupDoesNotUnkeyIt` (finding 2 -- needed a
+new test double, `SignalingGatedStopPlaybackAudioEngine`, giving a deterministic happens-before signal the
+instant `StopPlaybackAsync` is entered, since the fake engine has no real-time pacing and the original
+loose synchronization via "has the key command landed yet" did not reliably distinguish fixed-vs-broken
+behavior -- caught via the SAME mutation-testing discipline this whole chunk relies on, not by inspection;
+the test was redesigned mid-round after its first version passed against the deliberately-broken code).
+Both mutation-verified with a fresh per-mutation backup each: finding 1 reverted, reproduced the exact
+predicted failure (Debug "no radio backend configured" instead of Critical), restored, re-confirmed;
+finding 2 reverted (via a mutation-only shadow variable simulating the pre-fix early-read timing, since
+the real fix's own code had already been restructured), reproduced the exact predicted failure (the
+custom assertion message fired, confirming the lock was defeated), restored, re-confirmed. 213/213
+`ScanlineStudio.Application.Tests` passing (211 pre-existing + 2 new), full solution suite run in progress
+at time of writing -- confirm clean before treating this round as closed.
+
+Round 25 fixed 2 real risks, both genuine PTT-state-machine races distinct from the SafeLog-coverage
+pattern that dominated rounds 20-23 -- confirming round 24's own pivot was the right call and that this
+angle still has real bugs left in it. Does NOT count as chunk 3a's 1st clean round -- round 26 is now the
+earliest round that can. Twenty-four consecutive rounds (2-25) have now each found something real in this
+file.
