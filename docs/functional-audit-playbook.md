@@ -2875,7 +2875,7 @@ a wedged source) -- not inspected this round, worth a future round's attention i
 recurring. Off-scope note: a user-initiated `StopReceivingAsync` during a transmit is silently undone by
 the cleanup's own RX resume -- UX wart, outside the 3 failure classes.
 
-**Chunk 3a round 27 fixes applied** (2026-08-21, commit pending). Finding 1: both `_pttUnkeyEpoch`
+**Chunk 3a round 27 fixes applied** (2026-08-21, commit `963a1cd`). Finding 1: both `_pttUnkeyEpoch`
 consumer sites (the retry-gated cleanup un-key skip, and -- for defense-in-depth, not because a harmful
 case was found -- the `_pttLeftKeyedByCall` write skip) now ALSO require a new `keyEpochAfterOwnKeyAttempt`
 snapshot (`_pttKeyEpoch`, taken right after this call's own key phase completes) to be UNCHANGED before
