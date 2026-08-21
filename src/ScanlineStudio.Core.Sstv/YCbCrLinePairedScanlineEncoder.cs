@@ -3,9 +3,11 @@ using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Core.Sstv;
 
-/// <summary>MP/PD-family: Y(odd line), R-Y, B-Y, Y(even line) — one chroma pair shared between two
-/// luma lines. Read from <c>TMmsstv::LineMP</c>/<c>LinePD</c> (`Main.cpp`), which are structurally
-/// identical (only sync/porch/scan durations differ).</summary>
+/// <summary>MP/PD/MN-family: Y(odd line), R-Y, B-Y, Y(even line) — one chroma pair shared between two
+/// luma lines. Read from <c>TMmsstv::LineMP</c>/<c>LinePD</c>/<c>LineMN</c> (`Main.cpp:6733`/`:6686`/
+/// `:6803`) — all three structurally identical; MP/PD differ only in sync/porch/scan durations, MN
+/// additionally uses the narrow band (carried here by <c>mode.LuminanceMinHz</c>/<c>MaxHz</c>, not a
+/// separate code path).</summary>
 internal sealed class YCbCrLinePairedScanlineEncoder : IScanlineEncoder
 {
     public int RowsPerTransmissionLine => 2;
