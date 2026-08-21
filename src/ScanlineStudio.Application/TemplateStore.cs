@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 
 namespace ScanlineStudio.Application;
@@ -25,10 +26,11 @@ public sealed partial class TemplateStore : ITemplateStore
     private readonly IImageSourceWriter _imageSourceWriter;
     private readonly IImageFileLoader _imageFileLoader;
     private readonly ITransmitImagePreparer _preparer;
+    private readonly ILogger<TemplateStore> _logger;
     private readonly string? _templatesRootOverride;
 
-    public TemplateStore(IImageSourceWriter imageSourceWriter, IImageFileLoader imageFileLoader, ITransmitImagePreparer preparer)
-        : this(imageSourceWriter, imageFileLoader, preparer, templatesRootOverride: null)
+    public TemplateStore(IImageSourceWriter imageSourceWriter, IImageFileLoader imageFileLoader, ITransmitImagePreparer preparer, ILogger<TemplateStore> logger)
+        : this(imageSourceWriter, imageFileLoader, preparer, logger, templatesRootOverride: null)
     {
     }
 
@@ -36,11 +38,12 @@ public sealed partial class TemplateStore : ITemplateStore
     /// it in this phase, unlike <c>StockImageLibrary</c>'s own settings-driven directory override) --
     /// lets a test point this store at a real temp directory instead of the real user's Pictures
     /// folder, without needing a fake filesystem abstraction this codebase has no precedent for.</summary>
-    public TemplateStore(IImageSourceWriter imageSourceWriter, IImageFileLoader imageFileLoader, ITransmitImagePreparer preparer, string? templatesRootOverride)
+    public TemplateStore(IImageSourceWriter imageSourceWriter, IImageFileLoader imageFileLoader, ITransmitImagePreparer preparer, ILogger<TemplateStore> logger, string? templatesRootOverride)
     {
         _imageSourceWriter = imageSourceWriter;
         _imageFileLoader = imageFileLoader;
         _preparer = preparer;
+        _logger = logger;
         _templatesRootOverride = templatesRootOverride;
     }
 
@@ -104,8 +107,25 @@ public sealed partial class TemplateStore : ITemplateStore
                 continue;
             }
 
-            var json = await File.ReadAllTextAsync(manifestPath, ct).ConfigureAwait(false);
-            var manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
+            // Round-1 code-review finding (Tier A Batch 10 chunk 10b, real robustness gap fixed):
+            // File.WriteAllTextAsync in SaveAsync is not atomic (no temp-file-then-rename), so a
+            // crash/power-loss mid-save can leave a truncated/corrupt template.json -- a
+            // JsonException here previously killed the ENTIRE rack listing (every other template's
+            // manifest too), not just this one, for a store whose whole design explicitly supports
+            // hand-copying/moving folders around (real-world corruption risk, not theoretical). Skip
+            // just the one bad template and log it, matching the existing null-manifest skip below.
+            TemplateManifest? manifest;
+            try
+            {
+                var json = await File.ReadAllTextAsync(manifestPath, ct).ConfigureAwait(false);
+                manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
+            }
+            catch (JsonException ex)
+            {
+                Log.CorruptManifestSkipped(_logger, manifestPath, ex);
+                continue;
+            }
+
             if (manifest is null)
             {
                 continue;
@@ -245,5 +265,11 @@ public sealed partial class TemplateStore : ITemplateStore
         public int Height { get; }
 
         public ReadOnlySpan<Rgb24> GetScanline(int y) => _row;
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Template manifest at '{ManifestPath}' is corrupt or truncated; skipping this template, the rest of the rack listing is unaffected")]
+        public static partial void CorruptManifestSkipped(ILogger logger, string manifestPath, Exception ex);
     }
 }
