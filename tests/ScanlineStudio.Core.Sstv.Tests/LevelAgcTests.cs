@@ -2,8 +2,10 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
 /// Isolated tests for <see cref="LevelAgc"/> (porting legacy's <c>CLVL</c>, <c>m_agcfast</c>-only
-/// branch), checked directly against the ported formula before this class is wired into any decoder
-/// call site -- that wiring is separately scoped, later work.
+/// branch), checked directly against the ported formula in isolation from <c>AnalogFmSstvDecoder</c>'s
+/// own wiring (stale-comment correction, Tier A Batch 7 chunk 7e: this class IS wired into a real
+/// decoder call site now, `AnalogFmSstvDecoder.cs:922-937` -- this file's own isolation is a testing
+/// choice, not a statement that the wiring doesn't exist yet).
 /// </summary>
 public class LevelAgcTests
 {
