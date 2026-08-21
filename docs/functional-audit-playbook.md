@@ -2206,7 +2206,7 @@ rig this class never believed was keyed at all (`SetPttLockAsync`'s own document
 command policy makes this reachable); the queued `EnqueueAllAsync` accepted-validation note was
 mis-described (a negative value throws via array-slice bounds, not a synchronous spin).
 
-**Chunk 3a round 19 fixes applied** (2026-08-21, commit TBD). Finding 1: each step in `PlayWithPttAsync`'s
+**Chunk 3a round 19 fixes applied** (2026-08-21, commit `f015bdf`). Finding 1: each step in `PlayWithPttAsync`'s
 cleanup region (the urgent `UnkeyForCleanupAsync` call, `StopPlaybackWithWatchdogAsync`, the round-18
 retry) now wrapped in its own try/catch + `Log.CleanupStepFailed`, matching `DisposeAsync`'s own
 already-established per-step shape. Also reordered `UnkeyForCleanupAsync`'s own
