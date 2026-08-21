@@ -31,9 +31,12 @@ public sealed partial class HamlibProtocolFactory : IRadioProtocolFactory
     /// <summary>Public entry point for a real composition root -- constructs the real
     /// <see cref="HamlibRuntime"/> (running discovery + the version gate once, right now, on whatever
     /// thread calls this) over the real <see cref="NativeLibraryLoader"/>.
-    /// <paramref name="libraryOverridePath"/> is the discovery-order tier-3 manual path (spec/03's
-    /// "Discovery order") -- a one-time app-level setting, not per-connection identity, which is why
-    /// it's supplied here rather than on <see cref="HamlibConnectionSpec"/>.
+    /// <paramref name="libraryOverridePath"/> is the discovery-order TIER-1 manual path (spec/03's
+    /// "Discovery order" -- 1: user override, 2: bare soname, 3: known extra directories; doc
+    /// correction, Tier A Batch 9 chunk 9d: this comment previously said "tier-3," which is the
+    /// spec's OTHER manual fallback, not the override) -- a one-time app-level setting, not per-
+    /// connection identity, which is why it's supplied here rather than on
+    /// <see cref="HamlibConnectionSpec"/>.
     /// <paramref name="loggerFactory"/> is optional -- the composition root calls this as a static
     /// factory method, not through DI. When supplied (as <c>Program.cs</c> does today), each
     /// constructed type (<see cref="HamlibRuntime"/>, this factory, each
