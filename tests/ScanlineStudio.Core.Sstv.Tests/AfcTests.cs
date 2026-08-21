@@ -211,6 +211,14 @@ public class AfcTests
         // slightly ABOVE 1200Hz (~1202.5Hz) here, not below it. A sign-inverted implementation would
         // retune to ~1197.5Hz instead (verified: this is exactly what the pre-fix code computed).
         Assert.True(lastSyncEnvelopeFrequency!.Value > 1200.0, $"Expected the resonator to retune ABOVE 1200Hz (tracking the measured tone + calibration nudge), got {lastSyncEnvelopeFrequency.Value} -- looks like the retune direction is sign-inverted.");
+        // Batch 6 chunk 6a correction: legacy's single real m_iir12 IS retuned during a lock (same
+        // InitTone call the assertion above confirms) -- it does not stay pinned at nominal. Legacy
+        // resets it back to nominal via Stop()'s own InitTone(0) between images (sstv.cpp:1769-1780),
+        // so a post-single-image observation like this one correctly sees nominal either way. This
+        // port models that with two separate SyncEnvelopeDetector instances (one retuned for AFC/
+        // Slant, one that stays nominal forever for the sync-bypass mode-detection path) rather than
+        // legacy's one instance retuned-then-reset -- behaviorally equivalent for this observation,
+        // architecturally different; not "legacy never retunes this detector."
         Assert.Equal(1200.0, lastBypassFrequency!.Value, tolerance: 0.01);
     }
 
@@ -320,6 +328,36 @@ public class AfcTests
     public void IsFastAfcGroup_MatchesLegacySetSampFreqGrouping(SstvModeDefinition mode, bool expectedFast)
     {
         Assert.Equal(expectedFast, SstvModeRegistry.IsFastAfcGroup(mode));
+    }
+
+    [Theory]
+    [InlineData("robot-36", 1200.0)]
+    [InlineData("scottie-s1", 1200.0)]
+    [InlineData("mn73", 1900.0)]
+    [InlineData("mc180", 1900.0)]
+    public void InitializeSlant_PicksTheLegacySyncBufferTone(string modeId, double expectedHz)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 6 chunk 6a (docs/functional-audit-playbook.md):
+        // sstv.cpp:2291-2302 -- NARROW_SYNC is really 1900 (sstv.h:440), so the compiled #else branch
+        // is the live one: m_fNarrow -> d19 (1900), else non-AVT -> d12 (1200). m_fNarrow ==
+        // IsNarrowMode (sstv.cpp:550), i.e. exactly the MN/MC family (NarrowModeCode is not null).
+        // No prior test pinned which modes get 1200Hz vs 1900Hz here.
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+        var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+
+        decoder.InitializeSlantForTests(mode);
+
+        Assert.Equal(expectedHz, decoder.SyncEnvelopeDetectorForTests!.AppliedCenterFrequencyHzForTests, tolerance: 1e-9);
+    }
+
+    [Fact]
+    public void InitializeSlant_Avt_LeavesNoSyncEnvelopeDetector()
+    {
+        var decoder = new AnalogFmSstvDecoder(SampleRate);
+
+        decoder.InitializeSlantForTests(SstvModeRegistry.Avt);
+
+        Assert.Null(decoder.SyncEnvelopeDetectorForTests);
     }
 
     private static double SampleSineWaveFrequency(ZeroCrossingFrequencyCounter counter, double targetHz, double durationMs)
