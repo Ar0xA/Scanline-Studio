@@ -39,6 +39,11 @@ internal sealed class PixelSampleReader
         double luminanceMinHz,
         bool neverPeakPicks)
     {
+        // Legacy guarantees this (sstv.cpp:1179's `if(!m_KSB) m_KSB++`) -- a 0 here would silently
+        // degrade every peak-pick to a bare read with no test failing, since ksbSamples is always 1
+        // or more at every real caller today.
+        ArgumentOutOfRangeException.ThrowIfLessThan(ksbSamples, 1);
+
         _rawSampleAt = rawSampleAt;
         _ksbSamples = ksbSamples;
         _lineEndSampleExclusive = lineEndSampleExclusive;
@@ -84,6 +89,6 @@ internal sealed class PixelSampleReader
 
         var bare = ReadBare(startSample, endSample);
         var peek = ReadBare(peekIndex, peekIndex);
-        return bare < peek ? peek : bare; // sstv.cpp:4062's *ip < *(ip+m_KSB) -- strict, ties keep bare
+        return bare < peek ? peek : bare; // Main.cpp:4062's *ip < *(ip+m_KSB) -- strict, ties keep bare
     }
 }
