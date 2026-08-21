@@ -323,7 +323,9 @@ public class NarrowFskHeaderDecoderTests
         // Mode 1 requires the guard condition to hold for the FULL 50ms (FSKGARD/2) -- interrupting
         // it just 1ms early must reset to mode 0, not partially advance.
         var tooShort = new NarrowFskHeaderDecoder(SampleRate);
-        FeedConstant(tooShort, MsToSamples(49), 0, Mark); // space-dominant guard, 49ms
+        FeedConstant(tooShort, MsToSamples(49), 0, Space); // space-dominant guard, 49ms -- Mark/Space are
+                                                            // both 8192 so this was harmless, but named
+                                                            // wrong (Batch 6 chunk 6e nit fix)
         FeedConstant(tooShort, MsToSamples(2), Mark, 0); // interrupt with mark before 50ms hold completes
         FeedGuardAndStartBit(tooShort, guardMs: 100); // re-establish guard from scratch, then start-bit
         var recoveredLock = FeedDataBits(tooShort, 0x02);
@@ -340,5 +342,70 @@ public class NarrowFskHeaderDecoderTests
         FeedConstant(exact, MsToSamples(VisHeader.NarrowBitDurationMs), Mark, 0);
         var lockedOnFirstTry = FeedDataBits(exact, 0x02);
         Assert.Equal(0x02, lockedOnFirstTry);
+    }
+
+    // A dedicated "mode 2 genuinely times out to mode 0, not just stuck forever" test was
+    // attempted and dropped (Tier A Batch 6 chunk 6e, docs/functional-audit-playbook.md): both
+    // natural-signal constructions tried turned out unable to discriminate the mutation. Feeding a
+    // full fresh guard+start-bit+packet afterward locks regardless, since mode 2's own trigger
+    // condition (m>s) is exactly what a real start bit looks like -- a decoder STUCK in mode 2
+    // satisfies it identically to one that properly timed out to mode 0 first. A follow-up attempt
+    // using an insufficient (25ms) subsequent guard also locked under CORRECT code, because the
+    // data-bit stream itself (mode code 0x02's own bit pattern) happens to contain 4 consecutive
+    // space-dominant bits -- long enough to accidentally complete a full mode-0-to-mode-2 resync
+    // cycle regardless of whether the timeout actually fired. Mode2Timeout_TakesPriorityOverA...
+    // below does independently prove the timeout path exists and matters (its own mutation is
+    // real and caught); this specific "did it truly return to mode 0" distinction remains an open
+    // coverage gap, honestly documented rather than shipped as a test that can't fail.
+
+    [Fact]
+    public void Mode2Timeout_TakesPriorityOverAStartBitArrivingOnTheExactTimeoutSample()
+    {
+        // Closes a second coverage gap: mode 2 checks its own timeout BEFORE testing the start-bit
+        // condition each sample (sstv.cpp:2404-2411's `if(!m_fsktime){mode=0;} else if(cond){...}`
+        // -- an else-if, not two independent ifs) -- so a start bit that only becomes mark-dominant
+        // on the LAST (timeout) sample is wasted, not accepted.
+        //
+        // Mutation-tested: an earlier version of this test fed a full, generous 100ms guard
+        // afterward (via FeedPacket's default) and still passed even with the if/else-if order
+        // broken -- the wrongly-armed mode 3 wastes ~11ms failing its own recheck against the
+        // guard tone's space-dominant content, resets to mode 0, and the generous guard has enough
+        // SLACK left over to redo the whole mode 0->1->2 cycle and lock anyway (the exact same
+        // self-healing-via-a-different-reset-path phenomenon chunk 6c's own investigation found).
+        // Using a BARE-MINIMUM subsequent guard (no slack beyond the exact 50ms+1 hold boundary,
+        // same precision as GuardHold_49ms_DoesNotAdvance_50ms_DoesAdvance above) closes that gap:
+        // a wasted ~11ms detour through a wrongly-armed mode 3 leaves nowhere near enough budget
+        // left to complete a fresh hold from mode 0.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate);
+        FeedConstant(decoder, MsToSamples(50) + 1, 0, Space); // completes mode 1's hold, enters mode 2
+        FeedConstant(decoder, MsToSamples(100) - 1, 0, Space); // one sample short of mode 2's own timeout
+        decoder.ProcessSample(Mark, 0); // the timeout sample itself, mark-dominant -- must still time out
+
+        FeedConstant(decoder, MsToSamples(50) + 1, 0, Space); // bare-minimum guard, no slack
+        FeedConstant(decoder, MsToSamples(VisHeader.NarrowBitDurationMs), Mark, 0);
+        var locked = FeedDataBits(decoder, 0x02);
+
+        Assert.Equal(0x02, locked);
+    }
+
+    [Fact]
+    public void Mode3Recheck_FailsIfMarkDropsBeforeTheElevenMsMidpoint_ThenResetsCleanly()
+    {
+        // Closes a third coverage gap: mode 3 is a SINGLE recheck at the 11ms midpoint (not a hold
+        // or a window) -- if the mark-dominant condition fails at that one exact sample, legacy
+        // resets to mode 0 (sstv.cpp:2413-2429's failure branch). Trigger mode 2->3 with a genuine
+        // start bit, let it drop to space-dominant well before the 11ms recheck sample, confirm no
+        // lock happens on that recheck sample, then confirm clean recovery on a subsequent packet.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate);
+        FeedConstant(decoder, MsToSamples(50) + 1, 0, Space); // completes mode 1's hold, enters mode 2
+        decoder.ProcessSample(Mark, 0); // triggers mode 2->3 (start bit seen), arms the 11ms recheck
+
+        var recheckSamples = MsToSamples(VisHeader.NarrowBitDurationMs / 2);
+        FeedConstant(decoder, recheckSamples - 1, 0, Space); // drop to space-dominant well before the recheck
+        var stillLocked = decoder.ProcessSample(0, Space); // the recheck sample itself -- must fail
+        Assert.Null(stillLocked);
+
+        var locked = FeedPacket(decoder, 0x02);
+        Assert.Equal(0x02, locked);
     }
 }

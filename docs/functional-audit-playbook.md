@@ -4579,4 +4579,96 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1222/1223 (1 unrelated intentional
 skip).
 
-Chunk 6e remains open -- the last chunk of Batch 6.
+## Chunk 6e round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed -- last chunk of Batch 6
+
+Full Tier A rigor round on `NarrowFskHeaderDecoder.cs` (482 lines, the largest and most complex file
+in this batch): a direct, literal 18-mode port of `CSSTVDEM::DecodeFSK` (`sstv.cpp:2378-2606`)
+decoding both the MN/MC mode-announce packet and the FSK station-ID packet through one shared state
+machine. Already documented as having been through "two rounds of independent auditor review" with
+real transcription errors caught in round 1 of that earlier effort, plus several already-fixed
+code-review findings recorded inline -- all re-verified fresh, none re-litigated without new
+evidence.
+
+**Zero functional bugs.** Every one of modes 0-3's distinct shapes (mode 0's trigger, mode 1's the-
+only-true-hold semantics, mode 2's timeout-not-hold, mode 3's single-recheck-not-hold) confirmed
+against the literal legacy source; the fractional bit-boundary drift correction confirmed to
+genuinely diverge from naive integer accumulation by ~10 samples over a 24-bit packet; both
+already-documented station-ID fixes (mode 4's dual `m_fskcnt` reset, mode 7's compact-NR-marker
+*non*-reset) re-confirmed against source rather than re-read from their own prior fix comments; the
+mode-6-vs-mode-8 checksum-failure asymmetry and mode 10's `StationIdDecodeEnabled` asymmetry both
+confirmed real in legacy, with mode 10's own unreachability argument independently re-traced through
+the actual state graph (grepped every `m_fskmode` assignment site) rather than accepted from the
+comment.
+
+**Three real coverage gaps closed with mutation-verified tests -- two of which required real
+investigation after an initial construction failed to discriminate, the same lesson chunk 6c's own
+investigation already established for this batch.** Nothing previously distinguished mode 2's
+TIMEOUT shape (no condition check on the timeout sample itself, an else-if against mode 1's
+sustained-hold shape) from a hold, nor mode 3's single-recheck failure path, nor mode 7's
+nonzero-carried-count marker-byte edge case. A first attempt at a "mode 2 genuinely resets to mode 0"
+test passed even under a real mutation (mode 2 stuck forever) two separate times, for two different
+reasons: first, because mode 2's own trigger condition is literally what a real subsequent start bit
+looks like, so a stuck decoder locks anyway; second, because the natural mode-code byte's own bit
+pattern happened to contain 4 consecutive space-dominant bits, long enough to accidentally complete a
+full guard-hold-resync cycle regardless of correctness. Both attempts were verified to fail via
+mutation testing before being trusted, not assumed to pass -- the second attempt was dropped and
+documented honestly as an open gap rather than shipped. A third, narrower construction (mode 2's
+timeout taking priority over a start bit arriving on the exact timeout sample) DID mutation-verify
+successfully once redesigned with a bare-minimum subsequent guard budget (no slack for a wasted
+detour to self-heal from). Added `Mode2Timeout_TakesPriorityOverAStartBitArrivingOnTheExactTimeoutSample`,
+`Mode3Recheck_FailsIfMarkDropsBeforeTheElevenMsMidpoint_ThenResetsCleanly`, and
+`CompactNrMarker_WithNonZeroCarriedSubPacketCount_ConsumesOnlyOneHalf_NotTwo` -- all three
+mutation-verified against the exact defect shape they target. Also fixed one existing test's
+misleading (though harmless, since both constants share the same value) constant usage.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1225/1226 (1 unrelated intentional
+skip).
+
+## Tier A Batch 6 -- CLOSED (2026-08-21)
+
+**All 5 chunks closed, zero functional bugs found across the whole batch** (header/lock state
+machines: `SyncEnvelopeDetector.cs`, `SyncIntervalTracker.cs`, `VisLockStateMachine.cs`,
+`AvtTrainingLockStateMachine.cs`, `NarrowFskHeaderDecoder.cs`) -- every chunk closed on a clean
+round 1, no fix-and-reverify round 2 needed anywhere in this batch. What this batch DID find and fix:
+zero real behavioral bugs in shipped production code, but a substantial number of genuine coverage
+gaps across all five files, several nit-level doc/citation corrections, and -- twice in this batch
+(chunks 6c and 6e) -- a real, load-bearing finding about the state machines' own self-healing
+behavior that made a naively-constructed "does this specific reset actually fire" test pass under a
+real mutation, caught only because every new test in this batch was mutation-verified before being
+trusted rather than assumed correct from its own passing run:
+
+- **Chunk 6a** (`SyncEnvelopeDetector.cs`, the shared primitive "feeding all four" of this batch's
+  other files): 1 round. No functional bug. Closed two real `[risk]`-level coverage gaps (whether
+  `Retune` has any DSP effect at all, and the mode-dependent 1200Hz/1900Hz tone selection) --
+  flagged above nit severity specifically because `Retune`'s sign had already shipped backwards
+  once in this exact call chain before being caught.
+- **Chunk 6b** (`SyncIntervalTracker.cs`): 1 round. No functional bug -- this chunk's own
+  highest-risk target, `CheckConsecutiveHistory`'s history-window loop bound (exactly this
+  project's recurring off-by-one-window-bound bug class), confirmed correct against legacy's real
+  pre-decrement loop. Closed two coverage gaps (the min-separation rejection gate, the
+  history-window bound itself).
+- **Chunk 6c** (`VisLockStateMachine.cs`): 1 round. No functional bug. Closed one coverage gap
+  (the Scottie-only post-VIS-pulse anchor term). Two other proposed tests were built, found not to
+  discriminate their intended mutation, investigated rather than shipped anyway, and the real root
+  cause (a re-primed countdown masking a missing reset via a different, still-intact reject path)
+  recorded honestly as an open gap.
+- **Chunk 6d** (`AvtTrainingLockStateMachine.cs`): 1 round. No functional bug -- re-confirmed both
+  of this file's own previously-documented bug fixes independently. Found and closed a real
+  `[risk]`-level test defect (the sole end-to-end test's tolerance was ~58x too loose to prove a
+  real lock had happened, the same mechanism that let this file's own second documented bug ship
+  undetected before); the auditor's own proposed golden value was independently re-measured and
+  found to be off by 26 samples before being trusted.
+- **Chunk 6e** (`NarrowFskHeaderDecoder.cs`, the batch's largest file): 1 round. No functional bug.
+  Closed three coverage gaps; a first attempt at a fourth failed mutation-verification twice for two
+  different reasons before being dropped and honestly documented as an open gap, the same discipline
+  chunk 6c's own investigation established.
+
+No chunk in this batch closed under the formal 2-consecutive-clean-round gate -- all five closed by
+explicit auditor unconditional-go verdicts on a clean round 1, the same well-established pattern as
+every prior batch's own closures.
+
+Full round-by-round detail for all five chunks lives in this section's own per-round entries above,
+not reproduced here.

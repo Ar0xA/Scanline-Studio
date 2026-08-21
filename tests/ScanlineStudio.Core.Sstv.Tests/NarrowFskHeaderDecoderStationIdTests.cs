@@ -163,6 +163,31 @@ public class NarrowFskHeaderDecoderStationIdTests
     }
 
     [Fact]
+    public void CompactNrMarker_WithNonZeroCarriedSubPacketCount_ConsumesOnlyOneHalf_NotTwo()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 6 chunk 6e (docs/functional-audit-playbook.md):
+        // mode 7's compact-NR marker byte (0x02) deliberately does NOT reset the shared sub-packet
+        // counter (sstv.cpp:2509-2513 sets only m_fsks/m_fskNR/m_fskmode, never m_fskcnt) -- an
+        // earlier version of this port wrongly reset it. If corrupt/malformed input already
+        // accumulated an NR-string char before the marker byte arrives, legacy carries that nonzero
+        // count into mode 9, which only needs ONE more 6-bit half (not the normal two) to reach its
+        // own >=2 threshold. Byte sequence: STX, callsign "A", EOT, callsign checksum, ONE leftover
+        // NR-string char (0x21, which is >=0x10 so mode 7 treats it as raw text, count becomes 1),
+        // the 0x02 compact-NR marker, ONE compact-NR half (0x05), then the checksum
+        // (0x02^0x05=0x07). If the marker byte wrongly reset the count to 0, mode 9 would need a
+        // SECOND half before transitioning, and this sequence (which supplies only one) would
+        // misinterpret the checksum byte as a second NR half instead of committing.
+        var decoder = new NarrowFskHeaderDecoder(SampleRate) { StationIdDecodeEnabled = true };
+        var wireBytes = new[] { 0x2a, 0x21, 0x01, 0x21, 0x21, 0x02, 0x05, 0x07 };
+
+        var results = FeedRawBytes(decoder, wireBytes);
+
+        Assert.Equal(2, results.Count); // the callsign commit, then the compact-NR commit
+        Assert.Equal("A", results[0].StationIdCallsign);
+        Assert.Equal(5u, results[1].StationIdCompactNr);
+    }
+
+    [Fact]
     public void CompactNrRoundTrip_MatchesFskStationIdWireFormat_IsCompactEligible()
     {
         // Cross-check against Phase 2's own predicate: 123 with l=3 (a 3-char remainder) is
