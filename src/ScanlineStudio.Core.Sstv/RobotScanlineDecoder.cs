@@ -38,8 +38,8 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
     // Confirmed directly against source: `sstv.cpp:664-665` (SetSampFreq, case smR36) sets
     // `m_SG = (88.0+1.25)*m_SampFreq/1000` and `m_CG = (88.0+3.5)*SampFreq/1000` -- comprehensive-review
     // correction, an earlier version of this line wrongly wrote both using the bare `SampFreq`; only
-    // `m_CG` actually does that (see the round-2 note below for why). Both measured from
-    // this port's own segment boundary). `Main.cpp:4286-4297`'s RX switch enters the TCS branch for
+    // `m_CG` actually does that (see the round-2 note below for why). Both measured from this port's
+    // own segment boundary. `Main.cpp:4286-4297`'s RX switch enters the TCS branch for
     // `ps < m_CG`, but its own body only executes (`ps -= m_SG; if (ps >= 0)`) once ps has reached
     // m_SG -- so legacy's real per-sample m_DSEL re-decision only ever happens for
     // ps in [m_SG, m_CG) = tone-relative [1.25ms, 3.5ms), and FREEZES at whatever it was on the last
@@ -82,10 +82,14 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
         if (_rMinusY is null)
         {
             // ultracode audit finding #27: legacy's zero-centered m_D36 arrays default to 0 (neutral
-            // chroma) on a cold start; this port's chroma domain is 128-centered (YCbCr.ToRgb
-            // subtracts 128), so the equivalent neutral default is 128.0, not 0.0 -- a 0.0 default
-            // (this port's original allocation) is full-negative chroma, producing a saturated wrong
-            // color on the first decoded row of every image instead of neutral gray.
+            // chroma) on program cold start (Main.cpp's static zero-init) -- true only for the FIRST
+            // image; legacy's own per-picture reset (Main.cpp:4928) clears m_DSEL/m_AX but NOT
+            // m_D36/m_Y36, so images 2..N actually carry the PREVIOUS image's chroma row forward, not
+            // a neutral default. This port's domain is 128-centered (YCbCr.ToRgb subtracts 128), so
+            // 128.0 (neutral chroma) is the deliberately better choice here -- not a literal legacy
+            // port, an improvement kept because a 0.0 default (this port's original allocation) would
+            // be full-negative chroma, producing a saturated wrong color on the first decoded row of
+            // every image instead of neutral gray.
             _rMinusY = new double[mode.ImageWidth];
             _bMinusY = new double[mode.ImageWidth];
             Array.Fill(_rMinusY, 128.0);
@@ -94,7 +98,7 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
 
         var idealSamplesSoFar = 0.0;
         var y = new double[mode.ImageWidth];
-        var isEvenLine = true;
+        var isEvenLine = _lastSelectionIsEvenLine;
         var scanSegmentsSeen = 0;
 
         foreach (var segment in mode.LineSegments)
@@ -119,7 +123,20 @@ internal sealed class RobotScanlineDecoder : IScanlineDecoder
                     // Legacy re-decides m_DSEL on every single sample of this segment with no
                     // "first wins" gate (Main.cpp:4286-4297, unlike the per-pixel scans' m_AX-gated
                     // "first sample" behavior) -- so the real effective reading is whatever the
-                    // segment's LAST sample decided, not an average and not the first sample.
+                    // segment's LAST sample decided. This is exact for a DECISIVE final sample: this
+                    // port's single read reproduces legacy's own last decision. For an AMBIGUOUS final
+                    // sample, legacy's real behavior is a per-sample TOGGLE CHAIN over every ambiguous
+                    // sample in the window, not a single toggle -- functional-audit chunk 4d found and
+                    // deliberately left this as a divergence: reproducing legacy's exact chain would
+                    // make the outcome depend on the ambiguous-run length in SAMPLES (odd toggles,
+                    // even doesn't), which is legacy's own sample-rate-dependent artifact, not a stable
+                    // target to port -- this port's single toggle instead reproduces legacy's outcome
+                    // at legacy's OWN native 11025Hz rate exactly, and only diverges from legacy's own
+                    // (rate-dependent) artifact at other rates. Chosen over an exact port because the
+                    // exact port would need per-sample iteration here (four existing call-index-based
+                    // tests would need rewriting) for a fallback case with no real fixture exercising
+                    // it, trading real test churn for parity with a legacy behavior that isn't even
+                    // stable across legacy's own supported sample rates.
                     // Tone-selector always reads bare -- matches legacy's own GetPixelLevel here
                     // (Main.cpp:4289), never GetPictureLevel. Unaffected by piece 10.
                     //

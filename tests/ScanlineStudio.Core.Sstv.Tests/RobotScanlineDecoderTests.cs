@@ -205,4 +205,55 @@ public class RobotScanlineDecoderTests
         Assert.Equal(expectedG, actualPixel.G);
         Assert.Equal(expectedB, actualPixel.B);
     }
+
+    [Fact]
+    public void DecodeLine_ToneSelector_IsReadAtLegacysMCgBoundary_NotAtTheSegmentEnd()
+    {
+        // functional-audit chunk 4d: SHOULD item 12's real point (spec/14-roadmap.md) is that the
+        // tone-selector decision reads near legacy's own last-decided sample -- tone-relative m_CG =
+        // 3.5ms (sstv.cpp:665) -- not this segment's own full 4.5ms nominal end. All four other tests
+        // in this file are CALL-INDEX-driven, not SAMPLE-POSITION-driven, so they can't tell the
+        // difference: they'd pass unchanged even if the read position regressed back to the segment
+        // end. This test scripts frequency by actual sample index instead: a decisive 1500Hz (-> R-Y)
+        // for the real decisive window, then an ambiguous 1900Hz (the exact midpoint of 1500/2300, so
+        // |deviation| never clears the +-64 threshold) for the last ~1.0ms of contamination past
+        // m_CG. A read at the segment end lands in the ambiguous zone and TOGGLES from the decoder's
+        // own default previous-selection (R-Y, matching legacy's m_DSEL=0 default) to B-Y; a read at
+        // m_CG (this port's real behavior) sees the decisive tone and stays on R-Y. (A decisive-2300Hz
+        // version of this test would NOT distinguish the two: toggling FROM the R-Y default lands on
+        // B-Y either way, coincidentally matching the decisive outcome -- confirmed by mutation
+        // testing before picking 1500Hz here instead.)
+        const int sampleRate = 44100;
+        var mode = SstvModeRegistry.Robot36;
+        var decoder = new RobotScanlineDecoder();
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+
+        var toneStartSample = (int)((9.0 + 3.0 + 88.0) / 1000.0 * sampleRate);
+        var mCgSample = (int)((9.0 + 3.0 + 88.0 + 3.5) / 1000.0 * sampleRate);
+        var toneEndSample = (int)((9.0 + 3.0 + 88.0 + 4.5) / 1000.0 * sampleRate);
+
+        double Source(int sample) => sample switch
+        {
+            _ when sample < toneStartSample => 1900.0, // Y scan: neutral luma (byte value 128)
+            _ when sample < mCgSample => 1500.0, // decisive window: closer to 1500Hz -> R-Y (even line)
+            _ when sample < toneEndSample => 1900.0, // contamination zone past m_CG: ambiguous midpoint
+            _ => 2200.0, // chroma scan: distinguishable non-neutral value
+        };
+
+        var reader = new PixelSampleReader(Source, ksbSamples: 1, lineEndSampleExclusive: int.MaxValue, luminanceMinHz: mode.LuminanceMinHz, neverPeakPicks: true);
+        decoder.DecodeLine(mode, sampleRate, lineStartSample: 0, lineIndex: 0, reader, pixels);
+
+        double ToByteDomain(double freq) => (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+
+        // R-Y selected (isEvenLine=true) -> the 2200Hz chroma reading lands in R-Y; B-Y stays at its
+        // unwritten 128.0 (neutral) default. If the read drifted to the segment end instead, it would
+        // see 1900Hz (ambiguous), toggle away from R-Y to B-Y, and land the SAME 2200Hz reading in
+        // B-Y instead -- exactly the swap this test is designed to catch.
+        var (expectedR, expectedG, expectedB) = YCbCr.ToRgb(ToByteDomain(1900.0), ToByteDomain(2200.0), 128.0);
+        var actualPixel = pixels[0];
+
+        Assert.Equal(expectedR, actualPixel.R);
+        Assert.Equal(expectedG, actualPixel.G);
+        Assert.Equal(expectedB, actualPixel.B);
+    }
 }
