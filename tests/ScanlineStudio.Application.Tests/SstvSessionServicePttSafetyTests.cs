@@ -1747,6 +1747,83 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
     }
 
+    // ------------------------------------------------------------------ round 25 findings
+
+    [Fact]
+    public async Task Round25_PlayWithPttAsync_LockEngagedThenCatLinkDrops_AbnormalTerminationStillLatchesCritical()
+    {
+        // Round-25 finding (risk): pttKeyedOnRealRig stayed false whenever RigId == "none" AT THIS
+        // CALL'S OWN key time -- even when a PTT lock was already engaged on a real rig before the CAT
+        // link dropped, meaning the rig is genuinely keyed independent of this call's own observation.
+        // Silently disabled the cleanup Critical log AND the round-18 retry for a call that entered on
+        // a rig kept keyed by an EARLIER SetPttLockAsync call.
+        var (service, _, radio, logger) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+
+        // Lock successfully on a real rig.
+        await service.SetPttLockAsync(true);
+
+        // CAT link drops -- RigId flips to "none" WITHOUT un-keying -- then the cleanup un-key itself
+        // fails.
+        radio.RigId = "none";
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: cleanup un-key failed after CAT link drop");
+            }
+        };
+
+        // A transmit attempt aborts abnormally (StartPlaybackAsync throws).
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: the failure must be loudly logged as a genuinely keyed rig, not silently
+        // swallowed as the benign no-radio case.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Round25_PlayWithPttAsync_LockEngagedDuringStopPlaybackDrain_CleanupDoesNotUnkeyIt()
+    {
+        // Round-25 finding (risk): pttLockedAtCleanup used to be snapshotted at the very TOP of
+        // PlayWithPttAsync's finally, before StopPlaybackWithWatchdogAsync's own drain wait -- a
+        // SetPttLockAsync(true) completing DURING that drain (engaging a genuine operator lock seconds
+        // after this transmit's own body finished) was invisible to the stale snapshot, so this
+        // transmit's own normal-completion cleanup silently un-keyed the just-engaged lock.
+        // UnkeyForCleanupAsync's own epoch guard cannot catch this either -- it protects against a
+        // newer key completing WHILE the un-key call itself is in flight, not one that already
+        // completed before the un-key call was even entered.
+        var stopPlaybackGate = new TaskCompletionSource();
+        var reachedStopPlayback = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService(
+            wrapEngine: inner => new SignalingGatedStopPlaybackAudioEngine(inner, reachedStopPlayback, stopPlaybackGate.Task),
+            playbackStopWaitBudget: TimeSpan.FromSeconds(30));
+
+        var transmit = service.TransmitAsync(TestMode, TestImage);
+
+        // Deterministic happens-before point: the transmit's own cleanup has genuinely entered
+        // StopPlaybackWithWatchdogAsync's own StopPlaybackAsync call (past the un-fixed snapshot's own
+        // read point in program order, since that one runs before StopPlaybackWithWatchdogAsync is even
+        // called) and is now blocked on the gate below, BEFORE the fixed snapshot's own read point
+        // (which runs only once StopPlaybackWithWatchdogAsync itself returns).
+        await reachedStopPlayback.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Engage a lock WHILE the transmit's own cleanup is still draining playback.
+        var setLock = service.SetPttLockAsync(true);
+        await WaitForAsync(() => service.IsPttLocked, TimeSpan.FromSeconds(5));
+
+        // Release the drain -- the transmit's own cleanup now proceeds to its un-key decision.
+        stopPlaybackGate.SetResult();
+        await transmit;
+        await setLock;
+
+        // THE property: the just-engaged lock must survive this transmit's own normal-completion
+        // cleanup -- no un-key call for it, and IsPttLocked must still read true.
+        Assert.True(service.IsPttLocked, "a PTT lock engaged during StopPlayback's drain was silently defeated by the transmit's own cleanup");
+        Assert.Equal([true, true], radio.PttCalls);
+
+        await service.DisposeAsync();
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -1789,6 +1866,48 @@ public sealed class SstvSessionServicePttSafetyTests
 
         public async Task StopPlaybackAsync()
         {
+            await gate.ConfigureAwait(false);
+            await inner.StopPlaybackAsync().ConfigureAwait(false);
+        }
+
+        public int EnqueuePlaybackSamples(ReadOnlyMemory<float> samples) => inner.EnqueuePlaybackSamples(samples);
+
+        public ValueTask DisposeAsync() => inner.DisposeAsync();
+    }
+
+    /// <summary>Round-25 test double: like <see cref="GatedStopPlaybackAudioEngine"/>, but also signals
+    /// <paramref name="reached"/> the INSTANT <see cref="StopPlaybackAsync"/> is entered, before parking
+    /// on <paramref name="gate"/> -- needed because the fake engine has no real-time pacing (unlike a
+    /// real device), so a test cannot reliably tell "the transmit's own cleanup has genuinely reached
+    /// StopPlaybackWithWatchdogAsync" from external polling alone (e.g. watching the key command land) --
+    /// the whole encode/pump/finally-entry sequence can complete near-instantly. This gives a test a
+    /// deterministic happens-before point to race a concurrent SetPttLockAsync call against.</summary>
+    private sealed class SignalingGatedStopPlaybackAudioEngine(IAudioEngine inner, TaskCompletionSource reached, Task gate) : IAudioEngine
+    {
+        public int CaptureOverrunCount => inner.CaptureOverrunCount;
+
+        public event Action<ReadOnlyMemory<float>>? SamplesCaptured
+        {
+            add => inner.SamplesCaptured += value;
+            remove => inner.SamplesCaptured -= value;
+        }
+
+        public Task StartCaptureAsync(
+            AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
+            int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
+            CancellationToken ct = default) =>
+            inner.StartCaptureAsync(device, sampleRate, drainThreadPriority, periodSizeInFrames, periods, channelSource, ct);
+
+        public Task StopCaptureAsync() => inner.StopCaptureAsync();
+
+        public Task StartPlaybackAsync(
+            AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
+            bool stereoTx = false, CancellationToken ct = default) =>
+            inner.StartPlaybackAsync(device, sampleRate, periodSizeInFrames, periods, stereoTx, ct);
+
+        public async Task StopPlaybackAsync()
+        {
+            reached.TrySetResult();
             await gate.ConfigureAwait(false);
             await inner.StopPlaybackAsync().ConfigureAwait(false);
         }
