@@ -14,11 +14,16 @@ namespace ScanlineStudio.Core.Sstv;
 /// This is the mechanism behind legacy's three parallel sync-acquisition strategies (`sstv.cpp`'s
 /// <c>CSSTVDEM::Do</c>, <c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c>) — recognizing a transmission's
 /// mode purely from its sync pulse's own repeating timing, without ever needing to decode a VIS
-/// code. Only the class itself is ported here; wiring it into any of the three usage sites (and the
-/// separate, smaller subset of matches legacy actually acts on for VIS-bypass detection,
-/// `sstv.cpp:1912-1922`) is later, separately-scoped work — this is deliberately the smallest
-/// independently-verifiable piece, per user direction to chop large ports into parts that can be
-/// checked against legacy and debugged individually.
+/// code. All three usage sites are wired in <c>AnalogFmSstvDecoder</c> (<c>_syncBypass1Tracker</c>/
+/// <c>_syncBypassTracker</c>/<c>_syncBypassNarrowTracker</c>, constructed at
+/// `AnalogFmSstvDecoder.cs:889-894` and driven one sample at a time from
+/// <c>TrySyncIntervalDetectionStep</c>), including the smaller subset of matches legacy actually
+/// acts on for m_sint2 (`sstv.cpp:1912-1922`, <c>SyncBypassTrustedModes</c>). This class stays
+/// standalone so it can still be verified against legacy in isolation
+/// (<c>SyncIntervalTrackerTests</c>) separately from that wiring (<c>SyncBypass1DetectionTests</c>/
+/// <c>SyncBypassDetectionTests</c>/<c>SyncBypassNarrowDetectionTests</c>) -- deliberately the
+/// smallest independently-verifiable piece, per user direction to chop large ports into parts that
+/// can be checked against legacy and debugged individually.
 /// </summary>
 internal sealed class SyncIntervalTracker
 {
