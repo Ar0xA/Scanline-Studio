@@ -3211,7 +3211,7 @@ write-up asserted they don't, citing `Program.cs`'s handler; the agent's own rea
 `CancellationPromise` completion action suggests the same conclusion but wasn't independently confirmed)
 -- doesn't change any finding's severity or fix, only a secondary-harm detail.
 
-**Chunk 3a round 31 fixes applied** (2026-08-21, commit pending). Risk fixed: `PlayWithPttAsync`'s own key
+**Chunk 3a round 31 fixes applied** (2026-08-21, commit `92dc638`). Risk fixed: `PlayWithPttAsync`'s own key
 command hoisted into a `Task? keyCommand` local, with the identical `ContinueWith`/`OnlyOnFaulted`/
 `!IsCompleted`-gated fault-observer pattern used at the other sites. The 5 additional lower-weight sites
 the auditor flagged were deliberately NOT pursued this round -- different abandoned-task shapes (audio
