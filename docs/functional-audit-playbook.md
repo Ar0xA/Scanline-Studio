@@ -862,7 +862,7 @@ All commits: `e59cabf`/`29ef022`/`80a5a6b` (2a), `a77fc68`/`7321714`/`7c4e0ff`/`
 (2b), `bb0ee82`/`0a665f4`/(this closure) (2c). Full `tests/ScanlineStudio.Core.Sstv.Tests` suite
 last confirmed at 1022/1022 (1 unrelated intentional skip).
 
-## Tier A Batch 3 -- IN PROGRESS (chunk 3a CLOSED, 3b/3c not started), started 2026-08-20
+## Tier A Batch 3 -- CLOSED (2026-08-21), started 2026-08-20
 
 PTT/transmit sequencing (real-world harm class -- a leaked keyed transmitter, not just bad
 output). ~2663 lines across 5 files (`SstvSessionService.cs` 1098, `RadioController.cs` 405,
@@ -879,13 +879,10 @@ into 3, following Batch 2's precedent:
 - **Chunk 3c**: `RigctldClientProtocol.cs` + `HamlibRadioProtocol.cs` (the two CAT backend
   protocol implementations).
 
-**Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds, chunk 3b CLOSED after 4 rounds (see
-each chunk's own "CLOSED" entry near the end of this batch's section) -- both by explicit user
-decision, not the formal 2-consecutive-clean-round gate. Chunk 3c
-(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) rounds 1-2 done -- round 2 found no blockers and
-got an unconditional auditor go-for-production verdict, but did find 3 real (narrow) hardening risks,
-one of which was taken; awaiting the user's call on whether that's sufficient to close the chunk, same
-as chunk 3b's own closure precedent.
+**Status (updated 2026-08-21)**: all 3 chunks CLOSED -- chunk 3a after 32 rounds, chunk 3b after 4
+rounds, chunk 3c after 2 rounds (see each chunk's own "CLOSED" entry, and this batch's own "Tier A
+Batch 3 -- CLOSED" summary near the end of this section). All three by explicit user decision on an
+auditor go-for-production verdict, none under the formal 2-consecutive-clean-round gate.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3720,3 +3717,53 @@ Round 2 found real (if narrow) hardening risks, so it does not formally count as
 project's own definition -- but the auditor's own verdict was an UNCONDITIONAL "yes, ship as-is," a
 stronger signal than chunk 3b round 4's own conditional go. Whether that's sufficient to close chunk 3c
 now, same as chunk 3b's own closure, is the user's call.
+
+## Chunk 3c CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**2 rounds, 8 real findings fixed** (3 blockers + 1 confirmed risk in round 1, including a genuine
+mutation-verified repro of a Hamlib post-dispose rig resurrection; 1 risk taken in round 2, an
+unbounded rigctld request/response transaction that could wedge a PTT unkey command forever behind a
+half-open TCP peer). Round 2's own independent re-derivation confirmed all of round 1's fixes correct
+and found NO blockers, closing with an UNCONDITIONAL auditor go-for-production verdict ("Yes, ship
+as-is") -- stronger than chunk 3b round 4's own conditional go. The user, asked directly how to close,
+chose to accept that verdict and move on rather than dispatch a round 3 purely to chase the formal
+2-consecutive-clean-round gate. Same deliberate-exception precedent as chunk 3a's and chunk 3b's own
+closures above.
+
+Two round-2 hardening risks were left queued, not chased, per the auditor's own unconditional go: a
+Hamlib optional-meter-probe hard-error permanently failing the whole connect (diverging from rigctld's
+own more forgiving handling of the same case), and both Hamlib connect-catch arms logging before
+cleanup (a throwing `ILogger` could re-open round 1's own blocker 1).
+
+All 2 rounds' commits: `40349f3` (round 1 code) / `eaf8982` (round 1 docs), `687116e` / `bcdee7e`
+(round 2). Full solution suite confirmed green after every round; `ScanlineStudio.Core.Radio.Tests`
+last confirmed at 130/130, `ScanlineStudio.Core.Sstv.Tests` at 1022/1022 (1 unrelated intentional
+skip).
+
+## Tier A Batch 3 -- CLOSED (2026-08-21)
+
+**All 3 chunks closed** (PTT/transmit sequencing across `SstvSessionService.cs`, `RadioController.cs`+
+`TcpTransport.cs`, and the two CAT backend protocols) -- the real-world harm class this whole batch was
+opened for (a leaked keyed transmitter, silent wrong-state) found and fixed repeatedly across all
+three:
+
+- **Chunk 3a** (`SstvSessionService.cs`'s PTT lifecycle): 32 rounds, ~30 real fixes. Closed by
+  explicit user decision at round 32's first fully clean round, choosing not to dispatch a round 33
+  purely to satisfy the formal 2-consecutive-clean-round gate. Established this batch's two standing
+  process changes (auditor drafts substantive fix code directly; each finished-code round closes with
+  an explicit go-for-production question) that carried through chunks 3b and 3c.
+- **Chunk 3b** (`RadioController.cs`+`TcpTransport.cs`): 4 rounds, ~14 real findings. Every round after
+  the first found something the previous round's own fix missed, in the same recurring
+  cancellation/EOF/socket-error-handling failure class. Closed by explicit user decision on round 4's
+  conditional auditor go-ahead.
+- **Chunk 3c** (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`): 2 rounds, 8 real findings,
+  including a genuine mutation-verified repro of a post-dispose rig resurrection bug. Closed by
+  explicit user decision on round 2's unconditional auditor go-ahead.
+
+No chunk in this batch closed under the formal 2-consecutive-clean-round gate -- all three closed by
+explicit user decision on an auditor go-for-production verdict, a pattern now well-established across
+this project (see also Batch 1's own re-audit closure). If any of these three files/chunks is
+revisited later, start a fresh re-audit rather than assuming the formal gate was ever met.
+
+Full round-by-round detail for all three chunks lives in this section's own per-round entries above,
+not reproduced here.
