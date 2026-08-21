@@ -5232,4 +5232,4 @@ coverage gap that also caught a real self-inflicted regression during editing be
 commit, and the auditor explicitly ruled out the pre-budgeted round 2; 8d (last chunk, the CW Morse
 generator) found zero functional bugs, three doc overstatements, and closed one real coverage gap
 (40 of 43 table entries previously untested) with a mutation-verified golden-vector test. Commits:
-6242ce0, 16e4aa6, 434c5ca, plus 8d's pending commit.
+6242ce0, 16e4aa6, 434c5ca, c516591.
