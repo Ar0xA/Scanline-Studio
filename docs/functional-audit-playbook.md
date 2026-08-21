@@ -2054,7 +2054,7 @@ benign, unlike the playback-side residual); a round-11 comment claiming a double
 "survives... for the rest of the process's life" may be overstated against the CURRENT `MiniAudioEngine`
 (not fully re-verified, out of this chunk's own failure class either way).
 
-**Chunk 3a round 17 fixes applied** (2026-08-21, commit TBD). Findings 1/2: both wrapped with
+**Chunk 3a round 17 fixes applied** (2026-08-21, commit `39e4d58`). Findings 1/2: both wrapped with
 `WaitAsync` -- finding 1 uses `.WaitAsync(_cleanupTimeout, ct)` (matching `PlayWithPttAsync`'s own
 key-command fix exactly); finding 2 uses `.WaitAsync(ct)` alone, since `ct` here IS already
 `unkeyCts.Token` (a fresh CTS carrying `_cleanupTimeout`) -- reusing it rather than adding a second,
