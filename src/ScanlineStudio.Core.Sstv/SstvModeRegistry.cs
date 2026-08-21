@@ -748,13 +748,13 @@ public static class SstvModeRegistry
             return new PeakPickParameters(479.0 / 480.0, 479.0 / 480.0, 1280.0);
         }
 
-        // Group B: m_KSS = m_KS - m_KS/1280; m_KS2S = m_KS2 - m_KS2/1280; m_KSB = m_KSS/1280 (sstv.cpp:1120-1127)
+        // Group B: m_KSS = m_KS - m_KS/1280; m_KS2S = m_KS2 - m_KS2/1280; m_KSB = m_KSS/1280 (sstv.cpp:1123-1128)
         if (mode == Mp73 || mode == Mn73 || mode == ScottieDx)
         {
             return new PeakPickParameters(1279.0 / 1280.0, 1279.0 / 1280.0, 1280.0);
         }
 
-        // Group C: m_KSS = m_KS (no trim); m_KS2S = m_KS2 (no trim); m_KSB = m_KSS/1280 (sstv.cpp:1129-1146)
+        // Group C: m_KSS = m_KS (no trim); m_KS2S = m_KS2 (no trim); m_KSB = m_KSS/1280 (sstv.cpp:1130-1149)
         if (mode == Sc2180 || mode == Mp115 || mode == Mp140 || mode == Mp175
             || mode == Mr90 || mode == Mr115 || mode == Mr140 || mode == Mr175
             || mode == Ml180 || mode == Ml240 || mode == Ml280 || mode == Ml320
@@ -765,7 +765,7 @@ public static class SstvModeRegistry
         }
 
         // Group D: m_KSS = m_KS - m_KS/640; m_KS2S = m_KS2 - m_KS2/1024 (NOT /640 -- the one group
-        // where luma and chroma trim differently); m_KSB = m_KSS/1024 (sstv.cpp:1148-1155)
+        // where luma and chroma trim differently); m_KSB = m_KSS/1024 (sstv.cpp:1151-1154)
         if (mode == Mr73)
         {
             return new PeakPickParameters(639.0 / 640.0, 1023.0 / 1024.0, 1024.0);
@@ -865,7 +865,7 @@ public static class SstvModeRegistry
         // transmission line, CreatePdMode's `ImageHeight: transmissionUnits * 2`), so the default
         // formula below (which assumes 1 row/line, matching legacy's own default-branch modes) would
         // use the doubled ImageHeight (496) instead of legacy's real transmitted line count `m_L`
-        // (248 for all three, Main.cpp:792/812/822) -- permanently placing the finest-tier threshold
+        // (248 for all three, sstv.cpp:792/812/822) -- permanently placing the finest-tier threshold
         // (212, not 460) out of reach for a mode that only ever transmits 248 lines.
         if (mode == Pd120 || mode == Pd180 || mode == Pd240)
         {
@@ -885,9 +885,11 @@ public static class SstvModeRegistry
     /// re-derivation of legacy's literal constant: <see cref="SlantTracker"/> only ever uses this
     /// value as a fixed reference point for wrap-to-nearest-zero centering of the measured drift, so
     /// any consistent reference point works -- it's not meant to reproduce m_OFP's exact number.
-    /// Not meaningful for AVT (no sync segment at all) or Scottie, whose sync is mid-line, not at
-    /// line start -- both handled correctly by finding the segment wherever it actually is, per
-    /// LineSCT's real structure (see the Scottie doc comment above).</summary>
+    /// Scottie's sync is mid-line, not at line start -- handled correctly by finding the segment
+    /// wherever it actually is, per LineSCT's real structure (see the Scottie doc comment above).
+    /// AVT has no sync segment at all, so this throws for AVT -- callers must exclude
+    /// <see cref="Avt"/> first, the same caller-exclusion contract as
+    /// <see cref="GetSyncPeakOffsetMs"/>.</summary>
     internal static double GetSyncSegmentOffsetMs(SstvModeDefinition mode)
     {
         var expectedSyncHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
@@ -1002,19 +1004,39 @@ public static class SstvModeRegistry
         throw new InvalidOperationException($"Mode '{mode.Id}' has no known legacy m_OFP value.");
     }
 
+    /// <summary>Legacy's real mode-scan order (`sstv.h:450-494`'s <c>smXXX</c> enum, the raw index
+    /// <c>SyncCheck</c>'s own <c>for(i=0; i&lt;smEND; i++)</c> iterates, `sstv.cpp:1361-1367`) — NOT
+    /// <see cref="All"/>'s own declaration order, which differs from it (e.g. <see cref="Ml280"/>
+    /// precedes <see cref="Mp73"/> in <see cref="All"/> but follows it in the legacy enum). Legacy
+    /// returns the FIRST mode whose candidate interval matches, so order only matters when two
+    /// candidates' expected intervals both fall within <c>SyncCheckSub</c>'s match window — a real
+    /// but narrow case (e.g. ML280/MP73 at ~5ms apart) caught during this file's own Tier A Batch 5
+    /// chunk 5b audit round.</summary>
+    private static readonly IReadOnlyList<SstvModeDefinition> SyncIntervalScanOrder =
+    [
+        Robot36, Robot72, ScottieS1, ScottieS2, ScottieDx, MartinM1, MartinM2,
+        Sc2180, Sc2120, Sc260, Pd50, Pd90, Pd120, Pd160, Pd180, Pd240, Pd290, P3, P5, P7,
+        Mr73, Mr90, Mr115, Mr140, Mr175, Mp73, Mp115, Mp140, Mp175,
+        Ml180, Ml240, Ml280, Ml320, R24, Rm8, Rm12, Mn73, Mn110, Mn140, Mc110, Mc140, Mc180,
+    ];
+
     /// <summary>Legacy's per-mode expected sync-repeat interval, <c>SSTVSET.m_MS[i] = GetTiming(i) *
     /// m_SampFreq / 1000.0</c> (`sstv.cpp:577`) — the mode's own line duration, since (for every
     /// mode except AVT) the sync tone repeats once per transmission line. Derived from this port's
     /// own <c>LineDurationMs</c> (already cross-checked against <c>GetTiming</c> in
     /// <c>SstvRoundTripTests.LineDuration_MatchesLegacyGetTiming</c>) rather than re-transcribing a
     /// second, separate per-mode table. AVT is excluded (<c>m_MS[smAVT] = 0</c>, `sstv.cpp:579`,
-    /// explicitly zeroed after the loop) — matches its exclusion from AFC and Auto Slant too.</summary>
+    /// explicitly zeroed after the loop) — matches its exclusion from AFC and Auto Slant too.
+    /// Candidate order is <see cref="SyncIntervalScanOrder"/>, not <see cref="All"/>'s declaration
+    /// order — see that field's own doc comment for why the distinction is real, not cosmetic.</summary>
     internal static IReadOnlyList<(SstvModeDefinition Mode, double ExpectedIntervalSamples)> GetSyncIntervalCandidates(double sampleRate) =>
-        All.Where(m => m != Avt).Select(m => (m, m.LineDurationMs / 1000.0 * sampleRate)).ToList();
+        SyncIntervalScanOrder.Select(m => (m, m.LineDurationMs / 1000.0 * sampleRate)).ToList();
 
-    /// <summary><c>SyncCheckSub</c>'s per-mode-group required-match depth (`sstv.cpp:1290-1325`) —
-    /// how many *additional* consecutive prior intervals must also match before a candidate is
-    /// trusted. Returns null for modes this mechanism never matches at all: SC2-120/60
+    /// <summary><c>SyncCheckSub</c>'s per-mode-group loop lower bound `e` (`sstv.cpp:1290-1325`,
+    /// the <c>MSYNCLINE - N</c> formula) — NOT a count of matches by itself: the number of prior
+    /// intervals actually checked is <c>MSYNCLINE - 1 - e</c>, so a LARGER return value means
+    /// FEWER checks (e.g. 8-5=3 means 4 checks; 8-3=5 means 2 checks). Returns null for modes this
+    /// mechanism never matches at all: SC2-120/60
     /// (`sstv.cpp:1296-1298`, unconditionally excluded) or modes gated to the wrong narrow/normal
     /// band (`if (m_fNarrow) return 0` / `if (!m_fNarrow) return 0`).</summary>
     internal static int? GetSyncIntervalMatchDepth(SstvModeDefinition mode, bool isNarrow)

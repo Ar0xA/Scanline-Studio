@@ -1,3 +1,4 @@
+using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Imaging;
 
 namespace ScanlineStudio.Core.Sstv.Tests;
@@ -300,6 +301,25 @@ public class AfcTests
         decoder.InitializeAfcForTests(SstvModeRegistry.Avt);
 
         Assert.False(decoder.HasAfcTrackerForTests);
+    }
+
+    // Closes a coverage gap flagged by Tier A Batch 5 chunk 5b (docs/functional-audit-playbook.md):
+    // IsFastAfcGroup's 8-mode fast group (sstv.cpp:1162-1177) had no direct test -- every other AFC
+    // test always passes explicit 1.5/3.0 literals, so this table was unpinned.
+    public static IEnumerable<object[]> AllModesWithExpectedFastAfcGroup() =>
+        SstvModeRegistry.All.Select(m => new object[]
+        {
+            m,
+            m == SstvModeRegistry.MartinM1 || m == SstvModeRegistry.MartinM2
+                || m == SstvModeRegistry.Sc2180 || m == SstvModeRegistry.Sc2120 || m == SstvModeRegistry.Sc260
+                || m == SstvModeRegistry.Mc110 || m == SstvModeRegistry.Mc140 || m == SstvModeRegistry.Mc180,
+        });
+
+    [Theory]
+    [MemberData(nameof(AllModesWithExpectedFastAfcGroup))]
+    public void IsFastAfcGroup_MatchesLegacySetSampFreqGrouping(SstvModeDefinition mode, bool expectedFast)
+    {
+        Assert.Equal(expectedFast, SstvModeRegistry.IsFastAfcGroup(mode));
     }
 
     private static double SampleSineWaveFrequency(ZeroCrossingFrequencyCounter counter, double targetHz, double durationMs)

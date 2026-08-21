@@ -4143,3 +4143,54 @@ own plan.
 
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1074/1075 (1 unrelated intentional
 skip, `TxCaptureFixtureGenerator.RegenerateAllTxCaptureFixtures`).
+
+## Chunk 5b round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round (this chunk's own risk level) on `SstvModeRegistry.cs` lines 656-1044 --
+`FindByFullVisByte`'s parity-aware match, `IsScottieFamily`, `IsFastAfcGroup`, the 5-way
+`GetPeakPickParameters`/`GetKsbSamples` trim-group table (the piece already flagged in-file as
+having caught one real bug during its own 4-round plan review, "Piece 10" -- re-verified still
+correct today, not just trusted from the comment), `GetAutoSlantThresholdPositions` (including the
+documented PD120/180/240 row-doubling special case), the two derived (non-legacy-literal)
+sync-segment-offset helpers, the 43-entry `GetSyncPeakOffsetMs` `m_OFP` literal table (independently
+re-transcribed byte-for-byte from `sstv.cpp:657-1108`, the single highest-value check in this
+chunk), and `GetSyncIntervalCandidates`/`GetSyncIntervalMatchDepth`'s per-group narrow-gating table.
+
+**Zero functional bugs found** -- every value and every mode's group assignment reproduces legacy
+exactly, independently re-derived rather than trusted from the file's own already-extensive doc
+comments. One narrow, low-impact divergence found and fixed (not a bug in shipped output, a
+genuine parity gap): `GetSyncIntervalCandidates` iterated `All`'s own declaration order instead of
+legacy's real `smXXX` enum scan order (`sstv.h:450-494`) -- for two same-duration mode pairs within
+`SyncCheckSub`'s match window (Martin/MRT1 vs MR115, and ML280 vs MP73), legacy's first-match-wins
+semantics could pick a different mode than this port's declaration order for a ~0.5%-off-rate
+signal on the no-VIS sync-bypass path only. Independently confirmed the proposed fix's `sm*` order
+against `sstv.h:450-494` directly (not just trusted the auditor's transcription) before applying:
+extracted the real enum, matched exactly. Fixed with an explicit `SyncIntervalScanOrder` list.
+
+Five doc/citation nits fixed: three `GetPeakPickParameters` group citations off by 1-3 lines (B/C/D
+ranges corrected against `sstv.cpp` directly); one wrong file name in a citation (`Main.cpp` ->
+`sstv.cpp` for PD120/180/240's `m_L=248`); `GetSyncSegmentOffsetMs`'s doc comment claimed AVT was
+"handled correctly" when it actually throws for AVT (now states the real caller-exclusion contract,
+matching `GetSyncPeakOffsetMs`'s own established phrasing); `GetSyncIntervalMatchDepth`'s doc
+comment inverted its own semantics (a LARGER return value means FEWER prior-interval checks, not
+more -- corrected with the exact `MSYNCLINE - 1 - e` relationship). One nit left unfixed (pure
+numeric-fidelity technicality, no observable effect for any real mode/rate pair):
+`GetKsbSamples`'s `* 239.0/240.0` vs. legacy's literal `m_KS - m_KS/240.0` form.
+
+**Two real coverage gaps closed with new tests, not just noted.** `IsFastAfcGroup`'s 8-mode fast
+group had no direct test (`AfcTests.cs` always passed explicit 1.5/3.0 literals) -- added a
+43-mode `[Theory]` in `AfcTests.cs`, mutation-verified (dropping Martin M2 from the fast group makes
+it fail as predicted). `GetSyncIntervalMatchDepth`'s 4-group + narrow-gating table had only Robot
+36 and generic band-gating covered indirectly -- added an 84-case (43 modes minus AVT, x2
+narrow/normal) `[Theory]` in `SyncIntervalTrackerTests.cs`, mutation-verified (changing the default
+group's depth from 5 to 4 fails 27 of 84 cases as predicted).
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that
+found no functional bug, same rigor rule as this batch's own precedent (chunks 3a/3b/3c/4a/4b/4d
+all closed the same way, per explicit prior user decisions to accept a clean round 1 rather than
+manufacture a round 2 purely for the formal gate).
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1201/1202 (1 unrelated intentional
+skip).
+
+Chunks 5c (`VisHeader.cs`) and 5d (`VisBitDecision.cs` + `SyncAnchorCorrector.cs`) remain open.
