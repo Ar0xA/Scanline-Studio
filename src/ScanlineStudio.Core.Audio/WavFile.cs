@@ -79,6 +79,17 @@ public static class WavFile
 
         while (reader.BaseStream.Position < reader.BaseStream.Length)
         {
+            // Round-1 code-review finding (Tier A Batch 8 chunk 8a): the loop condition only checks
+            // that at least 1 byte remains, not the full 8-byte chunk header -- 1-7 stray trailing
+            // bytes (a truncated download, a writer that appended junk) previously let ReadInt32()
+            // run past EOF and leak a bare EndOfStreamException, unlike every other malformed-input
+            // path here, which throws InvalidDataException/NotSupportedException. A caller with a
+            // catch list built around this method's OWN documented exceptions would miss it.
+            if (reader.BaseStream.Length - reader.BaseStream.Position < 8)
+            {
+                throw new InvalidDataException("Truncated chunk header at end of file.");
+            }
+
             var chunkId = Encoding.ASCII.GetString(reader.ReadBytes(4));
             var chunkSize = reader.ReadInt32();
             var remainingInStream = reader.BaseStream.Length - reader.BaseStream.Position;
@@ -90,6 +101,19 @@ public static class WavFile
 
             if (chunkId == "fmt ")
             {
+                // Round-1 code-review finding: a `chunkSize` below 16 (the fixed format-field size
+                // read unconditionally just below) previously wasn't rejected here -- the file-level
+                // bound above only checks against bytes remaining in the FILE, not against this
+                // chunk's own declared size, so parsing would read past this chunk's true end and
+                // desynchronize from the real chunk boundaries (a silent mis-parse, not a crash: the
+                // `remaining > 0` guard at the extension read already prevented a negative-length
+                // ReadBytes, so this was never memory-unsafe, just wrong).
+                if (chunkSize < 16)
+                {
+                    throw new InvalidDataException(
+                        $"'fmt ' chunk declares size {chunkSize}, too small for the required 16-byte format fields.");
+                }
+
                 var audioFormat = reader.ReadInt16();
                 numChannels = reader.ReadInt16();
                 sampleRate = reader.ReadInt32();
@@ -102,8 +126,18 @@ public static class WavFile
                 if (audioFormat == AudioFormatExtensible)
                 {
                     // Extension layout: cbSize (2) + validBitsPerSample (2) + channelMask (4) +
-                    // SubFormat GUID (16) = 24 bytes; the GUID itself starts at offset 8.
-                    if (extension.Length < 24 || new Guid(extension[8..24]) != PcmSubFormat)
+                    // SubFormat GUID (16) = 24 bytes; the GUID itself starts at offset 8. A too-short
+                    // extension is malformed input, not an unsupported-but-valid format -- distinct
+                    // exception type from the real non-PCM-SubFormat case below it (round-1
+                    // code-review finding: both cases previously shared one NotSupportedException
+                    // message that described only the SubFormat case).
+                    if (extension.Length < 24)
+                    {
+                        throw new InvalidDataException(
+                            $"WAVE_FORMAT_EXTENSIBLE 'fmt ' chunk's extension is {extension.Length} bytes, too short for the required 24-byte SubFormat block.");
+                    }
+
+                    if (new Guid(extension[8..24]) != PcmSubFormat)
                     {
                         throw new NotSupportedException(
                             "WAVE_FORMAT_EXTENSIBLE with a non-PCM SubFormat is not supported.");
@@ -137,7 +171,10 @@ public static class WavFile
             }
             else
             {
-                reader.ReadBytes(chunkSize);
+                // Seek rather than ReadBytes -- a legitimately large unknown chunk (e.g. a big LIST/
+                // JUNK chunk) would otherwise force a throwaway allocation of the whole chunk just to
+                // discard it (round-1 code-review finding).
+                reader.BaseStream.Seek(chunkSize, SeekOrigin.Current);
             }
 
             // RIFF pads every sub-chunk to an even byte boundary.
