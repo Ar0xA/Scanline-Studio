@@ -3,9 +3,12 @@ namespace ScanlineStudio.Core.Sstv;
 /// <summary>
 /// Piece 8b (of the Robot-36-at-11025Hz decode-gap fix, see spec/14-roadmap.md's live investigation
 /// log): the pure fold-and-argmax computation from legacy's <c>TMmsstv::SyncSSTV</c>
-/// (`Main.cpp:3751-3799`), extracted as a standalone, independently testable function before piece
-/// 8c wires it into <see cref="AnalogFmSstvDecoder"/>'s decode lifecycle. Zero behavior change on
-/// its own -- nothing calls this yet.
+/// (`Main.cpp:3751-3799`), extracted as a standalone, independently testable function. Piece 8c
+/// has since wired it in -- the only production caller is
+/// <see cref="AnalogFmSstvDecoder.TryResolveSyncAnchorCorrection"/> (which supplies the envelope
+/// from a dedicated <see cref="SyncEnvelopeDetector"/>, see <see cref="ComputeAnchorCorrection"/>'s
+/// own doc comment for the ordering contract that caller depends on); this function itself stays
+/// pure.
 ///
 /// Legacy folds <c>e</c> transmission lines' worth of the sync-tone envelope (<c>m_B12</c>, the
 /// same <c>d12</c>/<c>d19</c> value already used for sync/VIS detection, `sstv.cpp:2284-2307`)
@@ -75,6 +78,10 @@ internal static class SyncAnchorCorrector
     /// legacy's page-strided ring-buffer indexing (`m_B12[pg*m_BWidth+i]`, `Main.cpp:3768`): that
     /// stride is purely a C++ circular-buffer memory layout detail, not part of the actual DSP
     /// algorithm, so a simple 0-based relative index is a faithful (not simplified) equivalent.
+    /// <paramref name="envelopeAt"/> is invoked EXACTLY ONCE per index, in strictly ascending order
+    /// from 0 -- the production caller passes a stateful streaming <see cref="SyncEnvelopeDetector"/>,
+    /// so this ordering is part of the contract, not an implementation detail a future refactor of
+    /// the fold loop below is free to change.
     ///
     /// This method itself omits legacy's Hilbert-demodulator tap adjustment (`if (m_Type==2)
     /// n -= m_hill.m_htap/4`, `Main.cpp:3794`) -- it stays scoped to the mode/argmax/wraparound
