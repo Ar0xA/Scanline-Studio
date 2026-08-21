@@ -222,6 +222,237 @@ public class WavFileTests
         }
     }
 
+    [Fact]
+    public void Read_FmtChunkTooSmallForFormatFields_Throws()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a (docs/functional-audit-playbook.md):
+        // a 'fmt ' chunk declaring fewer than the 16 bytes its own fixed format fields require was
+        // previously read past its declared end without complaint (a silent mis-parse, not a crash --
+        // the `remaining > 0` guard downstream already prevented a negative-length read).
+        var path = Path.GetTempFileName();
+        try
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(8); // too small for the required 16 format-field bytes
+                writer.Write(new byte[8]);
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            Assert.Throws<InvalidDataException>(() => WavFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Read_ExtensibleFormatWithTruncatedExtension_ThrowsInvalidData()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a: a WAVE_FORMAT_EXTENSIBLE 'fmt '
+        // chunk with fewer than the 24 bytes its SubFormat block requires previously shared an
+        // exception with the (semantically different) "valid but non-PCM SubFormat" case -- both are
+        // NotSupportedException with a message that only describes the SubFormat case. This is
+        // malformed data, not an unsupported-but-well-formed feature, so it gets its own
+        // InvalidDataException now.
+        var path = Path.GetTempFileName();
+        try
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(20); // 16 + 4-byte extension, below the 24 bytes SubFormat parsing needs
+                writer.Write(unchecked((short)0xFFFE));
+                writer.Write((short)1);
+                writer.Write(11025);
+                writer.Write(11025 * 2);
+                writer.Write((short)2);
+                writer.Write((short)16);
+                writer.Write(new byte[4]);
+
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(2);
+                writer.Write((short)0);
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            Assert.Throws<InvalidDataException>(() => WavFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Read_TruncatedChunkHeaderAtEndOfFile_ThrowsInvalidData_NotEndOfStream()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a: 1-7 stray trailing bytes (a
+        // truncated download, a writer that appended junk) previously let the next ReadInt32() run
+        // past EOF and leak a bare EndOfStreamException -- unlike every OTHER malformed-input path in
+        // this method, which throws InvalidDataException/NotSupportedException. A caller with a catch
+        // list built around this method's own documented exceptions would have missed it.
+        var path = Path.GetTempFileName();
+        try
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                WriteFmtChunk(writer, audioFormat: 1, extension: []);
+
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(2);
+                writer.Write((short)1234);
+
+                // A real chunk header is 8 bytes; only 3 stray bytes remain after this.
+                writer.Write((byte)1);
+                writer.Write((byte)2);
+                writer.Write((byte)3);
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            Assert.Throws<InvalidDataException>(() => WavFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Read_OddSizedUnknownChunkIsLastInFile_NoPadByteRequired_DoesNotThrow()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a -- the mirror case of
+        // Read_OddSizedUnknownChunkBeforeData_SkipsPadByteAndStillParsesData above (odd size + pad
+        // byte PRESENT + mid-file): here the odd-sized chunk is the very LAST thing in the file, so
+        // there is no physical pad byte at all. The `Position < Length` guard on the RIFF pad-byte
+        // read must recognize that and not try to consume a byte that doesn't exist.
+        var path = Path.GetTempFileName();
+        try
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                WriteFmtChunk(writer, audioFormat: 1, extension: []);
+
+                writer.Write(Encoding.ASCII.GetBytes("LIST"));
+                writer.Write(3);
+                writer.Write((byte)1);
+                writer.Write((byte)2);
+                writer.Write((byte)3);
+                // No pad byte -- this is genuinely the last byte in the file, no "data" chunk follows.
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            var (samples, sampleRate) = WavFile.Read(path);
+            Assert.Equal(11025, sampleRate);
+            Assert.Empty(samples); // no "data" chunk here -- only proving the chunk walk completed cleanly
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData((short)8, (short)1)] // 8-bit mono
+    [InlineData((short)16, (short)2)] // 16-bit stereo
+    public void Read_UnsupportedBitDepthOrChannelCount_Throws(short bitsPerSample, short numChannels)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a: the "Only 16-bit mono PCM WAV is
+        // supported" guard (reachable and correctly gated by the sawFmt check ahead of it) had no test
+        // for either half of its own condition.
+        var path = Path.GetTempFileName();
+        try
+        {
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(16);
+                writer.Write((short)1); // PCM
+                writer.Write(numChannels);
+                writer.Write(11025);
+                writer.Write(11025 * numChannels * bitsPerSample / 8);
+                writer.Write((short)(numChannels * bitsPerSample / 8));
+                writer.Write(bitsPerSample);
+
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(2);
+                writer.Write((short)0);
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            Assert.Throws<NotSupportedException>(() => WavFile.Read(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Read_ExtensibleSubFormatGuid_MatchesRealWindowsWireLayout_NotJustSelfConsistentRoundTrip()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8a: the existing extensible tests
+        // build their SubFormat bytes via `guid.ToByteArray()`, which is self-consistent with this
+        // class's own `new Guid(byte[])` parse by construction and so can't detect a wrong wire
+        // layout -- the "both halves wrong the same way" pattern CLAUDE.md's behavioral-parity rule
+        // warns about. This test hardcodes the REAL KSDATAFORMAT_SUBTYPE_PCM wire bytes (Data1/Data2/
+        // Data3 little-endian, Data4 in written order -- the standard Windows GUID on-wire layout)
+        // independently of WavFile's own Guid construction.
+        var path = Path.GetTempFileName();
+        try
+        {
+            byte[] pcmSubFormatWireBytes =
+            [
+                0x01, 0x00, 0x00, 0x00, // Data1 = 00000001, little-endian
+                0x00, 0x00, // Data2 = 0000, little-endian
+                0x10, 0x00, // Data3 = 0010, little-endian
+                0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71, // Data4, written order
+            ];
+
+            using var stream = new MemoryStream();
+            using (var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("fmt "));
+                writer.Write(16 + 24);
+                writer.Write(unchecked((short)0xFFFE));
+                writer.Write((short)1);
+                writer.Write(11025);
+                writer.Write(11025 * 2);
+                writer.Write((short)2);
+                writer.Write((short)16);
+                writer.Write((short)22); // cbSize
+                writer.Write((short)16); // validBitsPerSample
+                writer.Write(0); // channelMask
+                writer.Write(pcmSubFormatWireBytes);
+
+                writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(2);
+                writer.Write((short)0);
+            }
+
+            File.WriteAllBytes(path, WrapInRiff(stream.ToArray()));
+
+            var (samples, _) = WavFile.Read(path);
+            Assert.Single(samples); // succeeds -- proves the hardcoded wire bytes really are recognized as PCM
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private static byte[] BuildWavBytes(short audioFormat, byte[] dataBytes, Guid? extensibleSubFormat = null)
     {
         byte[] extension = [];
