@@ -5117,4 +5117,63 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 125
 
 ## Chunk 8b CLOSED
 
-Chunks 8c-8d remain open.
+## Chunk 8c round 1: AnalogFmSstvEncoder.cs
+
+Largest/highest-risk file in this batch -- the TX encode core, real TX-path DSP/codec logic. Full
+Tier A rigor, pre-budgeted for a possible round 2.
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is, **round 2 NOT warranted** (auditor's own
+explicit call: "the pre-budgeted second round was insurance against this file's size/risk; the risk
+didn't materialize"). Zero functional bugs -- all 7 checked claims held against direct legacy
+verification: the running-accumulator truncation (traced by hand across consecutive segments,
+confirmed the +/-1-sample-per-boundary bound), silence/VCO-phase-freeze behavior (confirmed
+`m_vco.Do()` is genuinely skipped, not zeroed-and-restarted, in legacy), the output filter's
+unconditional application (confirmed it's gated on `m_bpf`, which defaults to 1 -- unconditional
+matches the shipped default), the OutHEAD-before-AVT-branch ordering and the AVT 3x-VIS-repeat
+citation (both independently re-verified, not taken on the comment's own word), all four footer
+branch combinations with an exact (not approximate) ms-to-samples unit conversion, the filter-then-
+cap NR/RST ordering, and the FSK-then-CW independent-gating order.
+
+**Several doc-comment overstatements fixed, none affecting output:**
+- `EstimateSampleCount`'s doc comment and the accumulator's own inline comment both claimed matching
+  legacy's TX-capture bit-exactness was a real goal of this port's specific operand order -- corrected:
+  legacy's own accumulator uses a DIFFERENT operand order, and legacy's VCO is a quantized sine
+  lookup table plus integer gain/mask stages, not this port's exact `Math.Sin` -- sample-exact legacy
+  diffing was never actually reachable through this choice alone. Truncation is kept because it's the
+  real ported behavior, not because it enables a diffing goal that doesn't exist.
+- A genuine internal contradiction: one comment claimed the accumulator's rounding error is "bounded
+  to +/-0.5 sample forever" (a round-to-nearest figure) while the code truncates (bounding error to
+  [0,1), a one-sided lag) -- a second comment nearby already had this right. Corrected the wrong one.
+- The silence branch's "phase must be skipped, not zeroed-and-restarted" framing was a no-op as
+  written: for this branch's only reachable trigger (`frequencyHz` exactly 0), `phaseIncrement` is
+  itself 0, so "skip the advance" and "advance by 0" are behaviorally identical -- the real-world
+  bug this branch actually guards against is an explicit phase RESET, not the increment mechanism.
+  Corrected the framing without changing the `<= 0` condition itself (kept for a hypothetical future
+  negative-frequency segment).
+- `CapNrRstTextForStationId`'s "exact (not just safe-but-lossy) bound" claim overstated what
+  filter-then-cap guarantees -- capping the FILTERED string can still, in principle, flip a
+  legacy-compact NR to this port's string form for a sufficiently long all-digit remainder (legacy
+  has no TX-side cap at all to match against either way). Unreachable with any realistic RST/NR
+  exchange, but corrected the "exact" claim.
+
+**Real coverage gap closed with a mutation-verified test.** All of `AnalogFmSstvEncoderSilenceTests`'
+silence coverage exercises `RenderSegments`, a hand-duplicated test-only copy of `EncodeAsyncCore`'s
+own sample loop -- nothing pinned the two together, so a regression in the REAL production async
+iterator's silence branch could have survived undetected. Added
+`EncodeAsync_CwIdLeadingSilence_ProducesExactZero_OnTheRealEncodeAsyncPath`, using
+`CwMorseGenerator`'s fixed 250ms leading `'@'` silence (comfortably past the output filter's 25-sample
+ring-down settle time) on the real `EncodeAsync` path. Mutation-verified: disabling the silence branch
+(forcing the tone branch unconditionally) produces a nonzero DC leak (`-0.0183...`) from the frozen-
+but-nonzero phase, caught exactly as predicted. Building this test also caught a REAL self-inflicted
+regression during the fix: an earlier edit to the silence branch's doc comment had accidentally deleted
+the `sample = 0.0;` statement itself (a genuine build break, `CS0165`), caught immediately by the
+build step before it ever reached a commit.
+
+Auditor's verdict: go for production as-is, round 2 not needed -- explicit, reasoned call given the
+file's pre-budgeted risk, not the default single-round precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1251, Skipped: 1, Total: 1252.
+
+## Chunk 8c CLOSED
+
+Chunk 8d remains open.
