@@ -59,9 +59,16 @@ public sealed partial class TcpTransport : IRadioTransport
         }
 
         var client = new TcpClient();
+        NetworkStream stream;
         try
         {
             await client.ConnectAsync(_host, _port, ct).ConfigureAwait(false);
+            // Inside the same try as ConnectAsync deliberately: GetStream throws
+            // InvalidOperationException if the peer reset between accept and here. Assigning _client
+            // before this call left a live, connected TcpClient owned by a transport whose IsOpen
+            // reads false -- and RigctldClientProtocol.EnsureConnectedAsync retries OpenAsync on the
+            // same instance, so the next attempt overwrote the field and leaked the socket outright.
+            stream = client.GetStream();
         }
         catch (Exception ex)
         {
@@ -73,7 +80,7 @@ public sealed partial class TcpTransport : IRadioTransport
         }
 
         _client = client;
-        _stream = client.GetStream();
+        _stream = stream;
         _readOffset = 0;
         _readLength = 0;
         Log.Connected(_logger, _host, _port);
@@ -81,11 +88,23 @@ public sealed partial class TcpTransport : IRadioTransport
 
     public Task CloseAsync()
     {
-        _stream?.Dispose();
-        _client?.Dispose();
+        AbortConnection();
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Single place that tears the socket down and resets the read buffer, so
+    /// <see cref="IsOpen"/> and the buffer state can never disagree. Safe to call when already
+    /// closed.</summary>
+    private void AbortConnection()
+    {
+        var stream = _stream;
+        var client = _client;
         _stream = null;
         _client = null;
-        return Task.CompletedTask;
+        _readOffset = 0;
+        _readLength = 0;
+        stream?.Dispose();
+        client?.Dispose();
     }
 
     public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
@@ -112,9 +131,32 @@ public sealed partial class TcpTransport : IRadioTransport
 
         while (true)
         {
+            ct.ThrowIfCancellationRequested();
+
             if (_readOffset >= _readLength)
             {
-                var bytesRead = await stream.ReadAsync(_readBuffer.AsMemory(), ct).ConfigureAwait(false);
+                int bytesRead;
+                try
+                {
+                    bytesRead = await stream.ReadAsync(_readBuffer.AsMemory(), ct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // A cancel landing here is NOT the benign "caller got its line and stopped" case
+                    // the buffer-survival contract (this class's own doc comment) is written for. The
+                    // request whose response was being read is already on the wire, so its bytes are
+                    // still inbound (or partly sitting in _readBuffer): resuming would hand the NEXT
+                    // caller the previous command's tail. For rigctld's line protocol that desync is
+                    // permanent and silent -- every later poll parses the previous response, yielding a
+                    // plausible-looking but permanently stale frequency/PTT readback, with
+                    // RadioController never seeing a transport error to reconnect on. A byte transport
+                    // cannot resynchronize a request/response stream, so the connection is killed
+                    // instead: the next EnsureConnectedAsync reopens it and OpenAsync resets the
+                    // buffer, turning a silent corruption into a loud, self-healing reconnect.
+                    AbortConnection();
+                    throw;
+                }
+
                 if (bytesRead == 0)
                 {
                     throw new IOException("rigctld connection closed by remote host.");

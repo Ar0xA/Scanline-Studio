@@ -115,9 +115,25 @@ public sealed class FakeRadioTransport : IRadioTransport
                 await Task.Yield();
             }
 
-            ct.ThrowIfCancellationRequested();
+            if (ct.IsCancellationRequested)
+            {
+                // Mirrors TcpTransport's own real semantics (see IRadioTransport's buffer-survival
+                // contract doc comment): a cancelled read is NOT the benign "caller got its line and
+                // stopped" case the buffer-survival guarantee is written for, so it must not preserve
+                // state -- it aborts the connection, same as the real transport killing its socket.
+                AbortConnection();
+                ct.ThrowIfCancellationRequested();
+            }
+
             yield return _readBuffer[_readOffset++];
         }
+    }
+
+    private void AbortConnection()
+    {
+        _open = false;
+        _readOffset = 0;
+        _readLength = 0;
     }
 
     public ValueTask DisposeAsync()
