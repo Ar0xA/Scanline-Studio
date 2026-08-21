@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Core.Imaging;
 
@@ -16,7 +17,7 @@ public sealed class TemplateStoreRealFileSystemTests : IDisposable
     private readonly string _root = Path.Combine(Path.GetTempPath(), "scanlinestudio-template-store-realfs-tests", Guid.NewGuid().ToString("N"));
     private readonly TransmitImagePreparer _preparer = new(FontPath);
 
-    private TemplateStore CreateStore() => new(new ImageSourceWriter(), new ImageFileLoader(), _preparer, _root);
+    private TemplateStore CreateStore() => new(new ImageSourceWriter(), new ImageFileLoader(), _preparer, NullLogger<TemplateStore>.Instance, _root);
 
     public void Dispose()
     {

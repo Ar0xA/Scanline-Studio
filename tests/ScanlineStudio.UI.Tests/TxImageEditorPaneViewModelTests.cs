@@ -5030,7 +5030,7 @@ public sealed class TxImageEditorPaneViewModelTests
             // instance from the VM's own `loader` below) -- its RenderThumbnailAsync reads the
             // just-written asset PNG back off real disk to build the thumbnail composite, which a
             // dictionary-keyed fake has no way to satisfy.
-            var templateStore = new TemplateStore(imageSourceWriter, new ImageFileLoader(), new FakeTransmitImagePreparer(), root);
+            var templateStore = new TemplateStore(imageSourceWriter, new ImageFileLoader(), new FakeTransmitImagePreparer(), NullLogger<TemplateStore>.Instance, root);
             var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
             var imageSource = CreateSource(2, 2);
             var loader = new FakeImageFileLoader { ResultToReturn = imageSource };
