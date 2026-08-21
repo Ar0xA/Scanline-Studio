@@ -120,23 +120,46 @@ public sealed partial class TcpTransport : IRadioTransport
             throw new InvalidOperationException("Transport is not open -- call OpenAsync first.");
         }
 
-        await stream.WriteAsync(data, ct).ConfigureAwait(false);
+        try
+        {
+            await stream.WriteAsync(data, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Same reasoning as the read side: a cancelled write either half-wrote a command (the peer
+            // sees a truncated line) or fully wrote one whose response nobody will ever read. Both leave
+            // the request/response stream desynced, and a byte transport cannot resynchronize it -- kill
+            // the connection so the next EnsureConnectedAsync reopens instead of silently misreading.
+            AbortConnection();
+            throw;
+        }
     }
 
     public async IAsyncEnumerable<byte> ReadAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_stream is null)
+        var stream = _stream;
+        if (stream is null)
         {
             throw new InvalidOperationException("Transport is not open -- call OpenAsync first.");
         }
 
-        var stream = _stream;
-
         while (true)
         {
-            ct.ThrowIfCancellationRequested();
+            if (ct.IsCancellationRequested)
+            {
+                // Abort here too, not only in the stream.ReadAsync catch below. THIS is the branch a
+                // cancel hits whenever a response line (or, for `m`, the whole second line) is already
+                // sitting in _readBuffer being drained a byte at a time -- RigctldClientProtocol opens a
+                // fresh enumeration per line, so that state is routine, not exceptional. Throwing without
+                // aborting left the unconsumed tail in _readBuffer with _stream still non-null (IsOpen
+                // true, so EnsureConnectedAsync skips the reopen): the next ReadLineAsync would return
+                // that tail as its own response and every later poll would be one response behind --
+                // the exact silent, permanent desync IRadioTransport's contract exists to prevent.
+                AbortConnection();
+                ct.ThrowIfCancellationRequested();
+            }
 
             if (_readOffset >= _readLength)
             {

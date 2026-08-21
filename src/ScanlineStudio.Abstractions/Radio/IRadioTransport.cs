@@ -22,7 +22,10 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// buffered, and resuming would hand a later caller that request's tail instead of its own. A byte
 /// transport cannot resynchronize a request/response stream after that, so a cancelled read must close
 /// the underlying connection instead of trying to preserve the buffer — turning a silent, permanent
-/// desync into a loud, self-healing reconnect on the next <see cref="OpenAsync"/>.
+/// desync into a loud, self-healing reconnect on the next <see cref="OpenAsync"/>. The same reasoning
+/// applies to a cancelled <see cref="WriteAsync"/>: it can leave a half-written command on the wire (the
+/// peer sees a truncated line) or a fully-written one whose response nobody will ever read — either way
+/// the request/response stream is desynced, and a cancelled write must close the connection too.
 /// <see cref="ReadAsync"/> is single-consumer only; concurrent enumeration (two callers reading at
 /// once) is undefined. Any implementation of this interface — including test doubles — must reproduce
 /// this exact semantics, not a more forgiving approximation of it (a fake that's more forgiving than

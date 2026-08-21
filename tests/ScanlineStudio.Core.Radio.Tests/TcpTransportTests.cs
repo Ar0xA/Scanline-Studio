@@ -64,6 +64,49 @@ public class TcpTransportTests
     }
 
     [Fact]
+    public async Task ReadAsync_CancelledWithBufferedBytesPending_AbortsConnection()
+    {
+        // Regression test for chunk 3b round 3's blocker: round 2 fixed the cancellation case INSIDE
+        // stream.ReadAsync's own catch, but the loop-top `ct.ThrowIfCancellationRequested()` a few
+        // lines above it was untouched -- and THAT is the branch a cancel hits whenever a response
+        // line is already sitting in _readBuffer being drained a byte at a time (routine: rigctld's
+        // `m` command legitimately leaves a second line buffered, and RigctldClientProtocol opens a
+        // fresh ReadAsync enumeration per line). Cancelling there used to throw without aborting,
+        // leaving the buffered tail in place with IsOpen still true -- so the NEXT enumeration would
+        // silently return that stale tail as its own response.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync();
+
+        await using var transport = new TcpTransport("127.0.0.1", port);
+        await transport.OpenAsync(CancellationToken.None);
+
+        using var serverClient = await acceptTask;
+        await using var serverStream = serverClient.GetStream();
+
+        await serverStream.WriteAsync(Encoding.ASCII.GetBytes("ab\ncd\n"), CancellationToken.None);
+        await serverStream.FlushAsync(CancellationToken.None);
+
+        // Leaves "cd\n" sitting in the internal buffer, already read from the socket.
+        await ReadLineAsync(transport);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+        {
+            await foreach (var _ in transport.ReadAsync(cts.Token))
+            {
+            }
+        });
+
+        Assert.False(transport.IsOpen);
+
+        listener.Stop();
+    }
+
+    [Fact]
     public async Task ReadAsync_ThrowsIOException_WhenRemoteClosesConnection()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
