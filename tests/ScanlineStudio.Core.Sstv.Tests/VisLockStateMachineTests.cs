@@ -98,6 +98,35 @@ public class VisLockStateMachineTests
         Assert.Null(result);
     }
 
+    [Theory]
+    [InlineData("martin-m1", false)]
+    [InlineData("scottie-s1", true)]
+    [InlineData("scottie-s2", true)]
+    [InlineData("scottie-dx", true)]
+    public void LockAnchor_AddsScottiePostVisPulseForScottieFamilyOnly(string modeId, bool scottie)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 6 chunk 6c: no test in this file pinned the
+        // Scottie-only post-VIS-pulse anchor term. Main.cpp:7576-7578 emits an extra 1200Hz/9.0ms
+        // pulse after the VIS stop bit for smSCT1/smSCT2/smSCTDX only; the anchor arithmetic
+        // (VisLockStateMachine.cs's Verify case) must include it for exactly those three. 9ms is
+        // ~99 samples @11025Hz, well past the ~80-sample detector lag HeaderAfterSecondsOfSilence
+        // already budgets for, so dropping (or over-applying) the term is a real, catchable offset.
+        var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+        var segments = VisHeader.GenerateSegments(mode.VisCode).ToList();
+        if (scottie)
+        {
+            segments.Add((VisHeader.ScottiePostVisPulseFrequencyHz, VisHeader.ScottiePostVisPulseDurationMs));
+        }
+
+        var result = FeedUntilLocked(RenderSegments(segments, SampleRate));
+
+        Assert.NotNull(result);
+        Assert.Equal(mode.Id, result!.Value.Mode.Id);
+        var expectedMs = VisHeader.TotalDurationMs + (scottie ? VisHeader.ScottiePostVisPulseDurationMs : 0.0);
+        var expected = (int)Math.Round(expectedMs / 1000.0 * SampleRate);
+        Assert.InRange(result!.Value.LineStartSample, expected, expected + 150); // same bounds/lag budget as HeaderAfterSecondsOfSilence
+    }
+
     [Fact]
     public void HeaderAfterSecondsOfSilence_StillLocksAtTheRightOffset()
     {

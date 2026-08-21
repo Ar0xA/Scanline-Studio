@@ -302,18 +302,28 @@ internal sealed class VisLockStateMachine
                 {
                     if (d12 > d19 && d12 > _slvl)
                     {
-                        // Code-review finding (Piece 9): each term rounded to samples SEPARATELY,
-                        // not combined into one ms total then rounded once -- matching how this
-                        // state machine's own _syncTimeCounter actually accumulated real elapsed
-                        // samples (MsToSamples(ConfirmLockDurationMs) once, then MsToSamples(BitDurationMs)
-                        // exactly bitCount times, one per real per-bit countdown reset, then
-                        // MsToSamples(VerifyDurationMs) once). The two rounding conventions can
-                        // diverge by a few samples after several steps (confirmed: 3 samples for
-                        // extended VIS at 11025Hz) -- the same rounding-mismatch bug class
-                        // TryDecodeVisDataBits' own doc comment describes fixing, caught here by
-                        // code review rather than a failing test (this file's own anchor-precision
-                        // tests were within tolerance either way, small effect only, but the same
-                        // bug class this project already treats as worth fixing on principle).
+                        // Code-review finding (Piece 9): each COUNTER term rounded to samples
+                        // SEPARATELY, not combined into one ms total then rounded once -- matching
+                        // how this state machine's own _syncTimeCounter actually accumulated real
+                        // elapsed samples (MsToSamples(ConfirmLockDurationMs) once, then
+                        // MsToSamples(BitDurationMs) exactly bitCount times, one per real per-bit
+                        // countdown reset, then MsToSamples(VerifyDurationMs) once) -- this part is
+                        // exact by construction, the counters must sum to currentSample -
+                        // _triggerFireSample precisely, and they do.
+                        //
+                        // Batch 6 chunk 6c correction: AnchorReconciliationDurationMs is NOT one of
+                        // those counters -- it's an analytic bridge to VisHeader's own boundary, so
+                        // truncating it the same way compounds rather than absorbs the counters'
+                        // own rounding deficit (measured at 11025Hz: the one-shot combined-ms form
+                        // would place the anchor ~7.5 samples later, normal, ~13.5 later, extended
+                        // -- not the "3 samples" this comment previously and incorrectly claimed,
+                        // which didn't reproduce under re-derivation). Left as truncated-separately
+                        // anyway, deliberately NOT "fixed": the ~80-sample envelope-detector group
+                        // delay (this class's own ProcessSample doc comment, measured empirically)
+                        // dominates by an order of magnitude and this truncation's own deficit
+                        // happens to cancel a few samples of it -- combining-then-rounding would
+                        // make the composite anchor marginally WORSE, not better. Sub-millisecond
+                        // either way; not worth chasing further.
                         var mode = _resolvedMode!;
                         var bitCount = _isExtended ? 16 : 8;
                         var anchorOffsetSamples = MsToSamples(ConfirmLockDurationMs)
