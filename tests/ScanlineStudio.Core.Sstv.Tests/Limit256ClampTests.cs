@@ -90,4 +90,25 @@ public class Limit256ClampTests
         Assert.Equal(expectedG2, actualY2Pixel.G);
         Assert.Equal(expectedB2, actualY2Pixel.B);
     }
+
+    [Fact]
+    public void RgbSequentialScanlineDecoder_TruncatesBeforeTheBias_LikeLegacyGetPixelLevel()
+    {
+        // functional-audit chunk 4c: legacy's RGB-sequential RX branch (Main.cpp:4459-4461) reads
+        // through the int-RETURNING GetPictureLevel -> GetPixelLevel (Main.cpp:4038-4056), so
+        // truncation lands on the zero-centered picture level, BEFORE `d += 128`. Truncate-toward-zero
+        // rounds a negative (sub-mid-gray) value UP, so legacy is exactly one level brighter than a
+        // floor-after-bias -- this was the divergence chunk 4c found and fixed.
+        const double frequencyHz = 1814.0625; // (1814.0625-1500)*256/800 = 100.5, 27.5 below mid-gray
+        var mode = SstvModeRegistry.MartinM1;
+        var decoder = new RgbSequentialScanlineDecoder();
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        var reader = new PixelSampleReader(_ => frequencyHz, ksbSamples: 1, lineEndSampleExclusive: int.MaxValue, luminanceMinHz: mode.LuminanceMinHz, neverPeakPicks: true);
+
+        decoder.DecodeLine(mode, sampleRate: 44100, lineStartSample: 0, lineIndex: 0, reader, pixels);
+
+        // trunc(100.5 - 128) + 128 = -27 + 128 = 101 -- NOT floor(100.5) = 100. The reader returns
+        // the same constant frequency for every read, so G/B/R all land on 101 by the end of the line.
+        Assert.Equal(new Rgb24(101, 101, 101), pixels[0]);
+    }
 }
