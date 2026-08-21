@@ -109,11 +109,14 @@ public class HilbertFmDemodulatorTests
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
-    public void ComputePhaseDifference_WarmUp_MatchesExpectedLag(int df)
+    public void ComputePhaseDifference_SteadyState_MatchesExpectedLag(int df)
     {
         // lag = 2^df: df=0 -> 1-sample lag (from call 2); df=1 -> 2-sample lag, steady from call 3
         // (2 warm-up calls); df=2 -> 4-sample lag, steady from call 5 (4 warm-up calls). Confirmed by
         // hand-simulation and independently re-confirmed by auditor review, see class doc comment.
+        // Note (Batch 7 chunk 7b nit fix): this asserts only the STEADY-STATE region (the loop
+        // below starts at i=lag) -- the warm-up calls themselves (the ones diffing against the
+        // still-zero a[] entries) are exercised but not independently asserted here.
         var a = new double[4];
         var phases = new double[] { 0.1, 0.3, 0.7, 1.2, 1.9, 2.5, 3.0 };
         var diffs = new double[phases.Length];
@@ -283,17 +286,20 @@ public class HilbertFmDemodulatorTests
     }
 
     [Fact]
-    public void ProcessSample_ExactZeroRealComponent_UsesPhaseZero_NotAtan2()
+    public void ProcessSample_DigitalSilence_SettlesToZeroHz_NotCenterFrequency()
     {
-        // Round-1 correction: a==0.0 is a real, reachable, meaningful state (phase=0.0 rad used
-        // directly), not a stale/skip case. Feed digital silence (all zeros) -- the delayed real
-        // component stays exactly 0.0 throughout, so phase is pinned at 0.0 rad every call (never
-        // atan2'd) and never changes -- diff stays exactly 0 (no oscillation), which correctly reads
-        // out as 0Hz, NOT the center frequency: a discriminator's whole job is measuring
-        // sample-to-sample phase CHANGE, and a non-oscillating signal genuinely has no instantaneous
-        // frequency to report. (The center-frequency-as-zero-state fact is about the SMOOTHING
-        // FILTER's own cold-start value, a separate concept from what a silent/DC input demodulates
-        // to -- conflating the two was an error in an earlier draft of this test, not in the class.)
+        // Renamed (Batch 7 chunk 7b, docs/functional-audit-playbook.md): this test's own name
+        // used to claim it proved the a==0.0/atan2-skip guard, but an all-zero input can't -- on
+        // .NET, Math.Atan2(+0.0, +0.0) already returns +0.0, the same value the guard produces, so
+        // deleting the guard entirely would not change this test's outcome. What this DOES prove:
+        // the delayed real component stays exactly 0.0 throughout digital silence, so phase is
+        // pinned at 0.0 rad every call and never changes -- diff stays exactly 0 (no oscillation),
+        // which correctly reads out as 0Hz, NOT the center frequency: a discriminator's whole job
+        // is measuring sample-to-sample phase CHANGE, and a non-oscillating signal genuinely has
+        // no instantaneous frequency to report. (The center-frequency-as-zero-state fact is about
+        // the SMOOTHING FILTER's own cold-start value, a separate concept from what a silent/DC
+        // input demodulates to.) See ProcessSample_ZeroRealComponent_WithNonZeroQuadrature_
+        // UsesPhaseZero_NotAtan2 below for the test that actually exercises the guard.
         var demod = new HilbertFmDemodulator(11025);
         double last = 0;
         for (var i = 0; i < 11025; i++)
@@ -303,6 +309,37 @@ public class HilbertFmDemodulatorTests
 
         Assert.False(double.IsNaN(last));
         Assert.True(Math.Abs(last - 0.0) < 2.0, $"settled output on digital silence: {last}");
+    }
+
+    [Fact]
+    public void ProcessSample_ZeroRealComponent_WithNonZeroQuadrature_UsesPhaseZero_NotAtan2()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 7 chunk 7b (docs/functional-audit-playbook.md):
+        // sstv.cpp:3062's `if( a ) a = atan2(d, a);` genuinely SKIPS atan2 when the delayed real
+        // sample is 0. An all-zero input (the sibling test above) cannot prove this: on .NET,
+        // Math.Atan2(+0.0, +0.0) is already +0.0, so the guard and atan2 agree there, and deleting
+        // the guard would not change that test's outcome. Reaching the real==0/quadrature!=0 state
+        // needs an impulse: at tap=12/htap=6 (11025Hz), the delayed real component (_z[6] ==
+        // x[n-6]) is still 0 for calls 0..5 while the FIR output (quadrature) is not. With the
+        // guard, phase is pinned at 0.0 for all six calls, so the outputs are EXACTLY those of a
+        // silence-fed instance. Without it, call 0 would instead compute
+        // atan2(+5.55e-18, +0.0) = +PI/2, diverging immediately.
+        const int sampleRate = 11025; // tap=12, htap=6
+        var impulseFed = new HilbertFmDemodulator(sampleRate);
+        var silenceFed = new HilbertFmDemodulator(sampleRate);
+
+        var impulseOutputs = new double[6];
+        var silenceOutputs = new double[6];
+        impulseOutputs[0] = impulseFed.ProcessSample(1.0, isNarrow: false); // impulse
+        silenceOutputs[0] = silenceFed.ProcessSample(0.0, isNarrow: false);
+        for (var i = 1; i < 6; i++)
+        {
+            impulseOutputs[i] = impulseFed.ProcessSample(0.0, isNarrow: false);
+            silenceOutputs[i] = silenceFed.ProcessSample(0.0, isNarrow: false);
+        }
+
+        // Exact equality is the assertion: both paths must have taken phase = 0.0 every call.
+        Assert.Equal(silenceOutputs, impulseOutputs);
     }
 
     [Theory]
