@@ -413,7 +413,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
                 try
                 {
-                    await _radioSession.SetPttAsync(locked, ct).ConfigureAwait(false);
+                    // Round-17 finding: this await had no bound of its own -- the identical gap
+                    // PlayWithPttAsync's own key command had before round 14's fix (see that call
+                    // site's own comment for the full reasoning; same WaitAsync treatment applies
+                    // here for the same reason). Verified against both shipped backends directly:
+                    // HamlibRadioProtocol.SetPttAsync's CallAsync wrapper takes NO CancellationToken
+                    // parameter at all -- once the blocking native rig_set_ptt call starts, nothing
+                    // can interrupt it -- and RigctldClientProtocol's reply read has no timeout of its
+                    // own either. A wedged rig here (engage OR disengage direction) previously hung
+                    // this call forever WHILE HOLDING _pttLockGate -- stranding every future
+                    // SetPttLockAsync call, including a future emergency unlock, the one escape hatch
+                    // this whole method exists to be.
+                    await _radioSession.SetPttAsync(locked, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
                 }
                 catch (Exception) when (rigIsRealAtKeyTime)
                 {
@@ -902,6 +913,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // WhenAny would force a state-machine yield even when nothing is actually pending, moving
             // ResetAgc()/the log line/MaintenanceCriticalStopRaised off the drain thread on EVERY
             // call, not just a hung one -- a real regression the WhenAny shape would have introduced.
+            //
+            // Round-17 correction: for that SAME drain-thread caller, the watchdog below bounds
+            // NOTHING -- MiniAudioEngine's own claim-then-dispose sequence runs entirely inline and
+            // synchronously on that thread (ClaimCaptureSessionAsync's thread-blocking Wait() branch,
+            // then session.Dispose() called directly, not via Task.Run), so stopTask is already
+            // completed by the time it reaches WaitAsync and the 5s budget is never actually
+            // consulted. The watchdog only does real work for a NON-drain-thread caller (the two
+            // production callers via StartReceivingAsync's own guard: PlayWithPttAsync's entry, and
+            // DisposeAsync).
             Task stopTask;
             try
             {
@@ -910,9 +930,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
             catch (Exception ex)
             {
                 // A synchronous throw (e.g. ObjectDisposedException) never produces a Task at all --
-                // same shape as StopPlaybackWithWatchdogAsync's own sync-throw arm.
+                // same shape as StopPlaybackWithWatchdogAsync's own sync-throw arm. Round-17 nit:
+                // no early `return` here (unlike that method) -- this one still has ResetAgc()/
+                // Log.RxStopped() below the finally, and skipping them left the legacy-parity TX<->RX
+                // AGC reset (ultracode finding #6) un-run and no "RX stopped" line ever logged on this
+                // specific path, even though _isReceiving still correctly flips false via the finally
+                // either way.
                 Log.CleanupStepFailed(_logger, "StopCapture", ex);
-                return;
+                stopTask = Task.CompletedTask;
             }
 
             try
@@ -926,6 +951,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // or not the underlying stop call ever actually finishes. The abandoned stopTask is
                 // left running in the background -- observe its eventual fault so it doesn't surface
                 // as an unobserved task exception at GC time, detached from this call's own context.
+                //
+                // Round-17 nit: the capture-side twin of StopPlaybackWithWatchdogAsync's own documented
+                // "known consequence" (see that method's own doc comment) -- a following
+                // StartReceivingAsync can now open a SECOND native session while this abandoned one is
+                // still closing. Verified benign here (unlike that residual concurrent-open risk on
+                // the playback side, which is flagged, not fixed): MiniAudioEngine's own claim step
+                // nulls _captureSession AND unsubscribes SamplesAvailable together, before release, so
+                // the abandoned session cannot interleave audio into the new one.
                 Log.CaptureStopWatchdogFired(_logger, _cleanupTimeout);
                 _ = stopTask.ContinueWith(
                     t => Log.CleanupStepFailed(_logger, "StopCapture (finished after watchdog)", t.Exception!),
@@ -1534,6 +1567,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             // StopReceivingAsync's `-=` removes only ONE copy of each duplicated handler, so
                             // the extra subscription survives a Stop RX / Start RX cycle and keeps doubling
                             // every captured chunk into the decoder for the rest of the process's life.
+                            // Round-17 nit: this specific claim may be overstated against the CURRENT
+                            // MiniAudioEngine, not re-verified here (out of this chunk's own failure
+                            // class, as stated above) -- that implementation publishes _captureSession
+                            // under its own lock before release and a second StartCaptureAsync throws
+                            // "already started" before this class's own `+=` is ever reached, which
+                            // would prevent the double-subscription this comment describes. Flagging the
+                            // possible overstatement, not asserting the underlying gap is closed --
+                            // unverified against any OTHER IAudioEngine implementation.
                             if (!_pttLocked && _rxPendingResumeAfterUnlock)
                             {
                                 _rxPendingResumeAfterUnlock = false;
@@ -1585,7 +1626,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// two call sites (the abnormal-termination early un-key and the normal-completion post-drain one)
     /// share one implementation -- and so each gets its OWN fresh <see cref="CancellationTokenSource"/>.
     /// That is blocker 1's actual fix: the un-key's deadline must never be the leftover of an earlier
-    /// cleanup step's spend.</summary>
+    /// cleanup step's spend.
+    ///
+    /// Round-17 correction: giving this its own fresh CTS closes blocker 1 (a shared deadline), but
+    /// passing that CTS's token as <see cref="TryUnkeyPttAsync"/>'s own `ct` parameter did NOT, by
+    /// itself, actually bound the un-key call -- see that method's own comment for why (neither
+    /// shipped CAT backend polls `ct` once its native/protocol call has started). <c>unkeyCts</c>'s
+    /// own timeout is real and still correctly sized; what was missing was an independent
+    /// <c>WaitAsync</c> on the awaiting side, now added at the one call site.</summary>
     private async Task<bool> UnkeyForCleanupAsync(bool pttKeyedOnRealRig)
     {
         // Round-5 finding: snapshotted BEFORE the un-key attempt below, not after -- see _pttKeyEpoch's
@@ -1720,7 +1768,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         try
         {
-            await _radioSession.SetPttAsync(false, ct).ConfigureAwait(false);
+            // Round-17 finding (the single most safety-critical await in this file): passing `ct`
+            // (UnkeyForCleanupAsync's own fresh unkeyCts.Token) as this call's OWN parameter never
+            // actually bounded it -- the identical mistake round 16 found and fixed at every
+            // RX-resume site, one call away from the file's whole reason for existing. Verified
+            // against both shipped backends: HamlibRadioProtocol.SetPttAsync's CallAsync wrapper
+            // takes no CancellationToken at all; RigctldClientProtocol's reply read has no timeout of
+            // its own either. Without this, a wedged un-key command could hang every one of this
+            // method's 5 call sites forever: PlayWithPttAsync's finally (leaving _transmitInFlight
+            // stuck, permanent TX/Tune lockout), SetPttLockAsync (leaving _pttLockGate stuck), and
+            // worst of all DisposeAsync's own backstop -- which would then never return, letting the
+            // host's ~10s teardown bound expire and the process exit with the transmitter physically
+            // keyed and the Critical "PTT MAY STILL BE KEYED" log never even emitted. `ct` IS already
+            // a fresh CTS's own token here (see UnkeyForCleanupAsync's unkeyCts), so WaitAsync reuses
+            // it directly rather than adding a second, redundant timeout.
+            await _radioSession.SetPttAsync(false, ct).WaitAsync(ct).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -1833,11 +1895,32 @@ public sealed partial class SstvSessionService : ISstvSessionService
             await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
         }
 
-        await StopReceivingAsync().ConfigureAwait(false);
-
-        if (Waterfall is IDisposable disposableWaterfall)
+        // Round-17 finding: these three teardown steps used to run with no guard at all -- a throw
+        // from any one (e.g. StopReceivingAsync's own _decoder.ResetAgc() call, which sits outside
+        // its own internal try, or a throwing Waterfall.Dispose()) aborted DisposeAsync mid-way,
+        // skipping whatever came after and leaking that resource. Matches MiniAudioEngine.DisposeAsync's
+        // own established fix for the identical shape (its own comment: "each lifecycle now gets its
+        // own try/finally so a failure in one never prevents the other") -- each step here now gets
+        // its own try/catch instead, logged and swallowed, so teardown always reaches every step.
+        try
         {
-            disposableWaterfall.Dispose();
+            await StopReceivingAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.CleanupStepFailed(_logger, "StopReceiving (dispose)", ex);
+        }
+
+        try
+        {
+            if (Waterfall is IDisposable disposableWaterfall)
+            {
+                disposableWaterfall.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.CleanupStepFailed(_logger, "Waterfall.Dispose", ex);
         }
 
         // RX buffer subsystem Phase 7 (disposal-chain sub-piece): _decoder is ISstvDecoder-typed, not
@@ -1846,9 +1929,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // implementation's own resource-cleanup need), same duck-typed pattern as the Waterfall check
         // above. Still placed AFTER StopReceivingAsync so no in-flight PushSamples call can race the
         // decoder's own disposal.
-        if (_decoder is IDisposable disposableDecoder)
+        try
         {
-            disposableDecoder.Dispose();
+            if (_decoder is IDisposable disposableDecoder)
+            {
+                disposableDecoder.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.CleanupStepFailed(_logger, "Decoder.Dispose", ex);
         }
     }
 
