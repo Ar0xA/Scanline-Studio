@@ -124,6 +124,23 @@ public class RigctldClientProtocolTests
         Assert.Equal(expected, state.Mode);
     }
 
+    [Fact]
+    public async Task PollAsync_ThrowsRadioProtocolException_WhenPttResponseIsUnparseable()
+    {
+        // Regression test for chunk 3c round 1's blocker: an unparseable PTT readback used to default
+        // to "not transmitting" instead of throwing, unlike the frequency read (see the sibling test
+        // above). That's the one wrong guess with physical consequences here, and it also silently
+        // suppressed this poll's SWR/ALC/power reads (gated on isTransmitting), so a garbled 't'
+        // response would disarm the SWR cutoff on a rig that IS actually keyed.
+        var script = Script(
+            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe],
+            ["14074000", "USB", "0", "not-a-number"]);
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        await Assert.ThrowsAsync<RadioProtocolException>(() => sut.PollAsync(CancellationToken.None));
+    }
+
     [Theory]
     [InlineData("0", false)]
     [InlineData("1", true)]

@@ -157,8 +157,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
     public async Task<RadioState> PollAsync(CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync().ConfigureAwait(false);
@@ -240,8 +239,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
     public async Task SetFrequencyAsync(long hz, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync().ConfigureAwait(false);
@@ -262,7 +260,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
                 nameof(mode), mode, "This RadioMode has no Hamlib RIG_MODE_* equivalent.");
         }
 
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync().ConfigureAwait(false);
@@ -278,8 +276,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
     public async Task SetPttAsync(bool tx, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        await AcquireAsync(ct).ConfigureAwait(false);
         try
         {
             await EnsureConnectedAsync().ConfigureAwait(false);
@@ -333,7 +330,33 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
             }
         }).ConfigureAwait(false);
 
-        Capabilities = await CallAsync(ProbeCapabilities).ConfigureAwait(false);
+        try
+        {
+            Capabilities = await CallAsync(ProbeCapabilities).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // Separate cleanup arm from the block above, and NOT foldable into it: rig_open has
+            // already succeeded by this point, so this handle needs rig_close BEFORE rig_cleanup,
+            // where every failure inside the block above happens at or before rig_open and needs
+            // cleanup only. Leaving it open with _connected still false made DisposeAsync's
+            // (now-fixed) "if (_connected)" guard skip teardown entirely and made the next
+            // EnsureConnectedAsync overwrite _rig with a fresh rig_init -- leaking the RIG struct AND
+            // holding the serial port for the process lifetime, so every later Test/Connect failed on
+            // a busy port, permanently. A plain "Test connection" with a wrong baud rate is enough to
+            // hit this -- no race required.
+            Log.ConnectStepFailed(_logger, _model, ex);
+            var rig = _rig;
+            _rig = nint.Zero;
+            Capabilities = RadioCapabilities.None;
+            await Task.Run(() =>
+            {
+                _native.RigClose(rig);
+                _native.RigCleanup(rig);
+            }).ConfigureAwait(false);
+            throw;
+        }
+
         _connected = true;
         Log.Connected(_logger, _model, Capabilities);
     }
@@ -491,6 +514,27 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
     private static bool IsSoftError(int code) => SoftErrorCodes.Contains(-code);
 
+    /// <summary>Acquires <see cref="_lock"/> and re-checks <see cref="_disposed"/> AFTER the wait, not
+    /// only before it. <see cref="DisposeAsync"/> takes this same semaphore, and its own
+    /// <c>finally { _lock.Release(); }</c> hands the slot straight to whatever call queued behind it --
+    /// <c>SemaphoreSlim.Release()</c> completes a pending <c>WaitAsync</c> inside the release, and
+    /// <c>Dispose()</c> does not revoke that grant. Without this second check, a caller already queued
+    /// at dispose-time fell into <see cref="EnsureConnectedAsync"/> with <c>_connected</c> already
+    /// reset to false and rig_init/rig_open'd a BRAND NEW rig on a disposed protocol -- for
+    /// <see cref="SetPttAsync"/>(true) that meant a physically keyed transmitter on a handle nothing
+    /// would ever close, while the caller saw only an <see cref="ObjectDisposedException"/> out of its
+    /// own <c>Release()</c> call and concluded the key had failed.</summary>
+    private async Task AcquireAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        if (_disposed)
+        {
+            _lock.Release();
+            throw new ObjectDisposedException(nameof(HamlibRadioProtocol));
+        }
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_disposed)
@@ -503,7 +547,11 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
         await _lock.WaitAsync().ConfigureAwait(false);
         try
         {
-            if (_connected)
+            // Guards on handle ownership (_rig), not _connected: EnsureConnectedAsync's own probe-
+            // failure cleanup arm always clears _rig back to nint.Zero on any failure, so this stays
+            // the single source of truth for "is there a handle to release," independent of whether
+            // _connected ever got set.
+            if (_rig != nint.Zero)
             {
                 var rig = _rig;
                 _rig = nint.Zero;
@@ -517,8 +565,13 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
         }
         finally
         {
+            // Deliberately NOT _lock.Dispose(): SemaphoreSlim only needs disposal if
+            // AvailableWaitHandle was ever touched (it never is here), and disposing it would make a
+            // concurrent transaction's own `finally { _lock.Release(); }` throw
+            // ObjectDisposedException -- which replaces the real in-flight exception on its way out,
+            // and, for a waiter still queued at that moment, leaves a WaitAsync task that never
+            // completes at all (Dispose does not fault pending waiters).
             _lock.Release();
-            _lock.Dispose();
         }
     }
 
