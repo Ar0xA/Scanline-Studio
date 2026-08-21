@@ -2690,7 +2690,7 @@ as a latent class-3 risk if a future subscriber ever blocks synchronously, not f
 today); the 2 stale-arithmetic sizing comments (round 22's `InFlightKeyedTransmitWait`, round 24's
 `DisposeAsync` backstop) reconfirmed still accurate as flags, no new staleness found.
 
-**Chunk 3a round 25 fixes applied** (2026-08-21, commit pending). Finding 1 fixed: `pttKeyedOnRealRig`
+**Chunk 3a round 25 fixes applied** (2026-08-21, commit `f104208`). Finding 1 fixed: `pttKeyedOnRealRig`
 now baselined on `pttLockedAtEntry` immediately after that value is computed, BEFORE the
 `rigIsRealAtKeyTime` branch -- the branch's own unconditional `pttKeyedOnRealRig = true` for the
 this-call-keys-it case remains a strict superset, and the `if (_disposed)` sub-branch's own
