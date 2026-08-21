@@ -409,10 +409,12 @@ public class GoldenVectorTests
         //
         // Narrow-mode wiring itself is confirmed correct by the mn110/Pll arm above (3.41, close to
         // Hilbert's ~3.57) -- mn110/ZeroCrossing is comparatively weak evidence for Phase 1's
-        // SetWidth wiring specifically, since this port keeps ZeroCrossingFrequencyCounter in real Hz
-        // throughout, so SetWidth only moves the clamp bounds and the Clear()-reset value, not the
-        // underlying measurement math -- it would read back almost identically even if the narrow
-        // retune were silently missing. Both PLL and Hilbert arms are already covered for both
+        // SetWidth wiring specifically: since this port keeps ZeroCrossingFrequencyCounter in real
+        // Hz throughout, SetWidth's own held-estimate rescale (Batch 7 chunk 7c: this now also
+        // rescales any live measurement, not just the clamp bounds and Clear()-reset value) mostly
+        // just changes WHEN a value gets reinterpreted, not the underlying zero-crossing measurement
+        // math itself -- it would still read back almost identically even if the narrow retune were
+        // silently missing. Both PLL and Hilbert arms are already covered for both
         // fixtures (DecoderFixtures' own Theory + this Theory's Pll rows) -- 2 of the 3 demod types
         // share one table by design, not a gap in the plan's "3 demod types" wording.
         var toleranceByKey = new Dictionary<(string ModeId, DemodType DemodType), double>

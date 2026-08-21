@@ -188,4 +188,25 @@ public class ZeroCrossingFrequencyCounterTests
 
         Assert.Equal(expectedRescaledHz, afterRescale, tolerance: 2.0);
     }
+
+    [Fact]
+    public void ProcessSample_CrossingCloserThanOneSampleToThePrevious_HoldsPreviousEstimate()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 7 chunk 7c (docs/functional-audit-playbook.md):
+        // CFQC::Do's `if(count >= 1.0)` gate (sstv.cpp:421/449) discards any half-period shorter
+        // than one sample (it would imply a frequency above Nyquist) and KEEPS the previous
+        // estimate -- while still advancing the crossing-position bookkeeping the gate itself reads
+        // from. Reachable through sub-sample interpolation alone. Driven from a FRESH counter (not
+        // one that's already settled on a real tone) so every sample index and crossing offset is
+        // exactly known, rather than depending on unknown state left over from a settling phase.
+        var counter = new ZeroCrossingFrequencyCounter(SampleRate);
+        var beforeGatedCrossing = counter.CurrentFrequencyHzForTests; // the cleared default (0Hz, wide)
+
+        counter.ProcessSample(1.0); // sampleIndex 0->1, no crossing (prevSample starts at 0.0, not <0)
+        counter.ProcessSample(-1.0); // crossing at sampleIndex 1: offset=0.5, count=1-0-0.5=0.5, gated
+
+        // Without the gate this would become SampleRate*0.5/0.5 = 44100Hz, clamped to 2400Hz --
+        // instead the estimate must stay exactly at its pre-crossing value.
+        Assert.Equal(beforeGatedCrossing, counter.CurrentFrequencyHzForTests);
+    }
 }

@@ -4803,4 +4803,55 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1236/1237 (1 unrelated intentional
 skip).
 
-Chunks 7c-7f remain open.
+## Chunk 7c round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `PllFmDemodulator.cs` (143 lines) + `ZeroCrossingFrequencyCounter.cs`
+(129 lines) -- the other two `DemodType` options besides `HilbertFmDemodulator`, both with real
+documented fix history from prior review (`ZeroCrossingFrequencyCounter`'s two round-1/round-2
+`SetWidth` fixes; `PllFmDemodulator`'s own documented AGC-floor characterization). Also closed the
+item chunk 7b's own audit flagged off-scope: whether `PllFmDemodulator` omits legacy's
+`g_dblToneOffset` the same way `HilbertFmDemodulator` was confirmed to safely omit it.
+
+**Zero functional bugs across every audited point**, each independently re-derived from real
+legacy source: `PllFmDemodulator`'s AGC tracking, clamp placement (confirmed `±1.5` applies
+in-place immediately after the loop filter, before both the VCO and output-filter calls -- not
+after), and `SetWidth`'s confirmed-true claim that legacy touches only `SetFreeFreq`/`SetVcoGain`,
+never resetting filter state; `g_dblToneOffset` independently re-confirmed 0.0 on every path both
+files can reach (re-traced the actual global, not assumed transferred from chunk 7b's finding);
+`ZeroCrossingFrequencyCounter`'s sub-sample crossing interpolation, both previously-fixed
+`SetWidth` behaviors re-derived fresh from `sstv.cpp:367-383` (not re-read from their own fix
+history), and `Clear()`'s scope.
+
+**One genuine correction to an overstated "mathematically identical" claim**, the same class of
+finding as chunk 7b's "representationally inert" correction -- algebraically re-derived (confirmed
+`IirFilter`'s DC gain is exactly 1 for both cascade shapes it's used in) that filtering real Hz
+directly versus legacy's internal normalized scale is identical ONLY once the output filter has
+settled, not unconditionally: legacy's filter Z-state lives in normalized units, so a `SetWidth`
+implicitly rescales it too (legacy's reported Hz jumps ~272Hz instantly at a width flip), while
+this port's Hz-domain state glides toward the new value instead over ~17 samples. Bounded,
+accepted, and the port arguably behaves better than legacy here -- but the doc was overstating
+unconditional equivalence. Corrected in both `ZeroCrossingFrequencyCounter.cs` and the same
+overstated claim it was echoed into in `AfcTracker.cs`. Also fixed a stale class-doc claim
+(`ZeroCrossingFrequencyCounter` said it was used "exclusively" for AFC, when it's also the main
+picture demodulator under `DemodType.ZeroCrossing`) and collapsed `PllFmDemodulator`'s AGC-floor
+comment, which read as describing a live defect, into an accurate statement of the invariant (every
+current call site already feeds int16-domain samples, confirmed by tracing all three).
+
+**Two real coverage gaps closed with mutation-verified tests.** `PllFmDemodulator`'s existing
+silence test never actually reached the AGC's own division (an all-zero input never crosses zero,
+so `_prevInput`'s `< 0` gate never fires) -- added a sub-floor alternating-signal test that does.
+`ZeroCrossingFrequencyCounter`'s `count >= 1.0` sanity gate (discarding a sub-sample-spaced zero
+crossing rather than reporting an above-Nyquist frequency) had no direct test at all -- added one
+driven from a fresh counter with fully known state (an initial attempt reusing a settled counter
+produced ambiguous sample-index assumptions and had to be rebuilt from scratch after mutation
+testing showed it didn't discriminate), mutation-verified: reverting the gate to `>= 0.0` makes it
+wrongly clamp to 2400Hz, caught exactly as predicted.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1238, Skipped: 1, Total: 1239.
+
+## Chunk 7c CLOSED
+
+Chunks 7d-7f remain open.
