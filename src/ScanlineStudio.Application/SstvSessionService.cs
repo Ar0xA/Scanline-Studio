@@ -386,6 +386,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // a fresh RigId read.
                 var rigIsRealAtKeyTime = locked && _radioSession.RigId != "none";
 
+                // Round-18 finding 5: the unlock direction's own SetPttAsync failure had NO catch arm
+                // at all (the existing one below is filtered on rigIsRealAtKeyTime, which is always
+                // false when `locked` is false) -- it propagated straight out with no log whatsoever,
+                // not even a Warning. The safety net itself was never broken (_pttLocked is only ever
+                // cleared on a CONFIRMED success further down, so it correctly stays true here,
+                // and DisposeAsync's own backstop still catches it) -- but the operator got no signal
+                // at all until shutdown, for a failed EMERGENCY unlock on a genuinely keyed rig, the
+                // one action in this whole class an operator reaches for specifically because
+                // something already went wrong. Captured once, before the command, same blocker-2
+                // discipline as rigIsRealAtKeyTime's own capture just above.
+                var rigIsRealAtUnlockTime = !locked && _radioSession.RigId != "none";
+
                 if (rigIsRealAtKeyTime)
                 {
                     // Round-8 finding: published BEFORE the key command, same shape/reasoning as
@@ -488,6 +500,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
                     throw;
                 }
+                catch (Exception) when (rigIsRealAtUnlockTime)
+                {
+                    // Round-18 finding 5's fix: see rigIsRealAtUnlockTime's own comment. Deliberately
+                    // simpler than the engage-direction arm above -- no epoch bump (this call never
+                    // successfully keyed anything; _pttLocked is untouched by this catch and correctly
+                    // remains true, so no lost-update race is possible here) and no recovery attempt
+                    // (an unlock that itself failed has nothing safe to recover TO -- the existing
+                    // "Known, accepted race" this method's own doc comment already documents governs
+                    // any retry). Just makes the failure loudly visible immediately, matching
+                    // UnkeyForCleanupAsync's own Critical classification for the identical condition
+                    // (a real rig this call believed was keyed, whose un-key attempt failed).
+                    _pttUnkeyFailedOnRealRig = true;
+                    Log.PttStillKeyedAfterFailedUnkey(_logger);
+                    throw;
+                }
 
                 if (locked)
                 {
@@ -588,8 +615,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // whether the awaited task itself ever polls it, which is exactly what was
                         // missing -- round 10 through round 15 all assumed this CTS alone was already a
                         // real bound.
+                        //
+                        // Round-18 correction: WaitAsync alone STILL isn't enough -- StartReceivingAsync
+                        // bottoms out in JsonSettingsStore.LoadAsync, which does blocking
+                        // File.Exists/File.OpenRead before its own first `await` (see
+                        // GetStationIdTransmitOptionsAsync's own comment for the full reasoning), so a
+                        // hung network-mounted settings path never even returns a genuinely-pending Task
+                        // for WaitAsync to race. Task.Run offloads that synchronous prefix onto a pool
+                        // thread, closing the gap regardless of what StartReceivingAsync does internally.
                         using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
-                        await StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token).ConfigureAwait(false);
+                        await Task.Run(() => StartReceivingAsync(rxResumeCts.Token), rxResumeCts.Token).WaitAsync(rxResumeCts.Token).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -1028,7 +1063,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // still a real unbounded wait on a settings read (e.g. a config file on a hung network mount)
         // with no caller-visible way to bound it on the TuneAsync-with-no-ct production path. Same
         // fix, same reasoning.
-        var appSettings = await _settingsStore.LoadAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+        //
+        // Round-18 finding 4 (round-17's own deferral (a), now fixed): WaitAsync alone cannot bound
+        // this -- JsonSettingsStore.LoadAsync does blocking File.Exists/File.OpenRead BEFORE its own
+        // first `await` (this file's own EstimateSampleCount comment already states this exact fact,
+        // just never connected it to the WaitAsync bounds above), so on a hung network-mounted
+        // settings path the call doesn't even return a genuinely-pending Task for WaitAsync to race --
+        // the calling thread blocks synchronously before WaitAsync is ever reached. Task.Run offloads
+        // that synchronous prefix onto a pool thread, so the awaited Task really is pending
+        // immediately and WaitAsync's bound becomes real. Cost: a wedged mount leaks one abandoned
+        // pool thread per call using this pattern -- bounded and slow-growing in practice, since this
+        // path (unlike PlayWithPttAsync's own) isn't behind _transmitInFlight.
+        var appSettings = await Task.Run(() => _settingsStore.LoadAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
             ?? new StationIdSettings();
         var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
@@ -1075,9 +1121,44 @@ public sealed partial class SstvSessionService : ISstvSessionService
         };
     }
 
+    // Round-18 finding 3 (round-17's own deferral (b), now fixed): a generous backstop, not a UX
+    // limit -- the default UI value is 5s and legitimate antenna-tuning use is on that order. Exists
+    // only to bound the worst case of a corrupted/mistyped duration reaching TuneAsync below with no
+    // caller-side cancellation available (see that method's own comment).
+    private static readonly TimeSpan MaxTuneDuration = TimeSpan.FromMinutes(5);
+
     public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
     {
         const int sampleRate = 48_000;
+
+        // Round-18 finding 3: neither parameter was validated at all -- unlike TxVolumePercent
+        // (round 16's precedent, same threat model of an unvalidated value reaching the transmitter),
+        // these are direct caller arguments with a live caller that already catches and surfaces a
+        // failure (RadioStatusViewModel's own RadioStatus.Error.TuneFailed), so this throws rather
+        // than silently clamping -- the caller needs to know its own value was wrong, not have it
+        // silently substituted. Checked and thrown BEFORE Log.TuneStarting/PlayWithPttAsync, so PTT is
+        // never touched and _transmitInFlight is never taken on an invalid call.
+        //
+        // frequencyHz: NaN/infinity propagates through GenerateTone's Math.Sin into PumpToPlaybackAsync's
+        // unclamped `sample * gain` as NaN samples enqueued to the playback device WITH PTT KEYED;
+        // anything at or above Nyquist (half of sampleRate) aliases to arbitrary audible garbage.
+        if (!double.IsFinite(frequencyHz) || frequencyHz <= 0 || frequencyHz >= sampleRate / 2.0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frequencyHz), frequencyHz, $"Must be finite and in (0, {sampleRate / 2.0}) Hz.");
+        }
+
+        // duration: GenerateTone's totalSamples = (long)(duration.TotalSeconds * sampleRate) accepts
+        // any TimeSpan a caller can construct -- an absurd value (e.g. a unit-conversion bug upstream)
+        // keys PTT for a correspondingly absurd duration, and the one production caller
+        // (RadioStatusViewModel.TuneAsync) passes CancellationToken.None with no Stop command, so
+        // there is no way to interrupt it short of process exit. Zero/negative is otherwise benign
+        // (the pump loop just never runs) but still rejected -- a caller passing that almost certainly
+        // has a bug worth surfacing, not a deliberate "key and immediately un-key" request.
+        if (duration <= TimeSpan.Zero || duration > MaxTuneDuration)
+        {
+            throw new ArgumentOutOfRangeException(nameof(duration), duration, $"Must be greater than zero and at most {MaxTuneDuration}.");
+        }
+
         Log.TuneStarting(_logger, frequencyHz, duration);
         return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct, leaveKeyedAfterCall: leaveKeyedAfterTune);
     }
@@ -1248,9 +1329,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // attempt (a harmless no-op via TryUnkeyPttAsync's own RigId=="none"/never-keyed
                 // handling, since pttKeyedOnRealRig is still false at this point) and RX-resume, then
                 // releases _transmitInFlight.
-                var device = await ResolveDeviceAsync(forCapture: false, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
-                var gain = (await GetTxVolumePercentAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
-                var audioSettings = await LoadAudioSettingsAsync(ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                //
+                // Round-18 finding 4 (round-17's own deferral (a), now fixed): WaitAsync alone cannot
+                // bound any of these three -- each bottoms out in JsonSettingsStore.LoadAsync, which
+                // does blocking File.Exists/File.OpenRead BEFORE its own first `await` (see
+                // GetStationIdTransmitOptionsAsync's own matching comment for the full reasoning), so
+                // on a hung network-mounted settings path the call doesn't even return a genuinely-
+                // pending Task for WaitAsync to race. Task.Run offloads that synchronous prefix onto a
+                // pool thread so WaitAsync's bound becomes real.
+                var device = await Task.Run(() => ResolveDeviceAsync(forCapture: false, ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                var gain = (await Task.Run(() => GetTxVolumePercentAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
+                var audioSettings = await Task.Run(() => LoadAudioSettingsAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
                 // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md
                 // Critical item 1), not Capabilities -- see IRadioController.RigId's own doc comment for
@@ -1442,6 +1531,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // method's own doc comment for why an abnormal termination always overrides both.
                     var skipUnkeyAndRxResume = !abnormalTermination && (leaveKeyedAfterCall || pttLockedAtCleanup);
                     var unkeyAlreadyAttempted = false;
+                    var unkeyConfirmed = false;
 
                     // ---- Blocker 1, urgent half ----
                     // An abnormal termination IS the safety path (manual Stop TX / SWR auto-cutoff): the
@@ -1451,7 +1541,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // abnormalTermination is true, so this can never fire on a "stay keyed" path.
                     if (abnormalTermination)
                     {
-                        await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
+                        unkeyConfirmed = await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
                         unkeyAlreadyAttempted = true;
                     }
 
@@ -1464,7 +1554,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // CancellationTokenSource inside UnkeyForCleanupAsync.
                     await StopPlaybackWithWatchdogAsync().ConfigureAwait(false);
 
-                    if (!skipUnkeyAndRxResume && !unkeyAlreadyAttempted)
+                    // Round-18 finding: UnkeyForCleanupAsync's own bool return (whether the un-key was
+                    // actually CONFIRMED, not just attempted) used to be discarded here -- an urgent
+                    // un-key that timed out against a momentarily-busy backend (SWR cutoff / manual Stop
+                    // TX racing a backend that frees up moments later) got exactly one attempt, then
+                    // deferred all the way to DisposeAsync, which may not run for hours. Retried here,
+                    // immediately, while the failure is still fresh -- StopPlaybackWithWatchdogAsync's own
+                    // await just above gives a wedged backend a second, independent window to clear.
+                    // Guarded on pttKeyedOnRealRig so the benign RigId=="none" case (already correctly
+                    // "confirmed" false-but-harmless) never gets a pointless second attempt.
+                    if (!skipUnkeyAndRxResume && (!unkeyAlreadyAttempted || (pttKeyedOnRealRig && !unkeyConfirmed)))
                     {
                         await UnkeyForCleanupAsync(pttKeyedOnRealRig).ConfigureAwait(false);
                     }
@@ -1518,7 +1617,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         if (!wasReceiving && _rxPendingResumeAfterUnlock)
                         {
                             _rxPendingResumeAfterUnlock = false;
-                            await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                            await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => Task.Run(() => StartReceivingAsync(rxResumeCts.Token), rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                             RaiseCapturePausedForTransmitChanged(false);
                         }
                     }
@@ -1527,7 +1626,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     {
                         if (!skipUnkeyAndRxResume)
                         {
-                            await TryCleanupAsync("Resume RX", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                            await TryCleanupAsync("Resume RX", () => Task.Run(() => StartReceivingAsync(rxResumeCts.Token), rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                             // User-reported gap (2026-08-18): fires once the resume attempt has finished,
                             // success or failure -- this event is "no longer paused FOR THIS transmission,"
                             // not a restatement of IsReceiving itself (see the event's own doc comment).
@@ -1578,7 +1677,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             if (!_pttLocked && _rxPendingResumeAfterUnlock)
                             {
                                 _rxPendingResumeAfterUnlock = false;
-                                await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => StartReceivingAsync(rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
+                                await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => Task.Run(() => StartReceivingAsync(rxResumeCts.Token), rxResumeCts.Token).WaitAsync(rxResumeCts.Token)).ConfigureAwait(false);
                                 RaiseCapturePausedForTransmitChanged(false);
                             }
                         }
@@ -1766,23 +1865,44 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// re-read here.</summary>
     private async Task<bool> TryUnkeyPttAsync(bool pttKeyedOnRealRig, CancellationToken ct)
     {
+        // Round-17 finding (the single most safety-critical await in this file): passing `ct`
+        // (UnkeyForCleanupAsync's own fresh unkeyCts.Token) as this call's OWN parameter never
+        // actually bounded it -- the identical mistake round 16 found and fixed at every RX-resume
+        // site, one call away from the file's whole reason for existing.
+        //
+        // Round-18 correction: round 17's own fix bounded the WAIT but not the COMMAND -- `ct` was
+        // *also* passed to SetPttAsync itself, so once the budget expired the un-key was CANCELLED AT
+        // THE BACKEND'S REQUEST GATE and never actually reached the rig, rather than staying queued
+        // behind a wedged key command and reaching it once that clears -- verbatim the scenario
+        // PlayWithPttAsync's own blocker-1 doc comment already names as the one that matters most
+        // ("PTT-off was never even attempted on the exact hardware failure where it matters most").
+        // Decoupled here: the command itself now gets CancellationToken.None (never cancelled, so it
+        // stays queued and eventually reaches the rig once the gate frees), while the WAIT is still
+        // bounded by `ct` so this method still returns on time either way.
+        Task unkeyTask;
         try
         {
-            // Round-17 finding (the single most safety-critical await in this file): passing `ct`
-            // (UnkeyForCleanupAsync's own fresh unkeyCts.Token) as this call's OWN parameter never
-            // actually bounded it -- the identical mistake round 16 found and fixed at every
-            // RX-resume site, one call away from the file's whole reason for existing. Verified
-            // against both shipped backends: HamlibRadioProtocol.SetPttAsync's CallAsync wrapper
-            // takes no CancellationToken at all; RigctldClientProtocol's reply read has no timeout of
-            // its own either. Without this, a wedged un-key command could hang every one of this
-            // method's 5 call sites forever: PlayWithPttAsync's finally (leaving _transmitInFlight
-            // stuck, permanent TX/Tune lockout), SetPttLockAsync (leaving _pttLockGate stuck), and
-            // worst of all DisposeAsync's own backstop -- which would then never return, letting the
-            // host's ~10s teardown bound expire and the process exit with the transmitter physically
-            // keyed and the Critical "PTT MAY STILL BE KEYED" log never even emitted. `ct` IS already
-            // a fresh CTS's own token here (see UnkeyForCleanupAsync's unkeyCts), so WaitAsync reuses
-            // it directly rather than adding a second, redundant timeout.
-            await _radioSession.SetPttAsync(false, ct).WaitAsync(ct).ConfigureAwait(false);
+            unkeyTask = _radioSession.SetPttAsync(false, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // A synchronous throw (e.g. the null-object NoneRadioProtocol) never produces a Task at
+            // all.
+            if (pttKeyedOnRealRig)
+            {
+                Log.CleanupStepFailed(_logger, "PTT off", ex);
+            }
+            else
+            {
+                Log.PttUnkeySkippedNoRadio(_logger);
+            }
+
+            return false;
+        }
+
+        try
+        {
+            await unkeyTask.WaitAsync(ct).ConfigureAwait(false);
             return true;
         }
         catch (Exception ex)
@@ -1865,7 +1985,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // constructed first, registered as disposables first, and therefore disposed LAST --
         // IRadioSessionService is still live for everything below. If that resolution order ever
         // changes, this backstop silently stops working.
-        await AwaitInFlightKeyedTransmitAsync().ConfigureAwait(false);
+        // Round-18 finding 6: this step (and the backstop un-key just below) used to run with no
+        // guard at all -- the identical "one throw skips everything after it" shape round 17 fixed 30
+        // lines below, just two steps earlier. A throw here (e.g. a logging provider failing inside
+        // Log.WaitingForKeyedTransmitAtShutdown/Log.KeyedTransmitCleanupWaitTimedOut -- a file logger
+        // on a full disk) would skip the backstop un-key AND every step round 17 already guarded,
+        // with _disposed already true and the exception escaping into DI teardown.
+        try
+        {
+            await AwaitInFlightKeyedTransmitAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.CleanupStepFailed(_logger, "AwaitInFlightKeyedTransmit (dispose)", ex);
+        }
 
         // A rig can be physically keyed at shutdown for FOUR distinct reasons, and _pttLocked only
         // covered one of them: an engaged PTT lock (_pttLocked), a TuneAsync(leaveKeyedAfterTune:true)
@@ -1892,7 +2025,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // null-object backend always throws, and _pttLeftKeyedByCall/_keyedTransmitCompletion are
             // only published when RigId was real at key time. A failure here is therefore always a
             // genuinely stuck-keyed rig, never the benign no-radio case.
-            await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+            //
+            // Round-18 finding 6: also now guarded -- see the comment on this method's own first step
+            // above for why (same shape, same reasoning). UnkeyForCleanupAsync itself does not throw
+            // by design (TryUnkeyPttAsync's own doc comment), so this guards only the logging calls
+            // inside it, but that is exactly the realistic failure source identified above.
+            try
+            {
+                await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.CleanupStepFailed(_logger, "UnkeyForCleanup (dispose backstop)", ex);
+            }
         }
 
         // Round-17 finding: these three teardown steps used to run with no guard at all -- a throw

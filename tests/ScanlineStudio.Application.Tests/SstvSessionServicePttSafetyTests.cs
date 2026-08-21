@@ -1327,6 +1327,118 @@ public sealed class SstvSessionServicePttSafetyTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
     }
 
+    // ------------------------------------------------------------------ round 18 findings
+
+    [Fact]
+    public async Task Round18_TryUnkeyPttAsync_UnkeyCommandTimesOutButStillReachesTheRig_NotCancelledAtTheGate()
+    {
+        // Round-18 finding 1: round 17's own WaitAsync(ct) fix bounded the WAIT but ALSO passed `ct`
+        // to the command itself -- once the budget expired, the un-key was CANCELLED AT THE
+        // BACKEND'S REQUEST GATE and never actually reached the rig, rather than staying queued
+        // behind whatever wedged it and reaching the rig once that clears. GateOnCallNumber:2 parks
+        // only the cleanup un-key (call #2) on a gate this test CAN complete later -- unlike
+        // HangOnCallNumber's permanent hang -- specifically to prove the command is still alive and
+        // completable after this method has already given up waiting on it.
+        var gateTcs = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(
+            wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.Gate = gateTcs.Task;
+        radio.GateOnCallNumber = 2;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // The urgent un-key (call #2) timed out and Critical fired -- but finding 2's own retry (see
+        // its own test) then made a SECOND attempt (call #3, not gated), which succeeded and is the
+        // one `false` recorded here. Call #2 itself is still parked on the gate at this point --
+        // still alive, not recorded, not cancelled.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+        Assert.Equal([true, false], radio.PttCalls);
+
+        // THE property: releasing the gate now lets the originally-abandoned call #2 actually
+        // complete and reach the rig too (a second, redundant-but-harmless `false`) -- round 17's own
+        // ct-passthrough would have cancelled it before this point instead.
+        gateTcs.SetResult();
+        await WaitForAsync(() => radio.PttCalls.Count == 3, TimeSpan.FromSeconds(5));
+        Assert.Equal([true, false, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round18_PlayWithPttAsync_UrgentUnkeyFails_RetriesRatherThanGivingUpAfterOneAttempt()
+    {
+        // Round-18 finding 2: UnkeyForCleanupAsync's own bool return (whether the un-key was actually
+        // CONFIRMED) used to be discarded at both PlayWithPttAsync cleanup call sites -- an urgent
+        // un-key that failed against a momentarily-busy backend got exactly one attempt, then
+        // deferred all the way to DisposeAsync. The first un-key attempt fails deterministically here
+        // (BeforeSetPtt throws on the first tx=false call only); the fix's own retry, gated on
+        // "abnormal termination AND not yet confirmed," must fire a second attempt, which succeeds.
+        var attemptCount = 0;
+        var (service, _, radio, _) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                attemptCount++;
+                if (attemptCount == 1)
+                {
+                    throw new TimeoutException("simulated: momentarily busy backend");
+                }
+            }
+        };
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // THE property: two attempts were made, not one -- the second (successful) attempt is the
+        // only one recorded in PttCalls (the first threw before reaching PttCalls.Add).
+        Assert.Equal(2, attemptCount);
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round18_TuneAsync_InvalidFrequencyOrDuration_ThrowsBeforeTouchingPtt()
+    {
+        // Round-18 finding 3 (round-17's own deferral (b), now fixed): neither parameter was
+        // validated at all -- an out-of-range value used to reach GenerateTone/PumpToPlaybackAsync
+        // directly, WITH PTT KEYED. Every rejected call here must never touch PTT at all.
+        var (service, _, radio, _) = CreateService();
+
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(double.NaN, TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(-100, TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(30_000, TimeSpan.FromSeconds(1))); // >= Nyquist at the hardcoded 48kHz
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(1750, TimeSpan.Zero));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(1750, TimeSpan.FromMinutes(10)));
+
+        Assert.Empty(radio.PttCalls);
+
+        // A valid call still works normally.
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round18_SetPttLockAsync_UnlockCommandFails_LogsCriticalRatherThanSilently()
+    {
+        // Round-18 finding 5: the unlock direction's own SetPttAsync failure had no catch arm at all
+        // -- it propagated with no log whatsoever, not even a Warning, for a failed EMERGENCY unlock
+        // on a genuinely keyed rig.
+        var (service, _, radio, logger) = CreateService();
+        await service.SetPttLockAsync(true);
+
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: unlock command failed");
+            }
+        };
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(false));
+
+        // THE property: the operator is told immediately, not just whenever DisposeAsync eventually
+        // runs.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
