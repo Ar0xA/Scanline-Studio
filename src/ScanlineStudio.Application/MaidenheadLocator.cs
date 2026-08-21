@@ -30,7 +30,7 @@ public static class MaidenheadLocator
         }
 
         var g = locator.Trim();
-        if (g.Length is not (4 or 6) || g.Length % 2 != 0)
+        if (g.Length is not (4 or 6)) // 4 and 6 are both even, so a separate parity check is redundant
         {
             return false;
         }
@@ -52,10 +52,13 @@ public static class MaidenheadLocator
                 return false;
             }
 
-            // Center of the subsquare cell (+0.5 cell), not its corner -- matches the field/square
-            // tiers above, which both already center within their own cell width (a bare corner
-            // reference would bias distance/bearing systematically toward one edge of the locator's
-            // real coverage area, worse for a 4-character locator's much larger ~100km-wide cell).
+            // Center of the subsquare cell (+0.5 cell), not its corner. Doc correction (Tier A
+            // Batch 10 chunk 10a): the field/square math above (lines computing longitude/latitude
+            // before this block) computes the cell's SW CORNER, not a centered value -- this block
+            // (and the else-branch below) is where ALL centering actually happens, not a match to
+            // an already-centered upstream value. A bare corner reference would bias distance/
+            // bearing systematically toward one edge of the locator's real coverage area, worse for
+            // a 4-character locator's much larger ~100km-wide cell.
             longitude += (upper[4] - 'A' + 0.5) * (2.0 / 24.0);
             latitude += (upper[5] - 'A' + 0.5) * (1.0 / 24.0);
         }
@@ -91,7 +94,13 @@ public static class MaidenheadLocator
 
         var a = (Math.Sin(deltaLatRad / 2) * Math.Sin(deltaLatRad / 2))
             + (Math.Cos(lat1Rad) * Math.Cos(lat2Rad) * Math.Sin(deltaLonRad / 2) * Math.Sin(deltaLonRad / 2));
-        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
+        // Round-1 code-review finding (Tier A Batch 10 chunk 10a, real bug fixed): for an exactly
+        // antipodal grid pair, `a` is mathematically 1.0 but the floating-point sum of the two
+        // squared terms can land one ulp ABOVE 1.0, making `1 - a` negative -- Math.Sqrt of a
+        // negative number is NaN, silently propagating into distanceKm and rendering "NaN km" in a
+        // TX overlay instead of throwing or clamping. Antipodal grid pairs are genuinely reachable
+        // (arbitrary operator-typed grids, e.g. JN58/AE51), not a theoretical corner.
+        var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(Math.Max(0.0, 1 - a)));
         distanceKm = EarthRadiusKm * c;
 
         var y = Math.Sin(deltaLonRad) * Math.Cos(lat2Rad);
