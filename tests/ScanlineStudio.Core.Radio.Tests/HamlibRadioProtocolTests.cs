@@ -311,6 +311,70 @@ public class HamlibRadioProtocolTests
     }
 
     [Fact]
+    public async Task Connect_ProbeCapabilitiesHardErrors_ClosesAndCleansUpTheRig()
+    {
+        // Regression test for chunk 3c round 1's blocker 1: a hard error during ProbeCapabilities (the
+        // SECOND CallAsync in EnsureConnectedAsync, running AFTER rig_open already succeeded) used to
+        // leave the rig open with _connected still false -- DisposeAsync's own "if (_connected)" guard
+        // then skipped teardown entirely, and the next EnsureConnectedAsync overwrote _rig with a
+        // fresh rig_init, leaking the previous struct AND holding the serial port for the process
+        // lifetime. A plain "wrong baud rate" is enough to reach this -- no race required.
+        var native = new FakeHamlibNative { RigGetFreqCode = -6 }; // -RIG_EIO, hard -- fails the very
+                                                                    // first probe (ReadFrequency)
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        await Assert.ThrowsAsync<IOException>(() => sut.PollAsync(CancellationToken.None));
+
+        var log = native.CallLog;
+        Assert.True(log.IndexOf("rig_open") < log.IndexOf("rig_close"));
+        Assert.True(log.IndexOf("rig_close") < log.IndexOf("rig_cleanup"));
+        Assert.Equal(RadioCapabilities.None, sut.Capabilities);
+
+        // The next connect attempt must not see a stale open handle -- confirms _rig was actually
+        // released, not just that the log lines appeared in order.
+        native.RigGetFreqCode = 0;
+        await sut.PollAsync(CancellationToken.None);
+        Assert.Equal(2, log.Count(c => c == "rig_init"));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_QueuedBehindASlowCall_ThenALaterQueuedCaller_ThrowsObjectDisposedException_NeverResurrectsTheRig()
+    {
+        // Regression test for chunk 3c round 1's blocker 2: DisposeAsync's own `finally
+        // { _lock.Release(); }` used to hand the semaphore slot straight to whatever call queued
+        // behind it, without re-checking _disposed -- so a caller already queued on _lock.WaitAsync
+        // BEFORE DisposeAsync ran fell into EnsureConnectedAsync with _connected already reset to
+        // false, and rig_init/rig_open'd a BRAND NEW rig on a disposed protocol. For SetPttAsync(true)
+        // that meant a physically keyed transmitter on a handle nothing would ever close again, while
+        // the caller saw only an ObjectDisposedException out of its own Release() and concluded the
+        // key had failed.
+        var native = new FakeHamlibNative();
+        var sut = new HamlibRadioProtocol(native, model: 1);
+        await sut.PollAsync(CancellationToken.None); // establishes the connection
+
+        native.CallDelay = TimeSpan.FromMilliseconds(150); // long enough to hold _lock while the two
+                                                            // calls below queue up behind it
+
+        var slowPollTask = sut.PollAsync(CancellationToken.None); // acquires _lock, then sits in delay
+        await Task.Delay(TimeSpan.FromMilliseconds(20)); // let it actually acquire _lock first
+
+        // Queued BEFORE DisposeAsync is ever called -- passes its own initial disposed check while
+        // _disposed is still false, then blocks on _lock.WaitAsync() behind the slow poll above.
+        var pttTask = sut.SetPttAsync(true, CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(20)); // let it actually enter the wait queue
+
+        var disposeTask = sut.DisposeAsync();
+
+        await slowPollTask;
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => pttTask);
+        await disposeTask;
+
+        Assert.Equal(1, native.CallLog.Count(c => c == "rig_init")); // never resurrected
+        Assert.DoesNotContain("rig_set_ptt", native.CallLog); // the queued PTT call never reached
+                                                               // the native layer
+    }
+
+    [Fact]
     public async Task Connect_AppliesConfigInOrder_BeforeOpen()
     {
         var native = new FakeHamlibNative();
