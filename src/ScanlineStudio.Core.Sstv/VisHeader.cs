@@ -4,8 +4,10 @@ namespace ScanlineStudio.Core.Sstv;
 /// VIS (Vertical Interval Signaling) header: a fixed leader/break/leader tone sequence followed by
 /// a start bit, 7 data bits (LSB first) encoding the mode's VIS code, an even parity bit, and a
 /// stop bit. Shared by the encoder and decoder so both sides agree on bit order — see the parity
-/// caveat on <see cref="ScanlineStudio.Abstractions.Sstv.SstvModeDefinition"/>: this bit order is internally
-/// consistent but not yet cross-checked against the legacy binary or a real VIS decoder.
+/// caveat on <see cref="ScanlineStudio.Abstractions.Sstv.SstvModeDefinition"/>. LSB-first bit order
+/// is cross-checked against both legacy directions: TX (<c>Main.cpp:7551-7552</c>,
+/// <c>Write(d &amp; 0x0001 ? 1100 : 1300); d = d &gt;&gt; 1</c>) and RX (<c>sstv.cpp:1987-1988</c>,
+/// <c>m_VisData &gt;&gt;= 1; if(d11&gt;d13) m_VisData |= 0x0080</c>).
 /// </summary>
 internal static class VisHeader
 {
@@ -230,9 +232,10 @@ internal static class VisHeader
     /// prefix, transmits 16 raw bits back-to-back (LSB first) — low byte is
     /// <see cref="ExtendedVisEscapeCode"/> (0x23), high byte is <paramref name="rawExtendedCode"/>
     /// — then a single stop bit. No separate start/stop bit between the two bytes, and no computed
-    /// parity: both bytes are transmitted as literal raw values, matching legacy's `Main.cpp` TX
-    /// code (`if (d >= 0x100) { for 16 bits... }`) exactly rather than reusing this port's own
-    /// computed-parity convention for normal single-byte VIS codes.
+    /// parity: both bytes are transmitted as literal raw values, matching legacy's real TX code
+    /// (`Main.cpp:7549-7554`'s 16-bit raw loop, plus the unconditional stop bit at `Main.cpp:7561`)
+    /// exactly rather than reusing this port's own computed-parity convention for normal
+    /// single-byte VIS codes.
     /// </summary>
     public static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateExtendedSegments(int rawExtendedCode)
     {
@@ -377,7 +380,12 @@ internal static class VisHeader
     // --- AVT-specific header --- Main.cpp:7430 (`int e = (TxMode == smAVT) ? 3 : 1;`) repeats the
     // whole VIS block 3x for AVT only, then Main.cpp:7563-7575 appends a long sync/AFC training
     // sequence unique to this mode before any line data starts. Legacy's own RX budgets for exactly
-    // this preamble length at sstv.cpp:2140 (9 + 910 + 910 + 5311.9424 + 0.30514375).
+    // this preamble length at sstv.cpp:2140 (9 + 910 + 910 + 5311.9424 + 0.30514375) -- that leading
+    // 9ms is legacy's own RX-side sync-search TIMEOUT CEILING (cases 4-8, measured from case-3 exit),
+    // an unexplained slack term (~99 samples @ 11025Hz) in a different budget than the one below.
+    // AvtExtraHeaderDurationMs is this port's own TX-side fallback deadline for "how far to skip past
+    // a known-AVT header" -- a different quantity by construction, not a transcription that dropped
+    // the 9ms; do not "fix" this by adding it.
 
     /// <summary>Number of times the VIS block itself is transmitted for AVT (`Main.cpp:7430`) — 3,
     /// vs. 1 for every other mode.</summary>
