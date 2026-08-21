@@ -84,6 +84,29 @@ public class FskStationIdWireFormatTests
     }
 
     [Fact]
+    public void IsCompactEligible_FourDigitRemainder_ValueExactly1000_Eligible()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8b (docs/functional-audit-playbook.md):
+        // the existing l=4 tests cover 1234 (>=1000, true) and 0999/00999 (<1000, false), but never
+        // the >=1000 branch's own inclusive boundary. sprintf("%03u", 1000)="1000" round-trips
+        // exactly (4 digits, no padding needed), so this must be eligible.
+        Assert.True(FskStationIdWireFormat.IsCompactEligible("1000", out var value));
+        Assert.Equal(1000u, value);
+    }
+
+    [Theory]
+    [InlineData("999:", false)] // l=4 (colon counted), parsed value=999 (<1000) -- ineligible.
+    [InlineData("1234:", true)] // l=5 (colon counted), parsed value=1234 (>=1000) -- eligible.
+    public void IsCompactEligible_TrailingGarbageCountedInLength_ButNotInParsedValue(string remainder, bool expectedEligible)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8b: the strlen-vs-sscanf asymmetry
+        // (l counts trailing non-digit chars sscanf itself ignores) was only tested at l<4
+        // ("99:" above). This is the same asymmetry at l>=4, where it actually changes the
+        // eligibility outcome depending on the PARSED value, not the full remainder's length.
+        Assert.Equal(expectedEligible, FskStationIdWireFormat.IsCompactEligible(remainder, out _));
+    }
+
+    [Fact]
     public void FilterNrRstChars_KeepsOnlyAsciiFrom0x30To0x7F()
     {
         // Main.cpp:6931's `if (*sp >= '0')` is a SIGNED-char comparison in the original C++, so
@@ -102,5 +125,16 @@ public class FskStationIdWireFormatTests
 
         // '#'=0x23, '!'=0x21, '-'=0x2D are all < '0'=0x30 and get dropped.
         Assert.Equal("5991", filtered);
+    }
+
+    [Fact]
+    public void FilterNrRstChars_InclusiveBoundaries_0x30And0x7F_AreKept()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8b: the existing tests exercise only
+        // the DROPPED side of both bounds (below 0x30, at/above 0x80) -- the two inclusive edges the
+        // filter's own `>= '0' and <= 0x7F` condition claims to KEEP were never directly asserted.
+        var filtered = FskStationIdWireFormat.FilterNrRstChars((char)0x30 + "9" + (char)0x7F);
+
+        Assert.Equal("0" + "9" + (char)0x7F, filtered);
     }
 }

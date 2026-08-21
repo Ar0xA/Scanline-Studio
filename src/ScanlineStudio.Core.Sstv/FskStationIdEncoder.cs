@@ -16,12 +16,19 @@ namespace ScanlineStudio.Core.Sstv;
 /// (no `-0x20` offset -- that offset applies only to actual callsign/NR text characters, applied by
 /// this class before each such character is encoded).
 ///
-/// Callers must normalize the callsign (uppercase, trim, printable-range/length validation) at the
-/// settings boundary before calling <see cref="Generate"/> -- this class does not validate or throw,
-/// matching this project's "validate at the boundary, the encoder itself never throws" policy (an
-/// in-flight, lazily-enumerated transmission must not abort mid-stream). See
-/// <see cref="FskStationIdWireFormat"/> for the NR/RST compact-vs-string predicate and character
-/// filter this class delegates to.
+/// Callers must normalize the callsign (uppercase, trim, length cap -- see
+/// <see cref="StationIdCallsignNormalizer"/>) at the settings boundary before calling
+/// <see cref="Generate"/> -- this class does not validate or throw, matching this project's
+/// "validate at the boundary, the encoder itself never throws" policy (an in-flight,
+/// lazily-enumerated transmission must not abort mid-stream). Doc correction (Tier A Batch 8 chunk
+/// 8b): <see cref="StationIdCallsignNormalizer"/> does NOT do printable-range validation -- a
+/// non-ASCII character reaches this class's own `(byte)(ch - 0x20)` cast as a raw UTF-16 code unit,
+/// diverging from legacy's `BYTE(*p - 0x20)` over CP932 BYTES (one legacy byte per char here, vs. one
+/// or two CP932 bytes there for a double-byte character) -- the same divergence class
+/// <see cref="FskStationIdWireFormat.FilterNrRstChars"/> already documents for the NR/RST field,
+/// just not previously acknowledged here. Garbage-either-way for any real callsign (ASCII by
+/// convention), not a reachable bug. See <see cref="FskStationIdWireFormat"/> for the NR/RST
+/// compact-vs-string predicate and character filter this class delegates to.
 /// </summary>
 internal static class FskStationIdEncoder
 {
