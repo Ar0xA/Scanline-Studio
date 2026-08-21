@@ -3245,3 +3245,67 @@ not a latent `SetPttLockAsync`-gated one -- plus a genuine correctness fix (the 
 reordering) closing an instruction-scale residual for free rather than just documenting it. Does NOT count
 as chunk 3a's 1st clean round -- round 32 is now the earliest round that can. Thirty consecutive rounds
 (2-31) have now each found something real in this file.
+
+## Chunk 3a round 32 (2026-08-21) -- CLEAN of blockers/risks; 4 nits, fixed; chunk closed by user decision
+
+**VERDICT: EQUIVALENT-WITH-RISKS -- no blocker, no risk in the three tracked failure classes (leaked
+keyed transmitter, transmission destruction, unbounded stall/lockout); 4 nits.** This is the first round
+in 32 (round 1 through round 32) to find nothing in the three failure classes this chunk exists to close.
+
+Re-verification: round 31's fault-observer placement, the `_keyedTransmitCount`/gate-release reordering,
+and the outer try/finally removal were all independently re-traced and confirmed correct on every axis
+(fault-observer attaches with no intervening await; the reordering's 8 exit paths all leave
+`DisposeAsync`'s backstop correctly informed; the try/finally collapse is syntactically and semantically
+sound -- nothing entered/left the guarded region, only the two finallys' relative order changed, which IS
+the fix). Round 31's own deferred list (5 lower-weight "abandoned task" sibling sites) was assessed one by
+one: all 5 are genuinely diagnostic-only (settings/device reads, capture-side cleanup, no rig-state side
+effects) -- none belong to the three failure classes, all remain nits.
+
+Findings, all nits, all fixed:
+1. Indentation left unreflowed by round 31's try/finally collapse (`SstvSessionService.cs:387-820`, now
+   corrected) -- the try body was one indent level too deep (col 16 instead of col 12) throughout, with
+   one comment block split across two indent levels mid-sentence. Fixed: reflowed the entire try/finally
+   body one level shallower, uniformly.
+2. Stale local name in a test comment (`SstvSessionServicePttSafetyTests.cs:1950`) -- still said
+   `pttLockedAtEntry` after round 31's production-code rename to `pttLockedBeforeKeyDecision`. Fixed.
+3. Stale "outermost finally" wording (`SstvSessionService.cs:369`) -- described the two-finally shape
+   round 31 removed. Fixed: "the finally below."
+4. Round 30's "verified benign" claim for the engage-arm catch's device-identity filter
+   (`rigIsRealAtKeyTime`) was not unconditional -- `RadioController.ConnectAsync` assigns `_protocol`
+   before `_rigId` (`RadioController.cs:93-94`), so a `RigId == "none"` window with a real protocol
+   already assigned is genuinely reachable, and a key command failing in that window would leave every
+   shutdown-backstop flag untouched with no log at all -- the same anti-pattern round 24 already fixed
+   on the twin unlock arm. Zero production callers reach `SetPttLockAsync`'s engage direction today, so
+   this stayed a nit (explicitly flagged by the auditor to upgrade to a risk the moment it gets one).
+   Fixed by filtering on `locked` instead, mirroring round 24's identical fix to the unlock arm exactly;
+   `rigIsRealAtKeyTime` itself is unchanged and still used for the registration-publish gate a few lines
+   above, which genuinely needs the device-identity check.
+
+No dedicated regression test for finding 4 (currently unreachable -- zero production callers, same
+judgment call as several earlier accepted-but-untested residuals in this file, e.g. round 9's). Findings
+1-3 are pure mechanical/textual changes with no new correctness surface, verified by a clean build (0
+errors, 0 warnings) and the full `Application.Tests` suite passing unchanged (221/221, no new test).
+
+## Chunk 3a CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**32 rounds, ~30 real fixes** (leaked-keyed-transmitter-class blockers/risks in the large majority,
+narrowing to instruction-scale residuals and documentation nits by the end). Round 32 is the first round
+to find zero blockers/risks in the three tracked failure classes -- a genuine convergence signal after 31
+straight rounds each finding something real (rounds 2-31 unbroken). Per CLAUDE.md SS7, formally closing
+this chunk requires 2 CONSECUTIVE clean rounds; round 32 would be the 1st. The user, informed of round
+32's clean verdict and the length of the chain, explicitly chose to fix round 32's 4 nits and close now
+rather than dispatch a round 33 purely to satisfy the formal gate -- **a deliberate, recorded exception**,
+matching the precedent already set for Batch 1's own re-audit closure (`PROJECT_BRIEF.md`, "Batch 1
+RE-AUDIT" section: closed 4 rounds deep on a clean-but-not-doubly-confirmed round, by explicit user
+choice). If `SstvSessionService.cs`'s PTT lifecycle is revisited later, start a fresh re-audit rather than
+assuming the formal gate was met.
+
+Also decided at this point: future substantive-fix rounds in this project (not just this chunk) should
+ask the auditor to draft the actual fix code directly, rather than the calling session re-deriving a fix
+from the auditor's prose description -- rounds 24-31 were 8 straight rounds where a hand-derived fix for
+one round's finding introduced the bug the next round caught. See `feedback_ask_auditor_for_code_fixes`
+in auto-memory. Round 32's own 4 nits were mechanical enough (renames, comment text, indentation, a
+one-line filter swap mirroring an already-established pattern) not to need this treatment.
+
+Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) and chunk 3c (`RigctldClientProtocol.cs`+
+`HamlibRadioProtocol.cs`) remain open, not started.
