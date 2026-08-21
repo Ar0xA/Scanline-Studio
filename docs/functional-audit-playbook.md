@@ -5362,4 +5362,50 @@ Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` run: 84 passed, 0 failed (real 
 
 ## Chunk 9b CLOSED
 
-Chunks 9c-9d remain open.
+## Chunk 9c round 1: MiniAudioContext.cs, MiniAudioResampler.cs
+
+Not legacy ports (no legacy cross-platform native-audio abstraction) -- standalone concurrency/
+native-interop review. Neither file has a dedicated test file; coverage was entirely indirect before
+this round.
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is. Zero functional bugs -- `MiniAudioContext`'s
+ref-counting was independently re-verified correct (a failed native init throws BEFORE incrementing
+the ref count, so no phantom reference requiring an unmatched `Release()`; the class's own claim that
+"everything is serialized under `Lock`" was verified true for BOTH reads and writes of both fields,
+not just writes, by grepping every reference in the assembly). `MiniAudioResampler`'s documented
+overflow-guard fix was re-verified correct as written; the 1:1-sample-rate path and the native
+`written <= capacity` contract were both independently confirmed safe by reading the actual native
+shim/miniaudio source, not assumed.
+
+**One real latent-bug-shaped gap fixed** (unreachable today -- `internal`, single caller, constant
+real sample rates -- but validated explicitly rather than left as an implicit assumption): the
+overflow guard only ever caught an over-large output. A non-positive sample rate makes the internal
+capacity arithmetic go negative, which previously passed that guard silently and would have thrown an
+opaque `OverflowException`/native-failure `InvalidOperationException` instead of a clear, actionable
+one -- exactly the failure mode the existing guard's own comment says it exists to prevent. Added an
+explicit `sampleRateIn <= 0 || sampleRateOut <= 0` guard.
+
+**Two real coverage gaps closed with mutation-verified tests**, both in a new dedicated (device-free,
+always-CI-runnable) test file `MiniAudioResamplerTests.cs`: the pre-existing overflow guard itself had
+never been tested at all (mutation-verified: disabling it reproduces the exact `OverflowException` the
+guard exists to prevent), and the new rate-validation guard (mutation-verified across all 4
+sign/zero combinations: removing it reproduces `OverflowException` for negative rates and a native-
+failure `InvalidOperationException` for zero, never a clean `ArgumentException`).
+
+Noted but not fixed, per the auditor's own explicit reasoning: `MiniAudioContext` has zero CI-executed
+coverage (every test touching it is gated on a live PipeWire/PulseAudio server this project's own CI
+matrix doesn't provision -- a pre-existing, already-documented environment fact about the whole audio
+suite, not a defect introduced by this chunk); empty-input `Resample` calls currently throw rather
+than returning an empty array (unreachable today, undocumented-but-not-a-bug); `Release()`-without-
+`Acquire()`'s error path and the failed-`Acquire()`-leaves-no-phantom-ref claim both have no direct
+test (the latter has no seam to test at all without the DI refactor this class's own doc comment
+already declines).
+
+Auditor's verdict: go for production as-is -- no round 2 needed for a round that found no functional
+bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` run: 89 passed, 0 failed.
+
+## Chunk 9c CLOSED
+
+Chunk 9d remains open.
