@@ -2331,3 +2331,87 @@ Round 20 fixed 1 new blocker plus 3 more real risks/nits -- including finding th
 missed the deepest instance one frame further down -- does NOT count as chunk 3a's 1st clean round.
 Round 21 is now the earliest round that can count as chunk 3a's 1st clean round. Nineteen consecutive
 rounds (2-20) have now each found something real in this file.
+
+**Chunk 3a round 21** (2026-08-21, independent agent, fresh context, agent `a2cf0dbdb926305de`).
+Explicitly dispatched to re-verify round 20's own `SafeLog` coverage claim, given that rounds 19 and 20
+had each already made and then disproved the SAME "comprehensive" claim one round apart. Round 21 did a
+full enumeration of all 57 `Log.*` call sites in the file rather than trusting round 20's account of
+where it had applied `SafeLog`, and found round 20's own fix had reached only a "hand-picked subset".
+**(1) [BLOCKER]** `DisposeAsync`'s own backstop region -- `AwaitInFlightKeyedTransmitAsync`'s catch, the
+PTT backstop's catch, `StopReceiving (dispose)`/`Waterfall.Dispose`/`Decoder.Dispose`'s catches, plus
+`Log.WaitingForKeyedTransmitAtShutdown`/`Log.KeyedTransmitCleanupWaitTimedOut` -- 7 log calls on the
+process's OWN final safety net, still plain. **(2) [BLOCKER]** `PlayWithPttAsync`'s normal-completion
+`StopPlayback` catch, plus 3 log calls inside `StopPlaybackWithWatchdogAsync` itself (both
+`CleanupStepFailed("StopPlayback", ...)` arms and the watchdog-fired log) -- still plain. **(3)
+[BLOCKER]** `SetPttLockAsync`'s pre-recovery Critical "PTT MAY STILL BE KEYED" log itself (the message
+the whole `SafeLog` mechanism exists to guarantee reaches the operator) -- still plain. **(4)/(5)
+[risk]** 3 more log calls in `SetPttLockAsync` (`PttStillKeyedAfterFailedUnkey`,
+`PttUnkeyRaceLostToNewerKey`, `PttLockChanged`) plus its own "Resume RX (after unlock)" cleanup catch --
+still plain. **(6) [risk]** 4 log calls inside `StopReceivingAsync` (`StopCapture` catches x2,
+`CaptureStopWatchdogFired`, `RxStopped`) -- still plain; also, `_decoder.ResetAgc()` itself (not a log
+call -- a real try/catch gap, not a `SafeLog` gap) sits fully unguarded in both `StartReceivingAsync`
+and `StopReceivingAsync`, and a throw there propagates out of `StopReceivingAsync` even though
+`_isReceiving` is already correctly latched false by that point. **(6b) [risk]** that same unguarded
+`ResetAgc()`, reached via `PlayWithPttAsync`'s own bare `await StopReceivingAsync()` at its entry
+(before PTT is ever touched) -- a throw there propagates out of `PlayWithPttAsync` itself. **(7)
+[risk]** `SafeLog` itself is silent-only -- a totally broken logging provider (this whole mechanism's
+own threat model) leaves an operator with ZERO indication a transmitter might still be keyed, which is
+not an acceptable trade for "safe". **(8) [risk]** 6 more log calls outside the PTT path narrowly
+construed but still on this class's own maintenance/decode/waterfall fault paths
+(`DecoderPushSamplesFailed`, `WaterfallPushSamplesFailed`, `MaintenanceHandlerFailed` x3,
+`TransmitProgressHandlerFailed`) -- still plain. **Nit 9**: `ResumeReceivingBoundedAsync`'s own
+fault-observer attachment (round 20's own fix) has a narrow race between `WaitAsync` throwing and the
+`!resumeTask.IsCompleted` filter evaluating -- judged harmless in practice (.NET Core does not crash on
+an unobserved task fault by default; a exception in that narrow window instead falls through to the
+caller's own already-established "Resume RX" log, not lost). **Nit 10**:
+`StopPlaybackWithWatchdogAsync`/`StopReceivingAsync`'s own fault-observer continuations don't use
+`SafeLog` internally, unlike `ResumeReceivingBoundedAsync`'s (round 20) -- inconsistent, same underlying
+gap class. **Nit 11**: `SafeLog`'s own doc comment, given the established 2-round pattern of every
+"comprehensive" claim being subsequently found incomplete, should say so explicitly rather than risk
+round 22+ trusting it the same way.
+
+**Chunk 3a round 21 fixes applied** (2026-08-21, commit pending). All 3 blockers, both risk-6/6b
+findings, nit 10, and finding 7 fixed as real code changes; nit 9 and 11 handled as documented,
+reasoned deferrals (not silently dropped). ~28 individual `Log.*` call sites wrapped in `SafeLog` across
+findings 1/2/3/4/5/8 (`DisposeAsync`'s region, `PlayWithPttAsync`'s StopPlayback path,
+`StopPlaybackWithWatchdogAsync`, `SetPttLockAsync`'s Critical log plus 3 more, `StopReceivingAsync`'s 4
+log calls, the decoder/waterfall/maintenance/transmit-progress handler chain). Finding 6/6b: both
+`_decoder.ResetAgc()` call sites (`StartReceivingAsync`, `StopReceivingAsync`) now wrapped in a real
+try/catch (logged via `SafeLog`, swallowed) rather than left to propagate -- this closes 6b as a direct
+side effect, since `PlayWithPttAsync`'s own `StopReceivingAsync()` call site no longer has anything
+inside that method able to throw uncaught. Finding 7: `SafeLog` gained a last-resort
+`Console.Error.WriteLine` fallback (itself wrapped, in case stderr is also broken) so a totally broken
+`ILogger` still surfaces something instead of nothing. Nit 10: both remaining unwrapped fault-observer
+continuations now use `SafeLog` internally, matching `ResumeReceivingBoundedAsync`'s own shape. Nit 9:
+deferred, reasoned harmless above -- no fix applied. Nit 11: `SafeLog`'s own doc comment rewritten with
+an explicit hedge naming rounds 19/20's own repeated false "comprehensive" claims, instructing future
+rounds to keep checking rather than trust the comment.
+
+Also fixed, same round: the RE-RAISED finding from round 20's own re-verification pass --
+`StartReceivingAsync`'s second `_disposed` recheck (round 19's own fix) threw with no cleanup of its
+own, orphaning the native capture session `StartCaptureAsync` had already opened just above it (
+`_isReceiving` is still false at that point, so a later `StopReceivingAsync` call unconditionally
+early-returns via its own `if (!_isReceiving) return;` guard and the session is never closed). Rounds
+18/19 made an abandoned/timed-out RX-resume (via `Task.Run`) the NORMAL way to reach this branch, not an
+exotic race, so this was a real session/device/thread leak at every shutdown racing a resume this way.
+Fixed: best-effort closes the just-opened session (bounded by `_cleanupTimeout`, logged via `SafeLog` on
+failure) before throwing `ObjectDisposedException`.
+
+New regression test: `Round21_StartReceivingAsync_DisposedMidFlightAfterCaptureStarts_...` -- gates
+`FakeSettingsStore.LoadAsync` (a step `StartReceivingAsync` awaits before `StartCaptureAsync`), starts
+`StartReceivingAsync`, calls `DisposeAsync` concurrently (which sets `_disposed = true` as its own first
+line and completes without touching the audio engine, since `_isReceiving` is still false), then
+releases the gate so `StartReceivingAsync` proceeds through `StartCaptureAsync` and reaches its own
+second `_disposed` check with `_disposed` already true -- asserts the wrapped `IAudioEngine`'s
+`StopCaptureAsync` was called exactly once before the expected `ObjectDisposedException`. Mutation-
+verified: reverted to the pre-fix shape (`ObjectDisposedException.ThrowIf` with no cleanup), reproduced
+the exact predicted failure (`stopCaptureCount` 0 instead of 1), restored, rebuilt clean, re-confirmed
+passing. All 208 `ScanlineStudio.Application.Tests` passing (207 pre-existing + 1 new), full solution
+suite run in progress at time of writing -- confirm clean before treating this round as closed.
+
+Round 21 fixed 3 blockers, 2 real risks (6/6b, closed together), 1 more nit (10), and gave `SafeLog`
+itself a safety improvement (finding 7) plus an honesty improvement (nit 11) -- including finding that
+round 20's own "applied SafeLog everywhere" claim, made after round 19 ALSO made and disproved the same
+claim, was itself only a "hand-picked subset". Does NOT count as chunk 3a's 1st clean round -- round 22
+is now the earliest round that can count as chunk 3a's 1st clean round. Twenty consecutive rounds
+(2-21) have now each found something real in this file.

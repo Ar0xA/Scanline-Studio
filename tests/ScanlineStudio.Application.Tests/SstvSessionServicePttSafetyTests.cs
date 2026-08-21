@@ -1606,6 +1606,57 @@ public sealed class SstvSessionServicePttSafetyTests
     // exercisable with current test infrastructure. Noted here rather than shipped with a test that
     // would silently prove nothing.
 
+    // ------------------------------------------------------------------ round 21 findings
+
+    [Fact]
+    public async Task Round21_StartReceivingAsync_DisposedMidFlightAfterCaptureStarts_ClosesTheOrphanedCaptureSession()
+    {
+        // Round-21 re-raised finding: StartReceivingAsync's own second ObjectDisposedException check
+        // (round 19's own fix, just before publishing) used to throw with no cleanup of its own -- by
+        // the time this check runs, _audioEngine.StartCaptureAsync has already genuinely opened a
+        // native capture session, but _isReceiving is still false (it only flips true just below this
+        // check), so a subsequent StopReceivingAsync call unconditionally early-returns via its own
+        // `if (!_isReceiving) return;` guard and this session is never closed. Rounds 18/19 made an
+        // abandoned/timed-out RX-resume (via Task.Run) the NORMAL way to reach this branch, not an
+        // exotic race, so this was a real session/device/thread leak at every shutdown that raced a
+        // resume this way, not just a theoretical one.
+        var gate = new TaskCompletionSource();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+            Gate = gate.Task,
+        };
+        var stopCaptureCount = 0;
+        var (service, _, _, _) = CreateService(
+            wrapEngine: inner => new RecordingOrderAudioEngine(inner, onStopPlayback: () => { }, onStopCapture: () => stopCaptureCount++),
+            settingsStore: settingsStore);
+
+        // Parked inside a _settingsStore.LoadAsync call that StartReceivingAsync makes BEFORE ever
+        // calling StartCaptureAsync -- so the concurrent DisposeAsync below can genuinely race ahead
+        // of it, exactly as an abandoned/timed-out Task.Run-backed resume would.
+        var startReceiving = service.StartReceivingAsync();
+        Assert.False(startReceiving.IsCompleted, "StartReceivingAsync should still be parked on the settings-store gate");
+
+        // DisposeAsync sets `_disposed = true` as its own very first line (the same established
+        // property round 8's own test relies on), then completes -- StopReceivingAsync no-ops here
+        // since _isReceiving is still false, so this does not itself touch the audio engine.
+        await service.DisposeAsync();
+
+        // Release the gate: StartReceivingAsync now proceeds through StartCaptureAsync (genuinely
+        // opening the session) and reaches its own second ObjectDisposedException check with
+        // _disposed already true.
+        gate.SetResult();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(() => startReceiving.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // THE property: the session StartCaptureAsync just opened must be closed before this method
+        // throws, not left orphaned for nothing to ever close.
+        Assert.Equal(1, stopCaptureCount);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
