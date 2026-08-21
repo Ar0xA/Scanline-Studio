@@ -3767,3 +3767,44 @@ revisited later, start a fresh re-audit rather than assuming the formal gate was
 
 Full round-by-round detail for all three chunks lives in this section's own per-round entries above,
 not reproduced here.
+
+## Tier A Batch 4 -- IN PROGRESS, started 2026-08-21
+
+Pixel math: TX/RX scanline codecs (the batch plan's own "biggest correction" -- see the approved
+batch plan table above). Unlike Batch 3, this batch's files DO have a legacy counterpart, and
+legacy-parity/golden-vector fidelity is fully in scope, not just internal-invariant correctness.
+Chunked per the plan: **4a** shared substrate (`PixelSampleReader.cs`, `YCbCr.cs`,
+`ScanlineCodecFactory.cs`) -- in progress, see below. **4b** `YCbCrSequentialScanlineEncoder/Decoder.cs`
++ `YCbCrLinePairedScanlineEncoder/Decoder.cs`. **4c** `RgbSequentialScanlineEncoder/Decoder.cs` +
+`MonoAveragedPairedScanlineEncoder/Decoder.cs`. **4d** `RobotScanlineEncoder/Decoder.cs` -- chunk 4a's
+own off-scope note flagged Robot 36's `m_DSEL` chroma-selector polarity/toggle-on-ambiguous-fallback
+(`Main.cpp:4286-4305`) as the closest remaining analogue to the Scottie incident (CLAUDE.md §4) in
+this file family, not yet audited -- worth its own chunk, restate explicitly when 4d is delegated.
+
+## Chunk 4a round 1 (2026-08-21)
+
+No blocker. One real coverage gap closed, not a behavioral bug: `YCbCr.FromRgb`/`ToRgb` carried no
+independent legacy-reference test -- only one pinned gray level plus a self round-trip, coverage an
+ordering/offset error can pass (exactly how `FromRgb`'s missing `+128` shipped once, per this file's
+own doc history). Fixed with `YCbCrLegacyReferenceParityTests.cs` (new file): an exhaustive full-RGB-cube
+sweep of `FromRgb` against a direct transcription of legacy `ComLib.cpp`'s `GetRY` (`:3653-3668`), and
+a Y/RY/BY sweep of `ToRgb` against `YCtoRGB`/`Limit256` (`:3475-3482`/`:3461-3473`), including their real
+truncate-then-clamp order. `YCbCr.cs` itself verified correct against legacy -- not modified.
+
+Also fixed: a wrong legacy citation in `PixelSampleReader.cs` (`sstv.cpp:4062` -> the real line is
+`Main.cpp:4062`), in both the doc comment and the matching test's comment; and a missing constructor
+guard -- legacy guarantees `ksbSamples >= 1` (`sstv.cpp:1179`'s `if(!m_KSB) m_KSB++`), and a 0 here
+would silently degrade every peak-pick to a bare read with no test failing, since every real caller
+today always passes 1 or more. Added `ArgumentOutOfRangeException.ThrowIfLessThan` plus a
+mutation-verified test (reverted the guard, confirmed "No exception was thrown," restored).
+`ScanlineCodecFactory.cs` read and verified correct (all 5 `ColorEncoding` members map to exactly one
+encoder and one decoder) -- not modified.
+
+Two lower-priority nits on `YCbCr.cs` left unfixed per the auditor's own "don't spend another round"
+verdict: a comment-precision issue on `FromRgb`'s bit-exactness argument, and `ReadPeakPicked`'s
+boundary-guard asymmetry. Auditor's verdict: unconditional go -- ship as-is, don't spend another round
+on this chunk.
+
+Commit `4c6f1f4`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1025/1025
+(1 unrelated intentional skip, up from 1022 before this round's 3 new tests), every other project's
+test suite green.
