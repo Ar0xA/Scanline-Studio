@@ -93,20 +93,23 @@ namespace ScanlineStudio.Core.Sstv;
 /// never a narrow mode (`IsNarrowMode` covers only the MN/MC family, `sstv.cpp:550-563`), so that
 /// third retune is provably a no-op on the only path that still uses the PLL.
 ///
-/// <b>Representationally inert at steady state -- a real finding, not a hedge.</b> Algebraically (and
-/// confirmed by two independent derivations, this class's own author and an auditor code-level
-/// review), the `off`/`out` encode above and <c>ProcessSample</c>'s final <c>centerHz - scaled *
-/// bandwidthHz / 32768</c> descale are exact algebraic inverses for ANY consistent
-/// <c>(centerHz, bandwidthHz)</c> pair -- both cancel completely, at steady state AND dynamically
-/// (the smoothing filter is linear, so a constant scale factor passes straight through it). So
-/// <c>isNarrow</c> has NO effect on the settled Hz readout in THIS PORT'S representation, unlike
-/// legacy where `m_OFF`/`m_OUT` genuinely matter (`CHILL::Do` returns the raw SCALED value directly,
-/// `sstv.cpp:3086` -- legacy never converts to Hz at all; this class's Hz conversion is its own
-/// representational choice, and that choice is exactly what makes the selection cancel here). The
-/// ONLY observable effect of this parameter is a brief, bounded output-IIR transient right at a
-/// mid-stream flip (the smoothing filter's stored state is in the OLD scale for one switch -- see
-/// <c>ProcessSample</c>'s own doc comment) -- faithfully reproducing a transient legacy has too and
-/// does nothing to compensate, not a decode-accuracy fix. See
+/// <b>Representationally inert at STEADY STATE -- a real finding, not a hedge, but narrower than an
+/// earlier version of this paragraph claimed.</b> Algebraically (independently re-derived, Batch 7
+/// chunk 7b, docs/functional-audit-playbook.md), the `off`/`out` encode above and
+/// <c>ProcessSample</c>'s final <c>centerHz - scaled * bandwidthHz / 32768</c> descale are exact
+/// algebraic inverses for ANY consistent <c>(centerHz, bandwidthHz)</c> pair -- but only the
+/// MULTIPLICATIVE `out`/<c>bandwidthHz</c> scale factor passes straight through the (linear)
+/// smoothing filter unchanged at every sample, dynamically included. The ADDITIVE `off` term is a
+/// constant added to <c>diff</c> BEFORE the filter, so it only cancels once the filter's own step
+/// response has settled (i.e. at steady state) -- during any transient, <c>isNarrow</c>'s choice of
+/// `off`/`centerHz` genuinely shows up in the difference <c>(2172-1900)*(1-stepResponse(n))</c>,
+/// which is nonzero not just right after a mid-stream flip but also at COLD START (a freshly
+/// constructed narrow instance reads near 2172Hz on sample 0, a wide one near 1900Hz -- no flip
+/// needed). Unlike legacy, where `m_OFF`/`m_OUT` genuinely matter unconditionally (`CHILL::Do`
+/// returns the raw SCALED value directly, `sstv.cpp:3086` -- legacy never converts to Hz at all;
+/// this class's Hz conversion is its own representational choice, and that choice is exactly what
+/// makes the selection cancel at steady state here), this port's own settled-state readout is
+/// genuinely inert to `isNarrow` -- just not during any transient, cold-start included. See
 /// <c>ProcessSample_IsNarrowSelection_IsRepresentationallyInert_AtSteadyState</c> and
 /// <c>ProcessSample_IsNarrowFlipMidStream_CausesBoundedTransient_ThenResettlesToSameValue</c>
 /// (`HilbertFmDemodulatorTests.cs`) for the executable version of both halves of this finding.</item>

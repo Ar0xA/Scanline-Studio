@@ -4752,4 +4752,55 @@ no functional bug, same rigor rule as this batch's own precedent.
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1235/1236 (1 unrelated intentional
 skip).
 
-Chunks 7b-7f remain open.
+## Chunk 7b round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed
+
+Full Tier A rigor round on `HilbertFmDemodulator.cs` (314 lines, this port's main picture
+demodulator, the largest and most heavily pre-scrutinized file in this batch -- already through
+"two rounds of independent auditor plan-review" plus several documented and fixed subtle bugs, all
+re-verified fresh rather than trusted).
+
+**Zero functional bugs across all eight audited points**, each independently re-derived from real
+legacy source rather than accepted from the file's own (extensive, and in this case accurate) doc
+comments: the tier-selection thresholds and multiplier formula; `DoFir`'s delay-line shift
+direction, including a from-scratch re-derivation of WHY the reversed pairing is what makes the
+overall sign convention correct (traced the actual antisymmetry of the Hilbert kernel, confirmed
+`H[tap-n] = -H[n]`, confirmed the resulting `atan2` sign chain algebraically); `MakeHilbert`'s
+Hamming-window sinc-difference design and the claimed-unreachable branch; `ComputePhaseDifference`'s
+`lag = 2^df` shift-register mechanism, hand-simulated fresh for both df=1 and df=2; the scaled-not-
+Hz smoothing-filter domain, confirmed by verifying `IirFilter`'s own DC gain is exactly 1 for both
+the even and odd-tail cascade shapes; and the `real == 0.0` atan2-skip special case.
+
+**One genuine, high-value correction to the class's own "representationally inert" claim** -- the
+file asserted the `isNarrow` selection's cancellation holds "at steady state AND dynamically," but
+independent algebraic re-derivation found only the multiplicative `out`/`bandwidthHz` term passes
+through the linear smoothing filter unchanged at every sample; the additive `off`/`centerHz` term
+only cancels once the filter's own step response has settled, meaning `isNarrow` genuinely affects
+output during any transient -- not just "right at a mid-stream flip" as the comment claimed, but
+also at cold start (a freshly constructed narrow instance reads near 2172Hz on sample 0, not
+1900Hz). Not a behavioral bug (the code is legacy-faithful either way, and this port's decoder
+constructs the demodulator once at stream start before any mode is known, so this window is
+already accounted for elsewhere) -- but the comment was self-inconsistent with the transient it
+documents six lines later, and this file's comments are load-bearing for future reviewers. Doc
+corrected to state the real, narrower boundary.
+
+**One real `[risk]`-level vacuous test closed, not just noted -- exactly the "passes its own tests
+while wrong" failure class this whole sweep exists to catch.** The one test naming the `real ==
+0.0` atan2-skip guard fed an all-zero input, so `quadrature` and `real` were both exactly zero --
+but `Math.Atan2(+0.0, +0.0)` already returns `+0.0` on .NET, meaning the guard and its absence
+produce the identical result for that specific input; deleting the guard entirely would not have
+failed the test. Renamed the original test to describe what it actually proves (silence settles to
+0Hz, a real and separate claim) and added a genuinely discriminating test using an impulse: at
+tap=12/htap=6 (11025Hz), the delayed real component stays exactly 0 for the first 6 calls while the
+FIR's quadrature output does not, so a guard-free impulse response diverges from a guard-free
+silence response starting at call 0 -- mutation-verified (removing the guard makes the new test
+fail exactly as predicted). Also fixed a nit: a warm-up-lag test's name overclaimed what it
+actually asserts (only the steady-state region, not the warm-up calls themselves) -- corrected the
+name and added a note, no logic change.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1236/1237 (1 unrelated intentional
+skip).
+
+Chunks 7c-7f remain open.
