@@ -4071,3 +4071,75 @@ revisited later, start a fresh re-audit rather than assuming the formal gate was
 
 Full round-by-round detail for all four chunks lives in this section's own per-round entries above,
 not reproduced here.
+
+## Tier A Batch 5 -- IN PROGRESS, started 2026-08-21
+
+Mode tables & constants (approved batch plan, row 5). Different rubric from Batch 4 -- this batch
+mixes real data-table verification (does each mode's row match its legacy constants) with real
+control-flow logic, so rigor is set per-chunk, not uniformly at full Tier A weight.
+
+Chunked as follows. File sizes confirmed against the actual current files (the approved-plan table's
+`VisHeader.cs` estimate of 392 lines is stale -- the real file is 464 lines; noted here so a future
+reader doesn't treat the plan table as ground truth):
+
+- **5a** `SstvModeRegistry.cs` lines 1-655 (data/table half) -- verify each registered mode's
+  constants (frequencies, timings, channel order) against `sstv.h`/`Main.cpp`'s legacy mode table.
+  Table-verification rubric per the plan: single pass, escalate to full Tier A rigor only if it finds
+  a real constant mismatch. No dedicated test file found for `SstvModeRegistry.cs` under
+  `tests/ScanlineStudio.Core.Sstv.Tests/` -- coverage is indirect (golden-vector tests exercise
+  individual modes); note this as a possible coverage gap if 5a finds anything.
+- **5b** `SstvModeRegistry.cs` lines 656-1045 (real per-mode math half, the plan's own "higher risk"
+  flag) -- full Tier A rigor (fresh round -> fix -> fresh round again, 2 consecutive clean rounds).
+- **5c** `VisHeader.cs` (464 lines, 1 method + `VisHeaderTests.cs`) -- table-verification rubric per
+  the plan ("downgraded... table-verification pass"), single pass, escalate only on a real finding.
+- **5d** `VisBitDecision.cs` (30 lines + `VisBitDecisionTests.cs`) + `SyncAnchorCorrector.cs` (126
+  lines + `SyncAnchorCorrectorTests.cs`) -- both real control-flow/state logic, not tables. Full Tier
+  A rigor.
+
+Starting with 5a.
+
+## Chunk 5a round 1 (2026-08-21) -- CLOSED, single-pass table-verification, no round 2 needed
+
+Verified all 43 `SstvModeRegistry.cs` mode entries (lines 98-654) against legacy source:
+`CSSTVSET::GetTiming` (`sstv.cpp:1188-1278`) for line-duration totals; each family's real TX
+line-generator function (`Main.cpp:6535-6845`) for scan/sync/porch split, channel order, and sync
+placement -- not inferred from RX branch widths, the exact failure mode of the original Scottie
+incident (CLAUDE.md §4); the two-stage VIS-decode switch (`sstv.cpp:1993-2074`, `:2078-2121`)
+cross-checked against the TX byte table (`Main.cpp:7436-7548`) for all 24 normal + 13 extended VIS
+codes; the narrow-mode FSK packet bytes (`Main.cpp:7402-7421`) for all 6 narrow codes;
+`GetBitmapSize`/`GetPictureSize` (`sstv.cpp:607-653`) plus each family's TX loop bound for every
+`ImageWidth`/`ImageHeight`; and the legacy mode enum (`sstv.h:450-495`) for mode-set completeness
+(exactly 43, matches `All`).
+
+**Zero constant mismatches across all 43 modes.** Specific confirmations: Scottie's known-prior-bug
+framing (separator-G-separator-B-sync-in-middle-separator-R, `LineSCT`) is still correct; Robot 72
+is genuinely NOT a slow Robot 36 (fixed markers + both chroma scans every line vs. one alternating
+selector tone + one chroma scan, per `LineR72`/`LineR36` directly, matching CLAUDE.md §3's own
+example of this exact false-inference risk); RM12's real non-parity VIS byte `0x86` independently
+re-derived bit-by-bit as the sole parity violator among all 24 legacy bytes; MR/ML hold segments
+confirmed as a genuine last-transmitted-frequency hold (`LineMR`'s hoisted `short d;`), not a fixed
+tone; every odd-looking height (PD160 512x400, PD290 800x616, MP/MN 320x256, MC 320x256, ML
+640x496) confirmed against `m_L` and the TX loop bound.
+
+Two non-blocking nits (not fixed): `R24`'s `ImageHeight: 120` vs. `Rm8`/`Rm12`'s `240` for the same
+underlying legacy row-doubling structure is an inconsistent (though each independently already
+documented, deliberate) presentation-layer choice; `CreateMonoAveragedMode`'s hardcoded 2.0ms porch
+matches legacy's `ts/3.0` derivation numerically today but hides the derivation.
+
+**Real coverage gap closed with a new test, not just noted.** No test asserted the table's own
+fields directly -- `SstvRoundTripTests.LineDuration_MatchesLegacyGetTiming` only pins duration
+totals (a transposed VIS code between two same-duration modes, e.g. MP140/MN140 both 1090.0ms,
+would pass unchanged), and `VisHeaderTests.cs` pins exactly one VIS byte. Added
+`SstvModeRegistryTests.cs`: a `[Theory]` over all 43 modes pinning `VisCode`/`ExtendedVisCode`/
+`NarrowModeCode`/`ImageWidth`/`ImageHeight` against values independently re-transcribed from the
+legacy switches/tables above (not copied from the port's own already-passing values), plus a
+`Fact` confirming the expected-value table itself covers every registered mode (so a newly added
+mode can't silently skip this pin). Mutation-verified: reverting Martin M1's `VisCode` from 44 to
+40 makes the new theory fail as predicted, confirming the test is load-bearing, not vacuous.
+
+Auditor's verdict: unconditional go for production on the table as shipped -- no round 2 needed for
+a single-pass table-verification chunk that found no real mismatch, same rigor rule as this batch's
+own plan.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1074/1075 (1 unrelated intentional
+skip, `TxCaptureFixtureGenerator.RegenerateAllTxCaptureFixtures`).
