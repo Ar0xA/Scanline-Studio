@@ -43,7 +43,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
     public int RigSetPttCode { get; set; }
     public int RigGetPttCode { get; set; }
     public int Ptt { get; set; }
-    public string? Version { get; set; } = "Hamlib 4.5.5 2024-01-01T00:00:00Z x86_64-pc-linux-gnu";
+    public string? Version { get; set; } = "Hamlib 4.5.5 2024-01-01T00:00:00Z 64-bit";
 
     public Dictionary<ulong, int> LevelCodes { get; } = new();
     public Dictionary<ulong, float> LevelValues { get; } = new();

@@ -49,6 +49,26 @@ public class HamlibLibraryLocatorTests
         Assert.Equal("/opt/my-hamlib.so", resolvedPath);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Locate_OverridePathIsEmptyOrWhitespace_FallsBackToAutoDetection(string emptyOverride)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 9 chunk 9d (docs/functional-audit-playbook.md):
+        // a bare `is not null` check treats an empty/whitespace override the same as a real one,
+        // going exclusive-mode for no real path at all and failing with a confusing "not found"
+        // instead of falling back to auto-detection. Unreachable today (no caller passes one yet),
+        // but a real footgun the moment a future Settings wiring pass introduces one.
+        var loader = new FakeNativeLibraryLoader();
+        loader.Succeed(LinuxSoname, 42);
+        var sut = new HamlibLibraryLocator(loader, overridePath: emptyOverride);
+
+        var (handle, resolvedPath) = sut.Locate();
+
+        Assert.Equal(42, handle);
+        Assert.Equal(LinuxSoname, resolvedPath);
+    }
+
     [Fact]
     public void Locate_OverrideSetButFails_ThrowsWithoutFallingBackToAutoDetection()
     {

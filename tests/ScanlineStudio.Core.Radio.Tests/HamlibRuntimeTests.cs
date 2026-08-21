@@ -59,13 +59,41 @@ public class HamlibRuntimeTests
         Assert.Throws<HamlibUnavailableException>(() => sut.Native);
     }
 
-    private sealed class CountingHamlibNativeFactory(IHamlibNative native) : IHamlibNativeFactory
+    [Fact]
+    public void Constructor_MissingNativeExport_IsAvailableFalse_AttemptsPreserved()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 9 chunk 9d (docs/functional-audit-playbook.md):
+        // the real HamlibNative constructor throws HamlibUnavailableException if any one of its 14
+        // P/Invoke exports is missing from the loaded library (a partially-resolved instance is never
+        // observable -- HamlibNative.cs's own Resolve<TDelegate>). Nothing previously scripted the
+        // factory to reproduce that path -- the library loads fine, but the native shim it produces
+        // is unusable.
+        var loader = new FakeNativeLibraryLoader();
+        loader.Succeed(LinuxSoname, 1);
+        var factory = new CountingHamlibNativeFactory(
+            new FakeHamlibNative(),
+            throwOnCreate: new HamlibUnavailableException(["rig_get_level: export not found in loaded library"]));
+
+        var sut = new HamlibRuntime(loader, overridePath: null, factory);
+
+        Assert.False(sut.IsAvailable);
+        Assert.Equal(1, factory.CreateCallCount);
+        var ex = Assert.Throws<HamlibUnavailableException>(() => sut.Native);
+        Assert.Contains(ex.Attempts, a => a.Contains("rig_get_level", StringComparison.Ordinal));
+    }
+
+    private sealed class CountingHamlibNativeFactory(IHamlibNative native, HamlibUnavailableException? throwOnCreate = null) : IHamlibNativeFactory
     {
         public int CreateCallCount { get; private set; }
 
         public IHamlibNative Create(INativeLibraryLoader loader, nint handle)
         {
             CreateCallCount++;
+            if (throwOnCreate is not null)
+            {
+                throw throwOnCreate;
+            }
+
             return native;
         }
     }

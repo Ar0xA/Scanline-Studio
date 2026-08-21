@@ -5408,4 +5408,90 @@ Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` run: 89 passed, 0 failed.
 
 ## Chunk 9c CLOSED
 
-Chunk 9d remains open.
+## Chunk 9d round 1: all 5 Hamlib native-loading files
+
+Last chunk of Batch 9. Not legacy ports (CAT/rig control is explicitly not ported) -- real P/Invoke
+boundary code: a manually-laid-out C union struct, explicit UTF-8-with-null-terminator string
+marshaling, per-OS library discovery, eager-constructor version gating.
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is. Zero functional bugs -- every claim was
+independently re-verified against the real Hamlib source (a local clone, not the pinned spec headers
+alone): the `value_t` union's 16-byte layout and float/int arm offsets confirmed against `rig.h`
+directly; the UTF-8 null-terminator marshaling confirmed to never overrun for any input including
+surrogate pairs and embedded nulls (`GetByteCount`/`GetBytes` use the same encoding instance, so they
+always agree); the partial-construction-then-throw scenario in `Resolve<TDelegate>` confirmed
+genuinely unreachable by C# constructor semantics (`this` never escapes, all fields `readonly`); the
+`HamlibRuntime` eager-constructor rationale traced through the real `RadioController.ConnectAsync`
+call chain and confirmed accurate; the version-gate parsing confirmed against real `rig_version()`
+output shapes from `rig.c` directly.
+
+**Real, confirmed doc-comment/citation drift fixed across three files** (the auditor's own framing:
+"the kind of drift that makes the next reader mis-implement tier 3"): `spec/03-cat-layer.md` numbers
+discovery as 3 tiers (1=override, 2=soname, 3=extra-dirs), but `HamlibProtocolFactory.cs` called the
+override "tier-3" (should be tier-1) and `HamlibLibraryLocator.cs`'s own `BuildTier1And2Candidates`
+method built tiers 2+3, not 1+2 (renamed to `BuildTier2And3Candidates`). Also corrected: the macOS-only
+extra-directory tier confirmed as the spec's actual intended design (its own "e.g." wording), not an
+accidental Windows/Linux omission; `HamlibRuntime.cs`'s "~6 TryLoad attempts" overstated the real
+per-OS counts (1 on Linux, 2 on macOS/Windows).
+
+**One real latent-bug-shaped gap fixed** (unreachable today -- no caller passes an override path yet
+-- but a real footgun for a future Settings wiring pass): `HamlibLibraryLocator`'s override check used
+`is not null`, which treats an empty/whitespace-persisted override the same as a real path, disabling
+auto-detection for nothing and failing with a confusing message. Changed to
+`!string.IsNullOrWhiteSpace`.
+
+**Three real coverage gaps closed, two mutation-verified, one honestly NOT mutation-verified with the
+reason stated:**
+- The missing-export-during-construction path (`Resolve<TDelegate>` throwing inside
+  `HamlibNativeFactory.Create`) had no test -- added `Constructor_MissingNativeExport_IsAvailableFalse_AttemptsPreserved`,
+  mutation-verified (moving `factory.Create()` outside the exception-handling try/catch makes the
+  exception propagate unhandled, caught exactly as predicted).
+- The empty/whitespace-override fix had no test -- added
+  `Locate_OverridePathIsEmptyOrWhitespace_FallsBackToAutoDetection`, mutation-verified (reverting to
+  `is not null` reproduces the confusing "not found" failure for both empty and whitespace-only
+  inputs, exactly as predicted).
+- The real integration suite (`HamlibDummyRigIntegrationTests.cs`, real libhamlib, no fakes) never
+  exercised `HamlibNative.cs`'s only string-marshaling call sites (`rig_token_lookup`/`rig_set_conf`)
+  at all -- every existing test constructs `HamlibRadioProtocol` with no serial port, so the
+  `value is null` guard skips both calls entirely. Added
+  `SerialPortConfigured_RealRigTokenLookupAndSetConf_UtfMarshalingRoundTripsAgainstRealHamlib`
+  (confirmed to actually run against this machine's real libhamlib, not skip -- 149-169ms, not an
+  instant no-op). **Honest limitation, not swept under the rug**: attempted to mutation-verify this
+  against a missing-null-terminator bug (removing the trailing `0x00` byte) and the mutation did NOT
+  reliably fail the test -- a missing null terminator is native heap-buffer-overread undefined
+  behavior, not something a managed-code assertion can deterministically catch (it may or may not
+  manifest as an observable difference depending on adjacent heap contents at runtime). The test's
+  real value is proving the round-trip doesn't crash/misbehave against real Hamlib -- a genuine,
+  previously-entirely-missing integration-coverage gain -- not serving as a reliable regression guard
+  for that one specific defect class.
+
+Also fixed two unrealistic test-fixture strings (`x86_64-pc-linux-gnu` -> `64-bit`, matching real
+Hamlib's actual `rig_version()` output format) in `HamlibVersionGateTests.cs`/`FakeHamlibNative.cs`.
+
+Noted but not fixed, per the auditor's own explicit reasoning (a CI/infra decision, not a code
+change): the real P/Invoke layer (union marshaling, all 14 delegate resolutions) has zero CI-executed
+coverage on this project's actual CI matrix, since no workflow leg installs libhamlib and the
+integration tests self-skip-as-passed when it's unavailable -- a pre-existing, already-documented
+environment fact (same shape as the MiniAudio/PipeWire gap chunk 9c already noted), not a defect
+introduced by this chunk.
+
+Auditor's verdict: go for production as-is -- no round 2 needed for a round that found no functional
+bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Radio.Tests` run: 134 passed, 0 failed.
+
+## Chunk 9d CLOSED
+
+## Tier A Batch 9 -- CLOSED
+
+Cross-thread publishing & native loading: `WaterfallSource.cs`, `MiniAudioDeviceEnumerator.cs`,
+`MiniAudioContext.cs`, `MiniAudioResampler.cs`, all 5 Hamlib native-loading files -- all 4 chunks
+(9a-9d) closed. Zero functional bugs found across the entire batch. Real findings across the batch:
+9a (WaterfallSource's cross-thread scheduler contract) independently CONFIRMED accurate, found 3 doc
+overstatements and closed 2 real coverage gaps; 9b closed this batch's own flagged carry-over item
+from Batch 1 round-4 (a silent context-reference leak with zero observability, now logged) plus one
+real coverage gap; 9c found one real latent-bug-shaped gap (a one-sided overflow guard) and closed 2
+coverage gaps in a brand-new always-CI-runnable test file; 9d (the P/Invoke boundary, real native
+interop) found zero functional bugs but real doc/citation drift across 3 files, one real latent-bug
+fix, and closed 3 coverage gaps (one honestly reported as not mutation-verifiable, a native-UB
+limitation stated rather than hidden). Commits: 8c27f07, 1563148, 39eea92, plus 9d's pending commit.
