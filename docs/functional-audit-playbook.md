@@ -3971,3 +3971,48 @@ manufacture a second consecutive clean round after the fact.
 Commits `b89b4ac` (round 1 code) / `3db5adc` (round 1 docs) / `0eb76ff` (round 2 docs + ledger).
 Full solution suite green throughout; `ScanlineStudio.Core.Sstv.Tests` last confirmed at 1029/1030
 (1 unrelated intentional skip).
+
+## Chunk 4d round 1 (2026-08-21) -- the last chunk in Batch 4
+
+Highest-priority item, flagged since chunk 4a as the closest remaining Scottie-class risk in this
+file family: Robot 36's `m_DSEL` chroma-selector polarity and its ambiguous-fallback toggle
+(`Main.cpp:4286-4305`). **Correctly ported** -- verified against both the actual TX generator
+(`LineR36`, `Main.cpp:6568-6577`) and the actual RX decode switch independently, never inferred one
+from the other: even row -> 1500Hz -> R-Y, odd row -> 2300Hz -> B-Y, decisive threshold at
+`|d| >= 64`, ambiguous case toggles from the previous line's selection, cold default R-Y (matching
+`m_DSEL`'s own `Main.cpp:712` default) reset per image (matching `RobotScanlineDecoder`'s own
+per-session construction). Chunk 4c's truncation-domain fix pattern (truncate before the `+128` bias)
+independently re-confirmed still correct here -- this file was cited as one of finding #28's ORIGINAL
+three correct siblings, and that claim held up under direct re-verification, not just assumed true
+because it was the reference implementation.
+
+**One real, deliberate divergence found, not fixed as code -- comment corrected instead.** Legacy
+re-runs the decisive/ambiguous decision on every sample in its `[m_SG, m_CG)` window; the port
+evaluates one sample near the window's end. For a decisive final sample this is exact. For an
+ambiguous final sample, legacy's real behavior is a per-sample TOGGLE CHAIN whose outcome depends on
+the ambiguous run's length in samples (a sample-rate-dependent artifact of legacy's own algorithm,
+not a stable target); the port's single toggle instead reproduces legacy's outcome at legacy's own
+native 11025Hz rate exactly. Kept as-is (an exact port would need per-sample iteration, rewriting all
+four existing call-index-based tests, for a fallback case with no real fixture exercising it, and
+would risk the robot-36 golden-vector tolerance's own thin 0.89 headroom) -- the auditor's own
+recommendation, not a shortcut. Comment corrected to state this precisely instead of overclaiming
+equivalence.
+
+Real coverage gap closed: no test pinned the tone-selector's actual READ POSITION (SHOULD item 12) --
+all four existing tests are call-index-driven, not sample-position-driven, so they'd pass unchanged
+even if the read regressed back to the segment's nominal end (squarely in the following porch's
+contamination zone). New sample-position-driven test, mutation-verified (reverting to a segment-end
+read makes it fail as predicted).
+
+3 more nits fixed: finding #27's "cold-start" premise corrected (legacy's per-picture reset clears
+`m_DSEL`/`m_AX` but NOT `m_D36`, so only the very first image is a true cold start -- the port's
+128.0 neutral default is a deliberate improvement, not a literal legacy port, now stated as such); a
+garbled unbalanced-paren sentence; `isEvenLine`'s initial value now reads from
+`_lastSelectionIsEvenLine` instead of a hardcoded literal (unreachable today, removes a latent trap
+for self-consistency). One nit left unfixed (pure perf, no functional issue): the encoder recomputes
+`FromRgb` per pixel instead of caching the Y-pass's own R-Y/B-Y the way legacy's `LineR36` does.
+
+Auditor's verdict: unconditional GO -- if this round is clean, the whole batch closes; it was.
+
+Commit `99da537`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1030/1031
+(1 unrelated intentional skip), every other project's test suite green.
