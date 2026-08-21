@@ -881,11 +881,9 @@ into 3, following Batch 2's precedent:
 
 **Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
 end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
-round gate. Chunks 3b (`RadioController.cs`+`TcpTransport.cs`) and 3c (`RigctldClientProtocol.cs`+
-`HamlibRadioProtocol.cs`) not yet started -- check with the user before starting either, given the
-process changes chunk 3a's close decided (see that entry): ask the auditor to draft substantive fix
-code directly, and close each future round with an explicit go-for-production question rather than
-chasing nits across extra rounds.
+round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) started -- round 1 done (see "Chunk 3b
+round 1" entry below), 2 blockers + 3 risks fixed, not clean yet, round 2 next. Chunk 3c
+(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3314,3 +3312,80 @@ one-line filter swap mirroring an already-established pattern) not to need this 
 
 Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) and chunk 3c (`RigctldClientProtocol.cs`+
 `HamlibRadioProtocol.cs`) remain open, not started.
+
+## Chunk 3b round 1 (2026-08-21)
+
+First round on `RadioController.cs`+`TcpTransport.cs`. Both process changes chunk 3a's close decided
+applied from this round: the auditor drafted the actual fix code directly, and the round closed with an
+explicit go-for-production question (answer: no, not as-is). No legacy counterpart (CAT/rig control is a
+pure client of external backends, CLAUDE.md SS2) -- judged purely on internal-invariant correctness.
+
+**2 blockers, 3 risks, several nits.** Both blockers are silent-wrong-state bugs on realistic paths (no
+exotic timing needed):
+
+1. **[blocker]** `DisconnectAsync`'s whole teardown was gated on `_protocol is not null`, false for the
+   entire reconnect-backoff window (`SafeDisposeProtocolAsync` nulls it, and it can stay null
+   indefinitely if the factory keeps failing). A disconnect landing there skipped the whole second
+   block: `RigId` stayed at the live rig's id, no `Disconnected` event, `LastKnownState` never cleared --
+   and it never healed, since every later `DisconnectAsync` saw the same null `_protocol`. Concretely: a
+   user pressing Disconnect during a reconnect-backoff window could no longer transmit at all
+   (`SetPttAsync` throws via `RequireProtocol` reading the stale non-`"none"` `RigId`) until a
+   *successful* reconnect happened first. Fixed with a new `_sessionActive` bool, set independently of
+   `_protocol`'s own nullness, gating the teardown block instead.
+2. **[blocker]** A cancel landing mid-`stream.ReadAsync` in `TcpTransport.ReadAsync` left the socket
+   connected with the read cursor exactly where the in-flight response's bytes would land -- the next
+   `ReadLineAsync` call (the following poll) silently consumed that stale response instead of its own,
+   producing a plausible-looking but permanently wrong frequency/PTT readback with no exception ever
+   raised, and `RadioController` never sees a transport error to reconnect on. Fixed by catching
+   `OperationCanceledException` around the read and aborting the connection (closing the socket,
+   resetting the buffer) instead of trying to preserve it -- turns a silent, permanent desync into a
+   loud, self-healing reconnect on the next `OpenAsync`. `IRadioTransport`'s own buffer-survival-contract
+   doc comment updated to state this explicitly (cancellation is NOT the "caller got its line and
+   stopped" case that contract protects), and `FakeRadioTransport` updated to reproduce the same
+   connection-abort-on-cancel semantics, per the interface's own "no more forgiving approximation" rule.
+
+**3 risks**, all fixed: (a) a failed `OpenAsync` could leave `_client` set with `_stream` null if
+`GetStream()` threw after `ConnectAsync` succeeded -- `RigctldClientProtocol.EnsureConnectedAsync`'s
+retry-on-the-same-instance pattern would then leak the live socket; fixed by moving `GetStream()` inside
+the same try as `ConnectAsync`. (b) The poll loop wrote `_protocol` unconditionally on both the dispose
+and reconnect paths, with no lock against a concurrent `ConnectAsync`/`DisconnectAsync` -- latent today
+(single caller) but the precondition for an orphaned unstoppable poll loop; fixed with
+`Interlocked.CompareExchange` claiming the slot on both paths. (c) `DisconnectAsync`'s
+`await loopTask` was unbounded, and `HamlibRadioProtocol`'s own doc comment states cancellation is
+honored only at its semaphore boundary -- a wedged native CAT call could block `DisconnectAsync` (and
+therefore `DisposeAsync`, and therefore app shutdown) indefinitely; fixed with a 10s
+`WaitAsync(PollLoopShutdownTimeout)`, safe only because of fix (b)'s CompareExchange guard against a
+straggler clobbering a later session.
+
+Nits fixed alongside: `ConnectAsync`'s `ct` was never checked; a `ResolveProtocol` failure during
+`ConnectAsync` never published `Failed` (subscribers latched on `Connecting` forever); `ReadAsync` never
+observed `ct` while draining already-buffered bytes; `CloseAsync` didn't reset the read-buffer offset/
+length (folded into a new shared `AbortConnection()` helper both `CloseAsync` and the cancel-path use).
+Left queued, not fixed: `_disposed` check/set not atomic in either class's `DisposeAsync`; `LastKnownState`
+throws `ObjectDisposedException` after disposal instead of returning null.
+
+Both blockers got new regression tests (`RadioControllerTests.DisconnectAsync_DuringReconnectBackoff
+NullProtocolWindow_StillTearsDownFully`, `TcpTransportTests.ReadAsync_CancelledMidRead_AbortsConnection_
+RatherThanDesyncingTheBuffer`), each mutation-verified independently (reverted the fix, confirmed the
+exact predicted failure -- old gate stranding `RigId`/never publishing `Disconnected`; `IsOpen` staying
+`true` after a cancelled read -- then restored).
+
+**Real flake found and fixed along the way, not part of the audit itself:** the new cancellation test
+(one more concurrently-open loopback socket, in a different xUnit collection than
+`RigctldDummyRigIntegrationTests`) made a pre-existing race in that file's dummy-`rigctld`-process
+lifecycle newly visible -- roughly 15-20% of full `ScanlineStudio.Core.Radio.Tests` runs failed with
+"rigctld connection closed by remote host" (a real external subprocess quirk, reproduced with
+`CancellationToken.None` throughout, so unrelated to either blocker fix's own cancellation-path code).
+Confirmed by isolation testing (22 runs with the new test excluded: 0 failures; 25 runs with it included:
+~5 failures, always the 2nd/3rd test in the sequential class, never the 1st) that this was a pre-existing
+test-infrastructure fragility exposed rather than a defect in the audited production code. User chose to
+harden it now rather than defer: `RigctldDummyRigIntegrationTests` refactored around a
+`RunAgainstDummyRigAsync` helper that retries the whole dummy-process-plus-assertion body (fresh process,
+fresh port) up to 3 times on `IOException`. Confirmed clean across 25 consecutive full
+`ScanlineStudio.Core.Radio.Tests` runs after the fix (0 failures).
+
+Full solution suite green: `ScanlineStudio.Core.Radio.Tests` 123/123, `ScanlineStudio.Core.Sstv.Tests`
+1022/1022 (1 unrelated intentional skip), every other project passing. Committed as `710236f`.
+
+Round 1 found real blockers, so it does not count toward the 2-consecutive-clean-round gate. Round 2 is
+next -- the earliest round that can start that count.
