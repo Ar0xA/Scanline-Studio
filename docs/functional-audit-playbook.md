@@ -2963,7 +2963,7 @@ key bump and the read, so it can't miss this call's own bump; a concurrent bump 
 instruction window is benign) -- the genuine defect was specifically the PAIRING with the entry-time
 `unkeyEpochAtEntry` snapshot, not `keyEpochAfterOwnKeyAttempt` itself.
 
-**Chunk 3a round 28 fixes applied** (2026-08-21, commit pending). Blocker fixed: `unkeyEpochAtEntry`'s
+**Chunk 3a round 28 fixes applied** (2026-08-21, commit `53d7a7a`). Blocker fixed: `unkeyEpochAtEntry`'s
 read moved from method entry to the SAME point as `keyEpochAfterOwnKeyAttempt` (immediately after this
 call's own key phase, no await between the two reads) -- the pair now correctly answers "since MY OWN
 key: did anyone confirm off, and did anyone re-key", not two questions anchored to different, unrelated
