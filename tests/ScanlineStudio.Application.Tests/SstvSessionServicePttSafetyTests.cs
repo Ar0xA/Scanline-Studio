@@ -1439,6 +1439,124 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
     }
 
+    // ------------------------------------------------------------------ round 19 findings
+
+    [Fact]
+    public async Task Round19_PlayWithPttAsync_UnkeyThrowsFromLoggingFailure_StillCompletesAndReleasesGuard()
+    {
+        // Round-19 finding 1 (blocker): PlayWithPttAsync's cleanup region had a finally but NO catch
+        // -- UnkeyForCleanupAsync/TryUnkeyPttAsync are documented as never throwing, but that was
+        // never actually enforced; a throwing logging provider (simulated via RecordingLogger's own
+        // ThrowOnMessageContaining hook) is enough to violate it. Without this round's fix, the throw
+        // would skip StopPlayback/the retry/RX-resume entirely, with the un-key failure never
+        // recorded anywhere and _transmitInFlight potentially stuck (the OUTER finally, further down,
+        // still releases it regardless -- but every step BETWEEN this one and that outer finally would
+        // be skipped).
+        var (service, _, radio, logger) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: unkey command failed");
+            }
+        };
+        // Precise match: "'PTT off' failed" (with the closing quote right after "off") matches ONLY
+        // TryUnkeyPttAsync's own inner Log.CleanupStepFailed(_logger, "PTT off", ex) call -- NOT this
+        // round's own new wrapper logs ("PTT off (urgent)"/"PTT off (retry)"), which must still
+        // succeed and are what proves the fix actually catches the propagated failure.
+        logger.ThrowOnMessageContaining = "'PTT off' failed";
+
+        // THE property: the ORIGINAL exception (from the forced abnormal termination) still surfaces
+        // -- not replaced or masked by the logging failure -- and the call completes rather than
+        // hanging or crashing unexpectedly.
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // _transmitInFlight must have been released too -- a subsequent transmit must reach the SAME
+        // (still-throwing, by design) engine again rather than being rejected as "already in
+        // progress."
+        logger.ThrowOnMessageContaining = null;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
+    public async Task Round19_SetPttLockAsync_UnlockCommand_CallerCancellationDoesNotReachTheCommandItself()
+    {
+        // Round-19 finding 2: the identical gap round 18 closed in TryUnkeyPttAsync survived here --
+        // `ct` reached the UNLOCK command itself, not just the wait, so a caller cancelling `ct`
+        // while this call was queued behind a wedged prior command would abort the un-key AT THE
+        // BACKEND'S REQUEST GATE, never reaching the rig -- the emergency-unlock escape hatch this
+        // method's own doc comment says exists precisely for "when something already went wrong."
+        //
+        // GateOnCallNumber:2 parks only the unlock command (call #2 -- call #1 is the initial engage)
+        // -- note this happens AFTER _pttLockGate.WaitAsync(ct) at this method's very own entry, which
+        // an ALREADY-cancelled token would reject before ever reaching this round's own fix at all,
+        // so `cts` must start un-cancelled and only cancel WHILE genuinely parked, not before.
+        // CancelAfter (not an immediate Cancel) guarantees genuine mid-flight cancellation without
+        // needing to detect "now parked" directly -- the gate never resolves on its own, so the call
+        // cannot possibly finish before the timer fires.
+        var gateTcs = new TaskCompletionSource();
+        var (service, _, radio, _) = CreateService();
+        await service.SetPttLockAsync(true);
+        radio.Gate = gateTcs.Task;
+        radio.GateOnCallNumber = 2;
+
+        using var cts = new CancellationTokenSource();
+        cts.CancelAfter(TimeSpan.FromMilliseconds(50));
+
+        // The outer call itself throws EITHER WAY here -- the WAIT (WaitAsync(_cleanupTimeout, ct))
+        // correctly stays cancellable by the caller's own `ct` in both directions, that part is
+        // unchanged by this round's fix. The property under test is whether the underlying COMMAND,
+        // left running in the background once the wait itself gives up, still reaches the rig --
+        // observable only via PttCalls, not via the outer call's own (identical either way) exception.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.SetPttLockAsync(false, cts.Token));
+
+        // The command is still parked on the gate at this point -- not recorded, not cancelled (the
+        // fake's OWN inner Gate.WaitAsync uses the command's own ct parameter, which this round's fix
+        // set to CancellationToken.None for the unlock direction -- cts cancelling has no effect on it).
+        Assert.Equal([true], radio.PttCalls);
+
+        // THE property: releasing the gate now lets the abandoned command actually complete and
+        // reach the rig. Without this round's fix, `ct` (cts.Token) would have reached the fake's own
+        // inner Gate.WaitAsync too, so the command would already have been cancelled the moment
+        // CancelAfter fired -- gateTcs.SetResult() here would then complete a task nothing is
+        // meaningfully waiting on anymore, and PttCalls would never gain a second entry.
+        gateTcs.SetResult();
+        await WaitForAsync(() => radio.PttCalls.Count == 2, TimeSpan.FromSeconds(5));
+        Assert.Equal([true, false], radio.PttCalls);
+    }
+
+    [Fact]
+    public async Task Round19_SetPttLockAsync_UnlockFailsOnNeverKeyedRig_DoesNotLatchAFalseCriticalAlarm()
+    {
+        // Round-19 finding 5: the round-18 catch arm for the unlock direction latched
+        // _pttUnkeyFailedOnRealRig (and logged Critical) unconditionally on failure -- but
+        // SetPttLockAsync is documented as always issuing the command regardless of current belief,
+        // so an operator can legitimately call SetPttLockAsync(false) on a rig this class never
+        // believed was keyed at all. Without this round's gate, that produces a FALSE Critical alarm
+        // and a permanently-latched flag for a rig that was demonstrably never keyed.
+        var (service, _, radio, logger) = CreateService();
+        // Deliberately no prior SetPttLockAsync(true) -- _pttLocked/_pttLeftKeyedByCall/
+        // _pttUnkeyFailedOnRealRig are all still at their default false.
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: unlock command failed on a never-keyed rig");
+            }
+        };
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(false));
+
+        // THE property: no false alarm.
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Critical);
+
+        // And DisposeAsync's own backstop must find nothing to do either -- no spurious un-key
+        // attempt against a rig that was never believed keyed.
+        radio.BeforeSetPtt = null;
+        await service.DisposeAsync();
+        Assert.Empty(radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -1737,9 +1855,22 @@ public sealed class SstvSessionServicePttSafetyTests
     /// -- reused rather than re-invented. Needed here because blocker 2's fix is observable ONLY
     /// through log severity/identity: the PTT command outcome is identical either way, what changed
     /// is whether a keyed rig is reported as benign or critical.</summary>
+    /// <summary>Thrown by <see cref="RecordingLogger{T}.ThrowOnMessageContaining"/> -- a dedicated
+    /// type so a mutation-verification test can distinguish "the original exception properly
+    /// survived" from "a NEW exception thrown from inside a `finally` REPLACED it" (C# semantics: an
+    /// exception thrown inside a `finally` block replaces whatever was already propagating) purely by
+    /// type, without needing an exact message match.</summary>
+    internal sealed class SimulatedLoggingProviderFailureException(string message) : Exception(message);
+
     internal sealed class RecordingLogger<T> : ILogger<T>
     {
         public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        /// <summary>Test-only hook (round 19): when a formatted message contains this substring, `Log`
+        /// throws instead of recording -- simulates a broken logging provider (e.g. a file logger on a
+        /// full disk), the realistic source rounds 17-19 identified for "a Log.* call throwing" as an
+        /// in-scope failure mode for this class's own cleanup/dispose guards.</summary>
+        public string? ThrowOnMessageContaining { get; set; }
 
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
@@ -1747,7 +1878,18 @@ public sealed class SstvSessionServicePttSafetyTests
 
         public void Log<TState>(
             LogLevel logLevel, EventId eventId, TState state, Exception? exception,
-            Func<TState, Exception?, string> formatter) =>
-            Entries.Add((logLevel, formatter(state, exception)));
+            Func<TState, Exception?, string> formatter)
+        {
+            var message = formatter(state, exception);
+            if (ThrowOnMessageContaining is not null && message.Contains(ThrowOnMessageContaining, StringComparison.Ordinal))
+            {
+                // A dedicated, deliberately unusual exception TYPE (not just a distinct message) --
+                // a test asserting on the type alone must not accidentally pass because production
+                // code happens to throw the same common BCL exception type for an unrelated reason.
+                throw new SimulatedLoggingProviderFailureException($"Simulated logging provider failure (test double) for message: {message}");
+            }
+
+            Entries.Add((logLevel, message));
+        }
     }
 }
