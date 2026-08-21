@@ -1947,7 +1947,7 @@ public sealed class SstvSessionServicePttSafetyTests
     public async Task Round27_PlayWithPttAsync_LockEngagedThenDeviceResolutionFails_AbnormalTerminationStillLatchesCritical()
     {
         // Round-27 finding (risk): pttKeyedOnRealRig's own round-25 baseline read _pttLocked via
-        // pttLockedAtEntry, which is deliberately read LATE -- AFTER the three bounded device/settings
+        // pttLockedBeforeKeyDecision, which is deliberately read LATE -- AFTER the three bounded device/settings
         // awaits. A failure in any of those three awaits (device not found is the realistic one here)
         // reached the generic catch with pttKeyedOnRealRig still false even when a lock was ALREADY
         // engaged at this call's own true entry, reproducing verbatim the harm round 25 exists to
