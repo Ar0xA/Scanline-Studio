@@ -1688,6 +1688,28 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal(PttOnThenOff, radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 23 findings
+
+    [Fact]
+    public async Task Round23_PlayWithPttAsync_PttKeyedLoggingFails_TransmitStillCompletesNormally()
+    {
+        // Round-23 finding (risk): Log.PttKeyed is the ONE log call in the whole file that executes
+        // while a real transmitter is physically keyed -- was still unwrapped. State (_pttKeyEpoch,
+        // pttKeyedOnRealRig) is always latched correctly BEFORE this call, so a throw here was never
+        // a leaked-transmitter (failure class 1) risk -- but it WAS a transmission-destruction risk
+        // (failure class 2): a transient logging-provider failure landing in this exact window used
+        // to abort an otherwise-healthy transmit with the raw logging exception, immediately after
+        // key-up and before any audio was ever sent -- a bare carrier key-up/key-down burst on air.
+        var (service, _, radio, logger) = CreateService();
+        logger.ThrowOnMessageContaining = "PTT keyed";
+
+        // THE property: the fix (SafeLog) swallows the transient logging failure -- the transmit
+        // must complete normally, not abort.
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(PttOnThenOff, radio.PttCalls);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
