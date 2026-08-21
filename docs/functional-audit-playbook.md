@@ -2129,7 +2129,7 @@ a contract-violating engine implementation, not external wedging); 3 `ISstvDecod
 handlers never unsubscribed in `DisposeAsync`; `StopReceivingAsync`'s own `ResetAgc()`/`Log.RxStopped`
 tail (and `PlayWithPttAsync`'s call to it) still sits outside its own guarded region.
 
-**Chunk 3a round 18 fixes applied** (2026-08-21, commit TBD). Finding 1: `TryUnkeyPttAsync` restructured
+**Chunk 3a round 18 fixes applied** (2026-08-21, commit `c1b4796`). Finding 1: `TryUnkeyPttAsync` restructured
 to pass `CancellationToken.None` to the actual `SetPttAsync` call (so it can never be cancelled, and
 stays queued until the backend genuinely frees up) while `WaitAsync(ct)` still bounds only the WAIT.
 Finding 2: `PlayWithPttAsync`'s finally now captures `UnkeyForCleanupAsync`'s bool return and retries
