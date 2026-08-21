@@ -4,9 +4,10 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
 /// Isolated tests for <see cref="SyncIntervalTracker"/> (porting legacy's <c>CSYNCINT</c>), checked
-/// against synthetic peak sequences before this class is wired into any of the three usage sites
-/// legacy has for it (<c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c>) — that wiring is separately
-/// scoped, later work.
+/// against synthetic peak sequences independently of the decoder wiring for legacy's three usage
+/// sites (<c>m_sint1</c>/<c>m_sint2</c>/<c>m_sint3</c>) -- see that wiring's own tests
+/// (<c>SyncBypass1DetectionTests</c>/<c>SyncBypassDetectionTests</c>/
+/// <c>SyncBypassNarrowDetectionTests</c>).
 /// </summary>
 public class SyncIntervalTrackerTests
 {
@@ -177,6 +178,87 @@ public class SyncIntervalTrackerTests
     public void GetSyncIntervalMatchDepth_MatchesLegacySyncCheckSubGrouping(SstvModeDefinition mode, bool isNarrow, int? expectedDepth)
     {
         Assert.Equal(expectedDepth, SstvModeRegistry.GetSyncIntervalMatchDepth(mode, isNarrow));
+    }
+
+    [Fact]
+    public void PeakTooCloseToLastAccepted_IsRejected_AndDoesNotDisruptTheNextMatch()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 6 chunk 6b (docs/functional-audit-playbook.md):
+        // no test exercised SyncStart's min-separation gate (sstv.cpp:1399, m_MSLL=50ms) -- deleting
+        // that guard entirely (accepting every peak regardless of spacing) previously survived the
+        // whole suite. A peak inside the 50ms window must be rejected outright: not recorded into
+        // history, and must not advance _lastAcceptedPosition -- otherwise it would corrupt the
+        // interval measured for the NEXT real peak.
+        var candidates = SstvModeRegistry.GetSyncIntervalCandidates(SampleRate);
+        var tracker = new SyncIntervalTracker(SampleRate, isNarrow: false, candidates);
+
+        var mode = SstvModeRegistry.ScottieS1; // default group, depth 5 -- needs 3 consecutive matches
+        var intervalSamples = (int)Math.Round(mode.LineDurationMs / 1000.0 * SampleRate);
+        var tooCloseSamples = (int)(40.0 / 1000.0 * SampleRate); // 40ms < the 50ms m_MSLL gate
+
+        SstvModeDefinition? matched = null;
+        for (var i = 0; i < 2; i++)
+        {
+            matched = AdvanceAndTryStart(tracker, intervalSamples);
+        }
+        Assert.Null(matched); // only 2 consecutive so far -- a 3rd proper interval would complete it
+
+        var rejected = AdvanceAndTryStart(tracker, tooCloseSamples);
+        Assert.Null(rejected);
+
+        // If the too-close peak had been wrongly accepted, the next interval would be measured from
+        // IT (intervalSamples - tooCloseSamples, nowhere near expected) instead of from the last real
+        // accepted peak -- so this next feed, spaced to land exactly one full interval past the
+        // ORIGINAL last accepted peak, must still complete the match.
+        matched = AdvanceAndTryStart(tracker, intervalSamples - tooCloseSamples);
+
+        Assert.Equal(mode.Id, matched?.Id);
+    }
+
+    [Fact]
+    public void NarrowTracker_PriorHistoryUsesLegacysSubharmonicCap_CurrentEntryCanStillUseK3()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 6 chunk 6b: no test distinguished
+        // CheckConsecutiveHistory's loop starting at HistorySize-2 (correct -- skips re-checking the
+        // entry Check() itself just evaluated) from an off-by-one HistorySize-1 start, exactly the
+        // recurring off-by-one-window-bound bug class this project has hit before (RX buffer work).
+        // Both bounds produce the same result for a fully-1x-periodic sequence, so this needs a
+        // sequence where the current (most recent) entry only matches via k=3 -- allowed for narrow
+        // bands by Check()'s own subharmonicLimit=3, but NOT allowed for the history-window check,
+        // which caps narrow bands at k=2 (sstv.cpp:1336). If the loop started at HistorySize-1
+        // instead, it would re-check this same 3x entry against narrow's k<=2 cap and wrongly reject.
+        var candidates = SstvModeRegistry.GetSyncIntervalCandidates(SampleRate);
+        var tracker = new SyncIntervalTracker(SampleRate, isNarrow: true, candidates);
+
+        var mode = SstvModeRegistry.Mn73; // narrow group, depth 3 -- needs 4 prior + 1 current = 5 peaks
+        var intervalSamples = (int)Math.Round(mode.LineDurationMs / 1000.0 * SampleRate);
+
+        SstvModeDefinition? matched = null;
+        for (var i = 0; i < 4; i++)
+        {
+            matched = AdvanceAndTryStart(tracker, intervalSamples);
+        }
+        Assert.Null(matched); // only 4 consecutive 1x intervals so far
+
+        matched = AdvanceAndTryStart(tracker, intervalSamples * 3); // current entry matches via k=3
+
+        Assert.Equal(mode.Id, matched?.Id);
+    }
+
+    /// <summary>Precise-interval peak feed: advances the tracker's sample counter by exactly
+    /// <paramref name="samplesToAdvance"/>, then marks the peak at the resulting counter position --
+    /// unlike <see cref="FeedOnePeak"/>, which places its peak mid-block (so its first call yields a
+    /// half-interval), this gives an EXACT interval from the previously accepted peak on every call,
+    /// including the first.</summary>
+    private static SstvModeDefinition? AdvanceAndTryStart(SyncIntervalTracker tracker, int samplesToAdvance)
+    {
+        for (var i = 0; i < samplesToAdvance; i++)
+        {
+            tracker.Increment();
+        }
+
+        tracker.UpdateMax(1000);
+        return tracker.TryStart();
     }
 
     private static SstvModeDefinition? FeedPeriodicPeaks(SyncIntervalTracker tracker, int intervalSamples, int lineCount)
