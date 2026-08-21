@@ -9,10 +9,11 @@ namespace ScanlineStudio.Core.Sstv;
 /// difference between the expected sync frequency and what was actually measured — which the caller
 /// adds to every subsequently demodulated sample (mirroring legacy's `if(m_Sync) d += m_AFCDiff`).
 ///
-/// Kept in real Hz throughout (see <see cref="ZeroCrossingFrequencyCounter"/>'s doc comment for why
-/// this is a faithful, not approximate, simplification of legacy's internal x16384/BWH-scaled
-/// arithmetic) — every threshold below is legacy's own real-Hz constant, not a derived one, except
-/// the small calibration nudge noted at its own declaration.
+/// Kept in real Hz throughout (see <see cref="ZeroCrossingFrequencyCounter"/>'s doc comment for the
+/// faithful-at-steady-state, bounded-and-accepted-during-a-narrow-mode-transition qualification on
+/// this simplification of legacy's internal x16384/BWH-scaled arithmetic) — every threshold below
+/// is legacy's own real-Hz constant, not a derived one, except the small calibration nudge noted at
+/// its own declaration.
 ///
 /// Correction (ultracode audit findings #1/#4): two earlier claims in this comment were wrong.
 /// (1) legacy's <c>InitTone</c> retune IS modeled — <see cref="SyncEnvelopeDetector.Retune"/>, called

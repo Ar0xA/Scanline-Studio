@@ -2,17 +2,27 @@ namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
 /// Direct port of legacy <c>CFQC</c> (`sstv.cpp:347-489`) — a zero-crossing-interval frequency
-/// discriminator. Used exclusively as AFC's frequency-measurement input
-/// (<c>CSSTVDEM::SyncFreq</c>'s <c>m_fqc.Do(m_lvl.m_Cur)</c>, see <see cref="AfcTracker"/>), entirely
-/// separate from the PLL-based main demodulator (<see cref="PllFmDemodulator"/>/<c>CPLL</c>).
+/// discriminator. Used in two roles, matching legacy's single <c>m_fqc</c>: AFC's frequency-
+/// measurement input (<c>CSSTVDEM::SyncFreq</c>'s <c>m_fqc.Do(m_lvl.m_Cur)</c>, `m_Type==0`,
+/// `sstv.cpp:2258`, see <see cref="AfcTracker"/>) and, entirely independently, the main picture
+/// demodulator when the user selects <c>DemodType.ZeroCrossing</c> (`m_Type==1`, `sstv.cpp:2262`)
+/// -- split into two separate instances here, see <c>AnalogFmSstvDecoder</c>'s own field comment.
 /// Operates on the raw incoming audio sample directly (matching legacy's <c>m_lvl.m_Cur</c>), since
 /// zero-crossing interval timing is amplitude-independent — no AGC needed, unlike the PLL path.
 ///
 /// Kept in real Hz throughout rather than legacy's internal <c>(freq-Center)/BWH</c>-then-x16384
-/// scale: <see cref="IirFilter.Process"/> is a purely linear biquad cascade, so filtering
-/// <c>(freq-Center)/BWH</c> and rescaling afterward is mathematically identical to filtering
-/// <c>freq</c> directly — a representational simplification, not a numeric approximation. See
-/// <see cref="AfcTracker"/> for where the corresponding real-Hz threshold values come from.
+/// scale. <see cref="IirFilter.Process"/> is a linear biquad cascade with a DC gain of exactly 1,
+/// so ONCE THE OUTPUT FILTER HAS SETTLED, filtering <c>(freq-Center)/BWH</c> and denormalizing
+/// afterward is algebraically identical to filtering <c>freq</c> directly. It is NOT identical
+/// transiently: legacy's filter Z-state is stored in normalized units, so a <see cref="SetWidth"/>
+/// implicitly re-scales that state too (legacy's reported Hz jumps ~272Hz instantly at a wide-to-
+/// narrow flip, then holds), whereas this port's Hz-domain state is left alone and glides toward
+/// the new value instead. Accepted, bounded divergence: &lt;=~272Hz decaying over the 900Hz/order-3
+/// output filter's settling time (~1.5ms, ~17 samples at 11025Hz), only at a narrow-mode
+/// transition -- Tier A Batch 7 chunk 7c independently re-derived this from <see cref="IirFilter"/>'s
+/// own DC-gain algebra rather than trusting the port's original "mathematically identical" claim,
+/// which was true only at steady state, not unconditionally. See <see cref="AfcTracker"/> for
+/// where the corresponding real-Hz threshold values come from.
 /// </summary>
 internal sealed class ZeroCrossingFrequencyCounter
 {
