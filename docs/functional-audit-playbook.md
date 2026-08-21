@@ -2173,3 +2173,87 @@ projects) clean.
 Round 18 fixed 2 new blockers plus both of round 17's own deferred items -- does NOT count as chunk
 3a's 1st clean round. Round 19 is now the earliest round that can count as chunk 3a's 1st clean round.
 Seventeen consecutive rounds (2-18) have now each found something real in this file.
+
+**Chunk 3a round 19** (2026-08-21, independent agent, fresh context, agent `aff515a7f413b3b58`).
+Independently re-derived every round-18 fix with real scrutiny (not a skim), given three rounds in a
+row (16, 17, 18) had each found the PRIOR round's own "callee doesn't observe ct" fix was itself
+incomplete. Confirmed all 8 `Task.Run` sites correct, `TuneAsync`'s Nyquist/NaN bounds correct, the
+`DisposeAsync` guards correct, `TryUnkeyPttAsync`'s own decoupling correct. But found: **(1) [BLOCKER]**
+`PlayWithPttAsync`'s entire cleanup region (urgent un-key / StopPlayback / retry / RX-resume) had a
+`finally` but NO `catch` -- `UnkeyForCleanupAsync`/`TryUnkeyPttAsync` are documented as never throwing,
+but that guarantee was never actually enforced, and a throwing logging provider (the same realistic
+source rounds 17/18 already treated as in-scope for `DisposeAsync`'s own per-step guards) is enough to
+violate it. Without a guard, that throw skips EVERY step below it -- StopPlayback, the round-18 retry,
+RX-resume -- with the un-key failure never recorded anywhere: `_pttUnkeyFailedOnRealRig` never gets
+set, `DisposeAsync`'s four-state check finds nothing to do, and the process can exit with the
+transmitter physically keyed and no Critical log ever emitted. Worse than `DisposeAsync`'s own
+equivalent gap (which round 17 already fixed), since this is the PTT-off record itself, not just
+teardown. **(2) [risk]** one surviving instance of round 18's exact "`ct` wired to both the command and
+the wait" bug -- `SetPttLockAsync`'s own PTT command, line 439, still passed `ct` to the UNLOCK
+direction's command itself (round 18 fixed this in `TryUnkeyPttAsync` but this sibling site, the same
+class of bug, survived). A caller cancelling `ct` while queued behind a wedged prior command would
+abort the emergency-unlock escape hatch at the backend's own request gate, never reaching the rig --
+latent today (zero production callers), but a real trap for whoever wires the PTT-lock button.
+**(3) [risk]** abandoned RX-resume `Task.Run` tasks (round 16/18's own fix) are unobserved and can
+complete AFTER `DisposeAsync`, using a disposed decoder/engine -- `StartReceivingAsync`'s `_disposed`
+check only runs at its own first line, not immediately before the actual publish (subscribing
+handlers, setting `_isReceiving = true`), and unlike `StopPlaybackWithWatchdogAsync`/`StopReceivingAsync`'s
+own abandoned-task handling, no fault-observer continuation exists for these. Nits: round 18's own
+retry comment overstated the mechanism (the retry queues BEHIND the abandoned first command, not
+beside it on an "independent window", since round 18 also made that first command uncancellable); a
+round-18 catch arm (finding 5's own fix) latched `_pttUnkeyFailedOnRealRig`/logged Critical even for a
+rig this class never believed was keyed at all (`SetPttLockAsync`'s own documented always-issue-the-
+command policy makes this reachable); the queued `EnqueueAllAsync` accepted-validation note was
+mis-described (a negative value throws via array-slice bounds, not a synchronous spin).
+
+**Chunk 3a round 19 fixes applied** (2026-08-21, commit TBD). Finding 1: each step in `PlayWithPttAsync`'s
+cleanup region (the urgent `UnkeyForCleanupAsync` call, `StopPlaybackWithWatchdogAsync`, the round-18
+retry) now wrapped in its own try/catch + `Log.CleanupStepFailed`, matching `DisposeAsync`'s own
+already-established per-step shape. Also reordered `UnkeyForCleanupAsync`'s own
+`_pttUnkeyFailedOnRealRig = true` write to run BEFORE its own `Log.PttStillKeyedAfterFailedUnkey` call
+(not after) -- so even if THAT log call itself throws, the state is still correctly latched before the
+exception (now caught by the new wrapper) propagates. This does not claim to make logging fully safe
+against itself (an inherent limit -- you cannot use logging to guard against logging failures without
+eliminating logging from the failure path entirely), but closes the actual blocker-tier consequence:
+every OTHER cleanup step still gets its chance to run regardless of what caused the throw. Finding 2:
+`SetPttLockAsync`'s own PTT command decoupled exactly as round 18 did for `TryUnkeyPttAsync` --
+`locked ? ct : CancellationToken.None` for the command, `WaitAsync(_cleanupTimeout, ct)` still bounds
+the wait in both directions. Finding 3: new shared `ResumeReceivingBoundedAsync` helper centralizes
+all 4 RX-resume call sites' `Task.Run`+`WaitAsync` shape and adds a fault-observer `ContinueWith` on
+the background task (attached unconditionally, not just in a timeout branch, since this is now the
+single choke point for the `Task.Run` creation -- `OnlyOnFaulted` makes it a no-op on the common
+success path regardless of when attached); `StartReceivingAsync` now rechecks `_disposed` a second
+time, immediately before its own publish block, not only at its own first line. Nits: the round-18
+retry comment corrected to describe the actual queued-behind-not-beside mechanism; the round-18 catch
+arm (finding 5's own site) gated on `_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig`
+before latching/logging, so a failed unlock of a rig this class never believed was keyed produces no
+false alarm; `EnqueueAllAsync`'s queued note left uncorrected in-file (it was only ever tracked in this
+playbook/PROJECT_BRIEF, not as an in-source comment -- corrected here instead).
+
+New regression tests for all 3 fixable findings. Finding 1's test required a new
+`RecordingLogger.ThrowOnMessageContaining` hook (simulates a broken logging provider) and a dedicated
+`SimulatedLoggingProviderFailureException` type -- the FIRST version of this test used the same
+exception type (`InvalidOperationException`) for both the simulated logging failure and the original
+forced-abnormal-termination exception, so it passed even with the fix reverted (both exceptions looked
+identical to the assertion); caught by actually running the mutation and observing the wrong exception
+type surface, fixed by giving the simulated failure its own distinct type. Finding 2's test similarly
+needed a redesign mid-round: the first version used an ALREADY-cancelled token, which `SetPttLockAsync`'s
+own `_pttLockGate.WaitAsync(ct)` at its very first line rejects before ever reaching this round's fix,
+so the mutation had no observable effect (caught the same way, by actually running it); the corrected
+version uses `GateOnCallNumber` (parking only the unlock command) plus `CancelAfter` (guaranteeing
+genuine mid-flight cancellation without needing to detect "now parked" directly) so the token is still
+valid past the gate but cancels while the command itself is genuinely in flight. All 3 mutation-verified
+after their redesigns: finding 1 produced the exact predicted wrong-exception-type signature; finding 2
+produced the exact predicted "abandoned command never completes" signature; finding 5's nit-turned-test
+(the false-Critical-alarm gate) failed a clean assertion when disabled. Finding 3 (the RX-resume
+fault-observer + `_disposed` recheck) intentionally not given a dedicated test this round -- both are
+structural/defensive additions with no new isolable failure mode distinct from what round 16/18's own
+existing coverage already exercises, matching this chunk's established precedent for proportionate
+scope. Restored, rebuilt clean, all 3 re-confirmed passing, no stray test-host processes survived any
+mutation. All 206 `ScanlineStudio.Application.Tests` passing (203 pre-existing + 3 new), full solution
+suite (all projects) clean.
+
+Round 19 fixed 1 new blocker plus 2 more real risks, including catching two genuine gaps in its own
+regression tests before they shipped (not just in the production code) -- does NOT count as chunk 3a's
+1st clean round. Round 20 is now the earliest round that can count as chunk 3a's 1st clean round.
+Eighteen consecutive rounds (2-19) have now each found something real in this file.
