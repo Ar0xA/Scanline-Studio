@@ -4016,3 +4016,58 @@ Auditor's verdict: unconditional GO -- if this round is clean, the whole batch c
 
 Commit `99da537`. Full solution suite confirmed green: `ScanlineStudio.Core.Sstv.Tests` at 1030/1031
 (1 unrelated intentional skip), every other project's test suite green.
+
+## Chunk 4d CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**1 round, no functional bug, 1 real coverage gap closed** (the tone-selector read-position test),
+4 comment/doc nits fixed. The highest-priority item this chunk existed to check -- Robot 36's
+`m_DSEL` chroma-selector polarity, the closest remaining analogue to the Scottie incident in this
+file family -- verified correctly ported. Round 1 closed with an UNCONDITIONAL auditor
+go-for-production verdict. The user, asked directly how to close, chose to accept that verdict and
+close both the chunk and the batch rather than dispatch a round 2 purely to chase the formal
+2-consecutive-clean-round gate. Same deliberate-exception precedent as chunks 3a/3b/3c/4a/4b's own
+closures.
+
+Commit `99da537` (code) / this entry (docs). Full solution suite green throughout.
+
+## Tier A Batch 4 -- CLOSED (2026-08-21)
+
+**All 4 chunks closed** (pixel math: TX/RX scanline codecs -- `PixelSampleReader.cs`/`YCbCr.cs`/
+`ScanlineCodecFactory.cs`, the YCbCr sequential/line-paired pair, the RGB sequential/mono-averaged
+pair, and the Robot pair). Unlike Batch 3, every file in this batch has a real legacy counterpart, and
+legacy-parity fidelity was fully in scope throughout -- this batch found ONE real functional bug
+(chunk 4c) plus multiple genuine Scottie-class coverage gaps closed across chunks 4b/4c/4d, none of
+them actual channel-order/polarity bugs (unlike the original Scottie incident this whole batch was
+prioritized for), but each one a plausible near-miss of that same shape, now protected by a
+mutation-verified test:
+
+- **Chunk 4a** (shared substrate): 1 round. No blocker. A missing `ksbSamples >= 1` guard, a wrong
+  citation, and an exhaustive legacy-reference parity test for `YCbCr.FromRgb`/`ToRgb` closing a real
+  coverage gap. Closed by explicit user decision on round 1's unconditional go.
+- **Chunk 4b** (YCbCr sequential/line-paired): 1 round. No functional bug. Documented a genuine
+  legacy RX/TX self-inconsistency in MR/ML's hold gaps (this port deliberately matches legacy's TX,
+  not legacy's own inconsistent RX constant) and closed a real Scottie-class gap (line-paired chroma
+  sourced from the odd row, mutation-verified). Closed by explicit user decision on round 1's
+  unconditional go.
+- **Chunk 4c** (RGB sequential/mono-averaged): 2 rounds. **The one real functional bug in this
+  batch** -- `RgbSequentialScanlineDecoder` truncated after its `+128` bias instead of before,
+  systematically darkening ~half of every decoded pixel value across 15 of the 43 registered modes.
+  Fixed to match its sibling decoders' established pattern (extends ultracode audit finding #28),
+  mutation-verified, independently re-derived and confirmed correct by a fresh round 2 (including for
+  the narrow MC sub-family round 1 hadn't separately checked). Also closed a real Scottie-class gap
+  (mono-averaged paired genuinely averages both source rows). Closed by explicit user decision on
+  round 2's unconditional go -- round 1 wasn't clean, so this one doesn't strictly meet the formal
+  gate, same shape as chunk 3c's own closure.
+- **Chunk 4d** (Robot): 1 round. No functional bug -- the batch's own highest-priority item, Robot
+  36's `m_DSEL` chroma-selector polarity (the closest remaining Scottie-class risk in this file
+  family, flagged since chunk 4a), verified correctly ported against both TX and RX independently.
+  Closed a real coverage gap (tone-selector read position). Closed by explicit user decision on round
+  1's unconditional go.
+
+No chunk in this batch closed under the formal 2-consecutive-clean-round gate -- all four closed by
+explicit user decision on an auditor go-for-production verdict, the same well-established pattern as
+every Batch 3 chunk (see also Batch 1's own re-audit closure). If any of these four files/chunks is
+revisited later, start a fresh re-audit rather than assuming the formal gate was ever met.
+
+Full round-by-round detail for all four chunks lives in this section's own per-round entries above,
+not reproduced here.
