@@ -5233,3 +5233,30 @@ commit, and the auditor explicitly ruled out the pre-budgeted round 2; 8d (last 
 generator) found zero functional bugs, three doc overstatements, and closed one real coverage gap
 (40 of 43 table entries previously untested) with a mutation-verified golden-vector test. Commits:
 6242ce0, 16e4aa6, 434c5ca, c516591.
+
+## Tier A Batch 9 -- IN PROGRESS, started 2026-08-22
+
+Cross-thread publishing & native loading (approved batch plan, row 9). Real sizes confirmed by
+reading: `src/ScanlineStudio.Core.Sstv/WaterfallSource.cs` (113), `src/ScanlineStudio.Core.Audio.MiniAudio/MiniAudioDeviceEnumerator.cs`
+(279), `MiniAudioContext.cs` (86), `MiniAudioResampler.cs` (50), `src/ScanlineStudio.Core.Radio.Hamlib/HamlibNative.cs`
+(171), `HamlibRuntime.cs` (76), `HamlibLibraryLocator.cs` (96), `HamlibVersionGate.cs` (35),
+`NativeLibraryLoader.cs` (14) -- 920 lines total.
+
+Note: `WaterfallSource.cs`'s scheduler/slow-subscriber contract (CLAUDE.md's concurrency rule) is
+already explicitly documented on `IWaterfallSource`'s own doc comment (synchronous inline push,
+mirrors `IRadioController.StateChanges`'s established pattern) -- this chunk verifies that claim is
+ACCURATE against the real implementation, not that it's missing.
+
+Chunking:
+- **9a** `WaterfallSource.cs` (113) -- cross-thread publishing/scheduler contract, standalone.
+- **9b** `MiniAudioDeviceEnumerator.cs` (279) -- largest file in the batch; also carries a specific
+  carry-over item from Batch 1 round-4 (`ReleaseIfCompletedInTime`'s "timed-out close deliberately
+  leaks the context reference, no log emitted" gap, flagged off-scope there -- check whether it needs
+  the same fix Batch 1 already applied for the two session types).
+- **9c** `MiniAudioContext.cs` (86) + `MiniAudioResampler.cs` (50) -- the rest of the MiniAudio native
+  audio layer (136 lines combined).
+- **9d** `HamlibNative.cs` (171) + `HamlibRuntime.cs` (76) + `HamlibLibraryLocator.cs` (96) +
+  `HamlibVersionGate.cs` (35) + `NativeLibraryLoader.cs` (14) -- all 5 Hamlib native-loading files as
+  one chunk (392 lines combined), last chunk of this batch.
+
+Dispatching 9a now.
