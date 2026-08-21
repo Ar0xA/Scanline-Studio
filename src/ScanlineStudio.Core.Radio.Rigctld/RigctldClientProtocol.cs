@@ -69,11 +69,21 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             [RadioMode.Pkt] = "PKTFM",
         };
 
+    // Bounds one whole request/response transaction (and, separately, the capability probe -- see
+    // EnsureConnectedAsync). Without it, a peer that accepts the socket and then stops answering (a
+    // half-open TCP after a remote crash, a stopped rigctld) blocked the reading caller forever WHILE
+    // HOLDING _requestLock -- every later caller, including a PTT unkey, queued behind it and never
+    // reached the wire, leaving a physically keyed transmitter with no path to unkey it.
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
+
     private readonly IRadioTransport _transport;
     private readonly TimeSpan _connectTimeout;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _requestLock = new(1, 1);
-    private bool _disposed;
+    // volatile: unlike HamlibRadioProtocol's _disposed (ordered by their shared semaphore, since
+    // DisposeAsync there takes the same lock), DisposeAsync here never takes _requestLock at all, so
+    // there is no other happens-before edge between its write and AcquireAsync's own post-wait read.
+    private volatile bool _disposed;
 
     // Meter reads happen up to 3x per poll while transmitting -- logging every soft-failure
     // unconditionally would be a hot-path violation for a long transmission on a rig that
@@ -102,80 +112,84 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
-            // Frequency is core to RadioState -- always attempted regardless of the probed
-            // capability, unlike mode/PTT below (which have meaningful defaults when absent).
-            var freqLine = await GetSingleLineOrThrowAsync("f", ct).ConfigureAwait(false);
-            if (!long.TryParse(freqLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var hz))
+            return await WithRequestTimeoutAsync(async requestCt =>
             {
-                throw new RadioProtocolException($"rigctld 'f' returned an unparseable frequency: '{freqLine}'.");
-            }
-
-            var mode = RadioMode.Unknown;
-            if (Capabilities.HasFlag(RadioCapabilities.ReadMode))
-            {
-                mode = await GetModeAsync(ct).ConfigureAwait(false);
-            }
-
-            var isTransmitting = false;
-            if (Capabilities.HasFlag(RadioCapabilities.PttControl))
-            {
-                var pttLine = await GetSingleLineOrThrowAsync("t", ct).ConfigureAwait(false);
-                if (!int.TryParse(pttLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pttValue))
+                // Frequency is core to RadioState -- always attempted regardless of the probed
+                // capability, unlike mode/PTT below (which have meaningful defaults when absent).
+                var freqLine = await GetSingleLineOrThrowAsync("f", requestCt).ConfigureAwait(false);
+                if (!long.TryParse(freqLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var hz))
                 {
-                    // Throws rather than defaulting to false, matching the frequency read above:
-                    // "not transmitting" is the one wrong guess with physical consequences here, and it
-                    // also suppresses this poll's SWR/ALC/power reads (gated on isTransmitting below),
-                    // so a garbled readback would silently disarm the SWR cutoff on a rig that IS
-                    // keyed. RadioProtocolException is command-level -- RadioController keeps cadence
-                    // and publishes CommandFailed instead of tearing the connection down.
-                    throw new RadioProtocolException(
-                        $"rigctld 't' returned an unparseable PTT state: '{pttLine}'.");
+                    throw new RadioProtocolException($"rigctld 'f' returned an unparseable frequency: '{freqLine}'.");
                 }
 
-                isTransmitting = pttValue != 0;
-            }
-
-            // Meters are TX-only readings on a real rig -- gated on the PTT readback already
-            // obtained above (not a separate always-on probe) both because an RX-time read is
-            // meaningless and because it would double this poll's round-trip count on every cycle
-            // for a reading nobody looks at outside an active transmit.
-            float? swr = null, alc = null, powerPercent = null;
-            if (isTransmitting)
-            {
-                if (Capabilities.HasFlag(RadioCapabilities.SwrMeter))
+                var mode = RadioMode.Unknown;
+                if (Capabilities.HasFlag(RadioCapabilities.ReadMode))
                 {
-                    swr = await TryGetMeterAsync("l SWR", ct).ConfigureAwait(false);
+                    mode = await GetModeAsync(requestCt).ConfigureAwait(false);
                 }
 
-                if (Capabilities.HasFlag(RadioCapabilities.AlcMeter))
+                var isTransmitting = false;
+                if (Capabilities.HasFlag(RadioCapabilities.PttControl))
                 {
-                    alc = await TryGetMeterAsync("l ALC", ct).ConfigureAwait(false);
+                    var pttLine = await GetSingleLineOrThrowAsync("t", requestCt).ConfigureAwait(false);
+                    if (!int.TryParse(pttLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pttValue))
+                    {
+                        // Throws rather than defaulting to false, matching the frequency read above:
+                        // "not transmitting" is the one wrong guess with physical consequences here, and
+                        // it also suppresses this poll's SWR/ALC/power reads (gated on isTransmitting
+                        // below), so a garbled readback would silently disarm the SWR cutoff on a rig
+                        // that IS keyed. RadioProtocolException is command-level -- RadioController
+                        // keeps cadence and publishes CommandFailed instead of tearing the connection
+                        // down.
+                        throw new RadioProtocolException(
+                            $"rigctld 't' returned an unparseable PTT state: '{pttLine}'.");
+                    }
+
+                    isTransmitting = pttValue != 0;
                 }
 
-                if (Capabilities.HasFlag(RadioCapabilities.PowerMeter))
+                // Meters are TX-only readings on a real rig -- gated on the PTT readback already
+                // obtained above (not a separate always-on probe) both because an RX-time read is
+                // meaningless and because it would double this poll's round-trip count on every cycle
+                // for a reading nobody looks at outside an active transmit.
+                float? swr = null, alc = null, powerPercent = null;
+                if (isTransmitting)
                 {
-                    var fraction = await TryGetMeterAsync("l RFPOWER_METER", ct).ConfigureAwait(false);
-                    powerPercent = fraction * 100f;
+                    if (Capabilities.HasFlag(RadioCapabilities.SwrMeter))
+                    {
+                        swr = await TryGetMeterAsync("l SWR", requestCt).ConfigureAwait(false);
+                    }
+
+                    if (Capabilities.HasFlag(RadioCapabilities.AlcMeter))
+                    {
+                        alc = await TryGetMeterAsync("l ALC", requestCt).ConfigureAwait(false);
+                    }
+
+                    if (Capabilities.HasFlag(RadioCapabilities.PowerMeter))
+                    {
+                        var fraction = await TryGetMeterAsync("l RFPOWER_METER", requestCt).ConfigureAwait(false);
+                        powerPercent = fraction * 100f;
+                    }
                 }
-            }
 
-            // Opposite gating from the TX-only meters above -- see RadioState.SignalStrengthDb's own
-            // doc comment. RIG_LEVEL_STRENGTH is documented "arg int (dB)" in rig.h (unlike
-            // SWR/ALC/RFPOWER_METER, which are float) -- rigctld's `l <LEVEL>` line protocol still
-            // emits it as a single plain-text line either way (verified against a local Hamlib clone,
-            // rigctl_parse.c), so the existing float-parsing TryGetMeterAsync/ParseMeterFloat still
-            // parses it correctly; only the STORED type differs (rounded to int here to match
-            // RadioState.SignalStrengthDb's own int? type).
-            int? signalStrengthDb = null;
-            if (!isTransmitting && Capabilities.HasFlag(RadioCapabilities.SignalMeter))
-            {
-                var raw = await TryGetMeterAsync("l STRENGTH", ct).ConfigureAwait(false);
-                signalStrengthDb = raw is { } v && !float.IsNaN(v) && !float.IsInfinity(v)
-                    ? (int)MathF.Round(v)
-                    : null;
-            }
+                // Opposite gating from the TX-only meters above -- see RadioState.SignalStrengthDb's
+                // own doc comment. RIG_LEVEL_STRENGTH is documented "arg int (dB)" in rig.h (unlike
+                // SWR/ALC/RFPOWER_METER, which are float) -- rigctld's `l <LEVEL>` line protocol still
+                // emits it as a single plain-text line either way (verified against a local Hamlib
+                // clone, rigctl_parse.c), so the existing float-parsing TryGetMeterAsync/ParseMeterFloat
+                // still parses it correctly; only the STORED type differs (rounded to int here to
+                // match RadioState.SignalStrengthDb's own int? type).
+                int? signalStrengthDb = null;
+                if (!isTransmitting && Capabilities.HasFlag(RadioCapabilities.SignalMeter))
+                {
+                    var raw = await TryGetMeterAsync("l STRENGTH", requestCt).ConfigureAwait(false);
+                    signalStrengthDb = raw is { } v && !float.IsNaN(v) && !float.IsInfinity(v)
+                        ? (int)MathF.Round(v)
+                        : null;
+                }
 
-            return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+                return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+            }, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -189,7 +203,8 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
-            await SendSetCommandAsync($"F {hz}", ct).ConfigureAwait(false);
+            await WithRequestTimeoutAsync(requestCt => SendSetCommandAsync($"F {hz}", requestCt), ct)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -213,7 +228,8 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             // Passband 0 = Hamlib's RIG_PASSBAND_NORMAL sentinel ("use the rig's default passband
             // for this mode") -- verified against hamlib/include/hamlib/rig.h. RadioState has no
             // passband field, so this is always what ScanlineStudio asks for.
-            await SendSetCommandAsync($"M {token} 0", ct).ConfigureAwait(false);
+            await WithRequestTimeoutAsync(requestCt => SendSetCommandAsync($"M {token} 0", requestCt), ct)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -227,7 +243,8 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         try
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
-            await SendSetCommandAsync($"T {(tx ? 1 : 0)}", ct).ConfigureAwait(false);
+            await WithRequestTimeoutAsync(requestCt => SendSetCommandAsync($"T {(tx ? 1 : 0)}", requestCt), ct)
+                .ConfigureAwait(false);
         }
         finally
         {
@@ -254,8 +271,41 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             throw new TimeoutException($"Connecting to rigctld timed out after {_connectTimeout}.");
         }
 
-        Capabilities = await ProbeCapabilitiesAsync(ct).ConfigureAwait(false);
+        // Bounded separately from the OpenAsync step above (which has its own configurable
+        // _connectTimeout): 7 round trips with no bound of their own would otherwise wedge just like
+        // any other unbounded request/response transaction -- see RequestTimeout's own doc comment.
+        Capabilities = await WithRequestTimeoutAsync(ProbeCapabilitiesAsync, ct).ConfigureAwait(false);
         Log.CapabilitiesNegotiated(_logger, Capabilities);
+    }
+
+    /// <summary>Bounds one whole request/response transaction against <paramref name="ct"/> -- see
+    /// <see cref="RequestTimeout"/>'s own doc comment for why. A timeout surfaces as
+    /// <see cref="TimeoutException"/> (transport-level, so <c>RadioController</c> backs off and rebuilds
+    /// the protocol from scratch rather than retrying command-level); the cancelled read that produces
+    /// it also aborts the underlying socket per <see cref="IRadioTransport"/>'s own contract, so the
+    /// next connect starts clean instead of reading a desynced stream.</summary>
+    private static async Task<T> WithRequestTimeoutAsync<T>(
+        Func<CancellationToken, Task<T>> body, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(RequestTimeout);
+        try
+        {
+            return await body(cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            throw new TimeoutException($"rigctld did not respond within {RequestTimeout}.");
+        }
+    }
+
+    private static async Task WithRequestTimeoutAsync(Func<CancellationToken, Task> body, CancellationToken ct)
+    {
+        await WithRequestTimeoutAsync(async innerCt =>
+        {
+            await body(innerCt).ConfigureAwait(false);
+            return true;
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>Probes `f`/`m`/`t` once and sets capability flags from which return a value vs. an
