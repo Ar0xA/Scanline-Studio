@@ -132,6 +132,34 @@ public class AnalogFmSstvEncoderStationIdWiringTests
     }
 
     [Fact]
+    public async Task EncodeAsync_CwIdLeadingSilence_ProducesExactZero_OnTheRealEncodeAsyncPath()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8c (docs/functional-audit-playbook.md):
+        // AnalogFmSstvEncoderSilenceTests.cs's silence tests all exercise RenderSegments, a hand-
+        // duplicated copy of EncodeAsyncCore's own sample loop -- nothing pins the two together, so a
+        // regression in EncodeAsyncCore's OWN silence branch (the real production async iterator,
+        // never directly hit by those tests) could survive undetected. CwMorseGenerator.Generate's
+        // leading '@' character yields a fixed, WPM-independent 250ms of real silence
+        // (sstv.cpp:2865-2875's silence contract) before any CW tone -- long enough for
+        // TxOutputBandpassFilter's 24-tap ring-down to fully settle (needs only Tap+1=25 samples,
+        // with room to spare) on the REAL EncodeAsync path.
+        var mode = SstvModeRegistry.Robot36;
+        var image = CreateSolidImage(mode.ImageWidth, mode.ImageHeight);
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+
+        var withoutCw = await CollectAsync(encoder.EncodeAsync(mode, image));
+        var withCw = await CollectAsync(encoder.EncodeAsync(mode, image,
+            new StationIdTransmitOptions { CwEnabled = true, CwResolvedText = "TEST", CwToneFrequencyHz = 1000, CwWpm = 28 }));
+
+        var cwTail = withCw.Skip(withoutCw.Count).ToArray();
+
+        // Comfortably inside the 250ms leading '@' silence (2756 samples at 11025Hz), well past the
+        // filter's 25-sample ring-down settle time from whatever footer tone preceded it.
+        var settledSilenceWindow = cwTail.Skip(100).Take(2000);
+        Assert.All(settledSilenceWindow, s => Assert.Equal(0.0f, s));
+    }
+
+    [Fact]
     public async Task EncodeAsync_FskAndCwBothEnabled_BothDecodeIndependently()
     {
         // Main.cpp:7018-7025: OutputFSKID() called before OutputCWID() when both are configured --

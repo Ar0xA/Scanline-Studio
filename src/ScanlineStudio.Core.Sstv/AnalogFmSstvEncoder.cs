@@ -115,7 +115,10 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // individual per-pixel segments in a full image, independently rounding each one's sample
         // count biases every pixel the same direction and the error accumulates linearly (over a
         // second of drift by the end of the image). Tracking ideal elapsed samples as a running
-        // total and taking the difference keeps rounding error bounded to +/-0.5 sample forever.
+        // total and taking the difference keeps rounding error bounded. Doc correction (Tier A
+        // Batch 8 chunk 8c): this port TRUNCATES (see the ultracode finding #25 comment below), which
+        // bounds the error to [0,1) samples -- a one-sided lag, not the "+/-0.5 sample" round-to-
+        // nearest figure this line previously (incorrectly) claimed.
         var idealSamplesSoFar = 0.0;
         var emittedSamples = 0L;
 
@@ -127,9 +130,15 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             // ultracode audit finding #25: legacy's CSSTVMOD::Do uses `for (; m_iPos < int(m_dPos); ...)`
             // on an equivalent running accumulator -- floor/truncation, not round-to-nearest. Both are
             // bounded (non-cumulative, +/-1 sample per segment boundary) and Math.Round is arguably
-            // more accurate (zero-mean vs legacy's 0.5-sample lag) -- this is a knowing parity trade
-            // for future sample-exact diffing against a legacy TX capture, not a "legacy is more
-            // correct" claim. Comment left here so a future reader doesn't "fix" this back to Round.
+            // more accurate (zero-mean vs legacy's 0.5-sample lag). Doc correction (Tier A Batch 8
+            // chunk 8c): the previous "knowing parity trade for future sample-exact diffing against a
+            // legacy TX capture" framing overstated what this buys -- legacy's own accumulator uses a
+            // DIFFERENT operand order (`(tim*SampFreq)/1000.0`, multiply-then-divide, vs this port's
+            // divide-then-multiply), and legacy's VCO is a quantized sine LOOKUP TABLE plus integer
+            // gain/mask stages (`sstv.cpp:77-148,2866-2901`), not this port's exact `Math.Sin` --
+            // sample-exact legacy diffing was never actually reachable through this choice alone.
+            // Keep truncation anyway -- it is the real ported behavior, not an invented approximation.
+            // Comment left here so a future reader doesn't "fix" this back to Round without reason.
             var targetEmitted = (long)idealSamplesSoFar;
             var samplesToEmit = targetEmitted - emittedSamples;
             emittedSamples = targetEmitted;
@@ -148,7 +157,13 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                     // when the buffered value is <= 0), so a tone immediately after a gap resumes
                     // in-phase rather than restarting from phase 0. The output bandpass filter
                     // still runs over the zero samples below (sstv.cpp:2914), same as every other
-                    // segment -- do not special-case it out of the filter call.
+                    // segment -- do not special-case it out of the filter call. Doc correction (Tier
+                    // A Batch 8 chunk 8c): for this branch's ONLY reachable trigger (frequencyHz
+                    // exactly 0 -- GenerateFrequencySegments never emits a negative frequency),
+                    // "skip the phase advance" and "advance by 0" are behaviorally identical
+                    // (`phaseIncrement` is itself 0), so the distinction from a zeroed-and-restarted
+                    // phase doesn't actually bite here; it would matter only for a hypothetical
+                    // future f&lt;0 segment, which is why the branch is written as `&lt;= 0`, not `== 0`.
                     sample = 0.0;
                 }
                 else
@@ -340,11 +355,18 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     // filtered length -- e.g. raw "5 9 9 0 0 1 2" (13 chars, under the old raw cap) filters to
     // "5990012" (7 digits), a DIFFERENT string than what capping the raw text first would have left
     // for the encoder to filter, and can flip compact-vs-string form on the wire. Filtering FIRST,
-    // then capping the FILTERED result at 3 (RST digits) + MaxNrStringLength, is the only way to get
-    // an exact (not just safe-but-lossy) bound. FskStationIdEncoder.GenerateNrRstSubPacket re-filters
-    // its input internally -- harmless here since FilterNrRstChars is idempotent (filtering an
-    // already-filtered string is a no-op), so passing pre-filtered text through changes nothing about
-    // what that method computes.
+    // then capping the FILTERED result at 3 (RST digits) + MaxNrStringLength, is the correct fix for
+    // that real bug. Doc correction (Tier A Batch 8 chunk 8c): "exact (not just safe-but-lossy)
+    // bound" overstated what this guarantees -- capping the FILTERED string can still, in principle,
+    // flip a legacy-compact NR to this port's string form for a sufficiently long all-digit
+    // remainder (e.g. a 12-digit remainder ending "...001234" is compact-eligible uncapped but
+    // becomes string-eligible once truncated to 11 chars) -- legacy has no TX-side cap at all, so
+    // there's no "what legacy would send" to match once truncation happens either way. Unreachable
+    // with any realistic RST/NR exchange (real fields are a handful of digits), but not literally
+    // exact for arbitrary input. FskStationIdEncoder.GenerateNrRstSubPacket re-filters its input
+    // internally -- harmless here since FilterNrRstChars is idempotent (filtering an already-
+    // filtered string is a no-op, confirmed directly from its own stateless per-char predicate), so
+    // passing pre-filtered text through changes nothing about what that method computes.
     private static string? CapNrRstTextForStationId(string? raw)
     {
         if (string.IsNullOrEmpty(raw))
