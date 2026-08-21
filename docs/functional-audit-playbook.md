@@ -1938,3 +1938,77 @@ plus a genuinely new bug discovered outside the auditor's own report (`GetStatio
 -- round 15 does NOT count as chunk 3a's 1st clean round. Round 16 is now the earliest round that can
 count as chunk 3a's 1st clean round. Fourteen consecutive rounds (2-15) have now each found something
 real in this file.
+
+**Chunk 3a round 16** (2026-08-21, independent agent, fresh context, agent `a71f21caef3ca99ad`).
+Re-derived and confirmed all of round 15's fixes correct, including independently re-verifying
+finding 2's claim (that the urgent un-key after a timed-out key command is expected to itself fail)
+directly against `RigctldClientProtocol.cs`/`HamlibRadioProtocol.cs`'s own semaphore code rather than
+trusting the prior round's assertion. Found: **(1) [blocker]** the RX-resume `StartReceivingAsync`
+calls (one in `SetPttLockAsync`, three inside `PlayWithPttAsync`'s cleanup) were STILL effectively
+unbounded despite round 10's own fresh-CTS "fix" -- passing `rxResumeCts.Token` as the CALLEE's own
+`ct` parameter does not bound anything, since `MiniAudioDeviceEnumerator.RefreshAsync`/
+`MiniAudioEngine.StartCaptureAsync` only check `ct` at their own start/lock-acquire boundary, never
+during the blocking native call itself. This is the exact same mistaken assumption every round from
+10 through 15 made about this specific CTS, at a site none of them re-examined once it "looked
+already-sufficient." A hang here strands `_transmitInFlight` (permanent TX lockout) or `_pttLockGate`
+(permanent PTT-escape-hatch lockout), depending on which of the 4 sites hangs. **(2) [risk]**
+`StopReceivingAsync`'s wait on `IAudioEngine.StopCaptureAsync()` (no `CancellationToken` parameter at
+all) was genuinely unbounded, previously deferred by round 15 as needing a "paired fix" it didn't yet
+have a design for -- round 16 designed one: capture the `Task` before awaiting, bound the wait with
+`WaitAsync` on the TASK itself (mirroring `StopPlaybackWithWatchdogAsync`'s own established shape for
+the playback side), force `_isReceiving = false` on any outcome (the handlers are already detached
+before the stop attempt, so this is truthful regardless), and use `WaitAsync` specifically instead of
+`Task.WhenAny`+`Task.Delay` so the pre-existing synchronous drain-thread-inline fast path (relied on
+by `OnDecoderRestartCriticallyOverdue`'s own `GetAwaiter().GetResult()` call) stays genuinely
+synchronous with no forced state-machine hop. **(3) [risk]** `TxVolumePercent` flowed straight into
+`PlayWithPttAsync`'s `gain` multiplier with no range check at all, read OR write -- a corrupted/hand-
+edited `settings.json` (the identical threat model `GetStationIdTransmitOptionsAsync`'s own WPM/tone-
+frequency validation already codes against) could put an arbitrary multiplier on the transmitted
+audio (hard-clipping splatter on a positive out-of-range value, phase inversion on a negative one).
+**(4)-(7) [nits]**: `TransmitAsync`'s `Task.Run` sample-count estimate is the one remaining unbounded
+step in the preamble (self-terminating, CPU-bound, not urgent); round 15's own settings-read bound
+changed `GetStationIdTransmitOptionsAsync`'s public preview-path contract to allow `TimeoutException`
+where none could occur before (worth a one-line caller check, not chased here); `Log.TxStarting` logs
+before the single-flight guard, so a rejected overlapping transmit still logs a "TX starting" with no
+matching completion; four more unbounded read-only settings/device-name reads exist at lower
+severity (none holds a shared guard, so a hang there is self-contained, not a lockout).
+
+**Chunk 3a round 16 fixes applied** (2026-08-21, commit TBD). Finding 1: all four
+`StartReceivingAsync(rxResumeCts.Token)` call sites now also wrapped with
+`.WaitAsync(rxResumeCts.Token)` -- reusing the SAME CTS's token for both purposes (rather than adding
+yet another `_cleanupTimeout` reference) since that CTS already carries the exact timeout needed and
+`Task.WaitAsync(CancellationToken)` observes a token's cancellation independently of whether the
+awaited task itself polls it, closing the gap regardless of the callee's own behavior. Finding 2:
+`StopReceivingAsync` rewritten per the design above -- new `Log.CaptureStopWatchdogFired` message,
+fault-observer `ContinueWith` on the abandoned task (matching `StopPlaybackWithWatchdogAsync`'s own
+precedent), swallow-and-log rather than propagate (also matching that precedent), sync-throw-from-
+`StopCaptureAsync()`-itself still handled as its own early-return arm. The stale round-15 deferral
+comment at the `PlayWithPttAsync` call site was updated to point at this fix instead of describing a
+still-open gap. Finding 3: both `GetTxVolumePercentAsync` (read) and `SetTxVolumePercentAsync` (write)
+now clamp to `[0, 100]` via `Math.Clamp` -- clamping at both boundaries (not just read) keeps what's
+actually stored on disk consistent with what every reader promises, rather than relying on the
+read-side clamp to mask an unclamped value forever. Nits 4-7 logged, not fixed this round --
+genuinely lower severity/self-contained, judged disproportionate scope alongside the three real fixes
+above.
+
+New regression tests, one per finding, required two new test-double additions:
+`GatedStartCaptureAudioEngine` (hangs a specific 1-based call number, IGNORING its own `ct` entirely
+-- deliberately unlike `FakeAudioDeviceEnumerator.Gate`, which DOES respect `ct` and so could never
+have caught finding 1's specific gap, explaining why round 10's own original test for this exact code
+path passed even before this fix existed) and `GatedStopCaptureAudioEngine` (the capture-side mirror
+of the existing `GatedStopPlaybackAudioEngine`). All three mutation-verified: findings 1 and 2 each
+hung outright under an external `WaitAsync(TimeSpan.FromSeconds(5))`/`timeout` bound when their fix
+was reverted; finding 3's test initially had a real gap of its own (asserting the write-side clamp by
+reading back through the STILL-clamped getter, which passed even with the write-side clamp
+completely removed, since the read-side clamp alone was already enough to mask it) -- caught by
+actually running the mutation and observing the test stayed green, fixed by asserting against the
+raw stored settings value directly instead, re-mutated to confirm the corrected test now fails with
+the exact predicted unclamped value, then restored. All three fixes reverted, confirmed, and restored
+in turn; no stray test-host processes survived any mutation. All 197
+`ScanlineStudio.Application.Tests` passing (194 pre-existing + 3 new), full solution suite (all
+projects) clean.
+
+Round 16 fixed 1 new blocker (a gap in a mechanism every round since round 10 had assumed was already
+closed) plus 2 more real risks -- round 16 does NOT count as chunk 3a's 1st clean round. Round 17 is
+now the earliest round that can count as chunk 3a's 1st clean round. Fifteen consecutive rounds (2-16)
+have now each found something real in this file.
