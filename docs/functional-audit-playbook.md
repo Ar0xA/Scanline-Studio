@@ -862,7 +862,7 @@ All commits: `e59cabf`/`29ef022`/`80a5a6b` (2a), `a77fc68`/`7321714`/`7c4e0ff`/`
 (2b), `bb0ee82`/`0a665f4`/(this closure) (2c). Full `tests/ScanlineStudio.Core.Sstv.Tests` suite
 last confirmed at 1022/1022 (1 unrelated intentional skip).
 
-## Tier A Batch 3 -- IN PROGRESS, started 2026-08-20
+## Tier A Batch 3 -- IN PROGRESS (chunk 3a CLOSED, 3b/3c not started), started 2026-08-20
 
 PTT/transmit sequencing (real-world harm class -- a leaked keyed transmitter, not just bad
 output). ~2663 lines across 5 files (`SstvSessionService.cs` 1098, `RadioController.cs` 405,
@@ -879,8 +879,13 @@ into 3, following Batch 2's precedent:
 - **Chunk 3c**: `RigctldClientProtocol.cs` + `HamlibRadioProtocol.cs` (the two CAT backend
   protocol implementations).
 
-**Status**: chunk 3a round 1 returned -- 3 real blockers found, fix-request in progress. 3b/3c not
-yet started.
+**Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
+end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
+round gate. Chunks 3b (`RadioController.cs`+`TcpTransport.cs`) and 3c (`RigctldClientProtocol.cs`+
+`HamlibRadioProtocol.cs`) not yet started -- check with the user before starting either, given the
+process changes chunk 3a's close decided (see that entry): ask the auditor to draft substantive fix
+code directly, and close each future round with an explicit go-for-production question rather than
+chasing nits across extra rounds.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
