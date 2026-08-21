@@ -44,6 +44,27 @@ public class RadioControllerTests
     }
 
     [Fact]
+    public async Task ConnectAsync_CancelledToken_PublishesFailed_NotStuckOnConnecting()
+    {
+        // Regression test for chunk 3b round 2's finding F2: the cancellation check used to sit
+        // outside ConnectAsync's own try block, so a cancelled token was the one failure between
+        // Connecting and Connected that published no terminal event at all -- every subscriber
+        // latched on Connecting forever while only the caller saw the throw.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => controller.ConnectAsync(new TestConnectionSpec(), cts.Token));
+
+        Assert.Equal([RadioConnectionState.Connecting, RadioConnectionState.Failed], events);
+    }
+
+    [Fact]
     public async Task SetFrequencyAsync_ThrowsInvalidOperationException_WhenNotConnected()
     {
         var controller = new RadioController([], NullLogger<RadioController>.Instance);

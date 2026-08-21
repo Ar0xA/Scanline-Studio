@@ -98,6 +98,13 @@ public sealed class FakeRadioTransport : IRadioTransport
             {
                 if (_replayPosition >= _replayBytes.Length)
                 {
+                    // Aborts before throwing, mirroring TcpTransport's own real EOF handling
+                    // (bytesRead == 0 -> AbortConnection then throw): IRadioTransport's contract
+                    // requires test doubles to reproduce the real transport's exact semantics, not a
+                    // more forgiving approximation, and leaving _open true here would let
+                    // EnsureConnectedAsync-style reopen logic skip the reopen against a fake that has
+                    // nothing left to give.
+                    AbortConnection();
                     throw new IOException(
                         "FakeRadioTransport: scripted replay bytes exhausted -- the test script didn't " +
                         "provide enough bytes for what the protocol under test tried to read.");
