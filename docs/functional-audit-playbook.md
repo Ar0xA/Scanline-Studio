@@ -5073,4 +5073,48 @@ Passed - Failed: 0, Passed: 1246, Skipped: 1, Total: 1247.
 
 ## Chunk 8a CLOSED
 
-Chunks 8b-8d remain open.
+## Chunk 8b round 1: FskStationIdEncoder.cs, FskStationIdWireFormat.cs, StationIdCallsignNormalizer.cs
+
+Real legacy port -- FSK station-ID wire protocol; byte-exactness matters since real legacy YONIQ/
+MMSSTV stations must be able to decode this port's packets and vice versa.
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is. Zero functional bugs -- every claimed-
+verified behavior was independently re-derived from the real legacy source and confirmed correct: the
+EOT-not-XORed claim on both the callsign and NR/RST-string checksum paths (verified independently,
+not assumed transitively); the -0x20 offset's scope (text chars only, not STX/EOT/checksum bytes);
+the NR/RST compact-eligibility predicate's full 5-condition logic (traced against `Main.cpp:6940`
+statement-by-statement, including the `strlen`-vs-`sscanf` length/parse asymmetry); the compact form's
+checksum SEED (0x02) vs the string form's checksum RESET (0), confirmed genuinely different constants
+with only the string form sending EOT; the callsign normalizer's cap-then-uppercase-then-trim ORDER
+(worked example: 20 leading spaces + callsign caps away the entire real callsign under this order,
+matching legacy exactly); the signed-char filter's `>=0x30 and <=0x7F` reproduction of legacy's signed-
+char comparison.
+
+**Two doc-comment overstatements fixed** (both garbage-either-way for real input, not reachable bugs):
+`FskStationIdEncoder.cs`'s claim that callers do "printable-range validation" was false --
+`StationIdCallsignNormalizer` only caps/uppercases/trims, so a non-ASCII callsign character reaches
+this class's own UTF-16 cast, diverging from legacy's CP932-byte-based offset the same way
+`FskStationIdWireFormat.FilterNrRstChars`'s own doc comment already (correctly) acknowledges for the
+NR/RST field -- just not previously admitted here. `StationIdCallsignNormalizer.cs`'s "faithful port"
+claim was correct about ORDER but overstated about `.Trim()`'s character set (Unicode whitespace vs.
+legacy's real space/tab-only trim) -- unreachable from a single-line settings field, but corrected.
+
+**One contract nit fixed**: `IsCompactEligible`'s `value` out-param was left holding a real parsed
+number on some `false`-return paths (an inconsistent "false means value=0" contract) -- no current
+caller reads it when false, but fixed for correctness's own sake, not just caller discipline.
+
+**Four real coverage gaps closed, all mutation-verified**: the `value==1000` inclusive round-trip
+boundary (only 999/1234/0999 were tested, not the boundary itself); the `strlen`-vs-`sscanf`
+trailing-garbage asymmetry at `l>=4` (only tested at `l<4` before -- `"999:"` false vs `"1234:"` true
+is the exact case that changes outcome based on the PARSED value, not the full string's length); and
+`FilterNrRstChars`'s two inclusive boundary bytes (0x30, 0x7F) which were only tested from the dropped
+side before.
+
+Auditor's verdict: go for production as-is -- no round 2 needed for a round that found no functional
+bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1250, Skipped: 1, Total: 1251.
+
+## Chunk 8b CLOSED
+
+Chunks 8c-8d remain open.

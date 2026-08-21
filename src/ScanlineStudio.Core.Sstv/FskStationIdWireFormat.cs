@@ -73,6 +73,12 @@ internal static class FskStationIdWireFormat
 
         if (value >= CompactNrUpperBound)
         {
+            // Nit fixed (Tier A Batch 8 chunk 8b): TryParse above already wrote a real parsed value
+            // into `value` before this check, so a naive `return false;` here would leave `value`
+            // non-zero on a false return -- unlike every OTHER false path in this method. No current
+            // caller reads `value` when this returns false, but that's a caller-discipline
+            // coincidence, not a contract this method itself enforced.
+            value = 0;
             return false;
         }
 
@@ -82,7 +88,13 @@ internal static class FskStationIdWireFormat
         // characters (any value that short round-trips through %03u's zero-padding), or, at 4+
         // characters, the value itself is >= 1000 (so %03u doesn't need to pad and naturally
         // produces the same digit count).
-        return l < 4 || value >= 1000;
+        if (l < 4 || value >= 1000)
+        {
+            return true;
+        }
+
+        value = 0;
+        return false;
     }
 
     /// <summary>`Main.cpp:6930-6932`: keeps only bytes `&gt;= '0'`. Signed-`char` comparison in the

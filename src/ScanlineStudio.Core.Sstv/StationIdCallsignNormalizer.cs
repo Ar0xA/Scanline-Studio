@@ -35,6 +35,12 @@ public static class StationIdCallsignNormalizer
         var capped = raw.Length > FskStationIdWireFormat.MaxCallsignLength
             ? raw[..FskStationIdWireFormat.MaxCallsignLength]
             : raw;
+
+        // Doc correction (Tier A Batch 8 chunk 8b): the ORDER here (cap, then uppercase, then trim)
+        // is re-verified correct against Option.cpp:445-448, but `.Trim()`'s character set is wider
+        // than legacy's real trim -- legacy's `clipsp`/`SkipSpace` (ComLib.cpp:740-752/1022-1028)
+        // strip only ' ' and '\t', while .NET's `Trim()` strips the full Unicode whitespace set (e.g.
+        // '\n', '\r'). Unreachable from a single-line callsign settings field in practice.
         return capped.ToUpperInvariant().Trim();
     }
 }
