@@ -55,10 +55,20 @@ internal sealed class RgbSequentialScanlineDecoder : IScanlineDecoder
                     // every mode/channel and never needs to know Scottie DX exists as a special case.
                     var freq = reader.ReadPeakPicked(startSample, endSample);
                     // Divisor is 256, not 255 -- matches the encoder and legacy's ColorToFreq inverse.
-                    var value = (byte)Math.Clamp(
-                        (freq - mode.LuminanceMinHz) / (mode.LuminanceMaxHz - mode.LuminanceMinHz) * 256.0,
-                        0,
-                        255);
+                    var rawValue = (freq - mode.LuminanceMinHz) * 256.0 / (mode.LuminanceMaxHz - mode.LuminanceMinHz);
+
+                    // functional-audit chunk 4c, extending ultracode audit finding #28 to this family:
+                    // legacy's RGB-sequential RX branch (Main.cpp:4459-4461, and Scottie's own copy at
+                    // :4230-4233) reads through the same int-RETURNING GetPictureLevel/GetPixelLevel
+                    // (Main.cpp:4038-4056) every Y/R-Y/B-Y site does, so it truncates in the RAW
+                    // ZERO-CENTERED domain, BEFORE the `d += 128` at :4460 and the Limit256 at :4461.
+                    // R/G/B being "naturally 0-255" is a TX-side property (ColorToFreq's input), not an
+                    // RX-side one -- the demodulated picture level here is zero-centered on 1900Hz just
+                    // like luma's, so truncate-toward-zero rounds UP below mid-gray. Flooring the
+                    // already-biased value instead (this method's prior shape) made every sub-128
+                    // channel value exactly one level dark, systematically, on roughly half of every
+                    // decoded image.
+                    var value = (byte)Math.Clamp(Math.Truncate(rawValue - 128.0) + 128.0, 0, 255);
 
                     var index = lineIndex * mode.ImageWidth + x;
                     pixels[index] = SetChannel(pixels[index], scan.ChannelName, value);

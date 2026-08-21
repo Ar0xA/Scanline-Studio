@@ -3,8 +3,8 @@ using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Core.Sstv;
 
-/// <summary>Martin/Scottie-family: N sequential same-shaped channel scans per line, timing and
-/// channel order are pure <see cref="SstvModeDefinition.LineSegments"/> data.</summary>
+/// <summary>Martin/Scottie/AVT/Pasokon/SC2/MC-family: N sequential same-shaped channel scans per
+/// line, timing and channel order are pure <see cref="SstvModeDefinition.LineSegments"/> data.</summary>
 internal sealed class RgbSequentialScanlineEncoder : IScanlineEncoder
 {
     public IEnumerable<(double FrequencyHz, double DurationMs)> GenerateLine(SstvModeDefinition mode, IImageSource image, int lineIndex)
