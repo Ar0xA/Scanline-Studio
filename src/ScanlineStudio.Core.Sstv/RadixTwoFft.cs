@@ -10,7 +10,10 @@ internal static class RadixTwoFft
 {
     /// <summary>In-place forward FFT. <paramref name="real"/>/<paramref name="imag"/> must be the
     /// same power-of-two length; <paramref name="imag"/> is typically all-zero on input (real-valued
-    /// signal) and holds the imaginary output on return.</summary>
+    /// signal) and holds the imaginary output on return. The two spans must not overlap -- there is
+    /// no aliasing guard (none is cheap for spans), and an overlapping call would silently produce
+    /// garbage. Safe today (the only caller, <see cref="WaterfallSource"/>, allocates two distinct
+    /// arrays per frame); flagged for whoever adds a second call site (Tier A Batch 7 chunk 7f).</summary>
     public static void Forward(Span<float> real, Span<float> imag)
     {
         var n = real.Length;
