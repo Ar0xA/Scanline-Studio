@@ -3955,3 +3955,19 @@ in the file family -- a deliberate, already-tested, already-documented choice, n
 Auditor's verdict: unconditional GO -- ship chunk 4c as-is, close now, do not dispatch a round 3.
 
 Full `ScanlineStudio.Core.Sstv.Tests` suite re-confirmed green after the ledger/docs fixes.
+
+## Chunk 4c CLOSED (2026-08-21) -- round 2 clean, round 1 was not (a real bug found and fixed)
+
+**2 rounds, 1 real functional bug found and fixed** (`RgbSequentialScanlineDecoder`'s truncation-domain
+divergence, affecting 15 of the 43 registered modes), plus 2 real coverage gaps closed (the mono-averaged
+row-averaging test, and the RGB truncation-domain pin) and 2 nits (a class-doc omission, a stale
+measured-value ledger). Round 1 was NOT clean (a real blocker), round 2 -- an independent, fresh-context
+re-derivation, not a rubber-stamp -- was clean and gave an unconditional go. Strictly, this doesn't meet
+the formal "2 CONSECUTIVE clean rounds" gate (round 1 wasn't clean), but this is the same shape as
+chunk 3c's own closure (round 1 real findings, round 2 clean + unconditional go). The user, asked
+directly how to close, chose to accept round 2's verdict rather than dispatch a round 3 purely to
+manufacture a second consecutive clean round after the fact.
+
+Commits `b89b4ac` (round 1 code) / `3db5adc` (round 1 docs) / `0eb76ff` (round 2 docs + ledger).
+Full solution suite green throughout; `ScanlineStudio.Core.Sstv.Tests` last confirmed at 1029/1030
+(1 unrelated intentional skip).
