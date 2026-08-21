@@ -4947,4 +4947,57 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 124
 
 ## Chunk 7e CLOSED
 
-Chunk 7f remains open.
+## Chunk 7f round 1: RadixTwoFft.cs
+
+NOT a legacy port (the file's own doc comment states this explicitly, and CLAUDE.md's port-first rule
+is scoped to DSP/codec math that affects decoded-image correctness -- a waterfall spectrogram's exact
+FFT doesn't). Reviewed instead for standalone standard-algorithm correctness: does this radix-2
+decimation-in-time Cooley-Tukey FFT correctly implement the textbook algorithm.
+
+Verdict: EQUIVALENT, unconditional go for production as-is. Zero functional bugs -- the auditor
+hand-traced the bit-reversal permutation at n=8 (every index reaches its correct bit-reversed
+partner, no missed/double swaps) and the butterfly/twiddle structure (confirmed the forward,
+non-conjugated kernel `e^(-2*pi*i/len)`, correct complex product, correct DIT combine order, correct
+twiddle recurrence). Both degenerate sizes (n=1, n=2) independently confirmed as genuinely-correct
+no-ops/base-cases, not accidental. The only call site (`WaterfallSource.cs`) can't alias the two
+spans or hit either throw path. Float-precision twiddle-recurrence error at this file's realistic
+sizes (≤2048) is ~80-100dB below anything a spectrogram display resolves -- real but immaterial,
+not a defect.
+
+Fixes applied: documented the previously-unstated non-aliasing requirement between `real`/`imag`
+(safe today, only matters for a future second caller).
+
+**Real coverage gap closed with a mutation-verified test.** Every existing test fed a real-valued
+(all-zero `imag`) input and asserted only magnitudes -- a conjugated (wrong-sign) FFT kernel would
+have passed every one of them unchanged (the cosine test even explicitly accepts either a bin or its
+mirror). Added `Forward_ComplexExponentialAtBinK_PeaksExactlyAtThatBin_NotItsMirror`, feeding a
+genuine complex exponential input (the one signal that distinguishes the two sign conventions) and
+asserting the peak lands at the exact bin, not its mirror -- also closes the "non-zero `imag` input
+never exercised" gap in the same test. Mutation-verified: flipping the twiddle sign to the conjugated
+convention makes the peak land at bin 59 instead of 5 (n=64, targetBin=5), exactly as predicted.
+Also added `Forward_LengthOne_IsANoOp` and `Forward_LengthTwo_MatchesHandComputedTransform`, pinning
+the two previously-unasserted degenerate sizes with exact hand-computed values.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1246, Skipped: 1, Total: 1247.
+
+## Chunk 7f CLOSED
+
+## Tier A Batch 7 -- CLOSED
+
+DSP primitives (numeric fidelity, float-vs-double): `HilbertFmDemodulator.cs`, `PllFmDemodulator.cs`,
+`ZeroCrossingFrequencyCounter.cs`, `SearchBandpassFilter.cs`, `TxOutputBandpassFilter.cs`,
+`AfcTracker.cs`, `LevelAgc.cs`, `IirFilter.cs`, `MovingAverage.cs`, `TankFilter.cs`, `Vco.cs`,
+`RadixTwoFft.cs` -- all 6 chunks (7a-7f) closed. Zero functional bugs found across the entire batch.
+Real findings across the batch: one real coverage gap and two doc-overstatement corrections in 7a
+(chunk 7a also added 4 new golden-value test files for previously-untested primitives); a vacuous
+test replaced with a genuinely-discriminating one plus a doc-comment scope correction in 7b; one
+overstated "mathematically identical" claim corrected (twice, echoed into a second file) plus two
+coverage gaps closed in 7c; one stale/backwards cross-class doc comment plus one coverage gap plus a
+dropped-setting `docs/removed-features.md` entry in 7d; the batch's most substantive round (7e, full
+`AfcTracker.cs` audit) found zero functional bugs but several doc/citation corrections, one legacy-
+fidelity expression-order fix, and one coverage gap; 7f (non-port, standalone-correctness review)
+found zero functional bugs, one doc nit, and closed a real sign-convention coverage gap. Commits:
+8e9ffdf, c451c1f, b2bb210, 51b2c82, e150259, plus 7f's pending commit.
