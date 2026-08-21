@@ -25,7 +25,7 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
                 // Piece 10: peak-vs-bare folded into the SAME exhaustive channel switch that already
                 // picks the destination array, not a second parallel switch that could drift out of
                 // sync with this one. "Y" peak-picks (Main.cpp:4330, GetPictureLevel); "RY"/"BY" stay
-                // bare (Main.cpp:4338/4347, GetPixelLevel) -- legacy never peak-picks chroma here.
+                // bare (Main.cpp:4341/4350, GetPixelLevel) -- legacy never peak-picks chroma here.
                 // SHOULD item 11 (spec/14-roadmap.md): clamp folded into the same switch -- legacy
                 // Limit256's luma (Main.cpp:4332, `d = Limit256(d)` right after luma's own read) but
                 // NOT R-Y/B-Y, neither of which ever calls Limit256 -- comprehensive-review correction:
@@ -78,6 +78,16 @@ internal sealed class YCbCrSequentialScanlineDecoder : IScanlineDecoder
             }
             else
             {
+                // Deliberate, verified divergence for MR/ML's three 0.1ms hold gaps: legacy's RX
+                // segment offsets are `m_SG = m_KS + 0.1; m_SB = m_CG + 0.1` (sstv.cpp:871-874 /
+                // :966-969) -- 0.1 SAMPLES, not 0.1ms, since unlike every other term in those blocks
+                // the 0.1 is never scaled by `* m_SampFreq / 1000.0`. Legacy's own TX emits a real
+                // 0.1ms gap (Main.cpp:6772's `mp->Write(d, 0.1)`; the second arg is ms, cf. LineR72's
+                // `mp->Write(1500, 4.5)`), so legacy's RX is ~1 sample early on R-Y and ~2 on B-Y
+                // against its own transmitter (0.42px/0.84px of MR73 chroma at 11025Hz). This port
+                // accumulates the real 0.1ms, i.e. it matches legacy's TX and real on-air signals
+                // rather than legacy's RX bug -- an intentional choice, NOT an unported constant to
+                // "correct" later.
                 idealSamplesSoFar += segment.DurationMs / 1000.0 * sampleRate;
             }
         }
