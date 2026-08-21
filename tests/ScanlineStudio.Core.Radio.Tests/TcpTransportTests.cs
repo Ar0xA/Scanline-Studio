@@ -86,6 +86,13 @@ public class TcpTransportTests
             }
         });
 
+        // Regression test for chunk 3b round 2's finding F6: this used to leave _stream non-null
+        // after the peer closed, so IsOpen kept reading true on a dead socket -- and IsOpen is
+        // exactly what RigctldClientProtocol.EnsureConnectedAsync uses to decide whether to reopen,
+        // so a later Set*Async on this same protocol instance would skip the reopen and write into a
+        // dead socket.
+        Assert.False(transport.IsOpen);
+
         listener.Stop();
     }
 

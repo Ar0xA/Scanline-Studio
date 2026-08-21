@@ -110,12 +110,17 @@ public sealed partial class TcpTransport : IRadioTransport
     public async Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_stream is null)
+        // Captured into a local, same as ReadAsync: AbortConnection (a cancelled read on the read side,
+        // CloseAsync, or DisposeAsync during shutdown) nulls _stream, so re-reading the field on the
+        // write line below would turn this guarded InvalidOperationException into a
+        // NullReferenceException instead.
+        var stream = _stream;
+        if (stream is null)
         {
             throw new InvalidOperationException("Transport is not open -- call OpenAsync first.");
         }
 
-        await _stream.WriteAsync(data, ct).ConfigureAwait(false);
+        await stream.WriteAsync(data, ct).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<byte> ReadAsync(
@@ -159,6 +164,12 @@ public sealed partial class TcpTransport : IRadioTransport
 
                 if (bytesRead == 0)
                 {
+                    // Abort, don't merely throw: leaving _stream non-null after the peer closed makes
+                    // IsOpen lie, and IsOpen is exactly what RigctldClientProtocol.EnsureConnectedAsync
+                    // uses to decide whether to reopen -- so a later Set*Async on this same protocol
+                    // instance would skip the reopen and write into a dead socket. Same reasoning as
+                    // the cancellation path above.
+                    AbortConnection();
                     throw new IOException("rigctld connection closed by remote host.");
                 }
 
