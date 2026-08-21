@@ -107,6 +107,79 @@ public class TcpTransportTests
     }
 
     [Fact]
+    public async Task ReadAsync_AbortsConnection_OnAResetCloseNotJustAGracefulOne()
+    {
+        // Regression test for chunk 3b round 4's finding 2: ReadAsync's socket-read try only caught
+        // OperationCanceledException, so a peer RST (rigctld killed, network blip -- arrives as an
+        // IOException/SocketException from the read, not as bytesRead == 0 like a graceful FIN close)
+        // fell straight through with _stream left non-null. IsOpen is exactly what
+        // RigctldClientProtocol.EnsureConnectedAsync uses to decide whether to reopen, so a later
+        // Set*Async on this same protocol instance would write into a dead socket -- the same failure
+        // shape round 2 already fixed for the graceful-close case.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync();
+
+        await using var transport = new TcpTransport("127.0.0.1", port);
+        await transport.OpenAsync(CancellationToken.None);
+
+        using (var serverClient = await acceptTask)
+        {
+            // Socket.Close(0) forces an abrupt RST instead of a graceful FIN -- confirmed against a
+            // standalone probe on this environment: setting LingerState then disposing normally still
+            // produced a graceful 0-byte read here, NOT an exception, so that approach would have
+            // silently tested nothing. Close(0) reliably throws IOException/SocketException
+            // ("Connection reset by peer") on the client-side read instead.
+            serverClient.Client.Close(0);
+        }
+
+        await Assert.ThrowsAsync<IOException>(async () =>
+        {
+            await foreach (var _ in transport.ReadAsync(CancellationToken.None))
+            {
+            }
+        });
+
+        Assert.False(transport.IsOpen);
+
+        listener.Stop();
+    }
+
+    [Fact]
+    public async Task WriteAsync_AbortsConnection_OnAResetClose()
+    {
+        // Write-side counterpart of ReadAsync_AbortsConnection_OnAResetCloseNotJustAGracefulOne --
+        // chunk 3b round 4's finding 2 covered WriteAsync too: a failed write (IOException/
+        // SocketException from a peer RST) used to leave _stream non-null exactly like the read side
+        // did before this fix.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var acceptTask = listener.AcceptTcpClientAsync();
+
+        await using var transport = new TcpTransport("127.0.0.1", port);
+        await transport.OpenAsync(CancellationToken.None);
+
+        using (var serverClient = await acceptTask)
+        {
+            serverClient.Client.Close(0);
+        }
+
+        // Give the RST time to actually land on the loopback interface before writing -- an immediate
+        // write can succeed once before the reset is observed locally (confirmed via a standalone
+        // probe on this environment).
+        await Task.Delay(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAsync<IOException>(
+            () => transport.WriteAsync(Encoding.ASCII.GetBytes("f\n"), CancellationToken.None));
+
+        Assert.False(transport.IsOpen);
+
+        listener.Stop();
+    }
+
+    [Fact]
     public async Task ReadAsync_ThrowsIOException_WhenRemoteClosesConnection()
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);

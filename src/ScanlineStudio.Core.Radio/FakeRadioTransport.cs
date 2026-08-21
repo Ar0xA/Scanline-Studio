@@ -102,6 +102,19 @@ public sealed class FakeRadioTransport : IRadioTransport
 
         while (true)
         {
+            if (ct.IsCancellationRequested)
+            {
+                // Checked at the loop top, before a refill -- matching TcpTransport's own real ordering
+                // (see IRadioTransport's buffer-survival contract doc comment): a cancelled read is NOT
+                // the benign "caller got its line and stopped" case the buffer-survival guarantee is
+                // written for, so it must not preserve state -- it aborts the connection, same as the
+                // real transport killing its socket. Checking after a refill (as an earlier version of
+                // this did) would let a pre-cancelled token consume a replay chunk first -- more
+                // forgiving than the real transport, which the interface contract explicitly forbids.
+                AbortConnection();
+                ct.ThrowIfCancellationRequested();
+            }
+
             if (_readOffset >= _readLength)
             {
                 if (_replayPosition >= _replayBytes.Length)
@@ -130,16 +143,6 @@ public sealed class FakeRadioTransport : IRadioTransport
                 await Task.Yield();
             }
 
-            if (ct.IsCancellationRequested)
-            {
-                // Mirrors TcpTransport's own real semantics (see IRadioTransport's buffer-survival
-                // contract doc comment): a cancelled read is NOT the benign "caller got its line and
-                // stopped" case the buffer-survival guarantee is written for, so it must not preserve
-                // state -- it aborts the connection, same as the real transport killing its socket.
-                AbortConnection();
-                ct.ThrowIfCancellationRequested();
-            }
-
             yield return _readBuffer[_readOffset++];
         }
     }
@@ -154,7 +157,7 @@ public sealed class FakeRadioTransport : IRadioTransport
     public ValueTask DisposeAsync()
     {
         _disposed = true;
-        _open = false;
+        AbortConnection();
         return ValueTask.CompletedTask;
     }
 }
