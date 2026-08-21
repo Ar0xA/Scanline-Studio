@@ -91,7 +91,11 @@ public class CwMorseGeneratorTests
 
     [Theory]
     [InlineData('あ')] // HIRAGANA LETTER A ('あ') -- masks to 0x42 = 'B' under a naive `&0x7f`.
-    [InlineData('À')] // Latin-1 'À' -- masks to 0x40, one below 'A'.
+    [InlineData('À')] // Latin-1 'À' -- masks to 0x40 = '@' under a naive `&0x7f` (comment corrected,
+                       // Tier A Batch 8 chunk 8d: '@' is a SPECIAL-CASED 250ms-silence branch checked
+                       // BEFORE the table lookup, sstv.cpp:2976-2979 -- not an aliased table letter --
+                       // but a naive mask would still route it there instead of to real silence for
+                       // the right reason, which is exactly the hazard this test guards against.
     public void Generate_NonAsciiCharacter_ProducesSilence_NotAnAliasedLetter(char nonAscii)
     {
         // Code-review finding: legacy iterates CP932 BYTES (Main.cpp:6976), each independently
@@ -123,14 +127,83 @@ public class CwMorseGeneratorTests
     }
 
     [Fact]
-    public void MillisecondsPerDotFromWpm_IsExactInverseOfLegacysOwnFormula()
+    public void MillisecondsPerDotFromWpm_RoundTripsItsOwn1110Constant()
     {
-        // Main.cpp:1888: m_CWIDWPM = (1110.0 / (m_CWIDSpeed + 30)) + 0.5 -- verify round-trip
-        // (minus legacy's own +0.5 rounding term, which only applies going dot->WPM for display).
+        // Renamed (Tier A Batch 8 chunk 8d): this only proves internal self-consistency of this
+        // method's own `1110.0/wpm` formula -- NOT a round trip against legacy's real WPM-to-dot
+        // conversion, which lives at Main.cpp:13742 (SendCWID), not Main.cpp:1888 (that's the
+        // dot-to-WPM DISPLAY direction). Legacy's real conversion does its own +0.5 rounding AND
+        // quantizes to a whole millisecond (e.g. WPM 28 -> exactly 40ms there, ~39.64ms here) --
+        // this port's dot length is NOT bit-identical to legacy's, by design (an unquantized value
+        // is arguably a better match to the LABELED wpm than legacy's own quantization is).
         const double dotMs = 60.0;
-        var wpm = 1110.0 / dotMs; // legacy's forward formula without the +0.5 display-rounding term
+        var wpm = 1110.0 / dotMs;
         var roundTrippedDotMs = CwMorseGenerator.MillisecondsPerDotFromWpm(wpm);
 
         Assert.Equal(dotMs, roundTrippedDotMs, precision: 9);
+    }
+
+    [Theory]
+    [InlineData('0', "-----")]
+    [InlineData('1', ".----")]
+    [InlineData('2', "..---")]
+    [InlineData('3', "...--")]
+    [InlineData('4', "....-")]
+    [InlineData('5', ".....")]
+    [InlineData('6', "-....")]
+    [InlineData('7', "--...")]
+    [InlineData('8', "---..")]
+    [InlineData('9', "----.")]
+    [InlineData('=', "-...-")]
+    [InlineData('>', ".-.-.")]
+    [InlineData('?', "..--..")]
+    [InlineData('A', ".-")]
+    [InlineData('B', "-...")]
+    [InlineData('C', "-.-.")]
+    [InlineData('D', "-..")]
+    [InlineData('E', ".")]
+    [InlineData('F', "..-.")]
+    [InlineData('G', "--.")]
+    [InlineData('H', "....")]
+    [InlineData('I', "..")]
+    [InlineData('J', ".---")]
+    [InlineData('K', "-.-")]
+    [InlineData('L', ".-..")]
+    [InlineData('M', "--")]
+    [InlineData('N', "-.")]
+    [InlineData('O', "---")]
+    [InlineData('P', ".--.")]
+    [InlineData('Q', "--.-")]
+    [InlineData('R', ".-.")]
+    [InlineData('S', "...")]
+    [InlineData('T', "-")]
+    [InlineData('U', "..-")]
+    [InlineData('V', "...-")]
+    [InlineData('W', ".--")]
+    [InlineData('X', "-..-")]
+    [InlineData('Y', "-.--")]
+    [InlineData('Z', "--..")]
+    public void Generate_EveryTableEntry_MatchesItsRealItuMorsePattern(char letter, string ituPattern)
+    {
+        // Closes a coverage gap flagged by Tier A Batch 8 chunk 8d (docs/functional-audit-playbook.md):
+        // only 'A' (and '/' and '.', the two special-cased-outside-the-table characters) had any
+        // regression protection before this test -- 40 of the table's 43 hand-typed hex constants
+        // (CwMorseGenerator.cs:37-51) had zero coverage. A single-digit typo in the table (e.g.
+        // swapping F=0xd004 and L=0xb004) would produce a plausible-sounding wrong letter that
+        // nothing in the suite would have caught. Independently derived from real ITU Morse code,
+        // not from the table itself -- confirms both the table's own values AND the bit-scan
+        // direction (MSB-first) are correct for every reachable entry, not just 'A'.
+        var segments = CwMorseGenerator.Generate(letter.ToString(), ToneHz, DotMs).Skip(1).ToList(); // skip leading '@'
+
+        var expected = new List<(double FrequencyHz, double DurationMs)>();
+        foreach (var element in ituPattern)
+        {
+            expected.Add((ToneHz, element == '.' ? DotMs : DotMs * 3));
+            expected.Add((0.0, DotMs));
+        }
+
+        expected.Add((0.0, DotMs * 2)); // inter-character tail
+
+        Assert.Equal(expected, segments);
     }
 }

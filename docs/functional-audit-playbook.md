@@ -5176,4 +5176,60 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 125
 
 ## Chunk 8c CLOSED
 
-Chunk 8d remains open.
+## Chunk 8d round 1: CwMorseGenerator.cs
+
+Last chunk of Batch 8. Real legacy port -- `WriteCWID`'s bit-packed dot/dash Morse table.
+
+Verdict: EQUIVALENT-WITH-RISKS, go for production as-is. Zero functional bugs -- the auditor hand-
+decoded and independently verified all 43 table entries against real ITU Morse (not a spot check),
+hand-traced the bit-scan direction against 3 characters plus the auditor's own additional checks, and
+confirmed the `'.'->'R'` remap, the `'/'` literal pattern, the `'@'` leading-silence special case, and
+the raw-char-before-uppercasing non-ASCII ordering all match legacy exactly.
+
+**Doc-comment overstatements fixed, all pre-existing-behavior-accurate, framing-only:**
+- The "WPM UI value is never actually applied" legacy-bug claim was too absolute -- `sys.m_CWIDSpeed`
+  is a GLOBAL legacy field legacy's OTHER CW-send call site (`SendCWID`) DOES write from the
+  configured WPM, so a session that has sent CW manually even once picks up the WPM-derived dot
+  length for subsequent post-image CW-ID too. The real, narrower bug: `OutputCWID` itself never
+  performs that conversion, so only a session that never manually sent CW is stuck at legacy's
+  hardcoded default. This port's fix is still correct either way; only the framing was overstated.
+- `MillisecondsPerDotFromWpm`'s doc comment and its own test (`MillisecondsPerDotFromWpm_IsExactInverseOfLegacysOwnFormula`,
+  renamed) both overclaimed exact inversion of legacy's real WPM-to-dot conversion -- the cited legacy
+  line was actually the DOT-to-WPM display direction; legacy's real WPM-to-dot conversion lives
+  elsewhere, rounds differently, and quantizes to a whole millisecond (WPM 28: legacy 40ms exactly vs.
+  this port's ~39.64ms, inaudible but not bit-identical). Also fixed a sentence with the "~8% fast"
+  direction stated backwards.
+- A test comment claiming a non-ASCII char "masks to 0x40, one below 'A'" was numerically true but
+  misleading about which code path it actually aliases into (0x40 is `'@'`, the special-cased
+  250ms-silence branch, not an aliased table letter) -- corrected.
+
+**One real coverage gap closed with a mutation-verified test.** Only `'A'` (plus `'/'` and `'.'`, the
+two special-cased-outside-the-table characters) had any regression protection before this round -- 40
+of the table's 43 hand-typed hex constants had zero coverage; a single-digit typo could silently
+produce a plausible-sounding wrong letter. Added `Generate_EveryTableEntry_MatchesItsRealItuMorsePattern`,
+a golden-vector `[Theory]` covering all 40 reachable non-empty entries (`0`-`9`, `=`, `>`, `?`, `A`-`Z`),
+independently derived from real ITU Morse, not from the table itself. Mutation-verified: swapping the
+`F`/`L` table entries (the auditor's own suggested example) makes both letters' rows fail exactly as
+predicted.
+
+Auditor's verdict: go for production as-is -- no round 2 needed for a round that found no functional
+bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1290, Skipped: 1, Total: 1291.
+
+## Chunk 8d CLOSED
+
+## Tier A Batch 8 -- CLOSED
+
+Binary/encoding boundaries: `WavFile.cs`, `FskStationIdEncoder.cs`, `FskStationIdWireFormat.cs`,
+`StationIdCallsignNormalizer.cs`, `AnalogFmSstvEncoder.cs`, `CwMorseGenerator.cs` -- all 4 chunks
+(8a-8d) closed. Zero functional bugs found across the entire batch. Real findings across the batch:
+8a (not a legacy port -- standalone RIFF/WAV correctness) found and fixed two real malformed-input
+robustness gaps plus six coverage gaps; 8b (real FSK wire-protocol port) found zero functional bugs,
+two doc overstatements, one contract nit, and four coverage gaps; 8c (the batch's largest/highest-risk
+file, the TX encode core) found zero functional bugs and four doc overstatements, closed one real
+coverage gap that also caught a real self-inflicted regression during editing before it reached a
+commit, and the auditor explicitly ruled out the pre-budgeted round 2; 8d (last chunk, the CW Morse
+generator) found zero functional bugs, three doc overstatements, and closed one real coverage gap
+(40 of 43 table entries previously untested) with a mutation-verified golden-vector test. Commits:
+6242ce0, 16e4aa6, 434c5ca, plus 8d's pending commit.

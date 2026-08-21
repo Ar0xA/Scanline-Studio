@@ -19,18 +19,31 @@ namespace ScanlineStudio.Core.Sstv;
 /// all; WPM-to-dot-length is the caller's responsibility (<see cref="MillisecondsPerDotFromWpm"/>).
 /// Per the CW-ID/FSK station-ID subsystem implementation plan (round-2 finding, user-approved): the
 /// configured WPM is wired to dot length correctly here, a deliberate, documented deviation from an
-/// apparent legacy bug where the WPM UI value is never actually applied to CW-ID's own post-image
-/// dot length (`Option.cpp:594`, `Main.cpp:1886-1888`, `Main.cpp:13742` -- the conversion exists but
-/// <c>OutputCWID</c> never calls the code path that would apply it).
+/// apparent legacy bug -- doc correction (Tier A Batch 8 chunk 8d): the bug is narrower than
+/// "never actually applied" claimed. <c>sys.m_CWIDSpeed</c> is a GLOBAL legacy field
+/// (`ComLib.h:263`), and legacy's OTHER CW-send call site, <c>SendCWID</c> (`Main.cpp:13742`), DOES
+/// write it from the configured WPM -- so once a session has sent CW manually even once (Tune-button
+/// CW, a repeater-answer send, or the CW menu), a SUBSEQUENT post-image <c>OutputCWID</c> genuinely
+/// does pick up the WPM-derived dot length and keeps using it. The real, narrower bug: `OutputCWID`
+/// itself (`sstv.cpp:2967`) never performs that conversion, so a session that never sent CW manually
+/// runs post-image CW-ID at legacy's hardcoded default (`m_CWIDSpeed=10` -&gt; 40ms dot,
+/// `Main.cpp:904`) regardless of the configured WPM, since `SaveIni` (`Main.cpp:2396-2399`) persists
+/// `CWIDWPM` but never the derived `CWIDSpeed`. This port's fix (always deriving dot length from the
+/// configured WPM) is still the right call either way -- only the "never applied" framing was
+/// overstated.
 /// </summary>
 internal static class CwMorseGenerator
 {
-    /// <summary>Inverse of legacy's own WPM formula (`Main.cpp:1888`:
-    /// <c>m_CWIDWPM = (1110.0 / (m_CWIDSpeed + 30)) + 0.5</c>, and <c>dot = m_CWIDSpeed + 30</c>
-    /// directly per `sstv.cpp:2967` -- so, dropping the +0.5 display-rounding term, <c>wpm =
-    /// 1110.0 / dot</c>, inverted here). Constant is 1110, NOT the standard PARIS-timing 1200;
-    /// implementing "standard" Morse WPM here would run CW-ID ~8% fast relative to what the
-    /// configured WPM number implies.</summary>
+    /// <summary>Doc correction (Tier A Batch 8 chunk 8d): NOT literally the exact inverse of
+    /// legacy's real WPM-to-dot conversion. `Main.cpp:1888` (`m_CWIDWPM = (1110.0/(m_CWIDSpeed+30))
+    /// + 0.5`) is the DOT-to-WPM display direction, not WPM-to-dot; legacy's actual WPM-to-dot
+    /// conversion lives at `Main.cpp:13742` (`SendCWID`), does its own `+0.5` int-assignment rounding
+    /// AND quantizes to a whole millisecond -- at WPM 28 legacy's real dot is exactly 40ms, this
+    /// method's `1110.0/28` is ~39.64ms (~0.9% faster), inaudible but not bit-identical. The `1110`
+    /// constant itself IS correctly carried over (not the standard PARIS-timing `1200`) -- using
+    /// `1200` here would run CW-ID slower than legacy at any given configured WPM number (legacy's
+    /// own `1110` constant already runs ~8% fast relative to standard PARIS timing for the same WPM
+    /// label -- an earlier version of this comment had this direction backwards).</summary>
     public static double MillisecondsPerDotFromWpm(double wpm) => 1110.0 / wpm;
 
     // sstv.cpp:2953-2966, verbatim byte values.
