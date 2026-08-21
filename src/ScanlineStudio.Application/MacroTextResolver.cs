@@ -30,7 +30,12 @@ namespace ScanlineStudio.Application;
 /// (ITU/FCC callsign format is alphanumeric plus <c>/</c>), so this has no reachable real-world
 /// effect today -- documented here so a future caller doesn't rely on a same-scan guarantee that
 /// doesn't actually hold, rather than silently restructuring a working, tested two-pass resolver to
-/// close a gap nothing can currently trigger.</para></summary>
+/// close a gap nothing can currently trigger. Doc correction (Tier A Batch 10 chunk 10b): "cannot
+/// contain" is overstated as a HARD guarantee -- <see cref="OperatorSettings.Callsign"/> is an
+/// explicitly unvalidated <c>string?</c> (see that type's own doc comment), so a user COULD type
+/// <c>{name}</c> into the callsign box; unreachability rests on real-world convention, not
+/// enforcement. The consequence stays benign either way (the odd callsign resolves one level
+/// further, or is left verbatim).</para></summary>
 public interface IMacroTextResolver
 {
     /// <summary>Resolves every recognized token in <paramref name="rawText"/> against
@@ -79,6 +84,12 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
     private static string ResolvePercentTokens(string rawText, OperatorSettings operatorSettings)
     {
         var sb = new StringBuilder(rawText.Length);
+        // Doc note (Tier A Batch 10 chunk 10b): legacy's %D/%T don't read the system clock directly
+        // -- they call GetUTC (ComLib.cpp:319-323), which applies the user's own m_TimeOffset/
+        // m_TimeOffsetMin clock-correction setting (ComLib.cpp:249-251) on top of GetSystemTime. This
+        // port has no equivalent setting anywhere (confirmed by grep), so a legacy user who had
+        // configured a clock offset would see %D/%T resolve differently here. See
+        // docs/removed-features.md's "Macro %D/%T clock-offset correction" entry.
         var now = DateTime.UtcNow;
 
         for (var i = 0; i < rawText.Length; i++)

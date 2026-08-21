@@ -97,6 +97,25 @@ public sealed class MacroTextResolverTests
     }
 
     [Fact]
+    public void TimeToken_ResolvesToUtcTimeInLegacyFormat()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 10 chunk 10b (docs/functional-audit-playbook.md):
+        // %T -- one of only three ported legacy %-token cases -- had zero test coverage. Same shape-
+        // only check as DateToken above, for the same reason (avoids an hour/minute-rollover race
+        // against DateTime.UtcNow during a slow test run).
+        var settings = new OperatorSettings();
+
+        var resolved = _resolver.Resolve("%T", settings);
+        var parts = resolved.Split(':');
+
+        Assert.Equal(2, parts.Length);
+        Assert.Equal(2, parts[0].Length);
+        Assert.True(int.TryParse(parts[0], out var hour) && hour is >= 0 and <= 23);
+        Assert.Equal(2, parts[1].Length);
+        Assert.True(int.TryParse(parts[1], out var minute) && minute is >= 0 and <= 59);
+    }
+
+    [Fact]
     public void EmptyInput_ReturnsEmptyString()
     {
         var settings = new OperatorSettings();

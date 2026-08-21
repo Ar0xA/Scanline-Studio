@@ -227,3 +227,18 @@ and its resolution, verified directly against current source, not inferred from 
   for a narrower/wider transmit passband, has no way to reproduce that in this port. No golden-vector
   or decode-correctness impact for the default case — this is a TX-side spectral-shaping option, not
   a core DSP-math difference — but it is a real, silently-dropped user-facing capability.
+
+## Macro %D/%T clock-offset correction
+
+- **Legacy**: `MacroText`'s `%D`/`%T` tokens (`Main.cpp:10762-10776`) call `GetUTC` (`ComLib.cpp:319-323`),
+  which applies the user's own `m_TimeOffset`/`m_TimeOffsetMin` clock-correction setting
+  (`ComLib.cpp:249-251`) on top of `GetSystemTime` before formatting.
+- **Replacement**: none. Found during the functional-audit sweep (Tier A Batch 10, chunk 10b, round 1,
+  2026-08-22). `MacroTextResolver.ResolvePercentTokens` reads `DateTime.UtcNow` directly, with no
+  equivalent offset setting anywhere in this port (confirmed by grep).
+- **Impact**: unaffected for the common case (a user whose system clock is accurate needs no offset,
+  so `m_TimeOffset` defaults to zero). A legacy user who had configured a non-zero clock-offset
+  correction (compensating for a known-wrong system clock) would see `{name}`'s `%D`/`%T` fill values
+  resolve to a different date/time in this port than legacy would have produced, with no setting to
+  reproduce the correction. No decode-correctness impact — this only affects text baked into a TX
+  overlay via macro substitution, not any DSP/decode path.

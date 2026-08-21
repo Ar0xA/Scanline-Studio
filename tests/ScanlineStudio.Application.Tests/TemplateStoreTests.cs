@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 
 namespace ScanlineStudio.Application.Tests;
@@ -10,7 +11,7 @@ public sealed class TemplateStoreTests : IDisposable
     private readonly FakeImageFileLoader _imageFileLoader = new();
     private readonly FakeTransmitImagePreparer _preparer = new();
 
-    private TemplateStore CreateStore() => new(_imageSourceWriter, _imageFileLoader, _preparer, _root);
+    private TemplateStore CreateStore() => new(_imageSourceWriter, _imageFileLoader, _preparer, NullLogger<TemplateStore>.Instance, _root);
 
     public void Dispose()
     {
@@ -150,6 +151,29 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Single(afterSave);
         Assert.Equal("Contest", afterSave[0].Name);
         Assert.Equal(templateId, afterSave[0].Id);
+    }
+
+    [Fact]
+    public async Task ListAsync_OneCorruptManifest_SkipsItButStillListsTheRest()
+    {
+        // Closes a real coverage gap flagged by Tier A Batch 10 chunk 10b (docs/functional-audit-playbook.md):
+        // File.WriteAllTextAsync in SaveAsync is not atomic, so a crash/power-loss mid-save can leave
+        // a truncated/corrupt template.json -- previously this killed the ENTIRE rack listing (every
+        // other template's manifest too), not just the one bad template, for a store whose whole
+        // design explicitly supports hand-copying/moving folders around.
+        var store = CreateStore();
+        var goodId = store.CreateTemplateId("Good");
+        await store.SaveAsync(goodId, "Good", new PersistedTemplateDocument([]));
+
+        var corruptId = store.CreateTemplateId("Corrupt");
+        var corruptDirectory = Path.Combine(_root, corruptId);
+        Directory.CreateDirectory(corruptDirectory);
+        await File.WriteAllTextAsync(Path.Combine(corruptDirectory, "template.json"), "{ this is not valid json");
+
+        var results = await store.ListAsync();
+
+        Assert.Single(results);
+        Assert.Equal(goodId, results[0].Id);
     }
 
     [Fact]

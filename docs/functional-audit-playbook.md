@@ -5566,4 +5566,62 @@ Full `ScanlineStudio.Application.Tests` run: 228 passed, 0 failed.
 
 ## Chunk 10a CLOSED
 
-Chunks 10b-10c remain open.
+## Chunk 10b round 1: TemplateStore.cs, MacroTextResolver.cs
+
+`MacroTextResolver.cs` is PARTLY a real legacy port (its `%`-token resolution is a scoped-down C#
+port of legacy `MacroText`, `Main.cpp:10679-10833`); `TemplateStore.cs` is entirely new (no legacy
+template-designer precedent). Single round per this batch's own downgraded rigor.
+
+Verdict: go for production as-is. Zero functional bugs -- every legacy citation independently
+re-verified line-by-line against the real source, including the two claims most likely to be hand-
+waved: legacy's `p++` after `%` really is unconditional (a trailing lone `%` resolves to `%%` in both
+legacy and this port, confirmed by tracing what happens to a NUL byte read at end-of-string in both),
+and `LogConv.cpp`'s `MONT1[]` month-abbreviation array matches this port's own array in all 13
+entries including the unused index-0 slot. .NET regex non-rescan semantics (a fill value containing
+`{something}` is never re-resolved) and the `TemplateStore.SaveAsync` thumbnail-before-manifest
+ordering guarantee (a thumbnail failure genuinely leaves zero manifest, not a partial one) were both
+independently confirmed, not just trusted from their own doc comments.
+
+**One real robustness gap found and fixed.** `ListAsync` had no guard against a `JsonException` from
+a corrupt/truncated `template.json` -- since `File.WriteAllTextAsync` in `SaveAsync` isn't atomic (no
+temp-file-then-rename), a crash/power-loss mid-save can leave a truncated manifest, and this
+previously killed the ENTIRE rack listing (every other template too), not just the one bad template,
+for a store whose whole design explicitly supports hand-copying/moving folders around. Fixed by
+catching `JsonException` around just the read+deserialize, logging, and skipping only that one
+template -- required adding `ILogger<TemplateStore>` to the class (CLAUDE.md's mandatory
+`[LoggerMessage]` logging rule for changed I/O code), updated at all 3 call sites (DI resolves the new
+constructor automatically; the 2 test-helper factories and 1 direct test construction needed an
+explicit `NullLogger<TemplateStore>.Instance`).
+
+**Fixed one doc-comment overstatement and one real doc omission (with a `docs/removed-features.md`
+entry, per CLAUDE.md's removal rule):** the claim that "real amateur-radio callsigns cannot contain
+`{`/`}`" was true by ITU/FCC convention but overstated as an enforced guarantee --
+`OperatorSettings.Callsign` is explicitly unvalidated, so a user COULD type `{name}` into the callsign
+box (still benign either way, just not literally unreachable). Also documented that legacy's `%D`/`%T`
+apply the user's own clock-offset correction setting (`GetUTC`/`m_TimeOffset`, `ComLib.cpp:249-323`)
+which this port has no equivalent for -- a real, previously-undeclared scope reduction, now recorded
+in `docs/removed-features.md`'s new "Macro %D/%T clock-offset correction" entry.
+
+**Two real coverage gaps closed, both mutation-verified.** `%T` -- one of only three ported legacy
+token cases -- had zero test coverage; added a shape-only test (avoiding an hour/minute-rollover
+race, same discipline as the existing `%D` test), mutation-verified: a wrong separator character
+fails exactly as predicted. The corrupt-manifest fix itself had no test; added one exercising a real
+truncated JSON file alongside a valid template, mutation-verified: removing the try/catch guard makes
+the whole `ListAsync` call throw instead of skipping just the bad template, caught exactly as
+predicted.
+
+Noted but not fixed, per the auditor's own "currently unreachable" framing and this batch's
+minimalism-first downgraded rigor: `DeleteAsync`'s recursive delete has no traversal guard on
+`templateId`, but every current id source (`CreateTemplateId`, `Path.GetFileName`) structurally
+cannot produce a path-traversal string -- speculative hardening against a caller that doesn't exist,
+not currently justified.
+
+Auditor's verdict: go for production as-is -- no round 2 needed, per this batch's own single-round
+default.
+
+Full `ScanlineStudio.Application.Tests` run: 230 passed, 0 failed. `ScanlineStudio.UI.Tests`
+(TxImageEditorPaneViewModel tests, one call site there also updated): 310 passed, 0 failed.
+
+## Chunk 10b CLOSED
+
+Chunk 10c remains open.
