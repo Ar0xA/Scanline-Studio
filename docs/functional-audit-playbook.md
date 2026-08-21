@@ -2789,7 +2789,7 @@ host's runtime config (not checked) -- if it is, finding 2 would have upgraded t
 risk rather than a silent-loss risk. Off-scope notes: `IsPttLocked` has no change notification despite
 `_pttLocked` being flippable from three internal paths -- UI/state desync, outside the 3 failure classes.
 
-**Chunk 3a round 26 fixes applied** (2026-08-21, commit pending). Findings 1-3 all closed via ONE new
+**Chunk 3a round 26 fixes applied** (2026-08-21, commit `30d2bd6`). Findings 1-3 all closed via ONE new
 mechanism: a companion `_pttUnkeyEpoch` field (the mirror of `_pttKeyEpoch`, bumped on every CONFIRMED
 un-key at both existing epoch-guarded sites -- `UnkeyForCleanupAsync`'s and `SetPttLockAsync`'s own
 success branches), snapshotted once by `PlayWithPttAsync` at entry (`unkeyEpochAtEntry`, alongside
