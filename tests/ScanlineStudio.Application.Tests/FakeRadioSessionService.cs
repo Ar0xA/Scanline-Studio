@@ -72,6 +72,16 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
             await Gate.WaitAsync(ct).ConfigureAwait(false);
         }
 
+        if (Gate2 is not null && GateOnCallNumber2 == callNumber)
+        {
+            // Round-30 test hook: a SECOND, independent gate -- needed when a test must control TWO
+            // different calls' own release timing separately (e.g. an abandoned first call and a
+            // second call it indirectly triggers, both of which need to be released at DIFFERENT,
+            // deterministic points rather than simultaneously). Gate/GateOnCallNumber alone can't
+            // express this: it is one shared Task, so both calls would always release together.
+            await Gate2.WaitAsync(ct).ConfigureAwait(false);
+        }
+
         BeforeSetPtt?.Invoke(tx);
         // Mirrors NoneRadioProtocol.SetPttAsync's real always-throws behavior when RigId == "none"
         // (spec/18-path-to-1.0.md Critical item 1, round-1 plan-review's own explicit "add a
@@ -111,6 +121,17 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// reaches completion rather than being abandoned/cancelled. `null` (the default) keeps
     /// <see cref="Gate"/>'s original behavior of applying to every call.</summary>
     public int? GateOnCallNumber { get; set; }
+
+    /// <summary>Test-only hook (round 30): a SECOND, independent gate -- see <see cref="SetPttAsync"/>'s
+    /// own comment for why this exists separately from <see cref="Gate"/>. Unlike <see cref="Gate"/>,
+    /// this one requires <see cref="GateOnCallNumber2"/> to be set (no "applies to every call"
+    /// default) -- it exists specifically to target one OTHER call independently of whatever
+    /// <see cref="Gate"/>/<see cref="GateOnCallNumber"/> is already targeting.</summary>
+    public Task? Gate2 { get; set; }
+
+    /// <summary>Test-only hook (round 30): the 1-based call number <see cref="Gate2"/> applies to. See
+    /// <see cref="Gate2"/>'s own comment.</summary>
+    public int? GateOnCallNumber2 { get; set; }
 
     /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 14): 1-based call number of
     /// <see cref="SetPttAsync"/> that should hang forever instead of completing. See

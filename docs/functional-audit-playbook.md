@@ -3073,3 +3073,84 @@ time -- plus caught and fixed a genuine test-infrastructure race as a side effec
 mutation-verification discipline. Does NOT count as chunk 3a's 1st clean round -- round 30 is now the
 earliest round that can. Twenty-eight consecutive rounds (2-29) have now each found something real in
 this file.
+
+**Chunk 3a round 30** (2026-08-21, independent agent, fresh context, agent `a024384d074169c6a`). Verdict
+NOT CLEAN -- 1 risk + 2 nits, no blocker, no leaked-transmitter/transmission-destruction/stall found. All
+three findings are in or directly downstream of round 29's own two fixes; the rest of the file swept
+clean against the three failure classes. **[risk]** round 29's engage-arm fault-observer for
+`SetPttLockAsync`'s own `pttCommand` was attached AFTER the recovery-un-key's own await (up to
+`_cleanupTimeout`, ~5s) -- but both shipped backends serialize on a single approximately-FIFO request gate
+(this file's own round-19/24 comments state this), so the recovery un-key cannot make progress until the
+abandoned key command clears that SAME gate. That makes "the key command completes during the recovery
+await" not an unlucky interleaving but the EXPECTED ordering whenever the recovery does anything at all --
+so by the time the old placement's own `IsCompleted` check ran, it was almost always already `true`, and
+the observer almost never actually attached on the exact path it was written for. This is the ONE
+fault-observer site in the class with an await between the triggering throw and the check; every sibling
+site attaches immediately with no intervening await and is correct as-is. Harm is diagnostic-only, not
+state (the epoch bump/flag latch/Critical log already ran before the recovery), and the lost fault still
+reaches `Program.cs`'s own `UnobservedTaskException` handler (verified: logs and calls `SetObserved()`, no
+crash) -- just detached from context and without round 29's own attribution. **[nit]** round 29's widened
+`pttKeyedOnRealRig` baseline (`_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig`) was silently
+re-narrowed back to `pttLockedAtEntry` alone 130 lines later, in the `if (_disposed)` branch -- exactly the
+signal-erosion scenario round 29's own widening exists to prevent, occurring at the specific moment
+(shutdown-adjacent) the signal matters most. Not a leak (`_pttLeftKeyedByCall` itself survives, so
+`DisposeAsync`'s backstop still fires). **[nit]** round 29's widening also feeds the sticky,
+non-self-clearing `_pttUnkeyFailedOnRealRig` back in as an input -- once one real un-key failure has
+latched it and the operator later disconnects (every un-key against the null-object backend then throws
+synchronously, so it can never be CONFIRMED to clear the flag), every SUBSEQUENT transmit's cleanup
+re-attempts a doomed un-key and re-emits a fresh Critical, indefinitely, not just once. Defensible as
+correct-by-belief (the underlying condition — a rig that failed to un-key and is now unreachable — is
+genuinely still unresolved, unlike the actual false positives rounds 4/19/29 fixed), but flagged as the
+same signal-erosion SHAPE nonetheless.
+
+Explicitly checked and confirmed already-handled this round: round 29's unlock-direction fault-observer
+arm (no intervening await, correct as-is); the one catch-arm coverage hole
+(`locked == true && rigIsRealAtKeyTime == false`, i.e. `RigId == "none"`) where neither catch arm matches
+at all -- verified benign, since both no-radio paths throw synchronously and produce no Task to observe;
+round 29's widened baseline re-checked for a new double-attempt scenario -- none found, widening only
+makes the `pttKeyedOnRealRig`-qualified arms reachable more often, and every one of those already errs
+toward attempting the un-key; a fresh independent `Log.*` enumeration (69 sites, the same 9 unwrapped sites
+as prior rounds, all on normal entry/propagation paths outside any catch/cleanup/finally); unguarded
+non-log operations in catch/cleanup/finally (the round-21 `ResetAgc()` class) re-enumerated across all 34
+catch/finally blocks, nothing production-reachable found; `_keyedTransmitCount` balance re-verified
+(increment/decrement both gated on `keyedCompletion is not null`, decrement always precedes
+`TrySetResult`); budget composition re-checked (`_pttLockGate` max hold ~15s, `_transmitInFlight` bounded
+on every await except the sample pump which is itself bounded by `ct`/`MaxTuneDuration`/
+`PlaybackStallTimeout`, no cross-acquisition deadlock); round 28's epoch-snapshot relocation re-verified
+independently and still holds.
+
+**Chunk 3a round 30 fixes applied** (2026-08-21, commit pending). Risk fixed: the whole
+`if (pttCommand is { IsCompleted: false })` fault-observer block moved from AFTER the recovery-un-key
+attempt to immediately after the catch's own state-latching and Critical log, BEFORE the recovery block --
+`pttCommand` is fully assigned by that point (this catch only runs once the command has been issued), so
+nothing about the earlier placement depended on the recovery step. First nit fixed: the `if (_disposed)`
+branch's own assignment widened to `pttLockedAtEntry || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig`,
+matching the entry baseline's own three-flag test while keeping `pttLockedAtEntry`'s own late/fresh read
+for the `_pttLocked` term specifically (that branch's whole reason to exist). Second nit: documented as a
+considered-and-accepted trade-off at the entry baseline's own comment, not changed -- a real fix would
+need to distinguish "the same still-latent failure repeating" from "a genuinely new event" (e.g.
+de-duplicating by `_pttUnkeyEpoch`'s own value at latch time), which trades a repeated-but-true alarm for a
+real risk of under-warning if implemented wrong; a persistent Critical was judged the more conservative
+failure mode for a possibly-still-transmitting rig.
+
+New regression test:
+`Round30_SetPttLockAsync_KeyCommandFailsDuringRecoveryUnkey_ObservedNotSilentlyLost` -- needed a SECOND
+independent test-double gate (`FakeRadioSessionService.Gate2`/`GateOnCallNumber2`, new this round) to
+control the key command's and the recovery un-key's own release timing separately and deterministically.
+An EARLIER version of this test shared one gate between both calls and relied on their natural completion
+order after a simultaneous release -- **that version passed reliably against the UN-FIXED code across 5
+repeated runs**, caught only because mutation-testing revealed it wasn't actually distinguishing
+fixed-from-broken; redesigned with the two-gate mechanism before mutation-testing was retried, which then
+correctly reproduced the exact predicted failure (`WaitForAsync` timing out, the log line never appearing)
+reliably across 3 repeated runs. Restored, rebuilt clean, re-confirmed passing across 3 repeated runs
+(both the isolated filter and the full `Application.Tests` suite) given the test's own timing-sensitive
+design. 220/220 `ScanlineStudio.Application.Tests` passing (219 pre-existing + 1 new), full solution suite
+run in progress at time of writing -- confirm clean before treating this round as closed.
+
+Round 30 fixed 1 more risk in round 29's own newest code (continuing the established pattern) plus 2
+nits, one of which was silently re-undoing round 29's own fix in a second location -- and along the way
+demonstrated, first-hand and via its OWN mutation-testing discipline, exactly why a test that merely
+"passes" isn't sufficient proof of anything: a plausible-looking but non-deterministic regression test
+would have shipped silently broken if the process hadn't caught it before commit. Does NOT count as
+chunk 3a's 1st clean round -- round 31 is now the earliest round that can. Twenty-nine consecutive rounds
+(2-30) have now each found something real in this file.
