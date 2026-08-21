@@ -2609,7 +2609,7 @@ worth checking) and found NOT a real unbounded prefix for any caller that holds 
 directly; budget composition re-checked and found no combination producing an unbounded hold beyond
 finding 2 above. Two open items (nit 9, the 3 decoder-dispatch logs) re-examined with no new reasoning.
 
-**Chunk 3a round 24 fixes applied** (2026-08-21, commit pending). Risk fixed: the unlock-direction catch
+**Chunk 3a round 24 fixes applied** (2026-08-21, commit `46c326e`). Risk fixed: the unlock-direction catch
 filter changed from `when (rigIsRealAtUnlockTime)` (a fresh RigId read) to `when (!locked)` -- the inner
 belief-based gate is already the correct test and needed no device-identity filter layered on top;
 `rigIsRealAtUnlockTime` removed as dead code. Nit fixed: `DisposeAsync`'s backstop comment now states the
