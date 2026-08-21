@@ -504,10 +504,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // holds _pttLockGate for at most _cleanupTimeout (UnkeyForCleanupAsync's own CTS),
                     // same precedent as the existing in-gate recovery a few lines below. `await` inside
                     // a `catch` followed by a bare `throw;` is valid C# and preserves the original
-                    // exception/stack trace; UnkeyForCleanupAsync itself never throws.
+                    // exception/stack trace -- ONLY if UnkeyForCleanupAsync itself doesn't throw a NEW
+                    // one first, which round 20 found it actually can (see its own comment). Guarded
+                    // here so the ORIGINAL key-command failure always reaches the caller, not a
+                    // logging-provider failure substituted in its place -- the state record itself
+                    // doesn't depend on this guard (UnkeyForCleanupAsync's own round-20 fix latches
+                    // _pttUnkeyFailedOnRealRig before it can throw), only which exception surfaces.
                     if (Volatile.Read(ref _keyedTransmitCount) == 1)
                     {
-                        await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                        try
+                        {
+                            await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                        }
+                        catch (Exception recoveryEx)
+                        {
+                            SafeLog(() => Log.CleanupStepFailed(_logger, "PTT recovery un-key", recoveryEx));
+                        }
                     }
 
                     throw;
@@ -610,7 +622,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
                 if (locked && _disposed)
                 {
-                    await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                    // Round-20 finding: guarded so a genuine ObjectDisposedException always reaches the
+                    // caller below -- UnkeyForCleanupAsync's own "never throws" contract turned out to
+                    // be false (see its own comment), and letting that substitute a logging-provider
+                    // failure for the real disposal signal misleads any caller that branches on
+                    // ObjectDisposedException specifically (this class's own established convention).
+                    // The state record itself doesn't depend on this guard -- UnkeyForCleanupAsync's own
+                    // round-20 fix latches _pttUnkeyFailedOnRealRig before it can throw.
+                    try
+                    {
+                        await UnkeyForCleanupAsync(pttKeyedOnRealRig: true).ConfigureAwait(false);
+                    }
+                    catch (Exception recoveryEx)
+                    {
+                        SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (post-dispose recovery)", recoveryEx));
+                    }
+
                     throw new ObjectDisposedException(GetType().FullName);
                 }
 
@@ -732,7 +759,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
-            Log.CapturePausedHandlerFailed(_logger, paused, ex);
+            // Round-20 finding: this method's own doc comment (see its callers) says it exists
+            // specifically so a throwing subscriber can never propagate out and mask a caller's real
+            // exception -- but the log call right below could ALSO throw (the same logging-provider
+            // failure this whole round is about), defeating that guarantee at one remove. SafeLog
+            // closes it.
+            SafeLog(() => Log.CapturePausedHandlerFailed(_logger, paused, ex));
         }
     }
 
@@ -1596,7 +1628,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         }
                         catch (Exception ex)
                         {
-                            Log.CleanupStepFailed(_logger, "PTT off (urgent)", ex);
+                            // Round-20 finding: SafeLog, not a plain call -- see its own doc comment.
+                            // The state record itself doesn't depend on this log succeeding either
+                            // way (UnkeyForCleanupAsync's own round-20 fix already latched
+                            // _pttUnkeyFailedOnRealRig before it could throw), only whether this catch
+                            // itself stays reachable so StopPlayback/the retry/RX-resume below still run.
+                            SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (urgent)", ex));
                         }
 
                         unkeyAlreadyAttempted = true;
@@ -1645,7 +1682,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         }
                         catch (Exception ex)
                         {
-                            Log.CleanupStepFailed(_logger, "PTT off (retry)", ex);
+                            // Round-20 finding: SafeLog -- see the urgent-half arm's own comment above.
+                            SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (retry)", ex));
                         }
                     }
 
@@ -1821,6 +1859,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // Interlocked.Increment at every successful key site.
         var epochAtUnkeyStart = Volatile.Read(ref _pttKeyEpoch);
 
+        // Round-20 finding: assume-failed-until-confirmed, latched BEFORE the attempt below, not
+        // after. Round 19's own "write before the log call" reorder helped, but not enough --
+        // TryUnkeyPttAsync's OWN "never throws" contract turned out to be false too (its own doc
+        // comment now explains why), and that throw originates INSIDE the await below, before this
+        // method ever reaches its own post-await write. Latching here instead means the state record
+        // no longer depends on TryUnkeyPttAsync returning at all, let alone returning successfully --
+        // the confirmed-success branch just below still correctly clears this on a genuine success,
+        // or leaves it set (correctly) if a race with a newer key means this call's own view is
+        // already stale.
+        if (pttKeyedOnRealRig)
+        {
+            _pttUnkeyFailedOnRealRig = true;
+        }
+
         using var unkeyCts = new CancellationTokenSource(_cleanupTimeout);
         if (await TryUnkeyPttAsync(pttKeyedOnRealRig, unkeyCts.Token).ConfigureAwait(false))
         {
@@ -1837,11 +1889,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 _pttLocked = false;
                 _pttLeftKeyedByCall = false;
                 _pttUnkeyFailedOnRealRig = false;
-                Log.PttReleased(_logger);
+                SafeLog(() => Log.PttReleased(_logger));
             }
             else
             {
-                Log.PttUnkeyRaceLostToNewerKey(_logger);
+                SafeLog(() => Log.PttUnkeyRaceLostToNewerKey(_logger));
             }
 
             return true;
@@ -1851,22 +1903,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             // Round-3 finding: this is the fourth "keyed at shutdown" state -- see the field's own doc
             // comment for why DisposeAsync's existing three-state check otherwise misses exactly this
-            // case.
+            // case. Round-20 finding: the write itself now happens BEFORE the attempt above, not here
+            // -- see this method's own comment at the top for why.
             //
-            // Round-19 finding: this write now runs BEFORE the log call below, not after -- if the
-            // logging provider itself throws (the realistic source round 17/18 already treated as
-            // in-scope for DisposeAsync's own guards), the state is still correctly latched even
-            // though the exception then propagates out of this method. PlayWithPttAsync's own cleanup
-            // call sites now catch that propagation (see their own comments), so the exception no
-            // longer skips sibling cleanup steps -- but this ordering means the STATE record itself no
-            // longer depends on logging succeeding at all, which is the more load-bearing half.
-            _pttUnkeyFailedOnRealRig = true;
-
             // Risk A (partial fix, Tier A Batch 3 chunk 3a): a Warning is too quiet for "a real
             // transmitter this call keyed may still be on the air." Escalated to Critical, and only
             // for the captured-at-key-time real-rig case, so it can never fire for the benign
             // fresh-install RigId=="none" path that the Warning-suppression logic exists for.
-            Log.PttStillKeyedAfterFailedUnkey(_logger);
+            SafeLog(() => Log.PttStillKeyedAfterFailedUnkey(_logger));
         }
 
         return false;
@@ -1977,13 +2021,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             // A synchronous throw (e.g. the null-object NoneRadioProtocol) never produces a Task at
             // all.
+            // Round-20 finding: this method's own doc/callers assumed it "never throws" -- it did,
+            // via these very log calls, when the logging provider itself failed. SafeLog closes that
+            // specific hole (see its own doc comment).
             if (pttKeyedOnRealRig)
             {
-                Log.CleanupStepFailed(_logger, "PTT off", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off", ex));
             }
             else
             {
-                Log.PttUnkeySkippedNoRadio(_logger);
+                SafeLog(() => Log.PttUnkeySkippedNoRadio(_logger));
             }
 
             return false;
@@ -1996,16 +2043,41 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
         catch (Exception ex)
         {
+            // Round-20 finding: this method's own doc/callers assumed it "never throws" -- it did,
+            // via these very log calls, when the logging provider itself failed. SafeLog closes that
+            // specific hole (see its own doc comment).
             if (pttKeyedOnRealRig)
             {
-                Log.CleanupStepFailed(_logger, "PTT off", ex);
+                SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off", ex));
             }
             else
             {
-                Log.PttUnkeySkippedNoRadio(_logger);
+                SafeLog(() => Log.PttUnkeySkippedNoRadio(_logger));
             }
 
             return false;
+        }
+    }
+
+    /// <summary>Round-20 finding: this class's own cleanup/dispose paths, across rounds 17-19, all
+    /// assumed logging a failure could itself never fail -- a throwing logging provider (a file logger
+    /// on a full disk, the realistic source this chunk has repeatedly treated as in-scope) proved that
+    /// wrong at <see cref="TryUnkeyPttAsync"/>, defeating every guard built on top of it. Deliberately
+    /// silent on failure -- there is nothing safe left to log TO if the logger itself is broken, and
+    /// propagating here would defeat the entire reason this helper exists (a broken logger must never
+    /// be able to mask a safety-critical cleanup step). Used at every log call inside this class's
+    /// PTT-safety-critical catch/cleanup paths, not applied file-wide -- see each call site's own
+    /// reasoning for why that specific one is in scope.</summary>
+    private static void SafeLog(Action logAction)
+    {
+        try
+        {
+            logAction();
+        }
+#pragma warning disable CA1031 // Deliberately catches everything -- see this method's own doc comment.
+        catch
+#pragma warning restore CA1031
+        {
         }
     }
 
@@ -2026,7 +2098,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // here must never mask the original exception or block a sibling cleanup step. Still
             // logged at Warning (not swallowed silently) -- a failed "PTT off" step in particular
             // leaves the rig keyed, a safety-relevant condition a user needs to know about.
-            Log.CleanupStepFailed(_logger, stepName, ex);
+            //
+            // Round-20 finding: this method's own "never masks the original exception" guarantee
+            // (its own doc comment above) depended on this log call itself never throwing -- SafeLog
+            // closes that specific hole (a broken logging provider is the realistic source this round
+            // treats as in-scope, same as everywhere else this fix was applied this round).
+            SafeLog(() => Log.CleanupStepFailed(_logger, stepName, ex));
             return false;
         }
     }
@@ -2043,15 +2120,32 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// helper is the single choke point for the Task.Run creation across all 4 call sites --
     /// OnlyOnFaulted means it is a no-op on the (common) success path regardless of when it was
     /// attached.</summary>
-    private Task ResumeReceivingBoundedAsync(CancellationTokenSource rxResumeCts)
+    private async Task ResumeReceivingBoundedAsync(CancellationTokenSource rxResumeCts)
     {
         var resumeTask = Task.Run(() => StartReceivingAsync(rxResumeCts.Token), rxResumeCts.Token);
-        _ = resumeTask.ContinueWith(
-            t => Log.CleanupStepFailed(_logger, "Resume RX (finished after watchdog)", t.Exception!),
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-        return resumeTask.WaitAsync(rxResumeCts.Token);
+        try
+        {
+            await resumeTask.WaitAsync(rxResumeCts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!resumeTask.IsCompleted)
+        {
+            // Round-20 nit: the round-19 shape attached this observer UNCONDITIONALLY at creation
+            // time, which double-logged every ORDINARY (non-timeout) resume failure -- resumeTask
+            // faulting for a mundane reason (e.g. no capture device configured) makes this WAIT throw
+            // the SAME exception, which the caller (TryCleanupAsync) already logs once as "Resume RX";
+            // the unconditional observer then logged it AGAIN as "(finished after watchdog)" once
+            // resumeTask's own fault also satisfied OnlyOnFaulted. Gated here on the wait genuinely
+            // giving up while resumeTask is STILL running (the actual "abandoned" case this observer
+            // exists for) -- if resumeTask is already complete by the time this catch runs, its
+            // result/fault already propagated through this same WaitAsync call, so there is nothing
+            // left to observe later.
+            _ = resumeTask.ContinueWith(
+                t => SafeLog(() => Log.CleanupStepFailed(_logger, "Resume RX (finished after watchdog)", t.Exception!)),
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            throw;
+        }
     }
 
     private static async IAsyncEnumerable<float> GenerateTone(
