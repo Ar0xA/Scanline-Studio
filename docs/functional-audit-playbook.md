@@ -3119,7 +3119,7 @@ on every await except the sample pump which is itself bounded by `ct`/`MaxTuneDu
 `PlaybackStallTimeout`, no cross-acquisition deadlock); round 28's epoch-snapshot relocation re-verified
 independently and still holds.
 
-**Chunk 3a round 30 fixes applied** (2026-08-21, commit pending). Risk fixed: the whole
+**Chunk 3a round 30 fixes applied** (2026-08-21, commit `9ddb5d3`). Risk fixed: the whole
 `if (pttCommand is { IsCompleted: false })` fault-observer block moved from AFTER the recovery-un-key
 attempt to immediately after the catch's own state-latching and Critical log, BEFORE the recovery block --
 `pttCommand` is fully assigned by that point (this catch only runs once the command has been issued), so
@@ -3144,8 +3144,14 @@ fixed-from-broken; redesigned with the two-gate mechanism before mutation-testin
 correctly reproduced the exact predicted failure (`WaitForAsync` timing out, the log line never appearing)
 reliably across 3 repeated runs. Restored, rebuilt clean, re-confirmed passing across 3 repeated runs
 (both the isolated filter and the full `Application.Tests` suite) given the test's own timing-sensitive
-design. 220/220 `ScanlineStudio.Application.Tests` passing (219 pre-existing + 1 new), full solution suite
-run in progress at time of writing -- confirm clean before treating this round as closed.
+design. 220/220 `ScanlineStudio.Application.Tests` passing (219 pre-existing + 1 new) across 3 repeated
+runs. Full solution suite hit a pre-existing "Test host process crashed" flake on BOTH of 2 attempts,
+positioned around `ScanlineStudio.Core.Sstv.Tests` under heavy parallel load alongside
+`Core.Audio.MiniAudio.Tests`/`UI.Tests` -- confirmed unrelated to this round's changes (which only touch
+`SstvSessionService.cs`/its own test files) by running `Core.Sstv.Tests` standalone, which passed cleanly
+with its full 1022/1023 tests in 10m8s; `Application.Tests` itself also passed cleanly (220/220) in both
+full-suite attempts despite the unrelated crash elsewhere. Worth a separate look at CI/local resource
+contention if it recurs on a future round; not blocking this one.
 
 Round 30 fixed 1 more risk in round 29's own newest code (continuing the established pattern) plus 2
 nits, one of which was silently re-undoing round 29's own fix in a second location -- and along the way
