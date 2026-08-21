@@ -4240,4 +4240,94 @@ table-verification chunk that found no real mismatch, same rigor rule as chunk 5
 Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1204/1205 (1 unrelated intentional
 skip).
 
-Chunk 5d (`VisBitDecision.cs` + `SyncAnchorCorrector.cs`) remains open.
+## Chunk 5d round 1 (2026-08-21) -- CLOSED, unconditional go, no round 2 needed -- last chunk of Batch 5
+
+Full Tier A rigor round on `VisBitDecision.cs` (30 lines, the stateless VIS-bit decision predicate
+shared by `VisLockStateMachine` and `AnalogFmSstvDecoder`'s fixed-window header path) and
+`SyncAnchorCorrector.cs` (126 lines, the fold-and-argmax sync-anchor correction, `TMmsstv::SyncSSTV`
+port) -- both real control-flow/DSP logic, `SyncAnchorCorrector.cs` in particular flagged for the
+same class of sign-error risk this file's own doc comment already documents an earlier draft got
+backwards (caught by a prior Opus plan-review before any code shipped).
+
+**Zero functional bugs found.** `VisBitDecision.TryDecide`'s reject/accept predicate confirmed
+character-for-character against `sstv.cpp:1974-1988`, including independently re-confirmed variable
+correspondence (`d11`=1080Hz, `d13`=1320Hz, `d19`=1900Hz, `slvl2`=`m_SLvl2`) and that BOTH call sites
+(`VisLockStateMachine.cs`, `AnalogFmSstvDecoder.cs`) honor the "abort to case 0, resume on next
+sample" contract. `SyncAnchorCorrector`'s two highest-risk claims independently re-derived from
+first principles rather than trusted from the doc comment: the sign-flip (`argmaxBin -
+syncPeakOffsetSamples`, opposite of legacy's own literal `n`) re-traced through `m_rBase`'s zeroing
+(`sstv.cpp:1725-1731`) and its per-sample use in `DrawSSTVNormal` (`Main.cpp:4123-4148`), confirmed
+correct; the page-strided-vs-flat-array indexing equivalence claim confirmed genuinely equivalent
+(not just plausible) by tracing `IncWP`'s real per-page sample count. The dropped Scottie wraparound
+branch's replacement (folding a per-mode line-segment offset into the caller's own
+`syncPeakOffsetSamples`) confirmed against the actual caller, not just this file's own claim about
+it -- verified `GetSyncSegmentOffsetMs` really is generic (no hardcoded table) and really does
+produce 0 for every mode except Scottie. No `int` overflow risk at any real (mode, rate) pair.
+
+One doc-only nit fixed (both files' own claim that `SyncAnchorCorrector` wasn't wired into the
+decoder yet -- it has been, since piece 8c; corrected in both `SyncAnchorCorrector.cs`'s own class
+doc and `SyncAnchorCorrectorTests.cs`'s header comment).
+
+**Two real coverage gaps closed with new tests, not just noted.** `SyncAnchorCorrectorTests.cs`
+previously had no test for the callback-ordering contract the production caller actually depends on
+(`envelopeAt` invoked exactly once per index in strictly ascending order -- the real caller passes a
+STATEFUL streaming `SyncEnvelopeDetector`, so a future fold-loop refactor that re-reads or skips an
+index would silently corrupt it with nothing to catch it) or for the truncate-toward-zero-not-floor
+distinction on a negative fractional delta (every existing test used integral or positive-fractional
+results, where floor and truncation agree; production deltas are routinely negative-fractional).
+Added `EnvelopeCallback_IsInvokedExactlyOncePerIndex_InAscendingOrder`,
+`NegativeFractionalDelta_TruncatesTowardZero_NotFloor`, and
+`AllZeroEnvelope_DefaultsToBinZero_MatchingLegacysInitialMax`. Mutation-verified: floor-instead-of-
+truncate fails the first as predicted; resetting the fold's sample counter per page (a genuine
+ordering violation -- reversing page/inner-loop iteration direction alone does NOT violate the
+contract, since the counter itself stays monotonic regardless of loop nesting order, confirmed the
+hard way after two mutation attempts that didn't actually break anything) fails the
+ordering test as predicted.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite confirmed green: 1207/1208 (1 unrelated intentional
+skip).
+
+## Tier A Batch 5 -- CLOSED (2026-08-21)
+
+**All 4 chunks closed, zero functional bugs found across the whole batch** (mode tables & constants:
+`SstvModeRegistry.cs`'s data table and math halves, `VisHeader.cs`, `VisBitDecision.cs` +
+`SyncAnchorCorrector.cs`) -- unlike Batch 4, no chunk in this batch needed a fix-and-reverify round 2
+for a real bug; every chunk closed on a clean round 1. What this batch DID find and fix: one real
+parity gap (chunk 5b's sync-interval scan-order divergence from legacy's real enum order, affecting
+two narrow same-duration mode pairs on the no-VIS sync-bypass path only), and a substantial number of
+genuine coverage gaps across all four chunks -- table entries that were previously unpinned beyond
+duration totals, per-mode boolean/table lookups with no direct test, and (chunk 5c/5d) pattern-blind
+tests that would pass even if the underlying bit sequence were scrambled, exactly the Scottie-incident
+failure class this whole sweep exists to catch. Every coverage gap found was closed with a
+mutation-verified test in the same round it was found, not just noted for later:
+
+- **Chunk 5a** (`SstvModeRegistry.cs` data table, lines 1-655): 1 round, single-pass table-verification
+  rigor. All 43 modes' VIS/extended/narrow codes and dimensions confirmed against legacy. Closed a
+  coverage gap (no test pinned table entries beyond duration totals) with a new 44-case theory in a
+  new `SstvModeRegistryTests.cs`.
+- **Chunk 5b** (`SstvModeRegistry.cs` math half, lines 656-1044): 1 round, full Tier A rigor. The
+  43-entry `m_OFP` literal table, the 5-way peak-pick trim grouping, AFC fast-group, Auto Slant
+  thresholds, full-byte VIS matching, and sync-interval matching all confirmed against legacy. Fixed
+  the one real parity gap (sync-interval scan order) and closed two coverage gaps
+  (`IsFastAfcGroup`, `GetSyncIntervalMatchDepth`).
+- **Chunk 5c** (`VisHeader.cs`, all 464 lines): 1 round, single-pass table-verification rigor. First
+  dedicated audit of this file (previously only touched incidentally by an earlier, separate sweep on
+  `AnalogFmSstvDecoder.cs`'s VIS-decode region). Closed three coverage gaps, most notably the AVT
+  training sequence's shift-register bit pattern (previously duration-only, the Scottie-class risk
+  named above).
+- **Chunk 5d** (`VisBitDecision.cs` + `SyncAnchorCorrector.cs`): 1 round, full Tier A rigor. The
+  sign-derivation math in `SyncAnchorCorrector` -- flagged in-file as the single most failure-prone
+  detail, with a documented history of an earlier draft getting it backwards -- independently
+  re-derived from first principles and confirmed correct. Closed two coverage gaps (callback-ordering
+  contract, truncate-vs-floor).
+
+No chunk in this batch closed under the formal 2-consecutive-clean-round gate -- all four closed by
+explicit auditor unconditional-go verdicts on a clean round 1, the same well-established pattern as
+every prior batch's own closures (per the user's standing decision to accept a clean round 1 rather
+than manufacture a round 2 purely to satisfy the formal gate).
+
+Full round-by-round detail for all four chunks lives in this section's own per-round entries above,
+not reproduced here.

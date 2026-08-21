@@ -2,9 +2,9 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
 /// Piece 8b unit tests for <see cref="SyncAnchorCorrector.ComputeAnchorCorrection"/> -- isolated,
-/// synthetic-data tests before this function is wired into the decoder (piece 8c). See
-/// <see cref="SyncAnchorCorrector"/>'s own doc comment for the sign-derivation reasoning these tests
-/// confirm empirically.
+/// synthetic-data tests, independent of the decoder wiring piece 8c later added
+/// (<c>AnalogFmSstvDecoder.TryResolveSyncAnchorCorrection</c>). See <see cref="SyncAnchorCorrector"/>'s
+/// own doc comment for the sign-derivation reasoning these tests confirm empirically.
 /// </summary>
 public class SyncAnchorCorrectorTests
 {
@@ -58,5 +58,63 @@ public class SyncAnchorCorrectorTests
             envelopeAt: n => n == 2153 ? 1000.0 : 0.0);
 
         Assert.Equal(499, delta);
+    }
+
+    [Fact]
+    public void NegativeFractionalDelta_TruncatesTowardZero_NotFloor()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 5 chunk 5d (docs/functional-audit-playbook.md):
+        // every prior test here produces an integral or positive-fractional result, where floor and
+        // truncation agree -- in production syncPeakOffsetSamples is always fractional (ms/1000*rate)
+        // and delta is negative for every mode whose argmax lands before m_OFP, a case nothing pinned.
+        // Main.cpp:3783's `n -= SSTVSET.m_OFP` narrows double->int (m_OFP is double, sstv.h:509),
+        // truncating toward zero: argmax=10, OFP=20.5 -> -10, NOT floor's -11.
+        var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
+            lineWidthSamples: 100.0,
+            syncPeakOffsetSamples: 20.5,
+            lineCount: 4,
+            envelopeAt: n => (n % 100) == 10 ? 1000.0 : 0.0);
+
+        Assert.Equal(-10, delta);
+    }
+
+    [Fact]
+    public void AllZeroEnvelope_DefaultsToBinZero_MatchingLegacysInitialMax()
+    {
+        // Legacy's `int max = 0; int n = 0;` (Main.cpp:3766/3776-3781) means a flat/silent fold never
+        // updates argmax away from its initial 0 -- delta = 0 - OFP = -OFP exactly.
+        var delta = SyncAnchorCorrector.ComputeAnchorCorrection(
+            lineWidthSamples: 100.0,
+            syncPeakOffsetSamples: 20.0,
+            lineCount: 4,
+            envelopeAt: _ => 0.0);
+
+        Assert.Equal(-20, delta);
+    }
+
+    [Fact]
+    public void EnvelopeCallback_IsInvokedExactlyOncePerIndex_InAscendingOrder()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 5 chunk 5d: the production caller
+        // (AnalogFmSstvDecoder.TryResolveSyncAnchorCorrection) passes a STATEFUL streaming
+        // SyncEnvelopeDetector, so this ordering is part of the real contract, not an incidental
+        // implementation detail -- a future refactor of the fold loop that re-reads or skips an
+        // index would silently corrupt that detector's internal state with nothing here to catch it.
+        var expectedNext = 0;
+        var calls = 0;
+
+        SyncAnchorCorrector.ComputeAnchorCorrection(
+            lineWidthSamples: 1653.75,
+            syncPeakOffsetSamples: 0.0,
+            lineCount: 3,
+            envelopeAt: n =>
+            {
+                Assert.Equal(expectedNext, n);
+                expectedNext++;
+                calls++;
+                return 0.0;
+            });
+
+        Assert.Equal(3 * 1653, calls);
     }
 }
