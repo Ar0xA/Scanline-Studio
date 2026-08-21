@@ -61,9 +61,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
             await _neverCompletes.Task.ConfigureAwait(false);
         }
 
-        if (Gate is not null)
+        if (Gate is not null && (GateOnCallNumber is null || GateOnCallNumber == callNumber))
         {
-            await Gate.ConfigureAwait(false);
+            // Round-18: respects `ct` (via Task.WaitAsync, not a plain await), matching
+            // FakeAudioDeviceEnumerator.Gate's own round-10 upgrade -- needed so a test can
+            // distinguish a caller that cancels this specific command from one that (correctly, per
+            // round 18's own fix) never does. A no-op for every existing test passing
+            // CancellationToken.None, which never cancels.
+            await Gate.WaitAsync(ct).ConfigureAwait(false);
         }
 
         BeforeSetPtt?.Invoke(tx);
@@ -97,6 +102,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// calling thread, the same shape <c>FakeAudioDeviceEnumerator.Gate</c> already provides for device
     /// resolution.</summary>
     public Task? Gate { get; set; }
+
+    /// <summary>Test-only hook (round 18): when set together with <see cref="Gate"/>, restricts the
+    /// gate to that one 1-based call number only, leaving every other call unaffected -- unlike
+    /// <see cref="HangOnCallNumber"/> (a gate that can never be resolved), this one CAN be completed
+    /// later by a test, letting it prove a call that was gated past its own timeout still eventually
+    /// reaches completion rather than being abandoned/cancelled. `null` (the default) keeps
+    /// <see cref="Gate"/>'s original behavior of applying to every call.</summary>
+    public int? GateOnCallNumber { get; set; }
 
     /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 14): 1-based call number of
     /// <see cref="SetPttAsync"/> that should hang forever instead of completing. See

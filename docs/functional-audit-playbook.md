@@ -2091,3 +2091,85 @@ Round 17 fixed 2 new blockers -- including the single most safety-critical await
 unbounded for all 16 prior rounds -- does NOT count as chunk 3a's 1st clean round. Round 18 is now the
 earliest round that can count as chunk 3a's 1st clean round. Sixteen consecutive rounds (2-17) have
 now each found something real in this file.
+
+**Chunk 3a round 18** (2026-08-21, independent agent, fresh context, agent `add089e3d47863f4a`). Round
+17's fixes were each correct as far as they went, but one (`TryUnkeyPttAsync`) was found incomplete in
+exactly the same way rounds 16/17 kept finding elsewhere: it fixed the awaiting side, not the callee
+side. **(1) [BLOCKER]** round 17's `.WaitAsync(ct)` fix bounded the WAIT on the un-key command but also
+left `ct` (the same `unkeyCts.Token`) passed to the command ITSELF -- once the 5s budget expired, the
+un-key was CANCELLED AT THE BACKEND'S REQUEST GATE and never actually reached the rig, rather than
+staying queued behind whatever wedged it and reaching the rig once that clears. Verbatim the failure
+`PlayWithPttAsync`'s own blocker-1 doc comment already names as the scenario that matters most ("PTT-off
+was never even attempted on the exact hardware failure where it matters most"). **(2) [BLOCKER]**
+`UnkeyForCleanupAsync`'s own bool return (whether the un-key was actually CONFIRMED) was discarded at
+both `PlayWithPttAsync` cleanup call sites -- an urgent un-key that failed against a momentarily-busy
+backend (SWR cutoff / manual Stop TX racing a backend that frees up moments later) got exactly ONE
+attempt, then deferred entirely to `DisposeAsync`, which may not run for hours. Also picked up BOTH of
+round 17's deliberately-deferred items and fixed them: **(3) [risk, round-17 deferral b]** `TuneAsync`
+validated neither `frequencyHz` nor `duration` -- NaN/infinity frequency reaches
+`PumpToPlaybackAsync`'s unclamped gain multiplication as NaN samples WITH PTT KEYED; an absurd
+duration (any legal `TimeSpan`, no upper bound) keys PTT for a correspondingly absurd time with no
+caller-side cancellation available on the one production path. **(4) [risk, round-17 deferral a]**
+confirmed `WaitAsync` structurally cannot bound a callee's synchronous prefix -- `JsonSettingsStore.LoadAsync`
+does blocking `File.Exists`/`File.OpenRead` before its own first `await`, so every settings-backed
+`WaitAsync` bound in this file (rounds 15/16/17's fixes, transitively the RX-resume chain) never even
+reaches a genuinely-pending `Task` on a hung network-mounted settings path. Also found: **(5) [risk]**
+`SetPttLockAsync`'s UNLOCK-direction failure had literally no catch arm at all (the existing one is
+filtered on `rigIsRealAtKeyTime`, always false for `locked == false`) -- a failed EMERGENCY unlock on a
+genuinely keyed rig produced not even a Warning, though the underlying safety net (`_pttLocked` staying
+true) was never actually broken. **(6) [risk]** `DisposeAsync`'s first two steps
+(`AwaitInFlightKeyedTransmitAsync`, the backstop `UnkeyForCleanupAsync` call) had no guard at all --
+the identical "one throw skips everything after" shape round 17 fixed 30 lines below, just two steps
+earlier (realistic source: a failing logging provider inside either step's own log calls). Nits (not
+fixed): abandoned `CancellationTokenSource`s disposed while a task still holds their token (partly
+closed by finding 1's own fix); the abandoned un-key's eventual outcome isn't observed/logged, unlike
+its two direct siblings; `EnqueueAllAsync` doesn't validate `accepted` against `IAudioEngine`'s own
+contract (a negative value would drive a tight synchronous spin with PTT keyed, but only reachable via
+a contract-violating engine implementation, not external wedging); 3 `ISstvDecoderMaintenance`
+handlers never unsubscribed in `DisposeAsync`; `StopReceivingAsync`'s own `ResetAgc()`/`Log.RxStopped`
+tail (and `PlayWithPttAsync`'s call to it) still sits outside its own guarded region.
+
+**Chunk 3a round 18 fixes applied** (2026-08-21, commit TBD). Finding 1: `TryUnkeyPttAsync` restructured
+to pass `CancellationToken.None` to the actual `SetPttAsync` call (so it can never be cancelled, and
+stays queued until the backend genuinely frees up) while `WaitAsync(ct)` still bounds only the WAIT.
+Finding 2: `PlayWithPttAsync`'s finally now captures `UnkeyForCleanupAsync`'s bool return and retries
+once (guarded on `pttKeyedOnRealRig && !unkeyConfirmed`, so the benign `RigId=="none"` case never gets
+a pointless second attempt) after `StopPlaybackWithWatchdogAsync`'s own wait gives a wedged backend a
+second, independent window to clear. Finding 3: `TuneAsync` now validates both parameters and THROWS
+(not clamps, unlike the `TxVolumePercent` precedent -- there's a live caller that already surfaces a
+failure, so it needs to know its own value was wrong) before `Log.TuneStarting`/`PlayWithPttAsync`, so
+PTT is never touched on an invalid call; a new `MaxTuneDuration` constant (5 minutes, a generous
+backstop not a UX limit) caps the worst case. Finding 4: every settings-backed `WaitAsync` call site (8
+of them: the `GetStationIdTransmitOptionsAsync` read, the 3 pre-key awaits, and the 4 RX-resume sites)
+now wraps its own callee in `Task.Run(...)` first, offloading the synchronous prefix onto a pool
+thread so the outer `WaitAsync` bound becomes real regardless of what the settings store/device
+enumerator does internally. Finding 5: a second catch arm added to `SetPttLockAsync`'s key command,
+filtered on a new `rigIsRealAtUnlockTime` capture (mirrors `rigIsRealAtKeyTime`'s own blocker-2
+discipline -- captured once, before the command), deliberately simpler than the engage-direction arm
+(no epoch bump, no recovery attempt -- just makes the failure loudly visible via the same Critical log
+`UnkeyForCleanupAsync` already uses for the identical condition). Finding 6: both `DisposeAsync` steps
+wrapped in the same try/catch + `Log.CleanupStepFailed` pattern round 17 already established for the
+three steps just below them.
+
+New regression tests for all 4 fixable findings (1, 2, 3, 5) -- finding 1's test required upgrading
+`FakeRadioSessionService`'s `Gate` to respect `ct` (matching `FakeAudioDeviceEnumerator.Gate`'s own
+round-10 upgrade; without it, the fake couldn't distinguish a cancelled-at-the-gate command from a
+merely-slow one, and the FIRST version of this test passed even with the bug still present -- caught
+by actually running the mutation and observing no failure, not assumed) and a new `GateOnCallNumber`
+property (a gate that CAN be resolved later, unlike `HangOnCallNumber`'s permanent hang, needed to
+prove an abandoned call eventually completes rather than being cancelled). Finding 2's test interacts
+observably with finding 1's: the retry it proves is what makes finding 1's own gated call arrive as
+the SECOND `false` in `PttCalls`, not the first -- both tests' assertions account for this rather than
+treating it as noise. All 4 mutation-verified: findings 1 and 2 each produced their exact predicted
+failure signature (an abandoned call that never completes; a retry count of 1 instead of 2); findings
+3 and 5 each failed a clean assertion (no exception thrown; no Critical logged) when their guard was
+disabled. Findings 4 and 6 (mechanical structural additions, no new failure mode to demonstrate
+distinctly from what's already covered) intentionally not given dedicated tests, matching this
+chunk's own established precedent for proportionate scope. Restored, rebuilt clean, all 4 new tests
+re-confirmed passing, no stray test-host processes survived any mutation. All 203
+`ScanlineStudio.Application.Tests` passing (199 pre-existing + 4 new), full solution suite (all
+projects) clean.
+
+Round 18 fixed 2 new blockers plus both of round 17's own deferred items -- does NOT count as chunk
+3a's 1st clean round. Round 19 is now the earliest round that can count as chunk 3a's 1st clean round.
+Seventeen consecutive rounds (2-18) have now each found something real in this file.
