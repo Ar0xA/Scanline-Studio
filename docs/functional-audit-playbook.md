@@ -1973,7 +1973,7 @@ before the single-flight guard, so a rejected overlapping transmit still logs a 
 matching completion; four more unbounded read-only settings/device-name reads exist at lower
 severity (none holds a shared guard, so a hang there is self-contained, not a lockout).
 
-**Chunk 3a round 16 fixes applied** (2026-08-21, commit TBD). Finding 1: all four
+**Chunk 3a round 16 fixes applied** (2026-08-21, commit `2a2311b`). Finding 1: all four
 `StartReceivingAsync(rxResumeCts.Token)` call sites now also wrapped with
 `.WaitAsync(rxResumeCts.Token)` -- reusing the SAME CTS's token for both purposes (rather than adding
 yet another `_cleanupTimeout` reference) since that CTS already carries the exact timeout needed and
