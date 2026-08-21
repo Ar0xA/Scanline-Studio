@@ -133,6 +133,52 @@ public class SyncIntervalTrackerTests
         Assert.Equal(mode.Id, matched?.Id);
     }
 
+    // Closes a coverage gap flagged by Tier A Batch 5 chunk 5b (docs/functional-audit-playbook.md):
+    // GetSyncIntervalMatchDepth's 4-group + narrow-gating table (sstv.cpp:1290-1325) had no direct
+    // per-mode test -- only Robot 36 and generic band-gating were covered indirectly.
+    public static IEnumerable<object?[]> AllModesExceptAvtWithExpectedMatchDepth()
+    {
+        int? Depth(SstvModeDefinition mode, bool isNarrow)
+        {
+            if (mode == SstvModeRegistry.Sc260 || mode == SstvModeRegistry.Sc2120)
+            {
+                return null;
+            }
+
+            if (mode == SstvModeRegistry.R24 || mode == SstvModeRegistry.Robot36 || mode == SstvModeRegistry.MartinM2
+                || mode == SstvModeRegistry.Pd50 || mode == SstvModeRegistry.Pd240)
+            {
+                return isNarrow ? null : 4;
+            }
+
+            if (mode == SstvModeRegistry.Rm8 || mode == SstvModeRegistry.Rm12)
+            {
+                return isNarrow ? null : 0;
+            }
+
+            if (mode == SstvModeRegistry.Mn73 || mode == SstvModeRegistry.Mn110 || mode == SstvModeRegistry.Mn140
+                || mode == SstvModeRegistry.Mc110 || mode == SstvModeRegistry.Mc140 || mode == SstvModeRegistry.Mc180)
+            {
+                return isNarrow ? 3 : null;
+            }
+
+            return isNarrow ? null : 5;
+        }
+
+        foreach (var mode in SstvModeRegistry.All.Where(m => m != SstvModeRegistry.Avt))
+        {
+            yield return new object?[] { mode, false, Depth(mode, false) };
+            yield return new object?[] { mode, true, Depth(mode, true) };
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(AllModesExceptAvtWithExpectedMatchDepth))]
+    public void GetSyncIntervalMatchDepth_MatchesLegacySyncCheckSubGrouping(SstvModeDefinition mode, bool isNarrow, int? expectedDepth)
+    {
+        Assert.Equal(expectedDepth, SstvModeRegistry.GetSyncIntervalMatchDepth(mode, isNarrow));
+    }
+
     private static SstvModeDefinition? FeedPeriodicPeaks(SyncIntervalTracker tracker, int intervalSamples, int lineCount)
     {
         SstvModeDefinition? matched = null;
