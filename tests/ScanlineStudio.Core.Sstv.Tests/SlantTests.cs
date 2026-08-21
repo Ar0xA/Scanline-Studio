@@ -181,7 +181,7 @@ public class SlantTests
         var baselinePosition = perLineDrift * baselineLine;
         var fittedPosition = perLineDrift * correctionLine;
         var expectedD = (baselinePosition - fittedPosition) * adoptedRate / adoptedNominalSamplesPerLine / linesSinceBaseline;
-        var expectedRawCandidate = adoptedRate - expectedD; // MovingAverage.Add's first call (freshly Reset()) returns its own single input unchanged, no averaging dilution
+        var expectedRawCandidate = adoptedRate - expectedD; // MovingAverage.Add's first call (freshly Clear()'d, not Reset() -- Reset() has the opposite property, seeding every slot) returns its own single input unchanged, no averaging dilution
         var expectedCorrectedRate = Math.Floor(expectedRawCandidate * 50.0 + 0.5) / 50.0; // NormalSampleRate(_, 50) -- SlantTracker's own private helper, not clamped (well under the 1100/1060 ceiling)
 
         Assert.Equal(expectedCorrectedRate, firstResult!.Value, tolerance: 0.001);
