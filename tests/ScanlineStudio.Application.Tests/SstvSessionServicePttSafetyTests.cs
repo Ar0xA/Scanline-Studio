@@ -2067,6 +2067,79 @@ public sealed class SstvSessionServicePttSafetyTests
             TimeSpan.FromSeconds(5));
     }
 
+    // ------------------------------------------------------------------ round 30 findings
+
+    [Fact]
+    public async Task Round30_SetPttLockAsync_KeyCommandFailsDuringRecoveryUnkey_ObservedNotSilentlyLost()
+    {
+        // Round-30 finding (risk): the fault-observer round 29 added for SetPttLockAsync's own
+        // pttCommand used to be attached AFTER the recovery un-key's own await (up to
+        // _cleanupTimeout) -- but both shipped backends serialize on a single approximately-FIFO
+        // request gate, so the recovery un-key cannot make progress until the abandoned key command
+        // clears that SAME gate. That makes "the key command completes during the recovery await"
+        // the EXPECTED ordering whenever the recovery does anything at all, not an unlucky race -- so
+        // the old placement's own IsCompleted check almost always found the command already
+        // completed and never attached. Uses two INDEPENDENT gates (round-30 test hook
+        // FakeRadioSessionService.Gate2/GateOnCallNumber2) rather than relying on real scheduling
+        // order between the two calls -- an earlier version of this test shared one gate between both
+        // calls and passed even against the un-fixed code across multiple runs (the two calls'
+        // completion order after a simultaneous release is not actually guaranteed), caught by
+        // mutation-testing itself before this version was written.
+        var keyGate = new TaskCompletionSource();
+        var recoveryGate = new TaskCompletionSource();
+        var reachedRecoveryGate = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+
+        radio.Gate = keyGate.Task;
+        radio.GateOnCallNumber = 1; // the key command
+        radio.Gate2 = recoveryGate.Task;
+        radio.GateOnCallNumber2 = 2; // the recovery un-key it triggers
+        radio.OnCallStarted = callNumber =>
+        {
+            if (callNumber == 2)
+            {
+                reachedRecoveryGate.TrySetResult();
+            }
+        };
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                throw new TimeoutException("simulated: key command eventually failed after the watchdog gave up");
+            }
+        };
+
+        // The key command parks on its own gate; WaitAsync gives up after cleanupTimeout (50ms),
+        // well before that gate is ever released, entering the catch's own recovery path (the first
+        // engage-direction call ever made on this service, so _keyedTransmitCount reads exactly 1
+        // and the recovery un-key fires).
+        var lockCall = service.SetPttLockAsync(true);
+
+        // Deterministic happens-before point: the recovery's own un-key call has genuinely started
+        // and is now parked on its own SEPARATE gate -- confirms we are past the catch's own initial
+        // synchronous section (state latch, Critical log, and -- if fixed -- the fault-observer
+        // attachment), with the key command's own gate still fully unresolved.
+        await reachedRecoveryGate.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // Release the key command's own gate -- it now fails (via BeforeSetPtt). Give its trivial,
+        // no-further-await continuation time to genuinely complete BEFORE the recovery is allowed to
+        // proceed, so the recovery's own await -- and any check made only after it -- sees the key
+        // command already completed.
+        keyGate.SetResult();
+        await Task.Delay(200);
+
+        // Release the recovery's own gate -- it now succeeds.
+        recoveryGate.SetResult();
+
+        // THE property: the key command's own late failure must be observed and logged, not
+        // silently lost as an unobserved task exception.
+        await WaitForAsync(
+            () => logger.Entries.Any(e => e.Message.Contains("PTT command (finished after watchdog)", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(5));
+
+        await Assert.ThrowsAsync<TimeoutException>(() => lockCall);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)

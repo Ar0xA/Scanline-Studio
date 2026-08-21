@@ -512,6 +512,33 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     _pttLeftKeyedByCall = true;
                     SafeLog(() => Log.PttKeyCommandFailedMayHaveKeyed(_logger));
 
+                    // Round-30 finding (risk): this fault-observer attachment used to sit AFTER the
+                    // recovery-un-key await below (up to _cleanupTimeout, ~5s) -- but both shipped
+                    // backends serialize on a single approximately-FIFO request gate (see round-19's own
+                    // comment further down, and round-24's), so the recovery un-key cannot make
+                    // progress until the abandoned pttCommand clears that SAME gate. That makes "the key
+                    // command completes during the recovery await" not an unlucky race but the EXPECTED
+                    // ordering whenever the recovery does anything at all -- so by the time the old
+                    // placement's own IsCompleted check ran, it was almost always already true, and the
+                    // observer almost never actually attached on the exact path it exists for. Moved to
+                    // run BEFORE the recovery await, right after this catch's own state-latching and
+                    // Critical log -- pttCommand is fully assigned by this point (this catch only runs
+                    // once the command has been issued), so nothing here depends on the recovery step
+                    // below. This is the ONE fault-observer site in this class with an await between the
+                    // triggering throw and the original placement's own IsCompleted check; the sibling
+                    // sites (TryUnkeyPttAsync, StopReceivingAsync, StopPlaybackWithWatchdogAsync,
+                    // ResumeReceivingBoundedAsync, and this method's own unlock-direction arm below) all
+                    // attach immediately with no intervening await, so their own placement is correct
+                    // as-is.
+                    if (pttCommand is { IsCompleted: false })
+                    {
+                        _ = pttCommand.ContinueWith(
+                            t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT command (finished after watchdog)", t.Exception!)),
+                            CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                            TaskScheduler.Default);
+                    }
+
                     // Round-11 found this catch never attempts an immediate recovery un-key (unlike
                     // PlayWithPttAsync's own finally), leaving the rig recorded-but-not-recovered for
                     // potentially the rest of the process's life. Round-11 initially left this
@@ -555,23 +582,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         {
                             SafeLog(() => Log.CleanupStepFailed(_logger, "PTT recovery un-key", recoveryEx));
                         }
-                    }
-
-                    // Round-29 finding (risk): every OTHER abandoned task in this class attaches a
-                    // fault-observer continuation to its own abandoned task (StopReceivingAsync,
-                    // StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync, TryUnkeyPttAsync's own
-                    // round-26 fix) -- this one, the key-command await this whole method exists to
-                    // protect, did not. Gated the same way those sites gate it: only if pttCommand was
-                    // actually assigned (the try got far enough to issue the command) and is still
-                    // running (not yet completed -- if it already finished, its own fault already
-                    // propagated through the WaitAsync above as the exception this catch is handling).
-                    if (pttCommand is { IsCompleted: false })
-                    {
-                        _ = pttCommand.ContinueWith(
-                            t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT command (finished after watchdog)", t.Exception!)),
-                            CancellationToken.None,
-                            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                            TaskScheduler.Default);
                     }
 
                     throw;
@@ -1597,6 +1607,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // (_pttLeftKeyedByCall itself survives untouched, so DisposeAsync's own four-state
                 // backstop still fires) -- same signal-quality class this whole baseline exists to
                 // protect, one flag short. Widened to match the established belief test exactly.
+                //
+                // Round-30 finding (nit, considered and accepted, not changed): including
+                // _pttUnkeyFailedOnRealRig here means that once ONE real un-key failure has latched it
+                // and the operator then disconnects (RigId -> "none", where every un-key attempt throws
+                // synchronously and so can never CONFIRM success to clear the flag -- see its own clear
+                // sites), every SUBSEQUENT transmit's cleanup re-attempts an un-key against the
+                // null-object backend, fails again, and re-emits a fresh Critical "PTT MAY STILL BE
+                // KEYED" -- once per transmit, indefinitely, not just once. This is the signal-erosion
+                // SHAPE rounds 4/19 added gates to prevent, but the underlying belief (a rig that failed
+                // to un-key and is now unreachable) is genuinely still unresolved -- unlike the false
+                // positives those two rounds actually fixed (a rig confirmed OFF, or never keyed at
+                // all), there is no confirmed-safe state to fall silent about here. A real fix would need
+                // to distinguish "the same still-latent failure repeating" from "a genuinely new event"
+                // (e.g. de-duplicating by _pttUnkeyEpoch's own value at latch time), which trades a
+                // repeated-but-true alarm for a real risk of under-warning if implemented wrong. Left as
+                // a persistent, if repetitive, Critical -- the more conservative failure mode for a
+                // possibly-still-transmitting rig.
                 pttKeyedOnRealRig = _pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig;
 
                 // Round-15 finding 3: these three awaits had no bound of their own either -- unlike
@@ -1729,7 +1756,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // method's own entry assigned -- that one now deliberately uses the EARLY
                         // `_pttLocked` read taken at entry instead, so the two can genuinely differ if
                         // _pttLocked changed during this method's own device/settings awaits.)
-                        pttKeyedOnRealRig = pttLockedAtEntry;
+                        //
+                        // Round-30 finding (nit): this used to silently re-narrow round 29's own widened
+                        // baseline back down to pttLockedAtEntry alone -- e.g. a prior
+                        // TuneAsync(leaveKeyedAfterTune: true) leaving the rig keyed via
+                        // _pttLeftKeyedByCall alone (with _pttLocked false) survived the entry baseline
+                        // correctly, then got wiped back to false right here, downgrading the eventual
+                        // cleanup failure from Critical to Debug. Widened to match the SAME three-flag
+                        // belief test the entry baseline uses, keeping pttLockedAtEntry's own late/fresh
+                        // read for the _pttLocked term specifically (this branch's whole reason to exist)
+                        // while no longer silently dropping the other two flags.
+                        pttKeyedOnRealRig = pttLockedAtEntry || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig;
                         // Round-4 nit: GetType().FullName, not nameof(SstvSessionService), to match the
                         // ObjectName ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in
                         // this class -- both throw sites should report the same object identity.
