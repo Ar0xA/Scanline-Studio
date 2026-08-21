@@ -63,7 +63,18 @@ public interface IRadioController
     IObservable<RadioState> StateChanges { get; }
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }
 
+    /// <summary><b>Lifecycle calls are not internally serialized.</b> <see cref="ConnectAsync"/>,
+    /// <see cref="DisconnectAsync"/>, and <see cref="IAsyncDisposable.DisposeAsync"/> (where implemented)
+    /// must not overlap each other — the caller owns that mutual exclusion. Overlapping them is
+    /// undefined: e.g. a <see cref="DisconnectAsync"/> landing inside a concurrent
+    /// <see cref="ConnectAsync"/>'s own teardown-then-resolve window can observe a fully torn-down
+    /// controller, no-op, and return as if it disconnected successfully — while the session it meant to
+    /// stop finishes coming up and keeps polling. The <c>Set*Async</c> members and the two observable
+    /// streams ARE safe to call/subscribe concurrently with each other and with a lifecycle call.</summary>
     Task ConnectAsync(RadioConnectionSpec spec, CancellationToken ct);
+
+    /// <summary>See <see cref="ConnectAsync"/>'s own doc comment for the lifecycle-serialization
+    /// requirement this method shares.</summary>
     Task DisconnectAsync();
     Task SetFrequencyAsync(long hz, CancellationToken ct);
     Task SetModeAsync(RadioMode mode, CancellationToken ct);

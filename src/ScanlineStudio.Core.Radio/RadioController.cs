@@ -116,6 +116,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
 
+        IRadioProtocol resolved;
         try
         {
             // Inside the try, not above it: this used to sit outside, so a cancelled token was the one
@@ -123,7 +124,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             // every subscriber latched on Connecting forever while only the caller saw the throw.
             ct.ThrowIfCancellationRequested();
 
-            var resolved = ResolveProtocol(spec);
+            resolved = ResolveProtocol(spec);
             _protocol = resolved;
             // Set BEFORE reading RigId: everything from here on is reachable by DisconnectAsync's
             // (_sessionActive-gated) teardown, so a throw out of a backend's own RigId getter disposes
@@ -145,7 +146,11 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         }
 
         PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
-        Log.Connected(_logger, spec.GetType().Name, _protocol.Capabilities);
+        // Logs the local just resolved, not _protocol: a ConnectionEvents subscriber that reacts to
+        // Connected by synchronously calling DisconnectAsync (nothing prevents that -- Subject<T>.OnNext
+        // runs subscribers inline) would null _protocol before this line's first await, turning a field
+        // read here into a NullReferenceException.
+        Log.Connected(_logger, spec.GetType().Name, resolved.Capabilities);
         _lastLoggedFailureState = null;
 
         _pollLoopCts = new CancellationTokenSource();
@@ -281,6 +286,14 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             }
             catch (RadioProtocolException ex)
             {
+                if (ct.IsCancellationRequested)
+                {
+                    // An abandoned loop (PollLoopShutdownTimeout expired while a call was wedged) must
+                    // not publish a command-level failure after DisconnectAsync already published
+                    // Disconnected -- there is no session left for this event to describe.
+                    return;
+                }
+
                 // Command-level failure -- the connection is fine. Don't touch backoff, keep cadence.
                 attempt = 0;
                 PublishConnectionEvent(RadioConnectionState.CommandFailed, ex.Message, ex);
@@ -301,6 +314,19 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             }
             catch (Exception ex)
             {
+                if (ct.IsCancellationRequested)
+                {
+                    // Same reasoning as the RadioProtocolException guard above: an abandoned loop must
+                    // not publish Reconnecting/Failed or start a fresh reconnect attempt after
+                    // DisconnectAsync's teardown already ran.
+                    if (protocol is not null)
+                    {
+                        await SafeDisposeProtocolAsync(protocol).ConfigureAwait(false);
+                    }
+
+                    return;
+                }
+
                 // Transport-level failure -- back off, then close/reopen via a fresh protocol instance
                 // from the factory (never just retry the same dead transport forever).
                 attempt = Math.Min(attempt + 1, MaxBackoffAttempt);
@@ -344,8 +370,19 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                     // installed its own value -- or deliberately left it null -- and blindly
                     // overwriting it would resurrect a session the caller just tore down, or orphan a
                     // freshly-connected protocol nobody would ever dispose.
-                    if (ct.IsCancellationRequested ||
-                        Interlocked.CompareExchange(ref _protocol, fresh, null) is not null)
+                    if (Interlocked.CompareExchange(ref _protocol, fresh, null) is not null)
+                    {
+                        await SafeDisposeProtocolAsync(fresh).ConfigureAwait(false);
+                        return;
+                    }
+
+                    // Re-checked AFTER claiming the slot, not before: a DisconnectAsync whose bounded
+                    // wait timed out can run its whole teardown in the window between an earlier check
+                    // and this CAS, leaving _sessionActive false with `fresh` now installed -- a live,
+                    // undisposed protocol on a torn-down controller. SafeDisposeProtocolAsync's own CAS
+                    // is instance-matched, so un-installing it here is safe even if a newer session has
+                    // since claimed the slot.
+                    if (ct.IsCancellationRequested)
                     {
                         await SafeDisposeProtocolAsync(fresh).ConfigureAwait(false);
                         return;
@@ -376,6 +413,14 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             }
 
             attempt = 0;
+            // Same reasoning as the catch guards above: re-publishing a snapshot after teardown has
+            // already run would leave LastKnownState non-null for a controller with no session,
+            // permanently (nothing clears it again until the next real connect).
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
             PublishState(state);
 
             if (!await DelayAsync(spec.PollInterval, ct).ConfigureAwait(false))
