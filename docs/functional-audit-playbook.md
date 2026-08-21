@@ -2990,3 +2990,86 @@ that was only 1 round old (round 27's own fix), continuing the pattern that this
 consistently where the next round's findings live, now proven at blocker severity too, not just
 risk/nit. Does NOT count as chunk 3a's 1st clean round -- round 29 is now the earliest round that can.
 Twenty-seven consecutive rounds (2-28) have now each found something real in this file.
+
+**Chunk 3a round 29** (2026-08-21, independent agent, fresh context, agent `a64020af236f435ba`). Verdict
+EQUIVALENT-WITH-RISKS -- no blocker. Traced round 28's own fix in detail (no await between the key bump
+and the two epoch reads; every snapshot-skipping exit path leaves both epoch locals at safe placeholder
+defaults, because `abnormalTermination` on those paths forces `skipUnkeyAndRxResume` false, which makes
+the un-key-skip consumer unreachable with a placeholder, and the `_pttLeftKeyedByCall`-skip consumer's own
+skip requires `pttKeyedOnRealRig` true, which requires `_pttLocked` having been true, which requires
+`_pttKeyEpoch >= 1` -- so the skip is never wrongly taken) -- **round 28's fix holds, confirmed sound.**
+**[risk]** `SetPttLockAsync`'s own `pttCommand` (its key/un-key command) had no fault-observer when
+`WaitAsync` gives up on it -- a fourth instance of the exact round-26 finding, at the one site round 26's
+own enumeration comment claimed didn't exist ("every OTHER abandoned task... StopReceivingAsync,
+StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync" -- this one wasn't in that list). On the
+UNLOCK direction specifically, round 18's own design deliberately gives the command
+`CancellationToken.None` so it "stays queued and eventually reaches the rig" -- meaning a late failure is
+a real, expected outcome, and nothing observed or logged it: an operator hits emergency unlock during a
+wedged CAT link, gets the immediate Critical (correct), but is never told whether the retry that reaches
+the rig 30 seconds later actually succeeded or failed. Not a leak (state flags latch correctly, and
+`DisposeAsync`'s backstop still fires) -- observability only, on the one escape-hatch path this whole
+chunk exists to keep observable. **[nit]** `_pttUnkeyEpoch`'s own field doc comment (and 2 consumer
+comments) still described the PRE-round-28 semantics ("snapshotted once... at entry") even though round 28
+deliberately moved that read -- exactly the kind of stale safety-argument drift round 28's own comment (at
+its declaration) already flagged as a known risk class in this file. The local's own name
+(`unkeyEpochAtEntry`) no longer matched its sibling's accurate name (`keyEpochAfterOwnKeyAttempt`) either.
+**[nit, re-confirmed]** round 28's own documented-not-fixed nit (the early `pttKeyedOnRealRig` baseline's
+own false-Critical window) independently re-derived and confirmed still exactly as round 28 characterized
+it -- correctly left deferred, not something round 29 found a clean way to close either. **[nit]** the
+baseline's own belief test (`_pttLocked` alone) is narrower than the file's own equivalent "did this class
+believe something was keyed" test used at the unlock-direction catch (`_pttLocked || _pttLeftKeyedByCall
+|| _pttUnkeyFailedOnRealRig`) -- a prior `TuneAsync(leaveKeyedAfterTune: true)` leaving the rig keyed via
+`_pttLeftKeyedByCall` alone, followed by a RigId disconnect, would baseline a new transmit's
+`pttKeyedOnRealRig` false, downgrading its own cleanup Critical to Debug. Verified not a leak
+(`_pttLeftKeyedByCall` itself survives, so `DisposeAsync`'s backstop still fires) -- same signal-quality
+class round 25 exists to protect, one flag short.
+
+Independent re-enumerations, both clean: all `Log.*` call sites (9 unwrapped, all on normal
+entry/propagation paths, none in a catch/cleanup/finally/fault-observer, none reachable with PTT keyed);
+unguarded non-log operations in catch/cleanup/finally (the round-21 `ResetAgc` class) across all 34
+catch/finally blocks, nothing production-reachable found. Also explicitly considered and rejected as a
+finding: the lag between an un-key CONFIRMING at the rig and its own `_pttUnkeyEpoch` bump (both sites) --
+traced and confirmed awaitless/instruction-scale, same accepted-residual class as `_pttKeyEpoch`'s own
+documented window; and `_pttLocked = locked;`'s own unconditional write outside the epoch guard at the
+unlock site -- confirmed safe, since `_pttLockGate` serializes all `SetPttLockAsync` calls and
+`PlayWithPttAsync` never writes `_pttLocked = true` itself, so no concurrent writer can stomp it.
+
+**Chunk 3a round 29 fixes applied** (2026-08-21, commit pending). Risk fixed: `pttCommand`'s declaration
+moved outside the `try` (a local declared inside a `try` is not in scope in that try's own `catch`
+blocks, so this was needed regardless) as a nullable `Task?`, with the identical `ContinueWith`
+fault-observer pattern (`OnlyOnFaulted`, gated on `!IsCompleted`) added to BOTH catch arms (engage and
+unlock direction), matching the class's other 4 established sites exactly. First nit fixed: the field doc
+and both consumer comments corrected to describe the actual round-28 semantics, and the local renamed
+`unkeyEpochAtEntry` → `unkeyEpochAfterOwnKeyAttempt` throughout, matching its sibling's naming so a future
+round can't be misled by the name alone the way round 28's own bug partly stemmed from a mismatch between
+the old name and the old (wrong) semantics. Second nit: no action (already correctly deferred, re-stated).
+Third nit fixed: baseline widened from `_pttLocked` alone to the full established belief test
+(`_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig`).
+
+New regression test:
+`Round29_SetPttLockAsync_AbandonedCommandLaterFails_ObservedNotSilentlyLost` -- gates the PTT command via
+`FakeRadioSessionService`'s existing `Gate`/`GateOnCallNumber`, lets `SetPttLockAsync`'s own `WaitAsync`
+time out against a short `cleanupTimeout`, then releases the gate so the abandoned command fails,
+asserting the fault-observer's own log line appears. Mutation-verified: reverted the fault-observer
+attachment on the engage-direction catch arm (fresh backup taken immediately before this specific
+mutation), reproduced the exact predicted failure (the log line never appears, `WaitForAsync` times out),
+restored, rebuilt clean, re-confirmed passing. **Also found and fixed, during this verification pass, a
+genuine pre-existing race in this file's own shared `RecordingLogger<T>` test double**: its `Entries`
+property was a plain `List<T>`, and this class's own round-26/28/29 fault-observer fixes all log from a
+`ThreadPool` continuation concurrently with a test's `WaitForAsync` polling loop enumerating that same
+list on the test thread -- an intermittent `InvalidOperationException` ("Collection was modified"),
+caught by this exact new test failing once on a full-suite run despite passing standalone. Fixed by
+switching `Entries` to `ConcurrentBag<(LogLevel, string)>` (drop-in compatible with every existing
+`.Contains`/`.Any`/`.Clear()` call site in this file) -- confirmed fixed by 3 consecutive clean full runs
+of `ScanlineStudio.Application.Tests` afterward, not just 1. 219/219 `ScanlineStudio.Application.Tests`
+passing (218 pre-existing + 1 new), full solution suite run in progress at time of writing -- confirm
+clean before treating this round as closed.
+
+Round 29 confirmed round 28's blocker fix is genuinely sound (the first round this chunk has spent
+explicitly re-verifying a PRIOR round's blocker fix rather than finding a new one), found one more real
+risk in the same "abandoned task with no fault-observer" class round 26 introduced -- proving that
+enumeration was ALSO incomplete, matching the earlier round-21/22/23 `SafeLog`-coverage pattern one more
+time -- plus caught and fixed a genuine test-infrastructure race as a side effect of its own
+mutation-verification discipline. Does NOT count as chunk 3a's 1st clean round -- round 30 is now the
+earliest round that can. Twenty-eight consecutive rounds (2-29) have now each found something real in
+this file.

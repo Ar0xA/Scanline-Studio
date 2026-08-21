@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -2026,6 +2027,46 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal([false, true, false], radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 29 findings
+
+    [Fact]
+    public async Task Round29_SetPttLockAsync_AbandonedCommandLaterFails_ObservedNotSilentlyLost()
+    {
+        // Round-29 finding (risk): SetPttLockAsync's own pttCommand (its key/un-key command) had no
+        // fault-observer when WaitAsync gave up on it -- unlike every OTHER abandoned task in this
+        // class (StopReceivingAsync, StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync,
+        // TryUnkeyPttAsync's own round-26 fix). Round 18's own design deliberately gives the UNLOCK
+        // direction's command CancellationToken.None so it "stays queued and eventually reaches the
+        // rig" -- but a late failure behind that wedged command, on the one escape-hatch path this
+        // chunk exists to keep observable, was silently lost.
+        var gate = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.Gate = gate.Task;
+        radio.GateOnCallNumber = 1;
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                throw new TimeoutException("simulated: PTT command eventually failed after the watchdog gave up");
+            }
+        };
+
+        // SetPttLockAsync's own command parks on the gate -- its own WaitAsync gives up after
+        // cleanupTimeout (50ms), well before the gate is ever released, leaving the command abandoned
+        // but still running.
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(true));
+
+        // Release the gate -- the abandoned command now runs to completion, and (via BeforeSetPtt)
+        // fails.
+        gate.SetResult();
+
+        // THE property: that late failure must be observed and logged, not silently lost as an
+        // unobserved task exception.
+        await WaitForAsync(
+            () => logger.Entries.Any(e => e.Message.Contains("PTT command (finished after watchdog)", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(5));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
@@ -2375,7 +2416,14 @@ public sealed class SstvSessionServicePttSafetyTests
 
     internal sealed class RecordingLogger<T> : ILogger<T>
     {
-        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+        // Round-29 finding: was a plain List<T> -- this class's own round-26/28/29 fault-observer
+        // fixes all log from a ThreadPool continuation (TaskContinuationOptions.ExecuteSynchronously
+        // just means "run inline on whichever thread completes the task," not "run on the test
+        // thread"), concurrently with a test's own WaitForAsync polling loop enumerating this same
+        // collection on the test thread -- a genuine, if rare, InvalidOperationException
+        // ("Collection was modified") race, caught by this exact new test intermittently failing on a
+        // full-suite run. ConcurrentBag is thread-safe for concurrent Add/enumerate/Clear.
+        public ConcurrentBag<(LogLevel Level, string Message)> Entries { get; } = [];
 
         /// <summary>Test-only hook (round 19): when a formatted message contains this substring, `Log`
         /// throws instead of recording -- simulates a broken logging provider (e.g. a file logger on a
