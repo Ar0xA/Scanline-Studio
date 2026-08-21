@@ -24,8 +24,8 @@ namespace ScanlineStudio.Core.Sstv;
 /// port. Stale-comment correction: an earlier revision of this paragraph claimed "no LPF/BPF stage
 /// exists yet ahead of this class" as the reason -- false as of <c>AnalogFmSstvDecoder.AgcSampleAt</c>,
 /// which now feeds this class legacy's real post-2-tap-LPF/post-bandpass-filter value via
-/// <c>BandpassFilteredSampleAt</c> (`sstv.cpp:1824-1834` -- the LPF/BPF block itself; `:1823` is
-/// the overflow check's own closing brace, not part of it), matching legacy's own filter ordering.
+/// <c>BandpassFilteredSampleAt</c> (`sstv.cpp:1824-1833` -- the LPF/BPF block itself; `:1834` is
+/// the following `m_lvl.Do(d)` call, not part of it), matching legacy's own filter ordering.
 /// The real, still-accurate reason <c>m_Cur</c> has no dedicated field here: that filtered value is
 /// already directly available at every call site in this port (the same value <see cref="Do"/> is
 /// called with), so callers just keep using their own copy instead of fetching it back out of this
@@ -86,11 +86,15 @@ internal sealed class LevelAgc
     /// advances this DSP state whenever a paint happens to fire, which stretches the *effective*
     /// window to some UI-paint-cadence-dependent multiple of 100ms. That real interval isn't
     /// statically determinable (`Main.dfm` is a compiled binary resource, not inspectable from
-    /// source) -- an earlier version of this comment cited an unverified "~200ms" figure for it, which
-    /// should not be read as a value to replicate. This port's per-sample cadence uses legacy's own
-    /// designed 100ms value directly, which is the more faithful choice, not merely a documented
-    /// deviation (ultracode audit finding #5: confirmed a legacy UI-paint-cadence artifact, not a
-    /// design worth copying).</summary>
+    /// source; Tier A Batch 7 chunk 7e confirmed <c>TTimer</c>'s effective interval isn't readable
+    /// from source either, so even the VCL default of 1000ms is not a verified legacy figure, only a
+    /// plausible one) -- an earlier version of this comment cited an unverified "~200ms" figure,
+    /// which should not be read as a value to replicate. This port's per-sample cadence uses legacy's
+    /// own designed 100ms value directly (ultracode audit finding #5: confirmed a legacy UI-paint-
+    /// cadence artifact, not a design worth copying) -- in practice this makes the port's AGC gain
+    /// and <see cref="CurMax"/> refresh materially FASTER than legacy's own real runtime behavior, a
+    /// real, accepted divergence from what legacy users actually experienced, not a value-neutral
+    /// choice.</summary>
     public void Fix()
     {
         if (_cnt < _cntMax)
@@ -109,10 +113,12 @@ internal sealed class LevelAgc
 
     /// <summary>Resets to <c>Init()</c>'s defaults (`sstv.h:245-255`: <c>m_agc=1.0</c>,
     /// <c>m_Max=m_CurMax=m_Cnt=0</c>). Legacy calls this at every TX&lt;-&gt;RX transition
-    /// (<c>Sound.cpp:398,443</c>) -- confirmed deliberate state hygiene (an explicit reset block
-    /// alongside other resets and a bandpass-filter flush at both transition directions), not an
-    /// artifact (ultracode audit finding #6). Callers should invoke this at the same transition
-    /// point.</summary>
+    /// (<c>Sound.cpp:398,443</c>) -- confirmed deliberate state hygiene, not an artifact (ultracode
+    /// audit finding #6). Round-1 doc correction: an earlier version of this comment said the
+    /// accompanying bandpass-filter flush also runs at both transition directions -- it doesn't;
+    /// `Sound.cpp:441`'s flush loop (`SSTVDEM.Do(1)` x`m_bpftap`) exists only on the TX-&gt;RX side.
+    /// The <c>Init()</c> call itself IS at both directions, which is what this class's own contract
+    /// depends on. Callers should invoke this at the same transition point.</summary>
     public void Init()
     {
         _max = 0;

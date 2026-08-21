@@ -2,12 +2,15 @@ namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
 /// Direct port of legacy <c>CSSTVDEM::SyncFreq</c> (`sstv.cpp:2339-2376`) — the AFC (automatic
-/// frequency control) state machine. Fed a zero-crossing-based frequency reading
-/// (<see cref="ZeroCrossingFrequencyCounter"/>) every sample once a mode is locked; watches for a
-/// run of consecutive samples that plausibly reads as the mode's sync tone (1200Hz normal, 1900Hz
-/// for the MN/MC narrow family, `NARROW_SYNC`), and once found, locks a persistent correction — the
-/// difference between the expected sync frequency and what was actually measured — which the caller
-/// adds to every subsequently demodulated sample (mirroring legacy's `if(m_Sync) d += m_AFCDiff`).
+/// frequency control) state machine. Fed a frequency reading -- <see cref="ZeroCrossingFrequencyCounter"/>
+/// for the PLL demod path (legacy `m_Type==0`), or the picture-path demod output for the other two
+/// paths (see <c>AnalogFmSstvDecoder</c>'s own call sites) -- gated on <see cref="LevelAgc.CurMax"/>`&gt;16`,
+/// not every raw sample (round-1 doc correction: an earlier version of this opening sentence said
+/// "every sample," contradicting this same comment's own accurate statement further below). Watches
+/// for a run of consecutive samples that plausibly reads as the mode's sync tone (1200Hz normal,
+/// 1900Hz for the MN/MC narrow family, `NARROW_SYNC`), and once found, locks a persistent correction
+/// — the difference between the expected sync frequency and what was actually measured — which the
+/// caller adds to every subsequently demodulated sample (mirroring legacy's `if(m_Sync) d += m_AFCDiff`).
 ///
 /// Kept in real Hz throughout (see <see cref="ZeroCrossingFrequencyCounter"/>'s doc comment for the
 /// faithful-at-steady-state, bounded-and-accepted-during-a-narrow-mode-transition qualification on
@@ -26,6 +29,10 @@ namespace ScanlineStudio.Core.Sstv;
 /// gates the call to <see cref="ProcessSample"/> (matching legacy's `SyncFreq(d)` update), while the
 /// standing correction itself is applied to every sample unconditionally (matching legacy's separate,
 /// unconditional `d += m_AFCDiff`, `sstv.cpp:2270`).
+///
+/// Legacy's <c>SyncFreq</c> also sets <c>m_AFCFlag = 15</c> on every lock (`sstv.cpp:2361`) --
+/// confirmed (Tier A Batch 7 chunk 7e) this drives only a UI "AFC active" activity lamp
+/// (`Main.cpp:3312/3314/3438`), no DSP/decode effect, so it has no equivalent here.
 /// </summary>
 internal sealed class AfcTracker
 {
@@ -42,7 +49,7 @@ internal sealed class AfcTracker
 
     private int _consecutiveInBandCount;
     private int _disabledSamplesRemaining;
-    private int _gardRemaining = 10; // m_AFCGard, InitAFC (sstv.cpp:1659)
+    private int _gardRemaining = 10; // m_AFCGard, InitAFC (sstv.cpp:1669)
     private double _lockedFrequencyHz;
     private double _correctionHz;
 
@@ -71,9 +78,16 @@ internal sealed class AfcTracker
         _syncTargetHz = syncTargetHz;
         _bandLowHz = bandLowHz;
         _bandHighHz = bandHighHz;
-        _afcBeginSamples = (int)(afcBeginMs / 1000.0 * sampleRate);
-        _afcEndSamples = _afcBeginSamples + (int)(afcWidthMs / 1000.0 * sampleRate);
-        _cooldownSamples = (int)(100.0 / 1000.0 * sampleRate); // m_AFCInt = 100ms, sstv.cpp:1478
+        // Round-1 code-review finding: legacy computes AFCB = 1.5*SampFreq/1000.0 -- multiply BEFORE
+        // divide (sstv.cpp:1172/1176). An earlier version of this port divided first instead
+        // (`afcBeginMs / 1000.0 * sampleRate`) -- algebraically equal in real numbers, but not the
+        // same double expression, so it can round differently at some sample rate/duration
+        // combination even though none of this port's currently reachable operands happen to expose
+        // it. Reordered to match legacy's literal expression, not just its result at today's
+        // reachable operands.
+        _afcBeginSamples = (int)(afcBeginMs * sampleRate / 1000.0);
+        _afcEndSamples = _afcBeginSamples + (int)(afcWidthMs * sampleRate / 1000.0);
+        _cooldownSamples = (int)(100.0 * sampleRate / 1000.0); // m_AFCInt = 100ms, sstv.cpp:1478
 
         // SyncFreq's `d -= 128` (sstv.cpp:2347), translated out of legacy's x16384/BWH scale: 128 in
         // that scale is 128*BWH/16384 real Hz. Confirmed deliberate, not incidental (ultracode audit
@@ -85,7 +99,7 @@ internal sealed class AfcTracker
         // +6.25Hz wide / +2.0Hz narrow vs legacy).
         _calibrationOffsetHz = 128.0 * bandwidthHalfHz / 16384.0;
 
-        _shortAverage = new MovingAverage((int)(2.5 / 1000.0 * sampleRate)); // m_Avg, sstv.cpp:1475
+        _shortAverage = new MovingAverage((int)(2.5 * sampleRate / 1000.0)); // m_Avg, sstv.cpp:1475
 
         // InitAFC pre-seeds m_AFCLock/m_AFCData to the nominal sync-tone-equivalent value
         // (sstv.cpp:1662/1665) before the lock average has ever filled -- without this, the 15-tap

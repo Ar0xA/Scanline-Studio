@@ -4892,4 +4892,59 @@ Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 124
 
 ## Chunk 7d CLOSED
 
-Chunks 7e-7f remain open.
+## Chunk 7e round 1: AfcTracker.cs (full audit), LevelAgc.cs
+
+Verdict: EQUIVALENT-WITH-RISKS, unconditional go for production as-is. Zero functional bugs -- the
+auditor independently re-derived the two things most likely to be silently wrong (the `d -= 128`
+calibration sign and the `m_AFCDiff` correction sign) from the real demodulator scaling rather than
+trusting the existing comments, and both check out. AfcTracker's full `SyncFreq` state machine
+(in-band/out-of-band branching, `_gardRemaining` countdown-then-reset, `_disabledSamplesRemaining`
+cooldown, lock-average Reset-vs-Add selection) matched legacy statement-for-statement; LevelAgc's
+`Fix()` gain formula, threshold, and cadence matched `CLVL::Fix` literally. (Note: chunk 7c had
+already touched `AfcTracker.cs`, but only to correct one doc comment echoed in from
+`ZeroCrossingFrequencyCounter.cs` -- this round is the first full audit of its own state machine.)
+
+Fixes applied, all doc-comment/citation-level or coverage, no functional change except one exact-
+expression-order correction:
+- AfcTracker's opening doc sentence overclaimed "every sample" (contradicting its own later, correct
+  gated-feed description) and omitted that the PLL demod path is the only one actually fed by
+  `ZeroCrossingFrequencyCounter` -- corrected.
+- Two stale legacy line citations (`sstv.cpp:1659`->`1669` for `m_AFCGard`'s InitAFC line, in both
+  `AfcTracker.cs` and `AfcTests.cs`; `LevelAgc.cs`'s `1824-1834`->`1824-1833` for the LPF/BPF block).
+- Reordered `_afcBeginSamples`/`_afcEndSamples`/`_shortAverage`'s window-size arithmetic to multiply
+  before dividing, matching legacy's literal `AFCB = 1.5*SampFreq/1000.0` expression exactly (was
+  divide-then-multiply -- algebraically equal at every currently-reachable sample rate, confirmed by
+  re-running the full affected-test filter clean after the change, but not literally the same
+  expression, so a future sample rate could round differently).
+- `LevelAgc.cs`'s TX<->RX reset doc overstated that the accompanying bandpass-filter flush runs at
+  both transition directions -- it's TX->RX only (`Sound.cpp:441`); the `Init()` call itself is at
+  both, which is what this class's own contract actually depends on. Corrected.
+- Softened `LevelAgc.cs`'s `Fix()` cadence claim: legacy's real UI-paint-timer interval isn't
+  determinable from source (confirmed `Main.dfm` is binary, so even the VCL 1000ms default isn't a
+  verified figure) -- this port's per-sample-cadence 100ms design-window choice makes its AGC gain
+  and `CurMax` refresh materially faster than legacy's real runtime behavior, a real accepted
+  divergence, not the value-neutral "more faithful" framing the comment previously used.
+- Added a note on legacy's `m_AFCFlag = 15` (UI activity-lamp only, confirmed via `Main.cpp`, no
+  DSP/decode effect) to `AfcTracker.cs`, matching `LevelAgc.cs`'s own precedent of documenting (not
+  silently dropping) an omitted write-only field.
+- Fixed a stale `LevelAgcTests.cs` doc claim that the class wasn't wired into any decoder call site
+  yet -- it is (`AnalogFmSstvDecoder.cs:922-937`).
+
+**One real coverage gap closed with a mutation-verified test.** `_disabledSamplesRemaining` (the
+100ms post-lock cooldown) had no test ever driving it down to a genuine re-lock attempt. Added
+`AfcTracker_CooldownActive_SuppressesRelockUntilExpired`: locks once, drops out of band for less
+than the full cooldown, holds a genuinely different in-band reading well past the arm-to-lock window
+(must NOT relock while cooldown is active), then exhausts the remaining cooldown and confirms the
+same reading DOES relock. Sample-exact hand-derived expected values (mutation run against the
+gate-removed version independently reproduced the predicted -3.7917 exactly, confirming the by-hand
+math), mutation-verified: dropping the `_disabledSamplesRemaining == 0` gate makes the "during
+cooldown" assertion fail exactly as predicted.
+
+Auditor's verdict: unconditional go for production as-is -- no round 2 needed for a round that found
+no functional bug, same rigor rule as this batch's own precedent.
+
+Full `ScanlineStudio.Core.Sstv.Tests` suite run: Passed - Failed: 0, Passed: 1243, Skipped: 1, Total: 1244.
+
+## Chunk 7e CLOSED
+
+Chunk 7f remains open.
