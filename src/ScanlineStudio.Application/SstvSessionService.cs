@@ -1488,12 +1488,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // it.
             var pttKeyedOnRealRig = false;
 
-            // Round-26 finding: declared out here (like pttKeyedOnRealRig above), not alongside its own
-            // snapshot assignment inside the try below -- the cleanup finally needs to read this, and a
-            // local declared inside the try is not in scope there. Safe default: every guard that reads
-            // this is prefixed with `pttKeyedOnRealRig &&` (also false-by-default until the try actually
-            // reaches its own snapshot line), so an exception before that point never reaches a
-            // meaningful use of this placeholder value.
+            // Round-26 finding, round-28 correction: declared out here, not alongside its own snapshot
+            // assignment inside the try below -- the cleanup finally needs to read this, and a local
+            // declared inside the try is not in scope there. Round-28 finding (nit): the ORIGINAL
+            // safety argument for this placeholder ("every guard is prefixed with `pttKeyedOnRealRig &&`,
+            // also false-by-default until the try reaches its own snapshot line") went stale the moment
+            // round 27 moved pttKeyedOnRealRig's own assignment earlier (now near the top of the try,
+            // before this field is ever touched) -- so it is generally NOT false-by-default anymore at
+            // any point this placeholder could matter. Still safe, for a different reason: every
+            // consumer requires pttKeyedOnRealRig true, which requires _pttLocked having been true at
+            // some point, which requires _pttKeyEpoch >= 1 -- combined with the second epoch term below,
+            // every interleaving still errs toward attempting the un-key, never toward wrongly skipping
+            // one based on this specific placeholder value.
             var unkeyEpochAtEntry = 0;
 
             // Round-27 finding: same reason/shape as unkeyEpochAtEntry just above -- declared out here,
@@ -1523,6 +1529,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // directly into pttKeyedOnRealRig so it survives a throw from any of the three awaits.
                 // The rigIsRealAtKeyTime branch further down still unconditionally sets this true for
                 // the case THIS call keys/re-keys the rig itself, a strict superset of this baseline.
+                //
+                // Round-28 finding (nit, flagged not fixed): moving this baseline earlier widened its
+                // OWN false-positive window in the opposite direction -- if a lock is engaged here, then
+                // during the three awaits below a confirmed un-key genuinely turns the rig off AND
+                // RigId separately goes to "none" (RadioController.DisconnectAsync), this call never
+                // keys (rigIsRealAtKeyTime false) but pttKeyedOnRealRig stays stuck true from this
+                // stale baseline -- cleanup then attempts a doomed un-key against the null-object
+                // backend and logs a false Critical on a rig already confirmed off elsewhere. Pre-round-
+                // 27 this same window was instruction-scale (right up to the read); it is now up to
+                // three bounded-await-widths. unkeyEpochAtEntry's own round-28 fix does not rescue this
+                // -- that confirmed un-key's own epoch bump lands BEFORE unkeyEpochAtEntry's own (also
+                // moved-later) read, so the pair sees no change and does not skip the doomed attempt.
+                // Narrow (needs lock-engaged-then-confirmed-unlock-then-disconnect, all within these
+                // three awaits) and requires SetPttLockAsync, which has zero production callers today --
+                // not fixed this round; a real fix would need this baseline itself to be downgradeable
+                // by a confirmed un-key observed since this exact line, not just guardable at the
+                // consumer sites the way _pttUnkeyEpoch already is.
                 pttKeyedOnRealRig = _pttLocked;
 
                 // Round-15 finding 3: these three awaits had no bound of their own either -- unlike
@@ -1561,11 +1584,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 var pttLockedAtEntry = _pttLocked;
                 var rigIsRealAtKeyTime = _radioSession.RigId != "none";
 
-                // Round-26 finding: snapshotted here, at entry, alongside pttLockedAtEntry -- see
-                // _pttUnkeyEpoch's own doc comment. Used by this call's own cleanup to detect a
-                // CONFIRMED un-key that happened anywhere else (an operator's own SetPttLockAsync(false),
-                // or another PlayWithPttAsync call's own cleanup) between entry and cleanup time.
-                unkeyEpochAtEntry = Volatile.Read(ref _pttUnkeyEpoch);
+                // Round-28 finding (blocker): this used to be snapshotted here, at method entry -- see
+                // _pttUnkeyEpoch's own doc comment for what it's used for. Round 28 found that reading
+                // it THIS early was itself the bug: it let a confirmed un-key that happened BEFORE this
+                // call's own key command be misread, at cleanup time, as "confirmed AFTER I keyed" --
+                // the pairing with keyEpochAfterOwnKeyAttempt (below) only proves "nobody re-keyed since
+                // MY key phase", not "this specific confirmed un-key postdates my key". Moved to the
+                // SAME point as keyEpochAfterOwnKeyAttempt (right after this call's own key phase, see
+                // that assignment's own comment) so the pair now correctly means "since MY OWN key:
+                // someone confirmed off, and nobody re-keyed" -- preserving both of round 26's own
+                // motivating scenarios (an unlock mid-tone, and an unlock during
+                // StopPlaybackWithWatchdogAsync's own drain), both of which land after that point.
 
                 // Round-25 finding (risk): pttKeyedOnRealRig is baselined on an already-engaged lock --
                 // an already-engaged lock means the rig is genuinely keyed independent of THIS call's
@@ -1747,6 +1776,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // erring toward attempting the un-key (this file's own established rule) whenever
                 // ANYONE has re-keyed since this point, not just when this call's own belief is stale.
                 keyEpochAfterOwnKeyAttempt = Volatile.Read(ref _pttKeyEpoch);
+
+                // Round-28 finding (blocker): unkeyEpochAtEntry now read HERE too, not at method entry
+                // -- see its own comment (near pttLockedAtEntry, above) for why the entry-time read was
+                // itself the bug. Reading both epochs at this SAME point (immediately after this call's
+                // own key phase, no await between the two reads) means the pair now correctly answers
+                // "since MY OWN key: did anyone confirm off, and did anyone re-key" -- not two questions
+                // anchored to different, unrelated points in time.
+                unkeyEpochAtEntry = Volatile.Read(ref _pttUnkeyEpoch);
 
                 // Round-14 finding 2: same unbounded-await shape as finding 1, one step later --
                 // PTT is already keyed (or was already locked keyed at entry) by this point, so an
