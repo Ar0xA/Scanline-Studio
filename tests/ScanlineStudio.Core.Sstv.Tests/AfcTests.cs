@@ -103,7 +103,7 @@ public class AfcTests
         // sync-tone-equivalent value (sstv.cpp:1662/1665) before the 15-tap lock average has ever
         // filled. 10 near-miss cycles (each a stable in-band run that never reaches _afcEndSamples --
         // expired early by toggling out of band right after arming) exhaust _gardRemaining (starts
-        // at 10, sstv.cpp:1659) and trigger `_lockAverage.Reset(_lockedFrequencyHz)`. With this fix,
+        // at 10, sstv.cpp:1669) and trigger `_lockAverage.Reset(_lockedFrequencyHz)`. With this fix,
         // _lockedFrequencyHz is still its seeded syncTargetHz (1200) at that point (none of the
         // near-miss cycles ever locked), so the 15-tap average is now full of 1200s. A subsequent
         // genuine dead-on-target lock takes the OTHER branch (_lockAverage.Add, since gard is now 0),
@@ -123,6 +123,57 @@ public class AfcTests
 
         Assert.Equal(-0.2083, correction, tolerance: 0.01);
         Assert.True(Math.Abs(correction) < 50.0, $"Correction {correction} is nowhere near the seeded-with-syncTarget expectation -- looks like the pre-fix zero-seeded bug.");
+    }
+
+    [Fact]
+    public void AfcTracker_CooldownActive_SuppressesRelockUntilExpired()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 7 chunk 7e (docs/functional-audit-playbook.md):
+        // no existing test ever drove _disabledSamplesRemaining (the 100ms post-lock cooldown,
+        // sstv.cpp:2270's SyncFreq's m_AFCDis countdown) down to a genuine re-lock attempt. Legacy's
+        // own quirk -- m_AFCDis decrements ONLY in the out-of-band branch (sstv.cpp:2374), never while
+        // holding in-band -- is exercised here directly, not assumed.
+        //
+        // Sample-exact bookkeeping at SampleRate=44100: _afcBeginSamples=66, _afcEndSamples=198,
+        // _cooldownSamples=4410 (100ms). First lock arms the cooldown at exactly 4410. Feeding 2000
+        // out-of-band samples leaves 2410 remaining -- still active. A NEW in-band reading held for
+        // 300 samples (comfortably past the 199-sample arm-to-lock window) must NOT relock while the
+        // gate is active. Feeding the remaining 2410 out-of-band samples exhausts the cooldown
+        // exactly; a third in-band hold then DOES relock.
+        var tracker = new AfcTracker(SampleRate, syncTargetHz: 1200, bandLowHz: 1000, bandHighHz: 1325, afcBeginMs: 1.5, afcWidthMs: 3.0, bandwidthHalfHz: 400);
+
+        var firstCorrection = FeedConstantReading(tracker, 1200.0, durationMs: 50);
+        Assert.Equal(-3.125, firstCorrection, tolerance: 0.01);
+
+        FeedOutOfBandSamples(tracker, 2000);
+
+        var duringCooldown = FeedConstantReadingForSamples(tracker, 1210.0, 300);
+        Assert.Equal(-3.125, duringCooldown, tolerance: 0.0001);
+
+        FeedOutOfBandSamples(tracker, 2410);
+        var afterCooldown = FeedConstantReadingForSamples(tracker, 1210.0, 300);
+
+        Assert.NotEqual(-3.125, afterCooldown);
+        Assert.True(afterCooldown < -3.125, $"expected a larger-magnitude negative correction toward the new 1210Hz reading once the cooldown expired, got {afterCooldown}");
+    }
+
+    private static double FeedConstantReadingForSamples(AfcTracker tracker, double readingHz, int sampleCount)
+    {
+        var correction = 0.0;
+        for (var i = 0; i < sampleCount; i++)
+        {
+            correction = tracker.ProcessSample(readingHz);
+        }
+
+        return correction;
+    }
+
+    private static void FeedOutOfBandSamples(AfcTracker tracker, int sampleCount)
+    {
+        for (var i = 0; i < sampleCount; i++)
+        {
+            tracker.ProcessSample(1900.0); // outside every band this file's trackers construct with
+        }
     }
 
     /// <summary>Feeds an in-band run just long enough to pass <c>_afcBeginSamples</c> (arming the
