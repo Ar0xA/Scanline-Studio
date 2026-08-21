@@ -68,7 +68,7 @@ public sealed class FakeRadioTransport : IRadioTransport
 
     public Task CloseAsync()
     {
-        _open = false;
+        AbortConnection();
         return Task.CompletedTask;
     }
 
@@ -78,6 +78,14 @@ public sealed class FakeRadioTransport : IRadioTransport
         if (!_open)
         {
             throw new InvalidOperationException("Transport is not open -- call OpenAsync first.");
+        }
+
+        if (ct.IsCancellationRequested)
+        {
+            // Mirrors TcpTransport's own real semantics: a cancelled write aborts the connection
+            // instead of silently ignoring the token, same reasoning as the cancelled-read path below.
+            AbortConnection();
+            ct.ThrowIfCancellationRequested();
         }
 
         _written.AddRange(data.Span.ToArray());
