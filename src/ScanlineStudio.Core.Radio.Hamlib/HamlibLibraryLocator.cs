@@ -3,12 +3,15 @@ using System.Runtime.InteropServices;
 namespace ScanlineStudio.Core.Radio.Hamlib;
 
 /// <summary>
-/// See spec/03-cat-layer.md's "Discovery order". If a caller-supplied override path is set, it is
-/// tried <b>exclusively</b> — a user who explicitly configured a path wants exactly that library, not
-/// a silent substitution from auto-detection. Otherwise, two tiers, each falling through to the next:
-/// (1) bare per-OS soname, letting the OS's own dynamic linker search its normal paths; (2) a short
-/// hand-maintained list of known extra install directories. Throws
-/// <see cref="HamlibUnavailableException"/> listing every candidate tried and why if nothing loads.
+/// See spec/03-cat-layer.md's "Discovery order" -- three tiers overall (1: user override, 2: bare
+/// soname, 3: known extra directories). If a caller-supplied override path is set, it is tried
+/// <b>exclusively</b> (tier 1) — a user who explicitly configured a path wants exactly that library,
+/// not a silent substitution from auto-detection. Otherwise, this class builds candidates for tiers
+/// 2 and 3, each falling through to the next: bare per-OS soname (tier 2), letting the OS's own
+/// dynamic linker search its normal paths, then a short hand-maintained list of known extra install
+/// directories (tier 3, macOS-only today per the spec's own "e.g." wording -- not an accidental
+/// Windows/Linux omission). Throws <see cref="HamlibUnavailableException"/> listing every candidate
+/// tried and why if nothing loads.
 /// </summary>
 internal sealed class HamlibLibraryLocator
 {
@@ -33,7 +36,13 @@ internal sealed class HamlibLibraryLocator
     /// fails.</summary>
     public (nint Handle, string ResolvedPath) Locate()
     {
-        if (_overridePath is not null)
+        // Round-1 code-review finding (Tier A Batch 9 chunk 9d): `is not null` alone doesn't catch
+        // an override persisted as an empty/whitespace string -- that would disable tiers 2/3 for
+        // no real path at all, failing with a confusing "(user override): not found" instead of
+        // falling back to auto-detection. Unreachable today (no caller passes one yet, per
+        // HamlibProtocolFactory.cs), but this is exactly the kind of setting a future Settings
+        // wiring pass would introduce without necessarily re-reading this method.
+        if (!string.IsNullOrWhiteSpace(_overridePath))
         {
             if (_loader.TryLoad(_overridePath, out var overrideHandle))
             {
@@ -45,7 +54,7 @@ internal sealed class HamlibLibraryLocator
 
         var attempts = new List<string>();
 
-        foreach (var candidate in BuildTier1And2Candidates())
+        foreach (var candidate in BuildTier2And3Candidates())
         {
             if (_loader.TryLoad(candidate, out var handle))
             {
@@ -58,7 +67,7 @@ internal sealed class HamlibLibraryLocator
         throw new HamlibUnavailableException(attempts);
     }
 
-    private static IEnumerable<string> BuildTier1And2Candidates()
+    private static IEnumerable<string> BuildTier2And3Candidates()
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {

@@ -81,6 +81,31 @@ public class HamlibDummyRigIntegrationTests
     }
 
     [Fact]
+    public async Task SerialPortConfigured_RealRigTokenLookupAndSetConf_UtfMarshalingRoundTripsAgainstRealHamlib()
+    {
+        // Closes a real coverage gap flagged by Tier A Batch 9 chunk 9d (docs/functional-audit-playbook.md):
+        // every other test in this file constructs HamlibRadioProtocol with NO serial port/baud/ptt
+        // type, so HamlibRadioProtocol.cs's `if (value is null) return;` guard means rig_token_lookup
+        // and rig_set_conf -- HamlibNative.cs's only real string-marshaling call sites
+        // (ToUtf8NullTerminated) -- were never exercised against real Hamlib anywhere in this suite.
+        // The Dummy backend accepts rig_pathname via rig_set_conf without actually opening a serial
+        // port (confirmed: PollAsync below succeeds), so a bogus-but-plausible path is safe here.
+        if (!Runtime.Value.IsAvailable)
+        {
+            return;
+        }
+
+        var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel, serialPort: "/dev/ttyDUMMY0");
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Equal(145_000_000, state.FrequencyHz);
+        Assert.Equal(RadioMode.Fm, state.Mode);
+
+        await sut.DisposeAsync();
+    }
+
+    [Fact]
     public async Task Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly()
     {
         if (!Runtime.Value.IsAvailable)

@@ -6,7 +6,9 @@ namespace ScanlineStudio.Core.Radio.Hamlib;
 /// <summary>
 /// Real <see cref="IHamlibRuntime"/>. Runs <see cref="HamlibLibraryLocator"/> + the version gate
 /// <b>eagerly in the constructor</b> -- deliberately not lazily on first <see cref="Native"/> access,
-/// which would put the first ~6 <c>NativeLibrary.TryLoad</c> attempts plus <c>rig_version()</c> inline
+/// which would put the first 1-2 <c>NativeLibrary.TryLoad</c> attempts (per-OS: 1 on Linux, 2 on
+/// macOS/Windows -- doc correction, Tier A Batch 9 chunk 9d: previously overstated as "~6")
+/// plus <c>rig_version()</c> inline
 /// on whatever thread first calls <c>HamlibProtocolFactory.Create</c> (the UI thread, if a future
 /// Application-layer caller invokes <c>IRadioController.ConnectAsync</c> from a click handler --
 /// <c>RadioController.ConnectAsync</c> awaits a synchronously-completing <c>DisconnectAsync</c> when
