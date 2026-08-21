@@ -378,11 +378,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // long enough for this method's own recovery un-key to have something to talk to.
         TaskCompletionSource? keyedCompletion = null;
 
+        // Round-31 finding (nit): this used to be a NESTED try/finally (an inner one ending at
+        // _pttLockGate.Release(), wrapped by an outer one whose own finally ran the
+        // _keyedTransmitCount decrement AFTER that release) -- now a single try/finally, since moving
+        // the decrement to run BEFORE the release (see that finally's own comment) removed the only
+        // reason the outer wrapper existed. A single try/finally still guarantees the same thing the
+        // outer one did: this runs no matter how the body below exits.
         try
         {
-            try
-            {
-                // Round-2 fix: only the ENGAGE direction is rejected post-disposal -- an unlock must
+            // Round-2 fix: only the ENGAGE direction is rejected post-disposal -- an unlock must
                 // stay a valid escape hatch for a rig this class already left keyed (matches
                 // _pttLocked's own failed-unlock-stays-true reasoning below; disposal must never remove
                 // the one remaining way to un-key a rig that is still physically keyed).
@@ -522,14 +526,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // placement's own IsCompleted check ran, it was almost always already true, and the
                     // observer almost never actually attached on the exact path it exists for. Moved to
                     // run BEFORE the recovery await, right after this catch's own state-latching and
-                    // Critical log -- pttCommand is fully assigned by this point (this catch only runs
-                    // once the command has been issued), so nothing here depends on the recovery step
-                    // below. This is the ONE fault-observer site in this class with an await between the
-                    // triggering throw and the original placement's own IsCompleted check; the sibling
-                    // sites (TryUnkeyPttAsync, StopReceivingAsync, StopPlaybackWithWatchdogAsync,
-                    // ResumeReceivingBoundedAsync, and this method's own unlock-direction arm below) all
-                    // attach immediately with no intervening await, so their own placement is correct
-                    // as-is.
+                    // Critical log, so nothing here depends on the recovery step below. This is the ONE
+                    // fault-observer site in this class with an await between the triggering throw and
+                    // the original placement's own IsCompleted check; the sibling sites (TryUnkeyPttAsync,
+                    // StopReceivingAsync, StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync, and
+                    // this method's own unlock-direction arm below) all attach immediately with no
+                    // intervening await, so their own placement is correct as-is.
+                    //
+                    // Round-31 finding (nit): an earlier version of this comment claimed "pttCommand is
+                    // fully assigned by this point (this catch only runs once the command has been
+                    // issued)" -- FALSE on one path, as round 29's own comment at pttCommand's own
+                    // declaration already correctly states: a synchronous throw from
+                    // _radioSession.SetPttAsync leaves pttCommand null, and this catch runs for that case
+                    // too. The code below was always correct regardless (the `is { IsCompleted: false }`
+                    // pattern already handles null), but the claim itself was wrong and could have misled
+                    // a future round into "simplifying" the null-tolerance away as redundant.
                     if (pttCommand is { IsCompleted: false })
                     {
                         _ = pttCommand.ContinueWith(
@@ -777,24 +788,36 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
             finally
             {
+                // Round-8 finding: signalled no matter how the above ended (success, un-key failure, a
+                // throw from the disposal-race recovery, RX-resume failure) -- a DisposeAsync waiting on
+                // this must never be left hanging until its own timeout by an unrelated failure. Same
+                // CompareExchange pattern as PlayWithPttAsync's own inner finally (see its own comment):
+                // only clear the field if it still points at THIS call's instance, so an overlapping
+                // PlayWithPttAsync/SetPttLockAsync call can't have its own registration erased.
+                //
+                // Round-31 finding (nit): moved here, BEFORE _pttLockGate.Release() just below (this
+                // used to run in a separate OUTER finally, AFTER the release) -- releasing the gate
+                // first let a new SetPttLockAsync(true) call acquire it, publish its own registration,
+                // and increment _keyedTransmitCount WHILE this call's own registration was still
+                // counted, making round-12's own recovery guard
+                // (Volatile.Read(ref _keyedTransmitCount) == 1, in the engage-direction catch above)
+                // read 2 spuriously and skip the recovery un-key on a rig this call's own key command
+                // may have physically keyed -- the precise harm round 12's fix exists to prevent.
+                // Instruction-scale window (no await between the old release and decrement), the same
+                // accepted-residual CLASS _pttKeyEpoch's own field doc documents -- but this specific
+                // instance is now closed for free by reordering, not just documented. Safe to decrement
+                // before releasing: a successful engage has already written _pttLocked = true and a
+                // failed one _pttLeftKeyedByCall = true, so DisposeAsync's own backstop is never
+                // blinded by the earlier decrement.
+                if (keyedCompletion is not null)
+                {
+                    Interlocked.CompareExchange(ref _keyedTransmitCompletion, null, keyedCompletion);
+                    Interlocked.Decrement(ref _keyedTransmitCount);
+                    keyedCompletion.TrySetResult();
+                }
+
                 _pttLockGate.Release();
             }
-        }
-        finally
-        {
-            // Round-8 finding: signalled no matter how the above ended (success, un-key failure, a
-            // throw from the disposal-race recovery, RX-resume failure) -- a DisposeAsync waiting on
-            // this must never be left hanging until its own timeout by an unrelated failure. Same
-            // CompareExchange pattern as PlayWithPttAsync's own inner finally (see its own comment):
-            // only clear the field if it still points at THIS call's instance, so an overlapping
-            // PlayWithPttAsync/SetPttLockAsync call can't have its own registration erased.
-            if (keyedCompletion is not null)
-            {
-                Interlocked.CompareExchange(ref _keyedTransmitCompletion, null, keyedCompletion);
-                Interlocked.Decrement(ref _keyedTransmitCount);
-                keyedCompletion.TrySetResult();
-            }
-        }
     }
 
     public event Action<SstvModeDefinition>? ModeDetected
@@ -1563,9 +1586,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
             try
             {
                 // Round-27 finding (risk): pttKeyedOnRealRig's own round-25 baseline used to read AND
-                // ASSIGN from _pttLocked via pttLockedAtEntry, both of which happen LATE -- just before
+                // ASSIGN from _pttLocked via pttLockedBeforeKeyDecision, both of which happen LATE -- just before
                 // the rigIsRealAtKeyTime branch, AFTER the three bounded device/settings awaits below.
-                // Correct for pttLockedAtEntry's OWN purpose (deciding whether to double-key an
+                // Correct for pttLockedBeforeKeyDecision's OWN purpose (deciding whether to double-key an
                 // already-engaged lock, which must see the freshest possible state), but wrong for
                 // baselining pttKeyedOnRealRig: a failure in any of the three awaits below (device not
                 // found, no device configured, or the WaitAsync timeout itself -- all realistic)
@@ -1574,7 +1597,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // engaged at this call's own true entry, reproducing verbatim the harm round 25 exists
                 // to prevent (no Critical, no retry, just a Debug "no radio configured" line). Both the
                 // read AND the assignment happen HERE instead, before those awaits -- the read into a
-                // separate local from pttLockedAtEntry (kept late, for its own purpose), the assignment
+                // separate local from pttLockedBeforeKeyDecision (kept late, for its own purpose), the assignment
                 // directly into pttKeyedOnRealRig so it survives a throw from any of the three awaits.
                 // The rigIsRealAtKeyTime branch further down still unconditionally sets this true for
                 // the case THIS call keys/re-keys the rig itself, a strict superset of this baseline.
@@ -1659,7 +1682,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // configured). Read into a local exactly once: the old code's "RigId is stable so there's
                 // no was-available-at-entry-gone-by-cleanup scenario" claim was FALSE (see
                 // pttKeyedOnRealRig above), and this is the single read that claim is now replaced by.
-                var pttLockedAtEntry = _pttLocked;
+                //
+                // Round-31 finding (nit): renamed from pttLockedAtEntry -- despite the name, this was
+                // never read at method ENTRY (that read is the separate, genuinely-early one feeding
+                // pttKeyedOnRealRig's own baseline above, before the three bounded awaits). This one is
+                // deliberately read LATE, right here, for its own different purpose (deciding whether to
+                // double-key an already-engaged lock, which needs the freshest possible observation) --
+                // see its own consumers' comments. The old name invited exactly the kind of confusion
+                // round 29 already fixed once for unkeyEpochAtEntry -> unkeyEpochAfterOwnKeyAttempt.
+                var pttLockedBeforeKeyDecision = _pttLocked;
                 var rigIsRealAtKeyTime = _radioSession.RigId != "none";
 
                 // Round-28 finding (blocker): this used to be snapshotted here, at method entry -- see
@@ -1691,7 +1722,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // comment stays as the reasoning for WHY the baseline exists; see that assignment's own
                 // comment for WHY it had to move earlier.
 
-                // Round-26 finding (nit, flagged not fixed): when pttLockedAtEntry is true but
+                // Round-26 finding (nit, flagged not fixed): when pttLockedBeforeKeyDecision is true but
                 // rigIsRealAtKeyTime is false (a lock engaged on a real rig, then RadioController.
                 // DisconnectAsync set RigId to "none" without un-keying), the baseline just above
                 // correctly declares this call IS holding a genuinely keyed real rig -- but the
@@ -1708,7 +1739,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     // Published BEFORE the key command goes out and cleared only once this method's own
                     // finally has finished its un-key attempt, so DisposeAsync can never tear
                     // IRadioSessionService down out from under an in-flight un-key. Published in the
-                    // pttLockedAtEntry case too: this call didn't key the rig, but the rig IS keyed for
+                    // pttLockedBeforeKeyDecision case too: this call didn't key the rig, but the rig IS keyed for
                     // the whole duration of this call either way.
                     keyedCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -1747,7 +1778,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     {
                         // Provably never keyed BY THIS CALL -- the actual SetPttAsync(true) command is
                         // still below this block. Only an already-engaged lock could have the rig keyed
-                        // independent of this call, and pttLockedAtEntry covers exactly that -- keeps the
+                        // independent of this call, and pttLockedBeforeKeyDecision covers exactly that -- keeps the
                         // cleanup un-key's Critical-vs-Debug classification honest in the finally below.
                         // Deliberately the LATE read here -- this is exactly the "don't double-key/
                         // misclassify an already-engaged lock" decision that local is designed for, and
@@ -1758,15 +1789,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // _pttLocked changed during this method's own device/settings awaits.)
                         //
                         // Round-30 finding (nit): this used to silently re-narrow round 29's own widened
-                        // baseline back down to pttLockedAtEntry alone -- e.g. a prior
+                        // baseline back down to pttLockedBeforeKeyDecision alone -- e.g. a prior
                         // TuneAsync(leaveKeyedAfterTune: true) leaving the rig keyed via
                         // _pttLeftKeyedByCall alone (with _pttLocked false) survived the entry baseline
                         // correctly, then got wiped back to false right here, downgrading the eventual
                         // cleanup failure from Critical to Debug. Widened to match the SAME three-flag
-                        // belief test the entry baseline uses, keeping pttLockedAtEntry's own late/fresh
+                        // belief test the entry baseline uses, keeping pttLockedBeforeKeyDecision's own late/fresh
                         // read for the _pttLocked term specifically (this branch's whole reason to exist)
                         // while no longer silently dropping the other two flags.
-                        pttKeyedOnRealRig = pttLockedAtEntry || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig;
+                        pttKeyedOnRealRig = pttLockedBeforeKeyDecision || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig;
                         // Round-4 nit: GetType().FullName, not nameof(SstvSessionService), to match the
                         // ObjectName ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in
                         // this class -- both throw sites should report the same object identity.
@@ -1774,7 +1805,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     }
                 }
 
-                if (!pttLockedAtEntry)
+                if (!pttLockedBeforeKeyDecision)
                 {
                     if (rigIsRealAtKeyTime)
                     {
@@ -1808,9 +1839,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
                         // CAT link, not evidence the rig is actually off. The underlying call is left
                         // running in the background either way -- same trade-off EnqueueAllAsync's own
                         // round-13 stall fix accepts.
+                        Task? keyCommand = null;
                         try
                         {
-                            await _radioSession.SetPttAsync(true, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                            keyCommand = _radioSession.SetPttAsync(true, ct);
+                            await keyCommand.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
                         }
                         catch (Exception)
                         {
@@ -1825,6 +1858,29 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             // missed of this class; round 14's WaitAsync fix made it newly reachable in
                             // practice (a hung key command now reliably throws instead of hanging).
                             Interlocked.Increment(ref _pttKeyEpoch);
+
+                            // Round-31 finding (risk): this abandoned key command had no fault-observer
+                            // -- the direct twin of SetPttLockAsync's own pttCommand (rounds 29/30), but
+                            // strictly more reachable (this method has live production callers,
+                            // SetPttLockAsync currently has none) and the most safety-relevant instance
+                            // in the whole class: this is the one abandoned command that, by this
+                            // method's own reasoning just above, may have physically keyed the rig.
+                            // Harm is diagnostic/attribution only -- state handling above is already
+                            // correct regardless (epoch bump, then abnormalTermination -> urgent un-key
+                            // in the finally). Same gating as every sibling site: only attach if the
+                            // command was actually issued (not still null from a synchronous throw) and
+                            // is still running (not yet completed -- if it already finished, its own
+                            // fault already propagated through the WaitAsync above as the exception this
+                            // catch is handling).
+                            if (keyCommand is { IsCompleted: false })
+                            {
+                                _ = keyCommand.ContinueWith(
+                                    t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT key command (finished after watchdog)", t.Exception!)),
+                                    CancellationToken.None,
+                                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                                    TaskScheduler.Default);
+                            }
+
                             throw;
                         }
 
@@ -1866,7 +1922,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 keyEpochAfterOwnKeyAttempt = Volatile.Read(ref _pttKeyEpoch);
 
                 // Round-28 finding (blocker): unkeyEpochAfterOwnKeyAttempt now read HERE too, not at method entry
-                // -- see its own comment (near pttLockedAtEntry, above) for why the entry-time read was
+                // -- see its own comment (near pttLockedBeforeKeyDecision, above) for why the entry-time read was
                 // itself the bug. Reading both epochs at this SAME point (immediately after this call's
                 // own key phase, no await between the two reads) means the pair now correctly answers
                 // "since MY OWN key: did anyone confirm off, and did anyone re-key" -- not two questions
