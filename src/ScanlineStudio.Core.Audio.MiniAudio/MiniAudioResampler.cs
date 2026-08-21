@@ -14,6 +14,18 @@ internal static class MiniAudioResampler
     /// default (4), 0 to disable filtering, or an explicit order.</param>
     public static unsafe float[] Resample(ReadOnlySpan<float> input, int sampleRateIn, int sampleRateOut, int lpfOrder = -1)
     {
+        // Round-1 code-review finding (Tier A Batch 9 chunk 9c): the overflow guard below only
+        // ever caught an OVER-large output -- a non-positive rate makes `expectedOutputFrames`
+        // negative, which passes the `> int.MaxValue` check and truncates to a negative `capacity`,
+        // the exact "opaque exception instead of a clear one" failure mode that guard exists to
+        // prevent (it would throw from `new float[negativeCapacity]` instead). Unreachable today
+        // (this method is `internal`, single caller, constant real sample rates), but validated
+        // explicitly rather than left as an implicit assumption the arithmetic below depends on.
+        if (sampleRateIn <= 0 || sampleRateOut <= 0)
+        {
+            throw new ArgumentException($"Sample rates must be positive (got {sampleRateIn}Hz -> {sampleRateOut}Hz).", nameof(sampleRateIn));
+        }
+
         // Generous capacity: expected output length plus slack for the resampler's own latency
         // and rounding, so a single native call always has room -- if it didn't, the shim itself
         // reports failure (-1) rather than silently truncating.
