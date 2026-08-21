@@ -2573,3 +2573,63 @@ physically-keyed window itself), and the round's own thorough re-verification of
 trust-boundary claims (all confirmed still holding, not just asserted) is real audit value beyond the 2
 new findings. Does NOT count as chunk 3a's 1st clean round -- round 24 is now the earliest round that can.
 Twenty-two consecutive rounds (2-23) have now each found something real in this file.
+
+**Chunk 3a round 24** (2026-08-21, independent agent, fresh context, agent `ac059513c3dffa1bc`). Verdict
+EQUIVALENT-WITH-RISKS. Explicitly steered to broaden beyond the SafeLog-coverage angle (4 rounds running)
+into the PTT state machine's own field interactions, cancellation-token wiring, and cross-timeout budget
+composition. **[risk]** `rigIsRealAtUnlockTime` (`SetPttLockAsync`'s unlock-direction catch filter) is a
+FRESH `RigId` read used to classify a failed emergency unlock -- the exact blocker-2 anti-pattern round
+18 finding 5 reintroduced while fixing the missing arm in the first place. Verified against
+`RadioController.DisconnectAsync` (sets `RigId` to `"none"` WITHOUT un-keying) and `RequireProtocol`
+(throws synchronously once disconnected): if the CAT link drops between key and unlock, the rig is still
+genuinely keyed but this filter reads `"none"` and NEVER MATCHES AT ALL -- not even the inner
+belief-based gate (`_pttLocked || _pttLeftKeyedByCall || _pttUnkeyFailedOnRealRig`, which is already the
+CORRECT test) ever runs, so the emergency unlock's own failure produces no log whatsoever until
+`DisposeAsync`'s shutdown backstop, possibly hours later. Not a blocker: `_pttLocked` correctly stays
+true regardless, so the backstop still eventually fires. Reachability caveat stated honestly: grepped all
+of `src/` -- `SetPttLockAsync` currently has zero production callers (no ViewModel wires it up yet),
+same latent status round 18 accepted for its own half of this fix. **[nit]** `DisposeAsync`'s backstop
+un-key can burn its whole budget queueing FIFO behind an abandoned in-flight command on the backend's
+single request gate (the same trade-off already documented at `PlayWithPttAsync`'s urgent un-key and its
+retry) -- documentation-only, the backstop comment didn't carry the same caveat those two sibling sites
+already do.
+
+Explicitly checked and confirmed already-handled this round, stated rather than left silent (this round
+put unusual weight on this section, given its explicit mandate to broaden beyond logging): a fresh `Log.*`
+enumeration (65 exact invocations by this agent's counting method) found nothing new beyond the 3
+decoder-dispatch logs already out of scope -- explicitly calls the SafeLog-coverage angle "mined out",
+recommending no further round spend effort there; no unguarded non-log operation remains in any of the
+file's 23 catch/cleanup/finally blocks (enumerated all of them); the PTT state machine's TCS-overwrite
+interleaving traced both directions (`SetPttLockAsync` finishing first vs. last against an overlapping
+`PlayWithPttAsync`) with the count/nullness split and Dekker fencing both holding; all cancellation-token
+wiring re-verified correct at all 4 `SetPttAsync` sites; `StopReceivingAsync`'s synchronous prefix
+specifically re-examined for a round-18-shaped `Task.Run` gap (the one angle explicitly flagged as
+worth checking) and found NOT a real unbounded prefix for any caller that holds `_transmitInFlight`/
+`_pttLockGate` -- traced through `MiniAudioEngine.ClaimCaptureSessionAsync`/`DisposeCaptureSessionAsync`
+directly; budget composition re-checked and found no combination producing an unbounded hold beyond
+finding 2 above. Two open items (nit 9, the 3 decoder-dispatch logs) re-examined with no new reasoning.
+
+**Chunk 3a round 24 fixes applied** (2026-08-21, commit pending). Risk fixed: the unlock-direction catch
+filter changed from `when (rigIsRealAtUnlockTime)` (a fresh RigId read) to `when (!locked)` -- the inner
+belief-based gate is already the correct test and needed no device-identity filter layered on top;
+`rigIsRealAtUnlockTime` removed as dead code. Nit fixed: `DisposeAsync`'s backstop comment now states the
+same FIFO-queueing-behind-an-abandoned-command caveat its two sibling sites already document.
+
+New regression test:
+`Round24_SetPttLockAsync_UnlockFailsAfterCatLinkDrops_StillLatchesCriticalImmediately` -- locks
+successfully on a real rig, flips `RigId` to `"none"` (simulating a CAT link drop without un-keying, the
+exact `RadioController.DisconnectAsync` behavior), makes the emergency unlock itself fail, asserts the
+Critical "MAY STILL BE KEYED" log fires immediately rather than only surfacing at shutdown.
+Mutation-verified: reverted to the pre-fix `rigIsRealAtUnlockTime` filter (fresh backup taken
+immediately before this specific mutation, continuing the round-23 process-hygiene fix), reproduced the
+exact predicted failure (Critical log absent, only the initial lock's own Information entry present),
+restored from that fresh backup (confirmed via `git diff --stat` showing only the 2 intended fix hunks),
+rebuilt clean, re-confirmed passing. 211/211 `ScanlineStudio.Application.Tests` passing (210 pre-existing
++ 1 new), full solution suite run in progress at time of writing -- confirm clean before treating this
+round as closed.
+
+Round 24 fixed 1 risk plus 1 documentation nit -- notably the FIRST round since 19 to find something
+OTHER than an unwrapped `SafeLog` site, confirming the agent's own read that the logging-coverage angle
+is genuinely close to exhausted while the broader file is not yet clean. Does NOT count as chunk 3a's 1st
+clean round -- round 25 is now the earliest round that can. Twenty-three consecutive rounds (2-24) have
+now each found something real in this file.

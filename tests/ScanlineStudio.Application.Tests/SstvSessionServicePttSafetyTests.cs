@@ -1710,6 +1710,43 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.Equal(PttOnThenOff, radio.PttCalls);
     }
 
+    // ------------------------------------------------------------------ round 24 findings
+
+    [Fact]
+    public async Task Round24_SetPttLockAsync_UnlockFailsAfterCatLinkDrops_StillLatchesCriticalImmediately()
+    {
+        // Round-24 finding (risk): the unlock-direction catch filter used to re-read RigId at failure
+        // time (rigIsRealAtUnlockTime) -- the exact blocker-2 anti-pattern this file's own established
+        // rule forbids elsewhere (never re-read RigId at catch/failure time). If the CAT link drops
+        // between key and unlock (RadioController.DisconnectAsync sets RigId to "none" WITHOUT
+        // un-keying, per its own doc comment), the rig is still genuinely keyed but the old filter
+        // read "none" and never matched AT ALL -- not even the inner belief-based gate ever ran, so
+        // the emergency unlock's own failure produced NO log whatsoever until DisposeAsync's shutdown
+        // backstop, possibly hours later.
+        var (service, _, radio, logger) = CreateService();
+
+        // Lock successfully while the rig is real.
+        await service.SetPttLockAsync(true);
+        Assert.True(service.IsPttLocked);
+
+        // Simulate a CAT link drop -- RigId flips to "none" WITHOUT un-keying -- then the emergency
+        // unlock itself fails.
+        radio.RigId = "none";
+        radio.BeforeSetPtt = tx =>
+        {
+            if (!tx)
+            {
+                throw new TimeoutException("simulated: emergency unlock failed after CAT link drop");
+            }
+        };
+
+        await Assert.ThrowsAsync<TimeoutException>(() => service.SetPttLockAsync(false));
+
+        // THE property: the failure must be loudly logged IMMEDIATELY, not silently swallowed until
+        // shutdown.
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Critical && e.Message.Contains("MAY STILL BE KEYED", StringComparison.Ordinal));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
