@@ -41,6 +41,14 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     // by CompareExchange, so a straggler can no longer clobber a later session.
     private static readonly TimeSpan PollLoopShutdownTimeout = TimeSpan.FromSeconds(10);
 
+    // Bounded for the same reason PollLoopShutdownTimeout is: HamlibRadioProtocol.DisposeAsync takes
+    // its own semaphore with no token and no timeout, and that same semaphore is held for the whole
+    // duration of a wedged native call -- so an unbounded await here would re-introduce, one line after
+    // PollLoopShutdownTimeout's own wait, precisely the shutdown hang that timeout exists to prevent.
+    // Abandoning the dispose leaks a backend handle until process exit; hanging app shutdown forever
+    // (DisconnectAsync -> DisposeAsync -> app quit) is worse.
+    private static readonly TimeSpan ProtocolDisposeTimeout = TimeSpan.FromSeconds(10);
+
     private IRadioProtocol? _protocol;
     private CancellationTokenSource? _pollLoopCts;
     private Task? _pollLoopTask;
@@ -108,22 +116,33 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
 
-        ct.ThrowIfCancellationRequested();
-
         try
         {
-            _protocol = ResolveProtocol(spec);
+            // Inside the try, not above it: this used to sit outside, so a cancelled token was the one
+            // failure between Connecting and Connected that published no terminal event at all --
+            // every subscriber latched on Connecting forever while only the caller saw the throw.
+            ct.ThrowIfCancellationRequested();
+
+            var resolved = ResolveProtocol(spec);
+            _protocol = resolved;
+            // Set BEFORE reading RigId: everything from here on is reachable by DisconnectAsync's
+            // (_sessionActive-gated) teardown, so a throw out of a backend's own RigId getter disposes
+            // the protocol instead of orphaning it. _protocol non-null with _sessionActive false is
+            // exactly the state that teardown skips.
+            _sessionActive = true;
+            _rigId = resolved.RigId;
         }
         catch (Exception ex)
         {
-            // Connecting was already published above -- without this, a resolution failure leaves
-            // every subscriber latched on Connecting forever while only the caller sees the throw.
+            // Connecting was already published above -- without this, a cancelled token or a resolution
+            // failure leaves every subscriber latched on Connecting forever while only the caller sees
+            // the throw.
             PublishConnectionEvent(RadioConnectionState.Failed, ex.Message, ex);
+            // A no-op unless _sessionActive was already set (the RigId-getter-throws case) -- the
+            // ct-cancelled and ResolveProtocol-throws cases have no session to tear down yet.
+            await DisconnectAsync().ConfigureAwait(false);
             throw;
         }
-
-        _rigId = _protocol.RigId;
-        _sessionActive = true;
 
         PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
         Log.Connected(_logger, spec.GetType().Name, _protocol.Capabilities);
@@ -189,7 +208,12 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             {
                 try
                 {
-                    await protocol.DisposeAsync().ConfigureAwait(false);
+                    await protocol.DisposeAsync().AsTask()
+                        .WaitAsync(ProtocolDisposeTimeout).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    Log.ProtocolDisposeTimedOut(_logger, ProtocolDisposeTimeout);
                 }
                 catch (Exception ex)
                 {
@@ -483,6 +507,9 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "The radio poll loop did not stop within {Timeout}; abandoning it and completing teardown")]
         public static partial void PollLoopShutdownTimedOut(ILogger logger, TimeSpan timeout);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Disposing the current protocol did not complete within {Timeout}; abandoning it and completing teardown")]
+        public static partial void ProtocolDisposeTimedOut(ILogger logger, TimeSpan timeout);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "A StateChanges subscriber threw")]
         public static partial void StateChangesSubscriberThrew(ILogger logger, Exception ex);
