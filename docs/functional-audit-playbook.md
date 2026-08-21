@@ -5494,4 +5494,4 @@ real coverage gap; 9c found one real latent-bug-shaped gap (a one-sided overflow
 coverage gaps in a brand-new always-CI-runnable test file; 9d (the P/Invoke boundary, real native
 interop) found zero functional bugs but real doc/citation drift across 3 files, one real latent-bug
 fix, and closed 3 coverage gaps (one honestly reported as not mutation-verifiable, a native-UB
-limitation stated rather than hidden). Commits: 8c27f07, 1563148, 39eea92, plus 9d's pending commit.
+limitation stated rather than hidden). Commits: 8c27f07, 1563148, 39eea92, a4c46b6.
