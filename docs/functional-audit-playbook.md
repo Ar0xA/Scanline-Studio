@@ -3160,3 +3160,88 @@ demonstrated, first-hand and via its OWN mutation-testing discipline, exactly wh
 would have shipped silently broken if the process hadn't caught it before commit. Does NOT count as
 chunk 3a's 1st clean round -- round 31 is now the earliest round that can. Twenty-nine consecutive rounds
 (2-30) have now each found something real in this file.
+
+**Chunk 3a round 31** (2026-08-21, independent agent, fresh context, agent `aff56af46b173c70f`). Verdict
+NOT CLEAN -- 1 risk + 3 nits, no blocker. **[risk]** `PlayWithPttAsync`'s own PTT KEY command (the
+direct twin of `SetPttLockAsync`'s `pttCommand`, rounds 29/30) had no fault-observer -- and this is
+strictly more reachable than every prior instance of this class: `SetPttLockAsync` has zero production
+callers, while this line sits on `TransmitAsync`/`TuneAsync`'s live path. It is also, by this method's own
+established reasoning, the ONE abandoned command in the file most likely to have physically keyed the rig
+before failing. Round 30's own new enumeration comment explicitly lists the class's sibling sites and
+asserts completeness -- this line wasn't among them, the same shape as round 26's enumeration being
+incomplete → round 29. Harm is diagnostic/attribution only (state handling was already correct: epoch
+bump, `abnormalTermination` → urgent un-key). The auditor also flagged 5 more sites in the same class as
+worth fixing in the same pass (`StartPlaybackAsync`'s own abandoned open, `StopCaptureAsync` in the
+disposed-abandoned-resume branch, 3 `Task.Run(...)` settings/device wrappers) -- deliberately NOT pursued
+this round (see below). **[nit]** round 30's own new comment claimed `pttCommand` is "fully assigned by
+this point (this catch only runs once the command has been issued)" -- false on the synchronous-throw
+path, which round 29's OWN comment at the same variable's declaration already correctly states. The CODE
+was always correct (the null-tolerant pattern already handles it), only the comment was wrong -- but given
+this chunk's own history of stale claims causing later confusion (round 28's blocker, round 29's stale
+`_pttUnkeyEpoch` doc), worth correcting on sight. **[nit]** `pttLockedAtEntry` is named for a read that is
+deliberately NOT at method entry (round 27 documented this as intentional) -- the genuinely early
+`_pttLocked` read is a separate, unnamed-by-comparison value feeding `pttKeyedOnRealRig`'s own baseline.
+Exactly the naming-drift class round 29 already fixed once for `unkeyEpochAtEntry` →
+`unkeyEpochAfterOwnKeyAttempt`. **[nit]** `SetPttLockAsync` released `_pttLockGate` BEFORE clearing its own
+`_keyedTransmitCount` registration -- an instruction-scale window where a new `SetPttLockAsync(true)` call
+could acquire the gate, publish, and increment the count while the previous call's own registration was
+still counted, making round-12's own recovery guard (`Volatile.Read(ref _keyedTransmitCount) == 1`) read a
+spurious `2` and SKIP the recovery un-key on a rig its own key command may have physically keyed -- the
+precise harm round 12's fix exists to prevent. Same accepted-residual CLASS `_pttKeyEpoch`'s own field doc
+already documents (instruction-scale, undocumented until now) -- verified closeable for free by reordering
+rather than just flagging.
+
+Explicitly checked and confirmed already-handled this round: round 30's own fix A (observer moved before
+the recovery await) re-verified line-by-line -- `pttCommand` provably either null or fully assigned on
+every path reaching that catch (the guarded try has exactly two statements), moving it earlier interacts
+with nothing else in the catch (state-latch/Critical log precede it, the guarded recovery await follows
+and depends on none of it); round 30's own fix B (widened `if (_disposed)` baseline) re-checked for a new
+false-positive/double-attempt -- none found, every reachable arm already errs toward attempting the
+un-key; a fresh independent `Log.*` enumeration (9 unwrapped sites, identical to rounds 29/30, all outside
+any catch/cleanup/finally/fault-observer); unguarded non-log operations in catch/cleanup/finally (the
+round-21 `ResetAgc()` class) re-enumerated, nothing production-reachable; `EnqueueAllAsync`'s own loop
+checked against `IAudioEngine.EnqueuePlaybackSamples`'s own documented `0..samples.Length` contract --
+not a finding against this file; both event-raise sites (`TransmitProgressChanged`,
+`CapturePausedForTransmitChanged`) checked against their own documented "must not block"/threading
+contracts in `ISstvSessionService.cs` -- contract satisfied; budget composition and
+`_keyedTransmitCount`/epoch-guard balance re-derived independently, still erring toward attempting the
+un-key on every interleaving. One open question the agent flagged but did NOT resolve: whether these
+abandoned `.WaitAsync` source tasks additionally surface as `UnobservedTaskException` (round 30's own
+write-up asserted they don't, citing `Program.cs`'s handler; the agent's own reading of .NET's
+`CancellationPromise` completion action suggests the same conclusion but wasn't independently confirmed)
+-- doesn't change any finding's severity or fix, only a secondary-harm detail.
+
+**Chunk 3a round 31 fixes applied** (2026-08-21, commit pending). Risk fixed: `PlayWithPttAsync`'s own key
+command hoisted into a `Task? keyCommand` local, with the identical `ContinueWith`/`OnlyOnFaulted`/
+`!IsCompleted`-gated fault-observer pattern used at the other sites. The 5 additional lower-weight sites
+the auditor flagged were deliberately NOT pursued this round -- different abandoned-task shapes (audio
+engine opens, settings/device `Task.Run` wrappers) needing individual assessment of whether the SAME
+"PTT command" fault-observer pattern even applies, kept as a noted off-scope item rather than expanding
+this round's scope; a future round can revisit if the enumeration keeps recurring. First nit fixed: the
+inaccurate "fully assigned" claim corrected. Second nit fixed: `pttLockedAtEntry` renamed to
+`pttLockedBeforeKeyDecision` throughout, with a comment explaining why. Third nit fixed: the
+`_keyedTransmitCount` decrement moved to run inside the SAME `finally` as `_pttLockGate.Release()`,
+immediately before it (previously a separate OUTER `finally`, running after) -- this also let the now-
+redundant outer `try`/`finally` wrapper be removed entirely, since a single `finally` already guarantees
+the same thing the two nested ones did.
+
+New regression test:
+`Round31_PlayWithPttAsync_AbandonedKeyCommandLaterFails_ObservedNotSilentlyLost` -- gates the key command,
+lets `PlayWithPttAsync`'s own `WaitAsync` time out against a short `cleanupTimeout`, then releases the gate
+so the abandoned command fails, asserting the fault-observer's own log line appears. Mutation-verified:
+reverted the fault-observer attachment (fresh backup taken immediately before this specific mutation),
+reproduced the exact predicted failure (`WaitForAsync` timing out, the log line never appearing), restored,
+rebuilt clean, re-confirmed passing across 3 repeated runs. The `_keyedTransmitCount` reordering fix
+deliberately NOT given a dedicated regression test -- documented as an instruction-scale race needing
+test-only hooks well beyond what a pure reordering fix justifies (it cannot introduce a NEW single-threaded
+bug; verified by inspection plus the existing suite continuing to pass, matching this file's own
+established treatment of `_pttKeyEpoch`'s identical residual class). 221/221
+`ScanlineStudio.Application.Tests` passing (220 pre-existing + 1 new) across 3 repeated runs, full solution
+suite run in progress at time of writing -- confirm clean before treating this round as closed.
+
+Round 31 fixed the highest-reachability instance yet of the "abandoned task with no fault-observer" class
+(rounds 26/29/30's own pattern) -- the first instance of this specific class with LIVE production callers,
+not a latent `SetPttLockAsync`-gated one -- plus a genuine correctness fix (the `_keyedTransmitCount`/gate
+reordering) closing an instruction-scale residual for free rather than just documenting it. Does NOT count
+as chunk 3a's 1st clean round -- round 32 is now the earliest round that can. Thirty consecutive rounds
+(2-31) have now each found something real in this file.

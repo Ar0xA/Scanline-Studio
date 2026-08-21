@@ -2140,6 +2140,57 @@ public sealed class SstvSessionServicePttSafetyTests
         await Assert.ThrowsAsync<TimeoutException>(() => lockCall);
     }
 
+    // ------------------------------------------------------------------ round 31 findings
+
+    [Fact]
+    public async Task Round31_PlayWithPttAsync_AbandonedKeyCommandLaterFails_ObservedNotSilentlyLost()
+    {
+        // Round-31 finding (risk): PlayWithPttAsync's own PTT key command had no fault-observer --
+        // the direct twin of SetPttLockAsync's own pttCommand (rounds 29/30), but strictly more
+        // reachable (this method has live production callers -- TransmitAsync/TuneAsync --
+        // SetPttLockAsync currently has none) and the most safety-relevant instance in the whole
+        // class: this is the one abandoned command that, by this method's own reasoning, may have
+        // physically keyed the rig.
+        var gate = new TaskCompletionSource();
+        var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50));
+        radio.Gate = gate.Task;
+        radio.GateOnCallNumber = 1; // the key command
+        radio.BeforeSetPtt = tx =>
+        {
+            if (tx)
+            {
+                throw new TimeoutException("simulated: key command eventually failed after the watchdog gave up");
+            }
+        };
+
+        // The key command parks on the gate; WaitAsync gives up after cleanupTimeout (50ms), well
+        // before the gate is ever released -- abnormalTermination fires, and the finally's own urgent
+        // un-key (tx=false, call #2, unaffected by BeforeSetPtt and not restricted by
+        // GateOnCallNumber) completes normally.
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TransmitAsync(TestMode, TestImage));
+
+        // Release the gate -- the abandoned key command now runs to completion, and fails.
+        gate.SetResult();
+
+        // THE property: the key command's own late failure must be observed and logged, not
+        // silently lost as an unobserved task exception.
+        await WaitForAsync(
+            () => logger.Entries.Any(e => e.Message.Contains("PTT key command (finished after watchdog)", StringComparison.Ordinal)),
+            TimeSpan.FromSeconds(5));
+    }
+
+    // Round-31 finding (nit, not given a dedicated test): SetPttLockAsync's own _keyedTransmitCount
+    // decrement was reordered to run BEFORE _pttLockGate.Release() rather than after (closing an
+    // instruction-scale window where a new SetPttLockAsync(true) call could acquire the gate and
+    // increment the count before the previous call's own decrement, making round-12's own recovery
+    // guard read a spurious >1 and skip its recovery un-key). Same accepted-residual CLASS
+    // _pttKeyEpoch's own field doc already documents -- deterministically forcing a second
+    // SetPttLockAsync call to observe the OLD ordering's exact instruction-scale window would need
+    // test-only hooks well beyond what a pure reordering fix like this one justifies (the fix cannot
+    // introduce a NEW single-threaded bug -- it only changes when two independent Interlocked writes
+    // become visible relative to the gate release -- so it is verified by inspection plus the
+    // existing suite continuing to pass, not by a new race-dependent test).
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
