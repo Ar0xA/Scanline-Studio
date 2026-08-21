@@ -124,11 +124,13 @@ public sealed partial class TcpTransport : IRadioTransport
         {
             await stream.WriteAsync(data, ct).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception)
         {
-            // Same reasoning as the read side: a cancelled write either half-wrote a command (the peer
-            // sees a truncated line) or fully wrote one whose response nobody will ever read. Both leave
-            // the request/response stream desynced, and a byte transport cannot resynchronize it -- kill
+            // Same reasoning as the read side, for both failure shapes. A cancelled write either
+            // half-wrote a command (the peer sees a truncated line) or fully wrote one whose response
+            // nobody will ever read; a failed write (IOException/SocketException -- peer RST, broken
+            // pipe) leaves the socket unusable while IsOpen would keep reading true if left alone. Both
+            // desync the request/response stream beyond what a byte transport can resynchronize -- kill
             // the connection so the next EnsureConnectedAsync reopens instead of silently misreading.
             AbortConnection();
             throw;
@@ -168,19 +170,21 @@ public sealed partial class TcpTransport : IRadioTransport
                 {
                     bytesRead = await stream.ReadAsync(_readBuffer.AsMemory(), ct).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (Exception)
                 {
-                    // A cancel landing here is NOT the benign "caller got its line and stopped" case
-                    // the buffer-survival contract (this class's own doc comment) is written for. The
-                    // request whose response was being read is already on the wire, so its bytes are
-                    // still inbound (or partly sitting in _readBuffer): resuming would hand the NEXT
-                    // caller the previous command's tail. For rigctld's line protocol that desync is
-                    // permanent and silent -- every later poll parses the previous response, yielding a
-                    // plausible-looking but permanently stale frequency/PTT readback, with
-                    // RadioController never seeing a transport error to reconnect on. A byte transport
-                    // cannot resynchronize a request/response stream, so the connection is killed
-                    // instead: the next EnsureConnectedAsync reopens it and OpenAsync resets the
-                    // buffer, turning a silent corruption into a loud, self-healing reconnect.
+                    // Every failure out of the socket read aborts, not just cancellation. Cancellation:
+                    // the request whose response was being read is already on the wire, so resuming
+                    // would hand the NEXT caller the previous command's tail -- for rigctld's line
+                    // protocol that desync is permanent and silent, every later poll parsing the
+                    // previous response as a plausible-looking but permanently stale frequency/PTT
+                    // readback, with RadioController never seeing a transport error to reconnect on. A
+                    // socket-level IOException/SocketException is the same situation as the
+                    // bytesRead == 0 branch below: an RST close (rigctld killed, network blip) arrives
+                    // HERE, not as a zero-length read, and leaving _stream non-null would make IsOpen
+                    // lie the same way. Either way a byte transport cannot resynchronize a
+                    // request/response stream, so the connection is killed instead: the next
+                    // EnsureConnectedAsync reopens it and OpenAsync resets the buffer, turning a silent
+                    // corruption into a loud, self-healing reconnect.
                     AbortConnection();
                     throw;
                 }
