@@ -879,14 +879,10 @@ into 3, following Batch 2's precedent:
 - **Chunk 3c**: `RigctldClientProtocol.cs` + `HamlibRadioProtocol.cs` (the two CAT backend
   protocol implementations).
 
-**Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds (see "Chunk 3a CLOSED" entry near the
-end of this batch's section) -- closed by explicit user decision, not the formal 2-consecutive-clean-
-round gate. Chunk 3b (`RadioController.cs`+`TcpTransport.cs`) rounds 1-4 done -- round 4 found 2 more
-real risks (the 4th poll-loop publish site, socket-error abort handling) but closed with the auditor's
-own explicit "fix these, then it's a go, no further round needed" verdict. NOT closed under the formal
-2-consecutive-clean-round gate -- awaiting the user's call on whether the auditor's conditional go-ahead
-is sufficient to close now, or whether to run a round 5 seeking the formal gate. Chunk 3c
-(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) not yet started.
+**Status (updated 2026-08-21)**: chunk 3a CLOSED after 32 rounds, chunk 3b CLOSED after 4 rounds (see
+each chunk's own "CLOSED" entry near the end of this batch's section) -- both by explicit user
+decision, not the formal 2-consecutive-clean-round gate. Chunk 3c
+(`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) is next, not started.
 
 **Chunk 3a round 1** (2026-08-20). No legacy counterpart for CAT/PTT control (CLAUDE.md §2 --
 never ported, pure client of external backends), so this chunk skips legacy-parity checklist items
@@ -3567,3 +3563,26 @@ substance, the same "explicit go signal, don't chase more rounds" this project's
 already accepts from a direct go-for-production question. Whether to treat that as sufficient to close
 the chunk now, or to spend a round 5 seeking the formal 2-consecutive-clean-round gate, is the user's
 call -- flagged, not decided unilaterally.
+
+## Chunk 3b CLOSED (2026-08-21) -- by explicit user decision, not the formal 2-consecutive-clean-round gate
+
+**4 rounds, ~14 real findings fixed** (2 blockers + 3 risks in round 1; 3 risks + 1 nit in round 2,
+including a gap in round 1's own fix; 1 blocker + several nits in round 3, including a live blocker in
+the same failure class rounds 1-2 already fixed, plus round 2's own 2 deferred items resolved; 2 risks
+in round 4, the 4th of four poll-loop publish sites and a socket-error abort gap). Every round after the
+first found something the previous round's own fix missed, in the same recurring failure class:
+cancellation/EOF/socket-error handling scattered across several similar-looking branches
+(`TcpTransport.ReadAsync`'s two separate cancellation-check sites, `WriteAsync`, the poll loop's four
+publish sites), each needing the same abort/guard applied consistently. Round 4 closed with the
+auditor's own explicit conditional go-for-production verdict ("fix these two, then it's a go, no
+further round needed") rather than 2 consecutive clean rounds -- the user, informed of that verdict and
+asked directly how to close, chose to accept it and move on rather than dispatch a round 5 purely to
+chase the formal gate. Same deliberate-exception precedent as chunk 3a's own closure and Batch 1's
+re-audit closure above.
+
+All 4 rounds' commits: `710236f` (round 1 code) / `4153adb` (round 1 docs), `1889fa8` / `eb5487e`
+(round 2), `33eb82a` / `d43be26` (round 3), `4ee250a` / `10c9908` (round 4). Full solution suite
+confirmed green after every round; `ScanlineStudio.Core.Radio.Tests` last confirmed at 127/127 across 5
+consecutive runs, `ScanlineStudio.Core.Sstv.Tests` at 1022/1022 (1 unrelated intentional skip).
+
+**Chunk 3c (`RigctldClientProtocol.cs`+`HamlibRadioProtocol.cs`) is next, not started.**
