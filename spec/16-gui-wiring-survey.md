@@ -71,7 +71,7 @@ So "is this a literal?" now mostly finds *honest* placeholders. This survey ther
   *disabled stub* (`IsEnabled="False"` + tooltip — honest) vs. **dead-interactive stub** (still
   clickable/typeable, does nothing). Dead-interactive stubs are flagged explicitly; they are the
   remaining honesty gap.
-- **FAKE-LIVE** — a static value that still reads as real data. **Now rare** (5 sites, listed in the
+- **FAKE-LIVE** — a static value that still reads as real data. **Now rare** (4 sites, listed in the
   Summary). This stays the most important category to watch, just no longer the largest.
 
 Fully-wired screens (Logbook tab, TX image editor) get grouped coverage rather than one row per
@@ -340,9 +340,10 @@ filter row.**
 | Control | Class | File:line | Note |
 |---|---|---|---|
 | Header + entry count | REAL | `:967-968` | `EntryCountText` via `UpdateEntryCountText` (`RxHistoryPaneViewModel.cs:253`), localized through `_localization.GetString`. |
-| Search `TextBox` | **STUB (dead-interactive)** | `:977` | Watermark only — **no `Text` binding, and not disabled.** The user can type into it and nothing happens. One of two remaining dead-interactive controls in the app. |
+| Search `TextBox` | REAL, **fixed 2026-08-22** | `:977` | `SearchText` (`RxHistoryPaneViewModel.cs`), client-side case-insensitive substring match against `Entry.Note`/`Entry.ModeId`. Watermark narrowed from `"callsign, grid, mode, note…"` to `"mode, note…"` (`en.json:260`) to match what it actually searches — `ReceiveHistoryEntry` still has no callsign/grid field. |
 | All / Today segment | REAL | `:978-979` | `ShowTodayOnly` (`.cs:168`) → a real `IReceiveHistoryStore.QueryAsync` filter (`.cs:351`). |
-| 14MHz / Unlogged / Flagged `ToggleButton`s | **STUB (dead-interactive)** | `:980-982` | No `IsChecked` binding, **not disabled** — they latch visually and filter nothing. `ReceiveHistoryEntry` has no frequency field; `LinkedQsoId` and `IsFlagged` *are* real now, so "Unlogged"/"Flagged" are cheap to wire (client-side over `Entries`, or a new `ReceiveHistoryFilter` field). |
+| 14MHz `ToggleButton` | STUB (disabled), **fixed 2026-08-22** | `:980` | Was dead-interactive; now `IsEnabled="False"` + `Options.NotImplemented.Help` tooltip, matching the rest of the app's honesty convention. `ReceiveHistoryEntry` still has no frequency field — wiring this for real needs a schema change (new persisted field + capturing frequency at RX-save time), out of scope for the dead-control fix. |
+| Unlogged / Flagged `ToggleButton`s | REAL, **fixed 2026-08-22** | `:981-982` | `FilterUnloggedOnly`/`FilterFlaggedOnly` (`.cs`), client-side over `Entries` (`Entry.LinkedQsoId is null` / `Entry.IsFlagged`) into a new `FilteredEntries` collection — the Gallery grid's real `ItemsSource` now, separate from `Entries` itself (which stays unfiltered, still backing the Receive tab's Previous-frames strip). |
 | Sort chip | **FAKE-LIVE** | `:983` | Static `Border`, `Panes.RxHistory.SortChip` = `"SORT NEWEST"` (`en.json:261`). Asserts an active sort order; no sort logic exists anywhere. |
 | Size chip | **FAKE-LIVE** | `:984` | Static `Border`, `Panes.RxHistory.SizeChip` = `"SIZE M"` (`en.json:262`). Asserts an active thumbnail-size setting that doesn't exist. |
 | Latest button | REAL | `:985` | `SelectLatestCommand` (`.cs:320-321`), `CanSelectLatest` = list non-empty. Port of legacy's `SBPrim`, deliberately **not** `SBLatest` (which jumps to the *oldest* buffered frame). |
@@ -366,7 +367,7 @@ filter row.**
 | Re-decode button | STUB (disabled) | `:1145` | `IsEnabled="False"` + tooltip. Likely permanently infeasible — no raw audio is retained. |
 | Error / export-status banners | REAL | `:1147-1154` | `ErrorMessage` (`.cs:148`), `ExportStatusMessage` (`.cs:158`). |
 | Storage: Folder | REAL | `:1164` | `ImagesDirectory` (`.cs:173`), resolved via `IReceiveHistoryStore.GetImagesDirectoryAsync`. |
-| Storage: Naming | **FAKE-LIVE** | `:1168` | `Panes.RxHistory.NamingValue` = `"yyyyMMdd-HHmmss_MODE.png"` (`en.json:281`). Presented as the live naming scheme; the real one is `{yyyyMMdd-HHmmssfff}_{modeId}_{entryId[..8]}.png` (`ReceiveHistoryRecorder.cs:328`, and `…_partial_…` at `:379`). Not just unbacked — **actively wrong**. |
+| Storage: Naming | PLACEHOLDER (accurate), **fixed 2026-08-22** | `:1168` | `Panes.RxHistory.NamingValue` = `"yyyyMMdd-HHmmssfff_MODE_ID8.png"` (`en.json:281`), corrected to match the real scheme (`{yyyyMMdd-HHmmssfff}_{modeId}_{entryId[..8]}.png`, `ReceiveHistoryRecorder.cs:328`, and `…_partial_…` at `:379`). Was actively wrong before (missing milliseconds and the entry-id suffix). Still a static description, not live-bound — accurate is enough for a format string. |
 | Storage: Sidecar | PLACEHOLDER | `:1172` | `"—"` (`en.json:283`). |
 | Storage: Disk free | PLACEHOLDER | `:1176` | `"-- GB"` (`en.json:285`). |
 
@@ -668,9 +669,9 @@ figure below as ±10, not exact.
 |---|---|---|
 | **REAL** | ~275 | TX image editor (~130, 100 %), Logbook tab (~25, 100 %), Options General/Audio/Radio/Tx/Decode/Identification/QRZ/Forwarding cores (~50), Receive tab telemetry (~30), Radio header (~12), status bar + tab strip (~13), Gallery (~20), About/QSO-link dialogs (~12). |
 | **PLACEHOLDER** (honest) | ~60 | Receive Input-chain/Signal-quality/Frame-metadata/Unattended-RX unbacked rows, TX Outgoing-metadata card (9), TX mode/output scaffolding rows (8), Gallery per-entry SNR/freq/grid + Sidecar/Disk, status-bar Memory/SNR/Disk, TX Queue/Recently-sent/Session-frames empty states. |
-| **STUB** (disabled + tooltip) | ~55 | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options Decode Auto-start (1), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode/Reset/Advanced-timing (4), Gallery Re-decode (1), TX Recently-sent buttons (2), Decode-activity + TX-log header-only tables (2), 4 empty hatch plots. |
-| **STUB (dead-interactive)** | **4** | **Gallery filter row only** — Search `TextBox` (`MainWindow.axaml:977`), 14MHz / Unlogged / Flagged `ToggleButton`s (`:980-982`). All typeable/clickable with no effect. **The single remaining cluster of dead-but-live controls in the app.** |
-| **FAKE-LIVE** | **5** | Gallery Sort chip `"SORT NEWEST"` (`:983`), Gallery Size chip `"SIZE M"` (`:984`), Gallery Storage Naming `"yyyyMMdd-HHmmss_MODE.png"` (`:1168` — also factually wrong vs. `ReceiveHistoryRecorder.cs:328`), VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`), and the AUTOSAVE-ON chip's wording (`MainWindow.axaml:1421`, mitigated by being disabled+dimmed). Plus **4 latent** — the Advanced-timing values (`:272-275`), currently unreachable behind a permanently-disabled toggle but still real-looking literals if it's ever enabled. |
+| **STUB** (disabled + tooltip) | ~56 | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options Decode Auto-start (1), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode/Reset/Advanced-timing (4), Gallery Re-decode + 14MHz filter (2), TX Recently-sent buttons (2), Decode-activity + TX-log header-only tables (2), 4 empty hatch plots. |
+| **STUB (dead-interactive)** | **0**, **closed 2026-08-22** | Was 4 (Gallery Search `TextBox`, 14MHz/Unlogged/Flagged `ToggleButton`s). Search and Unlogged/Flagged are now real (client-side `FilteredEntries`, `RxHistoryPaneViewModel`); 14MHz is now an honest disabled stub instead (see the STUB row above) — no frequency field exists on `ReceiveHistoryEntry` to filter by, and adding one is a schema change out of scope for a dead-control fix. No dead-interactive controls remain anywhere in the app. |
+| **FAKE-LIVE** | **4** | Gallery Sort chip `"SORT NEWEST"` (`:983`), Gallery Size chip `"SIZE M"` (`:984`), VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`), and the AUTOSAVE-ON chip's wording (`MainWindow.axaml:1421`, mitigated by being disabled+dimmed). Gallery Storage Naming (`:1168`) is fixed as of 2026-08-22 — see its own PLACEHOLDER row above. Plus **4 latent** — the Advanced-timing values (`:272-275`), currently unreachable behind a permanently-disabled toggle but still real-looking literals if it's ever enabled. |
 | **PARTIAL** | **1** | Receive Frame-metadata "Grid / dist" (`:687`) — grid half real, distance half a hardcoded `"--"` inside `GridDisplay` itself (`RxImagePaneViewModel.cs:314`). |
 
 **Fully real screens:** TX image editor (100 %, zero disabled/unbacked controls). Logbook tab (100 %).
@@ -693,13 +694,13 @@ File > Open/Exit, Help > About, and Options.
    were the previous revision's lead example of literals masquerading as live data. Slant is now real
    (`RxImage.SlantPpmStatusBarDisplay`); SNR is now an honest `"—"` (`en.json:35`). Per-line SNR still
    does not exist anywhere in the decode pipeline — but the UI no longer claims it does.
-2. **The Gallery filter row is the app's remaining honesty gap**: 4 dead-interactive controls
-   (`MainWindow.axaml:977`, `:980-982`) plus 2 of the app's 5 FAKE-LIVE sites (`:983-984`). Two of the
-   four dead toggles ("Unlogged", "Flagged") are now cheap to wire — `LinkedQsoId` and `IsFlagged` are
-   both real, populated fields with real write paths.
-3. **The Storage "Naming" row is actively wrong**, not merely unbacked (`:1168` vs.
-   `ReceiveHistoryRecorder.cs:328`). It omits the milliseconds and the entry-id suffix the real files
-   carry. A one-line fix either way (bind it, or correct the literal).
+2. **The Gallery filter row's dead-interactive controls are fixed, 2026-08-22.** Search, Unlogged, and
+   Flagged are now real client-side filters (`RxHistoryPaneViewModel.FilteredEntries`, distinct from
+   the unfiltered `Entries` the Previous-frames strip still binds to); 14MHz is now an honest disabled
+   stub instead of a dead one, since `ReceiveHistoryEntry` still has no frequency field. Sort and Size
+   remain the app's only two FAKE-LIVE chips tied to genuinely unbuilt features.
+3. **The Storage "Naming" row is fixed, 2026-08-22** — corrected to
+   `yyyyMMdd-HHmmssfff_MODE_ID8.png`, matching `ReceiveHistoryRecorder.cs:328` exactly.
 4. **`RxImagePaneViewModel.DecodedNrRst` is real and populated with no control bound to it anywhere** —
    a fully-built RX-side decode result with no display surface.
 5. **Options → Decode settings are restart-only.** Every decoder toggle on that tab is baked into a DI

@@ -3403,6 +3403,99 @@ public sealed class PaneViewModelTests
             settingsStore ?? new FakeSettingsStore());
 
     [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_NoFilterActive_FilteredEntriesMatchesEntries()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "scottie-s1", "/tmp/b.png", "qso-1", ReceiveDecodeState.Completed, IsFlagged: true),
+            ],
+        };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.FilteredEntries.Count);
+        Assert.Equal(vm.Entries.Select(e => e.Entry.Id), vm.FilteredEntries.Select(e => e.Entry.Id));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_FilterUnloggedOnly_ExcludesEntriesWithALinkedQso()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("logged", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("unlogged", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+        };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FilterUnloggedOnly = true;
+
+        var entry = Assert.Single(vm.FilteredEntries);
+        Assert.Equal("unlogged", entry.Entry.Id);
+        // Entries itself (the Previous-frames strip's data source) must stay unfiltered.
+        Assert.Equal(2, vm.Entries.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_FilterFlaggedOnly_IncludesOnlyFlaggedEntries()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("flagged", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, IsFlagged: true),
+                new ReceiveHistoryEntry("plain", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+        };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FilterFlaggedOnly = true;
+
+        var entry = Assert.Single(vm.FilteredEntries);
+        Assert.Equal("flagged", entry.Entry.Id);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SearchText_MatchesNoteOrModeId_CaseInsensitive()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("by-note", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "Worked W1AW"),
+                new ReceiveHistoryEntry("by-mode", DateTimeOffset.UtcNow, "scottie-s1", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("no-match", DateTimeOffset.UtcNow, "robot36", "/tmp/c.png", null, ReceiveDecodeState.Completed, Note: "nothing relevant"),
+            ],
+        };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SearchText = "w1aw";
+        Assert.Equal(["by-note"], vm.FilteredEntries.Select(e => e.Entry.Id));
+
+        vm.SearchText = "SCOTTIE";
+        Assert.Equal(["by-mode"], vm.FilteredEntries.Select(e => e.Entry.Id));
+
+        vm.SearchText = null;
+        Assert.Equal(3, vm.FilteredEntries.Count);
+    }
+
+    [AvaloniaFact]
     public void LogbookPaneViewModel_Constructed_LoadsEntriesFromSearchAsync()
     {
         var logbook = new FakeLogbookSessionService();
