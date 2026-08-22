@@ -186,25 +186,32 @@ internal static partial class Program
         hostBuilder.Services.AddSingleton<IAdifExporter, AdifExporter>();
         hostBuilder.Services.AddSingleton<IAdifImporter, AdifImporter>();
         hostBuilder.Services.AddSingleton<IAdifUdpStreamer, AdifUdpStreamer>();
+
+        // QRZ.com Logbook API (upload/push) -- own named HttpClient with an explicit timeout, same
+        // rationale as QrzXmlLookup below: a hung QRZ connection must not pin the Logbook pane's
+        // upload path on the default 100s (functional-audit finding: QrzLogbookUploader requests
+        // this exact name via IHttpClientFactory.CreateClient, so without this registration it got
+        // default HttpClient options -- 100s -- instead). Credentials travel in a POST body here,
+        // not a GET query string, so (unlike QrzXmlLookup below) the default request-logging
+        // handler never logs them in plaintext -- RemoveAllLoggers() is not needed.
+        hostBuilder.Services.AddHttpClient("QrzLogbookApi", c => c.Timeout = TimeSpan.FromSeconds(15));
         hostBuilder.Services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
 
         // QRZ.com XML Callbook lookup (spec/08-logging.md's "QRZ.com lookup" section) -- a
         // DIFFERENT QRZ product from the upload API above (username/password auth, pull/enrich
-        // direction, not API-key/push). Its own named HttpClient with an explicit timeout: the
-        // bare AddHttpClient() above only covers the DEFAULT client QrzLogbookUploader uses, and a
-        // hung QRZ connection must not pin a Receive-tab "Lookup QRZ" button disabled for the
-        // default 100s.
+        // direction, not API-key/push). Its own named HttpClient with an explicit timeout, same
+        // rationale as QrzLogbookApi above: a hung QRZ connection must not pin a Receive-tab
+        // "Lookup QRZ" button disabled for the default 100s.
         //
-        // RemoveAllLoggers() is NOT optional here (real-window-testing-caught gap in an earlier
-        // draft): IHttpClientFactory's own built-in LoggingHttpMessageHandler logs the full request
-        // URI at Information level by default -- and this API sends credentials as GET query
-        // parameters (QRZ's own wire format, not this app's choice), so without this call, a real
-        // QRZ password lands in ~/.local/share/ScanlineStudio/logs/app.log in plaintext every time
-        // this client is used, regardless of anything QrzCallsignLookup's own Log class does or
+        // RemoveAllLoggers() IS needed here, unlike QrzLogbookApi above (real-window-testing-caught
+        // gap in an earlier draft): IHttpClientFactory's own built-in LoggingHttpMessageHandler logs
+        // the full request URI at Information level by default -- and this API sends credentials as
+        // GET query parameters (QRZ's own wire format, not this app's choice), so without this call,
+        // a real QRZ password lands in ~/.local/share/ScanlineStudio/logs/app.log in plaintext every
+        // time this client is used, regardless of anything QrzCallsignLookup's own Log class does or
         // doesn't log. Confirmed via a real manual test against the live QRZ server: the log line
         // read "GET https://xmldata.qrz.com/xml/current/?username=...&password=<plaintext>&agent=..."
-        // before this fix. QrzLogbookUploader (immediately above) doesn't need this: its credential
-        // travels in a POST body, which the same default handler does not log.
+        // before this fix.
         hostBuilder.Services.AddHttpClient("QrzXmlLookup", c => c.Timeout = TimeSpan.FromSeconds(15)).RemoveAllLoggers();
         hostBuilder.Services.AddSingleton<IQrzCallsignLookup, QrzCallsignLookup>();
 

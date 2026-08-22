@@ -5803,3 +5803,39 @@ cancellation-vs-timeout discrimination) are logged as deferred backlog, not fixe
 
 **Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, two trivial fixes applied in the same round
 per standing practice. Committed.
+
+## Chunk 3 (Core.Logbook): QrzCallsignLookup.cs, QrzLogbookUploader.cs
+
+**Round 1** -- NOT GO. Two blockers:
+1. `HttpClient.Timeout` expiry throws `OperationCanceledException` in .NET 5+ (not a distinct
+   `TimeoutException`), and both classes unconditionally rethrew any `OperationCanceledException`.
+   A QRZ server hang threw out of `UploadAsync` AFTER `LogbookSessionService` had already persisted
+   the QSO locally, surfacing as "log failed" on an already-saved record -- a user retry risks a
+   duplicate QSO. Same failure class the Batch 10 chunk 10c fix addressed, on a premise ("QRZ
+   uploader catches everything but cancellation") this round proved false for timeouts specifically.
+2. The `QrzLogbookApi` named `HttpClient` was requested by name in `QrzLogbookUploader` but never
+   registered in `Program.cs`, so it silently ran on the default 100s timeout instead of
+   `QrzXmlLookup`'s established 15s pattern.
+
+Fixed: added `catch (OperationCanceledException) when (!ct.IsCancellationRequested)` ahead of the
+rethrow in both classes (mirrors `AdifUdpStreamer.cs`'s existing correct pattern), registered
+`QrzLogbookApi` with a 15s timeout in `Program.cs`, corrected a stale comment there. Added timeout +
+genuine-cancellation tests for both classes; strengthened the ADIF=/KEY= assertion from
+key-presence-only to a full percent-encoded value round-trip (chunk 1's failure class again).
+115/115 `Core.Logbook.Tests` pass, clean build.
+
+**Round 2** (fresh agent, full re-scan) -- **GO.** Confirmed round 1's fix correct and complete
+across both files: verified every `OperationCanceledException` source in each class (HttpClient
+timeout, caller's token, `_sessionLock.WaitAsync`) now classifies correctly, no other swallowed
+value/state found, legacy `qrzcom.cpp` name/QTH composition parity confirmed. Flagged one
+same-failure-class risk: `QrzLogbookUploader`'s form-value parser did not trim whitespace, so a
+`RESULT=OK` value with trailing whitespace (e.g. a stray newline after the last pair) would read as
+a failed upload despite QRZ having accepted it -- inviting a retry and a duplicate QSO at QRZ. Low
+probability (QRZ's documented examples put `RESULT` first) but exactly this sweep's pattern, so
+fixed: `.Trim()` added to `UnescapeFormValue`. Three cosmetic/hygiene nits (no `EnsureSuccessStatusCode`,
+stale cached session kept after a failed forced re-login, undisposed `HttpResponseMessage`/
+`FormUrlEncodedContent`) logged as deferred backlog, not fixed -- none can produce a false success or
+wrong data. 115/115 tests pass, clean build.
+
+**Chunk 3 CLOSED (2026-08-22)** -- 2 rounds, real bug found and fixed round 1, clean GO round 2 with
+one additional trivial fix applied per standing practice. Committed.
