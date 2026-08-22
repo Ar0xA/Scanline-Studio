@@ -37,22 +37,31 @@ public sealed class StockImageLibrary : IStockImageLibrary
     public async Task<IImageSource> LoadThumbnailAsync(StockImageEntry entry, int maxDimension, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(entry.FilePath, ct).ConfigureAwait(false);
+        // Round-1 Tier B finding: this class used to skip AutoOrient entirely while its sibling
+        // ImageFileLoader always applied it -- the two are interchangeable branches of one caller
+        // switch (TxControlsPaneViewModel's stock-vs-file-picker source selection), so a phone
+        // photo from the stock folder transmitted sideways while the identical file loaded via
+        // Browse did not. Must run BEFORE both the fit computation and the resize, same ordering
+        // and rationale as ImageFileLoader's own doc comment -- the fit must be measured from the
+        // POST-orient dimensions, not the raw on-disk ones.
+        image.Mutate(x => x.AutoOrient());
         var (width, height) = FitWithinLongestSide(image.Width, image.Height, maxDimension);
         image.Mutate(x => x.Resize(width, height));
-        return CopyToImageSource(image, width, height);
+        return CopyToImageSource(image);
     }
 
     public async Task<IImageSource> LoadFullAsync(StockImageEntry entry, int targetWidth, int targetHeight, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(entry.FilePath, ct).ConfigureAwait(false);
-        image.Mutate(x => x.Resize(targetWidth, targetHeight));
-        return CopyToImageSource(image, targetWidth, targetHeight);
+        image.Mutate(x => x.AutoOrient().Resize(targetWidth, targetHeight));
+        return CopyToImageSource(image);
     }
 
     public async Task<IImageSource> LoadOriginalAsync(StockImageEntry entry, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(entry.FilePath, ct).ConfigureAwait(false);
-        return CopyToImageSource(image, image.Width, image.Height);
+        image.Mutate(x => x.AutoOrient());
+        return CopyToImageSource(image);
     }
 
     private async Task<string> ResolveDirectoryAsync(CancellationToken ct)
@@ -78,8 +87,14 @@ public sealed class StockImageLibrary : IStockImageLibrary
         return (Math.Max(1, (int)Math.Round(width * scale)), Math.Max(1, (int)Math.Round(height * scale)));
     }
 
-    private static ArrayImageSource CopyToImageSource(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, int width, int height)
+    // Reads the image's own post-mutation Width/Height rather than trusting a caller-passed target
+    // size (round-1 Tier B finding, matches ImageFileLoader.CopyToImageSource's own shape) --
+    // ImageSharp's Resize treats a 0 dimension as "auto-compute from aspect," so a caller-supplied
+    // size can silently diverge from the image's real post-resize dimensions.
+    private static ArrayImageSource CopyToImageSource(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image)
     {
+        var width = image.Width;
+        var height = image.Height;
         var pixels = new Rgb24[width * height];
         image.ProcessPixelRows(accessor =>
         {
