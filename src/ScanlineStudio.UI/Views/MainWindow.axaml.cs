@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Microsoft.Extensions.DependencyInjection;
@@ -47,9 +48,27 @@ public partial class MainWindow : Window
                 .GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
             if (geometry is { RememberWindowPosition: true, Left: { } left, Top: { } top, Width: { } width, Height: { } height })
             {
-                Position = new PixelPoint((int)left, (int)top);
-                Width = width;
-                Height = height;
+                // Tier C audit finding (risk): applied with zero bounds validation before this fix --
+                // a position persisted while on a since-removed monitor (unplugged second display, a
+                // resolution change) restored to coordinates with no display behind them. Windows
+                // does not clamp this, so the app appeared not to start, and the only recovery was
+                // hand-deleting settings.json (the Options toggle to turn this off lives inside the
+                // invisible window). `Screens.All` may not be reliably populated this early in every
+                // Avalonia configuration -- if the list comes back empty, fall back to trusting the
+                // persisted value rather than disabling the whole feature; only reject when a screen
+                // list IS available and genuinely none of them contain this position.
+                var restoredPosition = new PixelPoint((int)left, (int)top);
+                var screenBounds = Screens.All.Select(s => s.Bounds).ToList();
+                if (WindowGeometryPolicy.ShouldRestorePosition(restoredPosition, screenBounds))
+                {
+                    Position = restoredPosition;
+                    Width = width;
+                    Height = height;
+                }
+                else if (logger is not null)
+                {
+                    Log.RestoredWindowPositionOffScreen(logger, restoredPosition.X, restoredPosition.Y);
+                }
             }
         }
 
@@ -74,18 +93,36 @@ public partial class MainWindow : Window
             var width = Width;
             var height = Height;
 
-            Task.Run(async () =>
+            // Tier C audit finding (risk): unguarded before this fix -- JsonSettingsStore.SaveAsync's
+            // own Directory.CreateDirectory/File.Create/File.Move calls have no exception handling of
+            // their own (unlike its sibling LoadAsync), so a disk-full/read-only-profile/settings.json-
+            // locked-by-a-sync-client failure rethrew on the UI thread inside Closing, escaping past
+            // Program.cs's own try/catch around lifetime.Start -- which means lifetime.Exit never
+            // fires, and the 10s-bounded host DisposeAsync (audio capture device / radio connection
+            // teardown) is skipped entirely, not just this save. Best-effort like every other
+            // settings-write path in this app: log and let the window close anyway.
+            try
             {
-                var settings = await _settingsStore.LoadAsync();
-                var current = settings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
-                if (current.RememberWindowPosition != true)
+                Task.Run(async () =>
                 {
-                    return;
-                }
+                    var settings = await _settingsStore.LoadAsync();
+                    var current = settings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
+                    if (current.RememberWindowPosition != true)
+                    {
+                        return;
+                    }
 
-                var updated = current with { Left = left, Top = top, Width = width, Height = height };
-                await _settingsStore.SaveAsync(settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings));
-            }).GetAwaiter().GetResult();
+                    var updated = current with { Left = left, Top = top, Width = width, Height = height };
+                    await _settingsStore.SaveAsync(settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings));
+                }).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                if (logger is not null)
+                {
+                    Log.WindowGeometrySaveFailed(logger, ex);
+                }
+            }
         };
 
         DataContextChanged += (_, _) =>
@@ -99,24 +136,40 @@ public partial class MainWindow : Window
                         Log.ConstructingOptionsWindow(logger);
                     }
 
-                    var window = new OptionsWindowView { DataContext = optionsViewModel };
-                    window.Opened += (_, _) =>
+                    // Tier C audit finding (risk): unguarded before this fix -- the comment this
+                    // replaced claimed "no exception surface to guard," but InitializeComponent()
+                    // (run inside the OptionsWindowView constructor) throws on a bad binding/missing
+                    // resource, and ShowDialog can throw synchronously too; either one escaped through
+                    // RelayCommand.Execute into input dispatch and crashed the process with only the
+                    // generic AppDomain net for a trace. Same shape as QsoLinkRequested's own handler
+                    // below.
+                    try
+                    {
+                        var window = new OptionsWindowView { DataContext = optionsViewModel };
+                        window.Opened += (_, _) =>
+                        {
+                            if (logger is not null)
+                            {
+                                Log.OptionsWindowOpened(logger, window.Position.ToString(), Screens.ScreenFromWindow(window)?.Bounds.ToString() ?? "(none)");
+                            }
+                        };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.ShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
                     {
                         if (logger is not null)
                         {
-                            Log.OptionsWindowOpened(logger, window.Position.ToString(), Screens.ScreenFromWindow(window)?.Bounds.ToString() ?? "(none)");
+                            Log.OptionsWindowFailed(logger, ex);
                         }
-                    };
-                    window.ShowDialog(this);
-                    if (logger is not null)
-                    {
-                        Log.ShowDialogReturned(logger);
                     }
                 };
 
                 // Same synchronous, unawaited shape as OptionsRequested above (spec/18-path-to-1.0.md
-                // High item 5) -- a static-content dialog with no async work, no exception surface to
-                // guard the way the QsoLinkRequested handler below needs to.
+                // High item 5) -- a static-content dialog with no async work.
                 vm.AboutRequested += aboutViewModel =>
                 {
                     if (logger is not null)
@@ -124,11 +177,22 @@ public partial class MainWindow : Window
                         Log.ConstructingAboutWindow(logger);
                     }
 
-                    var window = new AboutWindowView { DataContext = aboutViewModel };
-                    window.ShowDialog(this);
-                    if (logger is not null)
+                    // Tier C audit finding (risk): same reasoning as OptionsRequested's own fix above.
+                    try
                     {
-                        Log.AboutShowDialogReturned(logger);
+                        var window = new AboutWindowView { DataContext = aboutViewModel };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.AboutShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.AboutWindowFailed(logger, ex);
+                        }
                     }
                 };
 
@@ -229,5 +293,17 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Log QSO requested from the RX pane; switching to the Logbook tab")]
         public static partial void LogQsoRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Restored window position ({X}, {Y}) is not on any known screen; using the default position instead")]
+        public static partial void RestoredWindowPositionOffScreen(ILogger logger, int x, int y);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to save window geometry on close")]
+        public static partial void WindowGeometrySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "OptionsWindowView failed to open or show")]
+        public static partial void OptionsWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AboutWindowView failed to open or show")]
+        public static partial void AboutWindowFailed(ILogger logger, Exception ex);
     }
 }

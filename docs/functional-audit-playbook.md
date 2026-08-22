@@ -7935,3 +7935,82 @@ correct, and not the subject of a fix would be ceremony, not verification. 731/7
 **Group 4 CLOSED (2026-08-22)** -- 1 round (GO, no blockers) -- the fix (6 converters) was applied
 and tested opportunistically alongside the clean verdict, per the round's own explicit
 recommendation, rather than treated as requiring escalation.
+
+### Group 5: Large UI code-behind
+
+`src/ScanlineStudio.UI/Views/TxImageEditorPaneView.axaml.cs` (807, the largest file in this whole
+Tier C sweep), `MainWindow.axaml.cs` (233), `App.axaml.cs` (70). No dedicated test file existed for
+any of the three before this round.
+
+**Round 1 verdict: no blockers found, 3 risk-tier findings recommended in the same pass** (the
+round's own explicit call: "do not escalate to a Tier B confirmation round... one fix pass,
+self-verified, is proportionate here" -- everything found was classified risk-tier, not blocker,
+so Tier C's own escalation trigger was never met). All 3 findings clustered in `MainWindow.axaml.cs`
+-- the specific class this round was told to hunt hardest, event-subscription leaks in the big
+`TxImageEditorPaneView.axaml.cs` file, was genuinely absent (verified: all `+=` subscriptions there
+target the view's own events or its own named children, nothing attached to the VM or any
+longer-lived object, so a per-edit-session view instance is fully collectable).
+
+**Risk (fixed): restored window geometry applied with zero bounds validation.** A position/size
+persisted while on a since-removed monitor (unplugged second display, a resolution change) restored
+the app to coordinates with no display behind them -- Windows does not clamp this, so the app
+appeared not to start, and the only recovery was hand-deleting settings.json (the Options toggle to
+turn this off lives inside the invisible window). Fixed with a bounds check against `Screens.All`,
+extracted into a new pure `WindowGeometryPolicy.ShouldRestorePosition` (per the round's own explicit
+recommendation, "the cheapest way to get this under test") -- an empty screen list (meaning `Screens`
+may not be reliably populated this early in every Avalonia configuration) trusts the persisted value
+rather than disabling the whole feature; a populated list that genuinely contains no matching screen
+rejects the restore.
+
+**Risk (fixed): the `Closing` handler's blocking settings save had no exception guard.**
+`JsonSettingsStore.SaveAsync`'s own `Directory.CreateDirectory`/`File.Create`/`File.Move` calls have
+no exception handling of their own (unlike its sibling `LoadAsync`, hardened in Group 1) -- a
+disk-full/read-only-profile/settings.json-locked-by-a-sync-client failure rethrew on the UI thread
+inside `Closing`, escaping past `Program.cs`'s own try/catch around `lifetime.Start` -- which means
+`lifetime.Exit` never fires, so the 10s-bounded host `DisposeAsync` (audio capture device / radio
+connection teardown) is skipped entirely, not just the window-geometry save. Fixed with the same
+best-effort log-and-continue pattern every other settings-write path in this app already uses.
+(Off-scope note, not chased this round: `JsonSettingsStore.SaveAsync` itself remains unguarded for
+every OTHER caller too, not just this one -- worth a check when `Settings` next comes up.)
+
+**Risk (fixed): the `OptionsRequested`/`AboutRequested` dialog handlers had no exception guard**,
+unlike their own sibling `QsoLinkRequested` handler a few lines below, whose own comment
+("no exception surface to guard") was not actually accurate -- `InitializeComponent()` (run inside
+the dialog's own constructor) throws on a bad binding/missing resource, and `ShowDialog` can throw
+synchronously too; either one escaped through `RelayCommand.Execute` into input dispatch and would
+have crashed the process with only the generic `AppDomain` net for a trace. Fixed with the same
+try/catch-and-log shape `QsoLinkRequested`'s own handler already uses.
+
+2 risk-tier findings deferred as genuine follow-ups, not required to close: no `PointerCaptureLost`
+handler anywhere in `TxImageEditorPaneView` (a robustness gap, not a confirmed repro -- the auditor
+could not construct a guaranteed capture-loss-without-release path from source alone); zoom
+possibly resetting to Fit on every Transmit-tab round-trip (needs real-window verification before
+fixing, per this project's own established rule against trusting headless Avalonia attach
+semantics). 8 nits also deferred (an asymmetric unguarded `SetupWithLifetime` call in `Program.cs`,
+mitigated by its own `AppDomain` hook; a `DataContextChanged` re-subscription with no unsubscribe,
+harmless since it's set exactly once today; assorted pointer-button-gating gaps in
+`TxImageEditorPaneView`).
+
+Also verified clean by inspection: complete null-guard coverage across every handler touching the
+ViewModel in all 3 files; `MainWindow`'s constructor load path can't brick startup
+(`JsonSettingsStore.LoadAsync` already hardened); a hypothesized `Task.Run(...).GetResult()`
+deadlock on `ISettingsStore.Changes` publish was disproved (zero subscribers to that observable
+exist anywhere in `src/`); `TxImageEditorPaneView`'s resize/anchor/snap math (already covered by 18
+existing test call sites in `TxImageEditorPaneViewModelTests.cs`) is correct; `App.axaml.cs`
+correctly relies on `Program.cs`'s own `AppDomain`/`TaskScheduler` hooks rather than needing its own
+equivalent; no boundary-hygiene violations.
+
+7 new regression tests added in a new `WindowGeometryPolicyTests.cs`, pinning the extracted pure
+bounds-check function (inside-primary-screen, inside-second-screen, off-any-known-screen -- the
+exact bug scenario, negative coordinates, empty-screen-list trusts the persisted value, exact
+origin, exact far edge exclusive boundary). The other two fixes (the `Closing`-handler guard, the
+dialog-handler guards) were not given dedicated tests -- both are tightly coupled to real
+`Window`/`ShowDialog` construction requiring a live Avalonia context, consistent with this
+project's own established rule against trusting headless Avalonia behavior without real-window
+verification; correct by inspection, matching an already-tested sibling pattern
+(`QsoLinkRequested`'s own try/catch) in both cases. 738/738 UI.Tests pass (was 731, +7), clean
+solution-wide build.
+
+**Group 5 CLOSED (2026-08-22)** -- 1 round (no blockers; 3 risk-tier findings fixed
+opportunistically per the round's own explicit no-escalation call). 2 risk-tier findings and 8 nits
+remain intentionally deferred.
