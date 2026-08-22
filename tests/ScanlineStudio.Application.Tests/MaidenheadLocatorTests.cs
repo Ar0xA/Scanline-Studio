@@ -133,4 +133,42 @@ public sealed class MaidenheadLocatorTests
         Assert.False(double.IsNaN(bearingDegrees));
         Assert.InRange(distanceKm, 19900, 20050); // half Earth's circumference, ~20015km
     }
+
+    [Fact]
+    public void TryToLatLon_EightCharacterLocator_ResolvesToTheSameCellAsItsSixCharacterPrefix()
+    {
+        // Tier B audit finding: an 8-character extended locator (a normal, widely-used VHF/microwave-
+        // grade precision) used to be rejected outright by the length check alone -- strictly MORE
+        // precise than the accepted 6-character form. Fix truncates the trailing digit pair after
+        // validating it, so an 8-char locator resolves to the SAME cell as its own 6-char prefix.
+        var foundEight = MaidenheadLocator.TryToLatLon("JN58tc55", out var latEight, out var lonEight);
+        var foundSix = MaidenheadLocator.TryToLatLon("JN58tc", out var latSix, out var lonSix);
+
+        Assert.True(foundEight);
+        Assert.True(foundSix);
+        Assert.Equal(latSix, latEight, precision: 10);
+        Assert.Equal(lonSix, lonEight, precision: 10);
+    }
+
+    [Theory]
+    [InlineData("JN58tcXX")] // trailing pair must be digits, not letters
+    [InlineData("JN58tc5")] // 7 characters -- still an invalid, incomplete length
+    public void TryToLatLon_InvalidEightCharacterLocators_ReturnsFalse(string locator)
+    {
+        Assert.False(MaidenheadLocator.TryToLatLon(locator, out _, out _));
+    }
+
+    [Fact]
+    public void TryToLatLon_InvalidSubsquare_LeavesOutParamsAtZero_NotTheStaleSwCornerValues()
+    {
+        // Tier B audit finding: every OTHER false-return path leaves latitude/longitude at their
+        // pre-zeroed defaults, but the invalid-subsquare path used to leave them at the SW-corner
+        // values already computed by the field/square math above it -- a stale, non-zero out-param
+        // on a false return from a public static API.
+        var found = MaidenheadLocator.TryToLatLon("JN58zz", out var latitude, out var longitude);
+
+        Assert.False(found);
+        Assert.Equal(0, latitude);
+        Assert.Equal(0, longitude);
+    }
 }
