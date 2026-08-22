@@ -198,6 +198,48 @@ public sealed class SstvSessionServiceStationIdTests
     }
 
     [Fact]
+    public async Task TransmitAsync_CwWpmPositiveButBelowLegitimateRange_FallsBackToDocumentedDefault()
+    {
+        // Tier B audit finding (Area 3): a corrupted/hand-edited settings.json value like 1 WPM used
+        // to pass the old `> 0` check untouched -- MillisecondsPerDotFromWpm(1) = 1110ms/dot, which
+        // keys PTT for minutes after every image with none of TuneAsync's own duration backstop on
+        // this path. Below the Options dialog's own legitimate range (10-50), so it must fall back to
+        // the documented default exactly like the zero/negative case above.
+        var (service, encoder, _, settingsStore) = CreateService();
+        WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwText = "TEST", CwWpm = 1 });
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(StationIdSettings.DefaultCwWpm, encoder.LastStationIdOptions!.CwWpm);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_CwToneFrequencyAboveLegitimateRange_FallsBackToDocumentedDefault()
+    {
+        // Tier B audit finding (Area 3): a corrupted/hand-edited settings.json value like 40000 Hz
+        // used to pass the old `> 0` check untouched, reaching CwMorseGenerator unclamped -- well
+        // above this file's encoder Nyquist, aliasing to an arbitrary on-air tone appended to every
+        // transmission. Above the Options dialog's own legitimate range (100-3000 Hz), so it must
+        // fall back to the documented default exactly like the zero/negative case above.
+        var (service, encoder, _, settingsStore) = CreateService();
+        WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.Cw, CwText = "TEST", CwToneFrequencyHz = 40000 });
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal(StationIdSettings.DefaultCwToneFrequencyHz, encoder.LastStationIdOptions!.CwToneFrequencyHz);
+    }
+
+    // Tier B audit finding (Area 3, nit): a +Infinity CwToneFrequencyHz would also reach the same
+    // `is >= 100 and <= 3000` upper-bound check above and fall through to the default -- `+Infinity
+    // >= 100` is true, but `+Infinity <= 3000` is false, so the `and` still rejects it. Not given a
+    // dedicated test,
+    // since System.Text.Json's default writer throws on +Infinity BEFORE this test's own
+    // WithStationIdSettings helper (WithSection -> Serialize) can even construct the scenario
+    // (confirmed by trying); reaching it for real would need a hand-crafted settings.json bypassing
+    // normal round-trip serialization, which the auditor's own review flagged as unverified and not
+    // required to close this finding -- the finite-but-absurd cases above already prove the fix.
+
+    [Fact]
     public async Task TransmitAsync_NrRstEnabledUnset_DefaultsToTrue_MatchingLegacysOwnDefault()
     {
         // LogFile.cpp:378: Log.m_LogSet.m_FSKNR defaults to 1 (enabled), the one field on this

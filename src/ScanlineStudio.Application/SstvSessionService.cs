@@ -308,6 +308,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// still-usable primitive rather than throwing from the primitive itself.</summary>
     private readonly SemaphoreSlim _pttLockGate = new(1, 1);
 
+    /// <summary>Tier B audit finding (Area 3): serializes <see cref="StartReceivingAsync"/> and
+    /// <see cref="StopReceivingAsync"/> against each other -- without this, both methods' own
+    /// `_isReceiving` check-then-act (read at entry, published only after several awaits) had no gate
+    /// between them, unlike <see cref="_pttLockGate"/>'s identical shape for <see cref="SetPttLockAsync"/>.
+    /// A real UI repro: <c>RadioStatusViewModel.SetReceivingSafeAsync</c> is a fire-and-forget command
+    /// with no busy guard, and <c>HaltReceivingAsync</c> is a SEPARATE command hitting
+    /// <see cref="StopReceivingAsync"/> concurrently -- a Start parked mid-flight (e.g. in device
+    /// enumeration) let a concurrent Stop read `_isReceiving == false` and silently no-op, leaving
+    /// capture live with the UI reporting "not receiving" and no error surfaced; the mirror ordering
+    /// dropped a Start instead. <see cref="StopReceivingAsync"/> takes no <see cref="CancellationToken"/>
+    /// by design (must still work post-dispose, see that method's own doc comment), so it waits on this
+    /// gate uncancellably AND bounded (by <c>_cleanupTimeout</c>) rather than indefinitely -- see that
+    /// method's own doc comment for why an unbounded wait here is not safe, and what happens (skips its
+    /// own body, logs, returns) on a timeout.</summary>
+    private readonly SemaphoreSlim _rxTransitionGate = new(1, 1);
+
     /// <summary>Manual-keying diagnostic aid (e.g. a "PTT lock" button) -- keys PTT immediately and
     /// holds it keyed independent of any <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call,
     /// until unlocked. Operates directly on the PTT line only -- unlike <see cref="PlayWithPttAsync"/>,
@@ -1119,6 +1135,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // before the publish that actually matters.
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        await _rxTransitionGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await StartReceivingLockedAsync(ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _rxTransitionGate.Release();
+        }
+    }
+
+    private async Task StartReceivingLockedAsync(CancellationToken ct)
+    {
         if (_isReceiving)
         {
             return;
@@ -1203,6 +1232,36 @@ public sealed partial class SstvSessionService : ISstvSessionService
     }
 
     public async Task StopReceivingAsync()
+    {
+        // Bounded, not indefinite or uncancellable-and-unbounded -- DisposeAsync (this method's other
+        // production caller alongside PlayWithPttAsync's entry) has its own established contract of
+        // best-effort, never-hanging teardown (every other cleanup-path wait in this file uses this
+        // same _cleanupTimeout budget). Without a bound, a concurrent StartReceivingAsync still
+        // resolving its own device/settings (itself unbounded -- a separate, already-tracked risk-tier
+        // finding) would make DisposeAsync's own call here hang for as long as that resolution takes.
+        // Safe to just give up and return on timeout: by the time DisposeAsync calls this, _disposed
+        // is already true, so the racing StartReceivingAsync's own recheck-then-throw unwinds and
+        // closes the session it opened on its own -- this method has nothing left to do in that case
+        // either way. A genuine (non-disposal) concurrent Start finishing slowly degrades the same way:
+        // logged and skipped rather than silently no-op'd, which is still strictly better than the
+        // race this gate exists to close (see _rxTransitionGate's own doc comment).
+        if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, CancellationToken.None).ConfigureAwait(false))
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "StopReceivingAsync (rxTransitionGate wait timed out)", new TimeoutException()));
+            return;
+        }
+
+        try
+        {
+            await StopReceivingLockedAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _rxTransitionGate.Release();
+        }
+    }
+
+    private async Task StopReceivingLockedAsync()
     {
         if (!_isReceiving)
         {
@@ -1381,8 +1440,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // legacy exactly (a macro token that resolves to empty would still fire in legacy, since the
         // gate never re-checks after MacroText expansion).
         var cwEnabled = stationIdSettings.CwIdMode == CwIdMode.Cw && !string.IsNullOrEmpty(stationIdSettings.CwText);
-        var wpm = stationIdSettings.CwWpm is > 0 ? stationIdSettings.CwWpm.Value : StationIdSettings.DefaultCwWpm;
-        var toneFrequencyHz = stationIdSettings.CwToneFrequencyHz is > 0
+
+        // Tier B audit finding (Area 3, matches round 16's TxVolumePercent / round 18's TuneAsync
+        // precedent): this doc comment's own "settings-boundary validation lives here" claim used to
+        // check only the lower bound (`> 0`). A corrupted/hand-edited settings.json could still reach
+        // the transmitter WITH PTT KEYED: CwWpm=1 -> MillisecondsPerDotFromWpm(1)=1110ms/dot, minutes
+        // of keyed CW after every image with none of TuneAsync's own duration backstop on this path;
+        // CwToneFrequencyHz>=24000 (this file's encoder Nyquist) aliases to an arbitrary on-air tone,
+        // and +Infinity would reach Math.Sin as NaN samples (NaN itself already falls through `> 0`,
+        // since a NaN comparison is always false). Bounded to the Options dialog's own product-decided
+        // legitimate range (OptionsWindowView.axaml's CwWpm/CwToneFrequencyHz NumericUpDown Minimum/
+        // Maximum) rather than an arbitrary wider one -- anything outside it is definitionally the
+        // "corrupted settings" case this method's own doc comment already promises to fall back from.
+        var wpm = stationIdSettings.CwWpm is >= 10 and <= 50
+            ? stationIdSettings.CwWpm.Value
+            : StationIdSettings.DefaultCwWpm;
+        var toneFrequencyHz = stationIdSettings.CwToneFrequencyHz is >= 100 and <= 3000
             ? stationIdSettings.CwToneFrequencyHz.Value
             : StationIdSettings.DefaultCwToneFrequencyHz;
         var nrRstEnabled = stationIdSettings.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled;

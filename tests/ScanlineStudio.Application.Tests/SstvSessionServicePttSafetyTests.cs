@@ -1704,8 +1704,13 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.False(startReceiving.IsCompleted, "StartReceivingAsync should still be parked on the settings-store gate");
 
         // DisposeAsync sets `_disposed = true` as its own very first line (the same established
-        // property round 8's own test relies on), then completes -- StopReceivingAsync no-ops here
-        // since _isReceiving is still false, so this does not itself touch the audio engine.
+        // property round 8's own test relies on), then completes -- StopReceivingAsync no-ops here.
+        // Tier B audit finding (Area 3): since _rxTransitionGate's own fix, this is no longer via the
+        // `_isReceiving` guard (the gate is held by the parked Start above) -- it now no-ops via that
+        // gate wait's own bounded timeout (_cleanupTimeout, 300ms here), logging and returning without
+        // touching the audio engine. This test is exactly why that wait had to be BOUNDED: an
+        // unbounded/uncancellable wait here would deadlock this line against the gate release below,
+        // which only runs AFTER this await returns.
         await service.DisposeAsync();
 
         // Release the gate: StartReceivingAsync now proceeds through StartCaptureAsync (genuinely
@@ -2252,6 +2257,57 @@ public sealed class SstvSessionServicePttSafetyTests
     // introduce a NEW single-threaded bug -- it only changes when two independent Interlocked writes
     // become visible relative to the gate release -- so it is verified by inspection plus the
     // existing suite continuing to pass, not by a new race-dependent test).
+
+    // ------------------------------------------------------------------ Tier B Area 3 findings
+
+    [Fact]
+    public async Task TierBAuditFinding_ConcurrentStartAndStopReceiving_StopNeverSilentlyNoOpsWhileStartIsMidFlight()
+    {
+        // Tier B audit finding (Area 3): StartReceivingAsync/StopReceivingAsync's own `_isReceiving`
+        // check-then-act had no gate between them, unlike SetPttLockAsync's own identical shape
+        // (_pttLockGate). A real UI repro: RadioStatusViewModel.SetReceivingSafeAsync is fire-and-
+        // forget with no busy guard, and HaltReceivingAsync is a SEPARATE command hitting
+        // StopReceivingAsync concurrently -- a Start parked mid-flight (e.g. in a slow settings/device
+        // read) let a concurrent Stop read `_isReceiving == false` and silently no-op, leaving capture
+        // live with the UI reporting "not receiving" and no error surfaced. _rxTransitionGate closes
+        // this: Stop now genuinely waits for the racing Start to finish, then acts on the real result.
+        var gate = new TaskCompletionSource();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+            Gate = gate.Task,
+        };
+        // Tier B audit finding (round-2 confirmation nit): StopReceivingAsync's own gate wait is
+        // bounded by _cleanupTimeout (see that field's doc comment) -- a generous 30s here so this
+        // test's own assertion below is never at the mercy of the default 300ms test budget racing
+        // this method's Task.Delay(50) under parallel test-host load. Only this test's PROPERTY
+        // (Stop must wait, not no-op) depends on real wall-clock timing; a too-short budget would make
+        // the test flake, not silently pass wrong.
+        var (service, engine, _, _) = CreateService(settingsStore: settingsStore, cleanupTimeout: TimeSpan.FromSeconds(30));
+
+        // Parked inside _settingsStore.LoadAsync, well before _isReceiving is ever published.
+        var startTask = service.StartReceivingAsync();
+        Assert.False(startTask.IsCompleted, "StartReceivingAsync should still be parked on the settings-store gate");
+
+        // Before the fix, this returned immediately (no-op, `_isReceiving` still false at this
+        // instant). After the fix, it blocks on the same _rxTransitionGate the parked Start holds.
+        var stopTask = service.StopReceivingAsync();
+        await Task.Delay(50);
+        Assert.False(stopTask.IsCompleted, "StopReceivingAsync must wait for the racing Start, not silently no-op past it");
+
+        gate.SetResult();
+
+        await startTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // THE property: Stop's command actually landed AFTER Start finished, instead of being dropped
+        // -- capture is genuinely stopped and IsReceiving reports the same thing.
+        Assert.False(service.IsReceiving);
+        Assert.False(((FakeAudioEngine)engine).IsCapturing);
+    }
 
     // ------------------------------------------------------------------ helpers
 
