@@ -7547,3 +7547,60 @@ consequence). 3 risk-tier findings and assorted nits from round 1 remain intenti
 batched (unbounded device/settings reads in `StartReceivingAsync`; the `_disposed`
 recheck-then-publish ordering; a missing fault-observer on one abandoned-task site). Areas 4-5
 remain.
+
+### Area 4: `PlayWithPttAsync` (the core TX/PTT engine, ~800 lines)
+
+**Round 1 verdict: NOT GO** -- 2 must-fix findings, both NEW breakage created by Area 3's
+`_rxTransitionGate` landing against Area 4's own abandoned-RX-resume design (not pre-existing bugs
+in Area 4 itself -- everything Area 4 uniquely owns, epoch pair, "believed keyed" triple,
+`_keyedTransmitCompletion`/`_keyedTransmitCount` publish/clear pairing across every exit path,
+`_disposed` fencing, `SafeLog` coverage, verified clean). 1 risk-tier finding (timeout-budget
+arithmetic now possibly exceeding `Program.cs`'s ~10s teardown bound) and 3 nits deferred/batched.
+
+**Must-fix 1 (fixed): `StartReceivingAsync`'s own gate wait was bounded only by the caller's token**,
+unlike its sibling `StopReceivingAsync`'s wait (already bounded by `_cleanupTimeout`, from Area 3).
+An abandoned RX-resume (`ResumeReceivingBoundedAsync`'s own budget already expired, but its inner
+`StartCaptureAsync` call keeps running in the background because a native call doesn't respect `ct`
+mid-flight -- an already-established fact) can hold `_rxTransitionGate` forever; any later caller
+(including the direct UI Start-RX path) then hangs indefinitely with no log and no throw -- a stuck
+Receiving toggle. Fixed: bounded the same way as `StopReceivingAsync`, but THROWS `TimeoutException`
+on timeout instead of silently returning -- a caller of Start needs to know capture did not actually
+start, unlike Stop's safe no-op.
+
+**Must-fix 2 (fixed): even once the gate IS acquired, the abandoned resume's own `StartCaptureAsync`
+call can still be genuinely running well past the point its caller gave up.** Concrete interleaving:
+transmit #1's cleanup starts an RX-resume; capture-start is slow (e.g. 7s); the resume's 5s budget
+fires and is abandoned; transmit #1 returns. Transmit #2 starts at t~5.1s; its own entry-time
+`wasReceiving` read correctly sees `false` (capture hasn't started yet) and skips pausing RX. At
+t~7s the abandoned resume finally finishes `StartCaptureAsync` and would have published
+`_isReceiving = true` -- turning capture ON while transmit #2 is actively PTT-keyed, with no
+coordination and no event ever raised. Fixed: a new recheck, sibling to the existing `_disposed`
+recheck right before the publish -- `if (ct.IsCancellationRequested) { ...close the session...;
+throw new OperationCanceledException(...); }`. `ct.IsCancellationRequested` is a reliable signal
+specifically for this case: `ResumeReceivingBoundedAsync` passes its own already-expired token all
+the way through as this method's `ct`, and no other caller of `StartReceivingAsync` ever cancels its
+own token (confirmed by checking every call site repo-wide).
+
+Two regression tests added (`SstvSessionServicePttSafetyTests.cs`'s new "Tier B Area 4 findings"
+section). 253/253 `Application.Tests` pass (was 251, +2), clean solution-wide build.
+
+**Round 2 (confirmation) verdict: GO.** Verified independently: `TimeoutException` from fix 1 is
+handled by every one of `StartReceivingAsync`'s call chains (the UI's own generic catch-and-revert,
+`Program.cs`'s startup catch, `ResumeReceivingBoundedAsync`'s own fault-observer/catch-all); no third
+production caller passes a cancellable token that fix 2's recheck could false-positive against; the
+C#/TPL claim that an `async Task` throwing `OperationCanceledException` completes the task as
+`Canceled` (not `Faulted`, so the abandoned task's self-abort is safely absorbed with no unobserved-
+exception risk) confirmed correct; both new tests genuinely fail pre-fix; both pre-existing
+Round-16/Round-21 tests confirmed unaffected by re-tracing their own interleavings against the new
+code. 4 nits noted (test-section-header placement -- fixed in the same pass; the gate's field doc
+not yet mentioning Start's own bound -- fixed in the same pass; no diagnostic log on a self-aborted
+resume; and the inherent brief native-session-open window before the recheck's own cleanup runs,
+not fixable without engine-level `ct` support) -- none blocking. Re-verified 253/253 pass, clean
+solution-wide build after the two doc/test-header nit fixes.
+
+**Area 4 CLOSED (2026-08-22)** -- 2 rounds (NOT GO -> GO), 2 real must-fix bugs fixed, both newly
+introduced by Area 3's own fix interacting with Area 4's pre-existing abandoned-resume design (not
+bugs latent in Area 4 alone) -- exactly the kind of cross-area interaction this file's own
+callee-first, cross-cutting-invariant review structure exists to catch. 1 risk-tier finding
+(timeout-budget arithmetic staleness, `docs`/comment-only) and 2 remaining nits stay deferred/
+batched. Area 5 (`DisposeAsync` + `AwaitInFlightKeyedTransmitAsync`) remains -- the last area.
