@@ -103,7 +103,7 @@ OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — bu
 
 ## Polling
 
-`IRadioController` implementations poll on a configurable interval (default 250 ms, matching legacy `PollInterval`) using an internal background loop; poll failures increment a backoff counter and surface via `ConnectionEvents` rather than throwing out of the polling loop. Poll type/scan behavior (`PollType`, `PollScan` in legacy `CRADIOPARA`) becomes a `PollingStrategy` enum (`Continuous`, `OnDemand`, `Scan`) on `RadioConnectionSpec`.
+`IRadioController` implementations poll on a configurable interval (default 250 ms — a deliberately chosen value, not a legacy match: legacy's own effective period at its default `PollInterval` works out to roughly 1 second (`cradio.cpp:704-707`'s `(5 + PollInterval) * 100ms`, tick-length-independent), and its fastest reachable setting is 500 ms) using an internal background loop; poll failures increment a backoff counter and surface via `ConnectionEvents` rather than throwing out of the polling loop — see `IRadioController.cs`'s own doc comment for the exact contract (synchronous push from the producing thread, no buffering, a slow subscriber stalls the poll loop, subscriber exceptions are caught), the CLAUDE.md §4 concurrency-rule statement this section was otherwise missing. Poll type/scan behavior (`PollType`, `PollScan` in legacy `CRADIOPARA`) becomes a `PollingStrategy` enum (`Continuous`, `OnDemand`, `Scan`) on `RadioConnectionSpec` — **`OnDemand` is declared but not actually implemented as a distinct strategy**: only `Scan` is rejected at connect time (`RadioController.ConnectAsync`), and the poll loop itself never reads `Strategy` at all, so `OnDemand` silently behaves exactly like `Continuous`.
 
 ## Testing hooks
 
@@ -112,7 +112,7 @@ OmniRig (`OmniRig_OCX.cpp`, Windows-only ActiveX) is **not** ported as-is — bu
 ## Definition of done
 
 - [x] `ScanlineStudio.Abstractions.Radio` interfaces above compiled and documented via XML doc comments.
-- [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`ScanlineStudio.Core.Radio`), 11 orchestration tests in `RadioControllerTests`.
+- [x] `IRadioController` reference implementation with connect/disconnect/backoff, unit-tested against a fake `IRadioProtocol` (protocols own their own transport, so the controller itself never touches `IRadioTransport` directly — see the "Core abstractions" code above). `RadioController` (`ScanlineStudio.Core.Radio`), 13 orchestration tests in `RadioControllerTests`.
 - [x] `IRadioProtocolFactory`-based backend resolution (exactly-one-match, typed error on zero/ambiguous
       match — see "Rig identification" above) unit-tested; no static rig registry exists to load.
       `NoneRadioProtocolFactory`/`RigctldProtocolFactory`/`HamlibProtocolFactory` are the three concrete

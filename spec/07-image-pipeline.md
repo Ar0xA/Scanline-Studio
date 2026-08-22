@@ -24,8 +24,29 @@ public interface IReceivedImageBuffer
 {
     // Updated incrementally as ISstvDecoder.LineDecoded fires; UI binds to this for live partial-image rendering.
     IImageSource Current { get; }
+
+    // [0.0, 1.0] fraction of decoded rows, null when idle. Reaches exactly 1.0 on the completing
+    // scanline group, not an asymptotic approximation.
+    double? Progress { get; }
+
+    // Monotonic counter bumped only when Current's IDENTITY changes (a fresh image starting, or
+    // the buffer blanking on restart) -- not on every pixel update to the SAME image. Lets a
+    // Saved subscriber detect a newer image superseding the one a completed save actually wrote.
+    int Generation { get; }
+
     event Action? Updated;
+
+    // Fires once a write to disk finishes, carrying the destination path and the Generation
+    // captured when that write was invoked (not when it completes). Raised on whichever thread
+    // the save's background work completes on -- the subscriber marshals to the UI thread itself.
+    event Action<string, int>? Saved;
+
     Task SaveAsync(string path, CancellationToken ct = default);
+
+    // Raises Saved directly, for a caller (ReceiveHistoryRecorder) that already wrote its own
+    // pixel snapshot without going through SaveAsync, to avoid racing a DecodeRestarted that can
+    // blank Current before an async SaveAsync read would happen.
+    void NotifySaved(string path, int generation);
 }
 
 public readonly record struct NormalizedRect(double X, double Y, double Width, double Height);
@@ -51,17 +72,55 @@ public interface ITransmitImagePreparer
     // "stretch" as a distinct option from aspect-preserving resize.
     IImageSource Resize(IImageSource source, int width, int height, bool preserveAspect);
 
-    // Must run AFTER Resize, not before -- overlay text is rasterized at the FINAL mode
+    // Brightness/Contrast/Saturation/Gamma/Sharpen/Denoise sliders, mapped from the TX image
+    // editor's raw values -- see ImageAdjustments (Abstractions.Imaging). Must run AFTER Resize
+    // (judged against the final framed/sized output) and BEFORE ApplyOverlay/ApplyTemplate (must
+    // never touch already-burned-in overlay pixels). A no-op ImageAdjustments returns the SAME
+    // source instance, not a copy, so the interactive preview skips a real round-trip when the
+    // sliders sit untouched.
+    IImageSource ApplyAdjustments(IImageSource source, ImageAdjustments adjustments);
+
+    // Legacy path, superseded by ApplyTemplate for the 1.1 template editor but not yet removed
+    // (the editor VM still migrates onto TemplateDocument incrementally). Must run AFTER Resize
+    // and ApplyAdjustments, not before -- overlay text is rasterized at the FINAL mode
     // dimensions, so a non-aspect-preserving "stretch" resize never smears/distorts already-drawn
-    // glyphs. (Crop -> Resize -> ApplyOverlay is the only correct order; stated explicitly here
-    // because it's load-bearing, not just the order the interface happens to list them in.)
+    // glyphs. Crop -> Resize -> ApplyAdjustments -> ApplyOverlay is the only correct order.
     IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay);
+
+    // The template-designer compositor (see [[15-template-designer]]) -- draws every element of a
+    // TemplateDocument (text/image/box elements, gradients, shadows, stack/3D effects, rotation)
+    // over existingBase in ascending (Z, list index) order. Same pipeline position as
+    // ApplyOverlay: after Resize/ApplyAdjustments, never before. A no-op (empty) document returns
+    // the SAME existingBase instance, same no-op convention as ApplyAdjustments.
+    IImageSource ApplyTemplate(IImageSource existingBase, TemplateDocument document);
+
+    // Lets the UI mirror ApplyTemplate's own shrink-to-fit text measurement for WYSIWYG canvas
+    // rendering, without ScanlineStudio.UI needing a SixLabors.Fonts reference.
+    double MeasureFittedFontSize(
+        string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx,
+        double strokeThicknessRelative = 0, double shadowOffsetXRelative = 0,
+        double shadowOffsetYRelative = 0, double rotationDegrees = 0,
+        double stackStepXRelative = 0, double stackStepYRelative = 0);
+
+    // Bundled font-family names for the template editor's font picker; first entry is the
+    // fallback family ApplyTemplate uses when a requested family isn't found.
+    IReadOnlyList<string> AvailableFontFamilies { get; }
+
+    // Rotates 90 degrees clockwise, always -- no direction parameter (4 clicks returns to the
+    // original orientation); width/height swap in the result.
+    IImageSource Rotate(IImageSource source);
 }
 ```
 
-`ApplyFilter`/`IImageFilter` (brightness/contrast/sharpen-style filters, e.g. a future "high contrast" preset) are deliberately NOT part of this interface yet -- the user explicitly deferred filters to a later pass ("that's for later"), and shipping an interface method with zero implementations/consumers is exactly the kind of speculative surface this project avoids elsewhere. Filters are already framed as a plugin extension point ([[11-plugin-system]]) in the TX flow section below, so the eventual re-add is more likely a new `IImageFilter` abstraction entirely, not a change to `ITransmitImagePreparer` itself.
+`ImageAdjustments`, `TemplateDocument`, and the full `TemplateElement` hierarchy (`TemplateTextElement`/
+`TemplateImageElement`/`TemplateBoxElement`, gradients, shadow/stack effects, rotation) are defined in
+full in [[15-template-designer]] — not repeated here. `ApplyFilter`/`IImageFilter` as a separate
+plugin-extension-point abstraction never shipped; the brightness/contrast/sharpen-style adjustments the
+user originally deferred ("that's for later") shipped instead as `ApplyAdjustments` above, a fixed set
+of sliders on `ITransmitImagePreparer` itself rather than a plugin surface — see [[11-plugin-system]]
+for what plugin extension points remain actually open.
 
-**Font source for `ApplyOverlay`**: `SixLabors.Fonts.SystemFonts` enumeration can legitimately be empty on a minimal Linux install (no system fonts registered) -- a real cross-platform trap for a feature that burns text into pixel data, not just displays it via the OS's own font stack the way UI chrome text does. Resolved by bundling a specific open-license font file (loaded into a `SixLabors.Fonts.FontCollection` explicitly at startup, never relying on system enumeration) -- needs its own [LICENSES.md](../LICENSES.md) entry once a specific font is picked, per CLAUDE.md's license-audit rule; not picked yet, tracked as a prerequisite for implementing `ApplyOverlay`, not a blocker for the rest of this design.
+**Font source for `ApplyOverlay`/`ApplyTemplate`**: `SixLabors.Fonts.SystemFonts` enumeration can legitimately be empty on a minimal Linux install (no system fonts registered) -- a real cross-platform trap for a feature that burns text into pixel data, not just displays it via the OS's own font stack the way UI chrome text does. Resolved by bundling open-license font files (loaded into a `SixLabors.Fonts.FontCollection` explicitly at startup, never relying on system enumeration) -- **done**: `TransmitImagePreparer`'s constructor registers DejaVu Sans Mono and the Barlow family (Regular/Bold/Italic/BoldItalic variants), surfaced via `ITransmitImagePreparer.AvailableFontFamilies`; both have their own [LICENSES.md](../LICENSES.md) entries per CLAUDE.md's license-audit rule.
 
 Image decode/encode to/from standard file formats (PNG/JPEG/BMP) uses `SixLabors.ImageSharp` (cross-platform, no GDI+/System.Drawing dependency, which is Windows-only and increasingly discouraged even there) rather than porting the legacy `Draw.cpp` GDI wrapper.
 
@@ -73,28 +132,32 @@ Image decode/encode to/from standard file formats (PNG/JPEG/BMP) uses `SixLabors
 
 1. User selects a source image (file, stock picker, or clipboard paste — `TxControlsPaneViewModel`'s existing flow, plus a clipboard image source added in a later pass, see below) — webcam/screen-capture frame capture, OS drag-drop as an image source, and legacy `PerSpect.cpp` perspective correction, stay deferred (see below).
 2. The picked image loads at its ORIGINAL/native resolution (a real behavior change from Phase 4's first slice, which auto-resized straight to the mode's exact dimensions with no edit step at all) and opens the TX image editor (see below) for crop/resize/stretch/overlay.
-3. `ITransmitImagePreparer`'s `Crop` → `Resize` → `ApplyOverlay` pipeline (that exact order — see the interface's own doc comment for why) produces the final mode-exact image.
+3. `ITransmitImagePreparer`'s `Crop` → `Resize` → `ApplyAdjustments` → `ApplyTemplate` pipeline (that exact order — see the interface's own doc comment for why) produces the final mode-exact image.
 4. Prepared image is handed to `ISstvEncoder.EncodeAsync` ([[06-sstv-dsp]]).
 
 ## TX image editor
 
-Combines crop/resize/stretch and text overlay in one editor with a realtime preview — user's own
-framing: "modern mini image editor functionality... more 2026 instead of 2020," not legacy's
-"type numbers into a form, click apply, hope it looks right" flow. Filters
-(brightness/contrast/sharpen/preset "modes" like a future "high contrast" filter), full
-macro-key placeholder auto-substitution, and the full QSL/vector template designer are all
-explicitly deferred past this pass — user's own words, "that's for later."
+Combines crop/resize/stretch, brightness/contrast/saturation/gamma/sharpen/denoise adjustments, and
+a template-element compositor (text/image/box, see [[15-template-designer]]) in one editor with a
+realtime preview — user's own framing: "modern mini image editor functionality... more 2026 instead
+of 2020," not legacy's "type numbers into a form, click apply, hope it looks right" flow. Full
+macro-key placeholder auto-substitution remains explicitly deferred — user's own words, "that's for
+later"; filters and the QSL/template designer, both once deferred by that same line, have since
+shipped (see below).
 
-**Placement**: an in-window view inside the existing `RxToolDock` region (tab-grouped alongside
-RX Image/RX History, or a full takeover of that region while editing — implementation detail,
-not a separate OS-level `Window`) — direct user decision, keeping RX/TX/history/editing reachable
-from one window rather than a second window to manage separately, honoring the "unified working
-area" principle ([[feedback_ui_effort_allocation]] memory). `TxToolDock`'s own 30%-width region
-is too narrow for freeform-cropping a multi-megapixel source photo; a real editing surface needs
-the same real estate the RX/History tab group already has.
+**Placement — updated for the shipped fixed-tab layout** ([[09-ui]]): the editor is the CENTER
+column of the Transmit tab's own 3-column grid (`MainWindow.axaml`), swapped in via
+`MainViewModel.ActiveEditor` (a nullable `ContentControl.Content` binding — null renders nothing,
+no separate visibility toggle needed) between the left TX-controls column and the right
+queue/log-cards column — not a separate OS-level `Window`, and not sharing space with RX History
+(RX History now lives in its own Gallery tab, see "RX history" below). This keeps
+RX/TX/history/editing reachable from one window rather than a second window to manage separately,
+honoring the "unified working area" principle ([[feedback_ui_effort_allocation]] memory) — the
+same goal the original dockable-pane design pursued, achieved differently once the dockable-pane
+architecture itself was replaced by the fixed-tab shell.
 
 **Realtime preview — what "TX-accurate" actually means this pass**: the preview panel renders the
-*real* `ITransmitImagePreparer` output (`ImageSourceBitmapConverter.ToBitmap(Crop→Resize→ApplyOverlay(...))`),
+*real* `ITransmitImagePreparer` output (`ImageSourceBitmapConverter.ToBitmap(Crop→Resize→ApplyAdjustments→ApplyTemplate(...))`),
 not a separately-drawn Avalonia approximation — the interactive canvas (crop handles, draggable
 overlay text) is chrome drawn over the source image, but the preview panel is always the pipeline's
 actual pixels, recomputed on every interactive change. This is **geometry/framing-accurate, not a
@@ -128,20 +191,22 @@ elements get an equivalent: draggable on the canvas, with numeric X/Y entry fiel
 for exact placement, matching legacy's own real precision affordance for text specifically.
 
 **Overlay text specifics**:
-- Plain free-typed text per element (the user types their own callsign, contact's callsign, etc.
-  directly into a text field on the element) — **not** an auto-substituting macro-key placeholder
-  system. No data source exists yet to auto-fill from: `spec/12-settings.md` has no "operator's own
-  callsign" setting, and the logbook's per-QSO `Callsign` field ([[08-logging]]) isn't wired to any
-  UI yet. A token/placeholder syntax with no substituter would be exactly the kind of unused stub
-  this design correctly avoids for `ApplyFilter` — not built until Settings/Logbook actually exist
-  to substitute from.
+- **Stale claim removed**: this section used to say free-typed text was deliberately **not** wired
+  to an auto-substituting macro-key system, for lack of a data source. A macro system has since
+  shipped (`IMacroTextResolver`/`MacroTextResolver`, `ScanlineStudio.Application`) — a scoped-down
+  C# port of legacy `MacroText` (`Main.cpp:10679-10833`) covering `%m` (operator callsign)/`%D`/`%T`
+  plus new `{name}`/`{grid}`/`{freq}`/`{mode}`/`{dist}`/`{bearing}` tokens and generic `{word}`
+  template variables (see [[15-template-designer]]'s fill-bar mechanism). An element's `Content`
+  text is free-typed as before, but is resolved through this macro system before
+  `ApplyTemplate`/`ApplyOverlay` ever sees it — an unrecognized `{word}` token is left verbatim
+  rather than silently vanishing (a deliberate plan-review decision, not an oversight).
 - Overflow (text wider than the image at narrow SSTV modes): clipped at the image bounds for v1 —
   simplest safe default; shrink-to-fit is a possible future refinement, not needed to ship this.
 
 **Mode-change interaction**: because crop region and overlay positions are stored in `NormalizedRect`/
 relative (0..1) coordinates rather than absolute pixels, `TxControlsPaneViewModel`'s already-shipped
 mode-change retention (Phase 4's TX stock picker work) composes with this directly — a mode change
-re-runs the same `Crop→Resize→ApplyOverlay` pipeline against the *new* mode's `(ImageWidth,
+re-runs the same `Crop→Resize→ApplyAdjustments→ApplyTemplate` pipeline against the *new* mode's `(ImageWidth,
 ImageHeight)` instead of a flat `LoadAsync` call. **Revised during implementation**: the original plan
 here was to reuse Phase 4's cancel-and-replace `CancellationTokenSource` machinery for this reflow, but
 that machinery existed specifically to guard an async I/O reload race (a second mode change completing
@@ -156,20 +221,22 @@ at editor-open time, to roughly 2x the target mode's dimensions) backs the inter
 canvas, so every drag-frame recompute works against a small image, not a re-crop of a multi-megapixel
 original on every mouse-move. This is a data-structure decision made now, not a tuning knob to
 retrofit later — changing it after the fact means rewriting the preview loop, not adjusting a
-setting. The full-resolution `Crop→Resize→ApplyOverlay` pipeline runs once, against the real
+setting. The full-resolution `Crop→Resize→ApplyAdjustments→ApplyTemplate` pipeline runs once, against the real
 original, on "Apply"/"Done."
 
-**Layering test gap this feature would otherwise walk through**: `UiLayeringArchitectureTests`'s
-`PackageReference` check (added in Phase 4's first slice) matches on exact package names
+**Layering test gap this feature would otherwise walk through — closed**: `UiLayeringArchitectureTests`'s
+`PackageReference` check (added in Phase 4's first slice) originally matched on exact package names
 (`Microsoft.Data.Sqlite`, `SixLabors.ImageSharp`) — `SixLabors.ImageSharp.Drawing`/`SixLabors.Fonts`
-(needed for `ApplyOverlay`'s text rendering) are different package names and would slip through
-silently. Switch that check to a prefix match (`StartsWith("SixLabors.", Ordinal)`) as part of this
-work, not a follow-up — otherwise the exact bug class this project has already caught twice ships a
-third time, just not caught by the test meant to catch it.
+(needed for `ApplyOverlay`/`ApplyTemplate`'s text rendering) are different package names and would
+have slipped through silently. Fixed by switching the check to a `bannedPackagePrefixes` prefix
+match (`"Microsoft.Data.Sqlite"`, `"SixLabors."`) — closes the exact bug class this project had
+already caught twice before.
 
-**Explicitly deferred past this pass** (unchanged/reconfirmed): `ApplyFilter`/`IImageFilter`, the
-macro-key auto-substitution system, legacy `PerSpect.cpp` perspective correction. **Stale as of
-2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer
+**Explicitly deferred past this pass** (unchanged/reconfirmed): legacy `PerSpect.cpp` perspective
+correction. Everything else once listed here — filters, the macro-key auto-substitution system, and
+the QSL/template designer — has since shipped; see the "Overlay text specifics" bullets above and
+the `ITransmitImagePreparer` interface above for what actually landed. **Stale as of 2026-08-16,
+updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer
 deferred — it was the active 1.1 target, fully redesigned (a modern templating layer, not a legacy
 `.mtm` port), and is now **implemented**. **Updated again, 2026-08-18 (later same day)**: clipboard
 paste as an image-element source has since shipped (the "+ IMAGE" flyout's 4th source, alongside
@@ -177,7 +244,7 @@ File/Last-RX/RX-History, plus a Ctrl+V shortcut — `ImageSourceKind.Clipboard` 
 `IFilePickerService.PickClipboardImageAsync`); OS drag-drop as an image source was NOT part of that
 work and remains not built.
 
-## Navigation: dockable panes, not legacy's paged main window
+## Navigation: fixed Receive/Transmit/Gallery/Logbook tabs, not legacy's paged main window, not a dockable-pane shell either
 
 Legacy's `Main.h` declares a real `TPageControl *Page` with `TabSync`/`TabRX`/`TabHist`/`TabTX`/`TabTemp`
 tab sheets (`ComLib.h`'s `enum { pgSync, pgRX, pgHist, pgTX, pgTemp }`) — the RX/Hist/TX/Temp/Sync
@@ -189,30 +256,34 @@ double-click calls `AdjustPage(pgHist)`) — so legacy actually has two History 
 not one. (Whether the waterfall/FFT panels themselves sit inside or outside the paged region isn't
 verifiable from `Main.h`'s flat component list alone — not claimed either way here.)
 
-This port deliberately does not replicate the paged main window — [[09-ui]]'s "Main window layout"
-section's 3-region waterfall/RX/TX arrangement (already built in Phase 3) is kept, but paging
-History/Template behind a tab a user must switch away from RX/TX to see is not. RX
-History and the Stock/template picker below are **dockable `Tool` panes** ([[09-ui]]'s existing
-`Dock.Avalonia` mechanism, already used for RX Image/RX History today), not a `HistoryView`/`StockImageView`
-modal dialog and not a legacy-style page — letting an operator see RX/History/TX simultaneously, tear any
-pane out to view side-by-side, without losing the tab-grouped-by-default compactness this port already
-established for RX Image/RX History (the waterfall is deliberately **not** part of that tab group — a
-fixed strip above it instead, see [[09-ui]]'s "Main window layout" section for why).
+**Superseded — this section originally described a dockable-`Tool`-pane shell (`Dock.Avalonia`,
+`AppDockFactory`, an `RxToolDock`/`WaterfallToolDock` split) that never shipped in that form and has
+since been fully replaced.** The shipped design ([[09-ui]]) is a fixed shell: a menu/header-card
+row plus a `TabControl` with 4 source-ordered tabs — Receive (0), Transmit (1), Gallery (2), Logbook
+(3) — bound two-way to `MainViewModel.SelectedTabIndex`. RX History (still named `RxHistoryPane`/
+`RxHistoryPaneViewModel` in code) lives inside the **Gallery** tab, not tab-grouped alongside a live
+RX Image pane; the Stock/template picker lives inline in the Transmit tab's TX Controls column (see
+"Stock image library" below), not a separate dockable pane either. Legacy's paged main window is
+still not replicated — RX/TX/Gallery/Logbook are each a full tab, not nested behind a sub-page a
+user must dig into — but "dockable, simultaneously visible, tear-out panes" was a design that was
+tried and abandoned, not the shipped shape. `Dock.Avalonia` is not a package reference of
+`ScanlineStudio.UI.csproj` today.
 
-**Dropped, not carried forward this pass** (CLAUDE.md's removal rule — logged in
+**Dropped, not carried forward** (CLAUDE.md's removal rule — logged in
 [docs/removed-features.md](../docs/removed-features.md)): legacy's `UDHist` step prev/next,
-`SBLatest` jump-to-latest, `HistStat` status label, drag-*in* from a history thumbnail into the TX
-template composition (`HistView.cpp`'s `BeginDrag` + `Main.cpp`'s `pHistView->IsPBox(...)` drag-accept
-handlers — dragging a history image directly into `TabTemp`/`TabTX`, not dragging out to another
-app), `SBCopy` (history image → clipboard), and `SBPaste` (clipboard → TX slot). The real gap: there
-is no history→TX/template compositing path at all in this design — a selected `RxHistoryPane` entry
-is a read-only preview only. Click-to-view thumbnails plus the stock/browse picker cover the core
-"pick a TX source image" workflow; direct step-through navigation, drag-in compositing, and clipboard
-transfer are not in this pass.
+`SBLatest` jump-to-latest, `HistStat` status label, and the specific *drag-in-from-thumbnail*/
+`SBCopy`/`SBPaste` mechanisms (`HistView.cpp`'s `BeginDrag` + `Main.cpp`'s `pHistView->IsPBox(...)`
+drag-accept handlers, and clipboard-copy/paste of a history image). **Superseded, not actually a
+gap**: this section used to say there was no history→TX/template compositing path at all — that's
+since shipped a different way. `TxImageEditorPaneViewModel.ImageSourceKind` includes `RxHistory` as
+a real image-element source alongside `File`/`LastRx`/`Clipboard` — an operator picks a history
+entry from the "+ IMAGE" flyout to composite it into the TX template, a picker-based path rather
+than legacy's drag-in gesture. Direct step-through navigation (`UDHist`) and the drag/clipboard
+mechanisms above remain dropped.
 
 ## Stock image library
 
-Legacy `StockVew.cpp` managed a user-configurable `StockDir` folder of local "TX stock" images (`TxStock1.jpg`/`.bmp`... up to `STOCKMAX` 300, paginated `STOCKPAGE` 4-at-a-time, `Main.h`) for quick reuse. Rewritten as `IStockImageLibrary` — a user-managed folder of images with thumbnails, no fixed page-size UI constraint, indexed the same way the RX history is (see below) for UI consistency. Surfaced inline in the TX Controls pane as a thumbnail strip (recently-used + library), with the existing file-browse flow kept alongside it as the direct/expert path — picking a thumbnail is a shortcut, not a replacement.
+Legacy `StockVew.cpp` managed a user-configurable `StockDir` folder of local "TX stock" images (`TxStock1.jpg`/`.bmp`... up to `STOCKMAX` 300, paginated `STOCKPAGE` 4-at-a-time, `Main.h`) for quick reuse. Rewritten as `IStockImageLibrary` — a user-managed folder of images with thumbnails, no fixed page-size UI constraint. **Corrected claim**: this used to say the library is "indexed the same way the RX history is" — false, and the two are not analogous: `StockImageLibrary` (`ScanlineStudio.Core.Imaging`) is a live `Directory.EnumerateFiles` scan of the configured folder with no persisted index at all, unlike RX history's real SQLite-backed index (see "RX history" below). Surfaced inline in the TX Controls pane as a thumbnail strip (recently-used + library), with the existing file-browse flow kept alongside it as the direct/expert path — picking a thumbnail is a shortcut, not a replacement.
 
 ```csharp
 namespace ScanlineStudio.Abstractions.Imaging;
@@ -232,6 +303,10 @@ public interface IStockImageLibrary
     // Mirrors IImageFileLoader.LoadAsync's fit-to-mode contract, so TxControlsPaneViewModel can treat
     // a stock pick and a browsed file identically once loaded.
     Task<IImageSource> LoadFullAsync(StockImageEntry entry, int targetWidth, int targetHeight, CancellationToken ct = default);
+
+    // Mirrors IImageFileLoader.LoadOriginalAsync -- loads at the source file's own native
+    // resolution, no resize at all, for the TX image editor's entry point.
+    Task<IImageSource> LoadOriginalAsync(StockImageEntry entry, CancellationToken ct = default);
 }
 ```
 
@@ -250,22 +325,28 @@ stale-mode result.
 
 ## RX history
 
-Legacy `HistView.cpp` + `History.bin` kept a browsable thumbnail history of received images in a proprietary binary format. Rewritten as `IReceiveHistoryStore`, backed by a lightweight embedded index (SQLite via `Microsoft.Data.Sqlite`, one row per received image: timestamp, mode, file path, linked QSO id if any) rather than a bespoke binary format — this also gives the logbook ([[08-logging]]) a natural foreign key to link a logged QSO to the image received during it. Surfaced as a dockable `RxHistoryPane`, tab-grouped with RX Image by default in their own `ToolDock` (`AppDockFactory`'s `RxToolDock` — separate from the waterfall's own fixed-strip `WaterfallToolDock`, see [[09-ui]]'s "Main window layout" section) — selecting a history entry loads it into a read-only preview and never touches the live `IReceivedImageBuffer` binding `RxImagePaneViewModel` owns, so browsing history cannot appear to interrupt or corrupt an in-progress live decode.
+Legacy `HistView.cpp` + `History.bin` kept a browsable thumbnail history of received images in a proprietary binary format. Rewritten as `IReceiveHistoryStore`, backed by a lightweight embedded index (SQLite via `Microsoft.Data.Sqlite`, one row per received image) rather than a bespoke binary format — this also gives the logbook ([[08-logging]]) a natural foreign key to link a logged QSO to the image received during it. **Surfaced in the Gallery tab** ([[09-ui]]'s fixed Receive/Transmit/Gallery/Logbook `TabControl`, not a dockable pane — see "Navigation" above), still backed by `RxHistoryPane`/`RxHistoryPaneViewModel` in code — selecting a history entry loads it into a read-only preview and never touches the live `IReceivedImageBuffer` binding `RxImagePaneViewModel` owns, so browsing history cannot appear to interrupt or corrupt an in-progress live decode.
 
 ```csharp
 namespace ScanlineStudio.Abstractions.Imaging;
 
-public sealed record ReceiveHistoryEntry(string Id, DateTimeOffset ReceivedAt, string ModeId, string FilePath, string? LinkedQsoId);
+public enum ReceiveDecodeState { Completed, Abandoned }
+
+public sealed record ReceiveHistoryEntry(
+    string Id, DateTimeOffset ReceivedAt, string ModeId, string FilePath, string? LinkedQsoId,
+    ReceiveDecodeState DecodeState, string? Note = null, bool IsFlagged = false);
 
 public sealed record ReceiveHistoryFilter(string? ModeId = null, DateTimeOffset? From = null, DateTimeOffset? To = null);
 
-// Callsign is deliberately not a filter field: ReceiveHistoryEntry has nothing to filter against
-// today (no QSO-linking UI exists yet to populate LinkedQsoId, and callsign isn't stored directly
-// on the entry) -- a real inconsistency both audit rounds missed, caught during implementation and
-// fixed by removing the field rather than adding unused/dead-code filtering.
-
 public interface IReceiveHistoryStore
 {
+    // Fires once RecordAsync's write (including its own retention-trim pass) completes -- the
+    // Gallery list and the Receive tab's "Previous frames" strip share one RxHistoryPaneViewModel
+    // singleton and both stay live off this event rather than only refreshing at
+    // construction/manual-refresh/filter-change. Raised on whatever thread the underlying write
+    // completes on; a subscriber marshals to the UI thread itself.
+    event Action<ReceiveHistoryEntry>? Recorded;
+
     Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default);
 
     // Same IImageSource-only contract as IStockImageLibrary above — no SQLite/ImageSharp type ever
@@ -275,15 +356,38 @@ public interface IReceiveHistoryStore
 
     // Called by the same application-layer adapter that populates IReceivedImageBuffer, on decode completion.
     Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default);
+
+    // Resolved saved-image folder, for the Gallery tab's Storage card.
+    Task<string> GetImagesDirectoryAsync(CancellationToken ct = default);
+
+    // Sets/clears the Gallery frame metadata card's user-entered note. False (not an exception) if
+    // entryId no longer exists -- reachable, since the retention-trim ring buffer can delete an
+    // untouched row between the Gallery loading it and a user editing it.
+    Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default);
+
+    // Sets the Gallery "Flagged" filter/toggle. Same missing-entryId contract as SetNoteAsync.
+    Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default);
+
+    // Sets LinkedQsoId -- the primitive behind the Gallery's "Log entry"/"Open in log" actions,
+    // clicked AFTER an image is already saved. Same missing-entryId contract as SetNoteAsync.
+    Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default);
 }
 ```
 
-**Layering test coverage**: `UiLayeringArchitectureTests` today only checks referenced assembly names
-and `<ProjectReference>` items against `ScanlineStudio.Core.*` — it would not catch a direct `PackageReference` to
-`Microsoft.Data.Sqlite` or `SixLabors.ImageSharp` from `ScanlineStudio.UI.csproj` even though that
-would defeat the point of the `IImageSource`-only contract above. Add an explicit assertion (or a
-`.csproj`-level check) that `ScanlineStudio.UI` carries neither package reference, alongside the
-existing namespace check.
+**Corrected**: this section's `ReceiveHistoryEntry`/`IReceiveHistoryStore` snippet, and its
+"Callsign is deliberately not a filter field... no QSO-linking UI exists yet" comment, are both
+stale — QSO-linking has since shipped (`SetLinkedQsoIdAsync` above, plus the Gallery's "Log entry"/
+"Open in log" actions), and the entry/interface both gained several fields not shown before
+(`DecodeState`, `Note`, `IsFlagged`, the `Recorded` event, `GetImagesDirectoryAsync`,
+`SetNoteAsync`, `SetFlaggedAsync`). `ReceiveDecodeState` also formalizes the `_partial_`
+filename-suffix convention `ReceiveHistoryRecorder.RecordAbandonedImageAsync` already writes for a
+mid-reception abandoned image (legacy has no equivalent classification) into a real, queryable
+field.
+
+**Layering test coverage — closed**: `UiLayeringArchitectureTests`'s `bannedPackagePrefixes` check
+(`"Microsoft.Data.Sqlite"`, `"SixLabors."`, see "TX image editor" above) now catches a direct
+`PackageReference` to either from `ScanlineStudio.UI.csproj` — the gap this section used to flag as
+open is resolved.
 
 ## Explicitly deferred (not v1)
 
@@ -301,6 +405,7 @@ existing namespace check.
 
 ## Definition of done
 
-- [x] `IImageSource`/`ITransmitImagePreparer` implemented on ImageSharp, unit-tested — `IImageSource` (`ArrayImageSource`) and `ITransmitImagePreparer` (`TransmitImagePreparer`: Crop/Resize/ApplyOverlay) both done, backing the TX image editor (`TxImageEditorPaneViewModel`/`TxImageEditorPaneView`). Filter/preset support (`ApplyFilter`/`IImageFilter`) is not part of this interface — deferred to the plugin system, [[11-plugin-system]].
+- [x] `IImageSource`/`ITransmitImagePreparer` implemented on ImageSharp, unit-tested — `IImageSource` (`ArrayImageSource`) and `ITransmitImagePreparer` (`TransmitImagePreparer`: Crop/Resize/ApplyAdjustments/ApplyOverlay/ApplyTemplate/Rotate) all done, backing the TX image editor (`TxImageEditorPaneViewModel`/`TxImageEditorPaneView`). Adjustment sliders and the template compositor shipped on `ITransmitImagePreparer` itself, not as a separate `ApplyFilter`/`IImageFilter` plugin surface — see [[11-plugin-system]] for what plugin extension points remain actually open.
 - [x] RX live-fill behavior verified end-to-end against a real [[06-sstv-dsp]] decode — not just a fixture waveform: Phase 3's demo used real `MiniAudioEngine` capture over a real virtual audio cable, real `AnalogFmSstvDecoder`, feeding `ReceivedImageBuffer` live.
-- [ ] RX history and stock library backed by SQLite index, migrated-from-legacy path documented in [[12-settings]] (best-effort import of existing `History.bin` if feasible, otherwise a clean start with the old folder left untouched).
+- [x] RX history backed by a SQLite index (`SqliteReceiveHistoryStore`, `ScanlineStudio.Core.Logbook`) — done.
+- [ ] Stock library was deliberately NOT given an index — `StockImageLibrary` is a live `Directory.EnumerateFiles` scan of the configured folder, not a SQLite-backed index (see "Stock image library" above); no migrated-from-legacy `History.bin` import path was ever built, and [[12-settings]] documents no such migration — a clean start with the old folder left untouched is the de facto behavior today, not a documented decision.

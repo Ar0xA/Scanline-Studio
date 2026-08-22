@@ -12,12 +12,12 @@
 | UI framework | Avalonia UI 11 (Fluent theme) | XAML + MVVM, true cross-platform desktop rendering, closest migration path from VCL forms |
 | MVVM toolkit | CommunityToolkit.Mvvm | Source-generated `ObservableProperty`/`RelayCommand`, no reflection overhead |
 | DI container | `Microsoft.Extensions.DependencyInjection` via generic `Host` | Constructor injection everywhere, no service locator |
-| Configuration | `Microsoft.Extensions.Configuration` + `System.Text.Json` | JSON files, layered (defaults → user → env) |
-| Logging (app diagnostics) | `Microsoft.Extensions.Logging` + Serilog file sink | Structured logs, rolling files, distinct from QSO logging ([[08-logging]]) |
-| Serial I/O | `System.IO.Ports`, wrapped | Cross-platform since .NET 8; wrapped behind `ISerialTransport` for testability (see [[02-radio-layer]]) |
+| Configuration | `System.Text.Json` (source-generated) behind `ISettingsStore` | Single user JSON file under `%AppData%`/`ScanlineStudio`; defaults come from `AppSettings` record defaults, not a config-layering system — see [[12-settings]] |
+| Logging (app diagnostics) | `Microsoft.Extensions.Logging` + a minimal in-repo `FileLoggerProvider` (`ScanlineStudio.Host`) | Append-only file alongside the default console provider; no third-party sink dependency (see [[08-logging]] for QSO logging, a separate concern) |
+| Rig transport | Byte-stream transports behind `IRadioTransport` (TCP only); serial CAT is handled inside linked Hamlib | No in-house serial port code — see [[03-cat-layer]] |
 | Networking | `System.Net.Sockets`, wrapped | Used for rigctld and TCP-attached rigs ([[04-rigctld]]) |
 | Audio | Cross-platform native backend behind `IAudioEngine` | See [[05-audio-engine]] |
-| Testing | xUnit, NSubstitute, FluentAssertions, coverlet | See [[13-testing]] |
+| Testing | xUnit, coverlet, hand-written fakes (no mocking/assertion library by choice) | See [[13-testing]] |
 | Packaging | `dotnet publish` self-contained, per-OS | No installer dependency on .NET being preinstalled |
 
 .NET (not Electron/web) was chosen because the DSP and audio paths are CPU- and latency-sensitive; a native runtime avoids the GC/JIT unpredictability of a JS engine for real-time sample processing.
@@ -30,7 +30,8 @@ Strict one-directional dependency flow. Each layer only depends on layers below 
 ┌─────────────────────────────────────────────────────────────┐
 │ ScanlineStudio.UI               (Avalonia views, ViewModels)          │  see 09-ui.md
 ├─────────────────────────────────────────────────────────────┤
-│ ScanlineStudio.Plugins           (plugin host, extension points)      │  see 11-plugin-system.md
+│ ScanlineStudio.Plugins           (scaffolded, empty -- no plugin host │  see 11-plugin-system.md
+│                                    implemented yet)                    │
 ├─────────────────────────────────────────────────────────────┤
 │ ScanlineStudio.Application       (use-case orchestration, services)   │
 │  ├─ Sstv session orchestration                               │
@@ -40,13 +41,15 @@ Strict one-directional dependency flow. Each layer only depends on layers below 
 │ ScanlineStudio.Core.Sstv    │ ScanlineStudio.Core.Radio   │ ScanlineStudio.Core.Logbook  │  see 06, 02/03/04, 08
 │ ScanlineStudio.Core.Audio   │ ScanlineStudio.Core.Imaging │ ScanlineStudio.Core.Localization│ see 05, 07, 10
 ├─────────────────────────────────────────────────────────────┤
-│ ScanlineStudio.Abstractions       (interfaces + DTOs shared by all)   │
-├─────────────────────────────────────────────────────────────┤
 │ ScanlineStudio.Settings           (config load/save/migrate)          │  see 12-settings.md
+├─────────────────────────────────────────────────────────────┤
+│ ScanlineStudio.Abstractions       (interfaces + DTOs shared by all;   │
+│                                    the true base layer -- zero        │
+│                                    project references of its own)     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific protocol types, or audio backend types directly — never a `ScanlineStudio.Core.*` concrete assembly, only `ScanlineStudio.Application` service interfaces, `ScanlineStudio.Settings` (for UI-owned preference sections), and view-model-friendly DTOs. Enforced by `UiLayeringArchitectureTests` (`tests/ScanlineStudio.UI.Tests/UiLayeringArchitectureTests.cs`), which also bans direct `Microsoft.Data.Sqlite`/`SixLabors.*` package references from `ScanlineStudio.UI`. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
+Rule: `ScanlineStudio.UI` never references rig-specific protocol types or audio backend types directly — never a `ScanlineStudio.Core.*` concrete assembly, only `ScanlineStudio.Application` service interfaces, `ScanlineStudio.Settings` (for UI-owned preference sections), and view-model-friendly DTOs. Enforced by `UiLayeringArchitectureTests` (`tests/ScanlineStudio.UI.Tests/UiLayeringArchitectureTests.cs`), which also bans direct `Microsoft.Data.Sqlite`/`SixLabors.*` package references from `ScanlineStudio.UI`. This directly encodes the CLAUDE.md rule "UI must never directly communicate with radio drivers."
 
 ## Solution structure
 
@@ -55,7 +58,8 @@ Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific proto
   ScanlineStudio.Abstractions/
   ScanlineStudio.Settings/
   ScanlineStudio.Core.Radio/
-  ScanlineStudio.Core.Radio.Cat/            # per-rig protocol plugins (03)
+  ScanlineStudio.Core.Radio.Cat/            # 03 -- reserved for the TemplateCatProtocol fallback
+                                             # only; NOT per-rig protocols (currently empty)
   ScanlineStudio.Core.Radio.Rigctld/        # 04
   ScanlineStudio.Core.Radio.Hamlib/         # 03, in-process Hamlib CAT backend
   ScanlineStudio.Core.Audio/                # 05
@@ -65,7 +69,7 @@ Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific proto
   ScanlineStudio.Core.Logbook/              # 08
   ScanlineStudio.Core.Localization/         # 10
   ScanlineStudio.Application/
-  ScanlineStudio.Plugins/                   # 11
+  ScanlineStudio.Plugins/                   # 11, scaffolded in the solution -- no source files yet
   ScanlineStudio.UI/                        # 09, Avalonia app + views + view-models
   ScanlineStudio.Host/                      # composition root: Program.cs, DI registration, hosting
 /tests
@@ -76,6 +80,7 @@ Rule: `ScanlineStudio.UI` never references `System.IO.Ports`, rig-specific proto
   ScanlineStudio.Core.Imaging.Tests/
   ScanlineStudio.Core.Localization.Tests/
   ScanlineStudio.Core.Logbook.Tests/
+  ScanlineStudio.Settings.Tests/
   ScanlineStudio.Application.Tests/
   ScanlineStudio.Host.Tests/
   ScanlineStudio.UI.Tests/                  # view-model tests, headless Avalonia
@@ -89,7 +94,7 @@ Each `ScanlineStudio.Core.*` project is a bounded module: it may be extracted to
 
 ## Composition root
 
-`ScanlineStudio.Host/Program.cs` is the only place allowed to call `new` on concrete infrastructure types (transports, audio backends, protocol implementations) or to register services. Everything else receives dependencies through constructor injection. No static mutable state or singletons accessed via static properties anywhere in the codebase — "current radio," "current settings," etc. are always resolved through DI, never through a `Program.CurrentRadio`-style global (this replaces the legacy pattern of `extern CRADIOPARA RADIO;` global structs throughout `cradio.h`/`Option.h`).
+`ScanlineStudio.Host/Program.cs` is the only place allowed to call `new` on concrete infrastructure types (transports, audio backends, protocol implementations) or to register services. Everything else receives dependencies through constructor injection — "current radio," "current settings," etc. are always resolved through DI, never through a `Program.CurrentRadio`-style global (this replaces the legacy pattern of `extern CRADIOPARA RADIO;` global structs throughout `cradio.h`/`Option.h`), with one documented exception: `App.Services` (a static `IServiceProvider?`, `ScanlineStudio.UI/App.axaml.cs`) exists because Avalonia instantiates XAML markup extensions and window code-behind itself, with no constructor-injection route available there. Sanctioned readers only: `App`'s own bootstrap resolve, `TranslateExtension`, `ViewLocator`, and window code-behind (e.g. `MainWindow`). Everything else uses constructor injection.
 
 ## Concurrency model
 
@@ -100,7 +105,7 @@ Each `ScanlineStudio.Core.*` project is a bounded module: it may be extracted to
 
 ## Error handling
 
-- Infrastructure layers (radio, audio, serial) surface failures as typed results or exceptions specific to the operation (`RadioConnectException`, `AudioDeviceUnavailableException`), never silent failure or error codes returned as `int`.
+- Infrastructure layers (radio, audio, serial) surface failures as typed results or exceptions specific to the operation (`RadioProtocolException`, `AudioDeviceUnavailableException`), never silent failure or error codes returned as `int`.
 - The `ScanlineStudio.Application` layer translates these into user-facing, localized notifications (see [[10-localization]]) — never a raw exception message shown to the user.
 - A disconnected or misbehaving radio must degrade gracefully: SSTV encode/decode and logging continue to function with radio control unavailable, mirroring "never remove existing radio support unless replaced" by never making radio control a hard dependency of the DSP/logging core.
 

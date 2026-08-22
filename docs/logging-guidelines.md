@@ -12,11 +12,16 @@ anywhere to diagnose it from.
   `ScanlineStudio.Host/Program.cs`) wires a default console `ILoggerProvider` plus DI-resolvable
   `ILogger<T>` everywhere. A second provider, `ScanlineStudio.Host/FileLoggerProvider.cs`, appends
   to a fixed path (`%LocalAppData%/ScanlineStudio/logs/app.log` on Windows, the XDG-equivalent
-  elsewhere), overwritten fresh each launch — read this file directly when debugging; don't rely
-  on console capture alone.
+  elsewhere) — **across launches, not overwritten fresh each time**: a crashed/killed prior run's
+  lines must survive to the next launch, or they're unrecoverable evidence for exactly the kind of
+  bug this file exists to diagnose. Size-rotated instead: once the live file reaches 10 MB, it's
+  renamed to `app.log.1` (shifting any existing `.1`..`.4` backups up by one, dropping the oldest
+  once 5 backups exist) and a fresh file opened at the original path; rotation is best-effort and
+  never fatal to logging. Read this file directly when debugging; don't rely on console capture
+  alone.
 - Any project that needs `ILogger<T>` must reference the `Microsoft.Extensions.Logging.Abstractions`
-  package (`Version="8.0.2"`, matching every other package pin in this repo) — most projects don't
-  have it yet; add it the first time a class in that project needs a logger.
+  package (`Version="8.0.2"`, matching every other package pin in this repo) — most projects already
+  do; add it the first time a class in a project that doesn't yet need a logger.
 
 ## The `[LoggerMessage]` pattern — mandatory, not a style preference
 
@@ -58,8 +63,9 @@ behavior on its own).
 
 ## Level guide
 
-- **Critical** — the process is about to die or already has (unhandled exception handlers,
-  `AppDomain.UnhandledException`/`TaskScheduler.UnobservedTaskException`).
+- **Critical** — the process is about to die or already has (`AppDomain.UnhandledException`).
+  `TaskScheduler.UnobservedTaskException` is logged at **Error**, not Critical — an unobserved
+  faulted task doesn't necessarily mean the process is dying.
 - **Error** — an operation failed in a way the user will notice or that loses data/state (a
   received image failed to save, a settings write failed, an unhandled exception in a user
   command). Always include the `Exception` parameter when one exists.
@@ -73,8 +79,9 @@ behavior on its own).
   investigating something (a slider debounce firing, a favorite mode selected). This is the
   default minimum level while active development/debugging is ongoing (see below) — expect it to
   be verbose but not overwhelming.
-- **Trace** — reserved for genuinely per-iteration/hot-path detail (e.g. `RadioController`'s
-  per-poll state publish, typically ~1/sec). Rare; justify explicitly if you reach for it.
+- **Trace** — reserved for genuinely per-iteration/hot-path detail (e.g. a poll-loop's own
+  per-iteration state publish, if one ever needs it). Rare; nothing in this codebase currently logs
+  at Trace — justify explicitly if you reach for it.
 
 ## Hot-path rule — non-negotiable
 
@@ -89,6 +96,7 @@ only a state *transition* (e.g. radio connected → disconnected), never every p
 ## Current minimum level
 
 `Program.cs` sets `LogLevel.Debug` as the global floor while this project is in active
-development/debugging. This is deliberately verbose and not the intended shipped default — flip to
-`Information` (via the same `SetMinimumLevel` call, or the runtime toggle once built) at the first
-real release tag.
+development/debugging. This is deliberately verbose and not the intended shipped default. Already
+overridable today via a `--log-level <Level>` launch argument (any `Microsoft.Extensions.Logging.LogLevel`
+name, e.g. `Information`/`Warning`/`Error`) — flip the hardcoded default itself to `Information` at
+the first real release tag; the launch-argument override needs no further work.

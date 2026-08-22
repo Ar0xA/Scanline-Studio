@@ -32,9 +32,12 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
   (`SBCopyClick` → `CopyBitmap(pBitmapHist)`) copies the *selected history image* to the clipboard;
   `SBPaste` (`SBPasteClick` → `PasteBitmap(pBitmapTXM,...)`, then `AdjustPage(pgTX)`) pastes clipboard
   content *into* the TX slot — an asymmetric pair, not a matched copy/paste-to-TX pair.
-- **Replacement**: partial, updated 2026-08-09 (batch 7). [[spec/07-image-pipeline]]'s
-  `RxHistoryPane` (a dockable, always-visible thumbnail grid, not a modal dialog or a page you must
-  switch to) covers click-to-view browsing — click-to-select-any-thumbnail is a strict superset of
+- **Replacement**: partial, updated 2026-08-09 (batch 7), navigation-shell citation corrected
+  2026-08-22 (see [[spec/07-image-pipeline]]'s and [[spec/09-ui]]'s own corrections — the dockable-pane
+  shell this line originally described was fully replaced by a fixed Receive/Transmit/Gallery/Logbook
+  `TabControl`). [[spec/07-image-pipeline]]'s `RxHistoryPane` — now surfaced in the Gallery tab, not a
+  dockable pane, a modal dialog, or a page you must switch to — covers click-to-view browsing —
+  click-to-select-any-thumbnail is a strict superset of
   `UDHist`'s own step-prev/next spinner (any entry reachable in one click, not just the immediate
   neighbor), so direct step-through nav is deliberately NOT being added as a separate control; this
   is a considered scope decision, not an oversight. "Jump to most recent" IS now real — a new
@@ -51,10 +54,14 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
   before this fix — the list never included the actual latest frame without a manual refresh. The TX
   Controls pane's inline stock/template picker plus its existing file-browse flow cover picking a TX
   source image.
-- **Not carried forward this pass — the real gap**: there is still no history→TX/template compositing
-  path at all in the new design — selecting a `RxHistoryPane` entry only loads a read-only preview
-  ([[spec/07-image-pipeline]]), it cannot be dragged into a template or the TX slot the way legacy's
-  drag-in could. Also still dropped: copying a history image OUT to the clipboard (legacy's `SBCopy`)
+- **Corrected 2026-08-22 — not actually still a full gap**: this line used to say there was no
+  history→TX/template compositing path at all. `TxImageEditorPaneViewModel.ImageSourceKind` gained an
+  `RxHistory` case since — an operator picks a history entry from the "+ IMAGE" flyout to composite it
+  into the TX template ([[spec/07-image-pipeline]]), a picker-based path rather than legacy's drag-in
+  gesture. The remaining real gap is narrower: legacy's specific *drag-in-from-thumbnail* gesture
+  (`BeginDrag`/`IsPBox` drag-accept) is still not built, and selecting an entry for browsing purposes
+  (not compositing) still only loads a read-only preview. Also still dropped: copying a history image
+  OUT to the clipboard (legacy's `SBCopy`)
   — no such button/command exists anywhere in this port. **Corrected 2026-08-18** (commit `51beb68`):
   the OTHER half — pasting clipboard content INTO the TX slot (legacy's `SBPaste`) — is no longer
   dropped; the earlier "no first-class bitmap API" blocker was resolved by using Avalonia's own
@@ -65,8 +72,9 @@ Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry her
   actual-image-data clipboard read, not a lower-fidelity file-reference copy, so it now matches
   legacy's real `PasteBitmap` behavior for the paste-into-TX direction specifically.
 - **Impact**: users who relied on dragging a history thumbnail directly into a TX template to compose
-  it need to use file-based load/save instead for now (save the history image to a file, then load it
-  via the TX picker) — drag-in and copy-history-to-clipboard remain unbuilt. Paste-to-TX (`SBPaste`'s
+  it now use the "+ IMAGE" flyout's RX-History picker instead (see the correction above) — a picker
+  click, not a file-based save/reload round trip, and not a drag gesture either. Only the specific
+  drag-in gesture itself and copy-history-to-clipboard remain unbuilt. Paste-to-TX (`SBPaste`'s
   own direction) now works directly via Ctrl+V in the TX image editor. Step-through nav and
   jump-to-latest are both now covered (see Replacement above). Revisit copy-from-history/drag-in if
   this turns out to matter in practice — logged here rather than silently dropped per CLAUDE.md's

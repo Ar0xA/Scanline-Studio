@@ -13,9 +13,9 @@ Provide a stable, versioned extension surface so functionality (rig protocols, i
 | Extension point | Interface | Backing module | Status (current codebase) |
 |---|---|---|---|
 | CAT backend client | `IRadioProtocol` | [[03-cat-layer]] | exists (`src/ScanlineStudio.Abstractions/Radio/IRadioProtocol.cs`) |
-| Image filter | `IImageFilter` | [[07-image-pipeline]] | not yet defined — [[07-image-pipeline]] explicitly defers it ("deliberately NOT part of this interface yet") |
+| Image filter | `IImageFilter` | [[07-image-pipeline]] | not defined, and no longer planned as a plugin surface — **corrected**: brightness/contrast/saturation/gamma/sharpen/denoise adjustments shipped as `ITransmitImagePreparer.ApplyAdjustments`, a fixed set of methods on the built-in interface, not a separate plugin-hookable `IImageFilter` abstraction; see [[07-image-pipeline]] |
 | Log export format | `ILogExporter` | [[08-logging]] | not yet defined — [[08-logging]] currently only defines `IAdifExporter`/`IAdifImporter` |
-| Macro action | `IMacroAction` | [[09-ui]] | not yet defined — [[09-ui]] describes a `MacroKeyEditor` dialog but no such interface |
+| Macro action | `IMacroAction` | [[09-ui]] | not defined, and no longer planned as a plugin surface — **corrected**: macro-key text substitution shipped as `IMacroTextResolver`/`MacroTextResolver` (`ScanlineStudio.Application`), a fixed built-in service, not a plugin extension point; there is no separate `MacroKeyEditor` dialog — macro tokens are typed directly into TX image editor text elements, see [[07-image-pipeline]] |
 
 Each extension point is meant to be simply a `ScanlineStudio.Abstractions` interface defined by its owning spec — plugins do not get a separate, parallel API; they implement the same interfaces the built-in implementations do, discovered and registered the same way. As of this writing only `IRadioProtocol` actually exists (see Status column); the rest are still planned. This keeps "plugin" and "built-in" symmetric rather than second-class, once built.
 

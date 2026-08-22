@@ -27,13 +27,13 @@ Real costs, accepted knowingly: no official prebuilt native binaries (built from
 ```csharp
 namespace ScanlineStudio.Abstractions.Audio;
 
-public sealed record AudioDeviceInfo(string Id, string Name, int MaxInputChannels, int MaxOutputChannels, IReadOnlyList<int> SupportedSampleRates);
+public sealed record AudioDeviceInfo(string Id, string Name, int MaxInputChannels, int MaxOutputChannels, IReadOnlyList<int> SupportedSampleRates, bool IsDefault = false);
 
 public interface IAudioDeviceEnumerator
 {
     IReadOnlyList<AudioDeviceInfo> InputDevices { get; }
     IReadOnlyList<AudioDeviceInfo> OutputDevices { get; }
-    Task RefreshAsync();
+    Task RefreshAsync(CancellationToken ct = default);
 }
 
 public interface IAudioEngine : IAsyncDisposable
@@ -51,6 +51,12 @@ public interface IAudioEngine : IAsyncDisposable
         int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
         CancellationToken ct = default);
     Task StopCaptureAsync();
+
+    // Overrun count since the last StartCaptureAsync -- drives the status-bar XRUN readout. Can
+    // both throw AND block on a call that races a concurrent stop; see the interface's own doc
+    // comment for the exact caveat, not restated here to avoid the two copies drifting apart.
+    int CaptureOverrunCount { get; }
+
     Task StartPlaybackAsync(
         AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
         bool stereoTx = false, CancellationToken ct = default);
@@ -101,7 +107,12 @@ Many SSTV operators route audio through a virtual audio cable (VB-Cable, BlackHo
 
 ## Level metering
 
-TX/RX audio level metering (VU-meter style, visible in the legacy `Scope`/level bar UI) is derived from the same sample stream already flowing through `SamplesCaptured`/`EnqueuePlaybackSamples` — a lightweight peak/RMS calculator subscribes alongside the DSP pipeline, not a separate audio tap, to avoid opening two capture streams.
+**Corrected — this section described a design that was never built this way.** RX level metering
+is not a separate subscriber to `SamplesCaptured`; it's computed *inside* the decoder from the
+ported `LevelAgc`, measured post-bandpass-filter (not on the raw captured stream), and exposed as
+`ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven` (see [[06-sstv-dsp]]). TX level metering
+(VU-meter style, visible in the legacy `Scope`/level bar UI) **does not exist at all** — no
+peak/RMS calculator subscribes to `EnqueuePlaybackSamples`'s stream anywhere in this codebase.
 
 ## Testing
 

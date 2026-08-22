@@ -15,12 +15,19 @@ Per-OS conventional app-data directory, resolved via `Environment.GetFolderPath(
 ```
 <app-data>/ScanlineStudio/
   settings.json
-  rigs.json              # user-added/edited rig definitions and template CAT protocols (03-cat-layer.md)
-  macros.json
   history.db              # 08-logging.md's QSO logbook, merged with 07-image-pipeline.md's RX history (single SQLite file, not separate logbook.sqlite/images.sqlite-index files)
-  plugins/
-  locale/                 # user-added translation overrides, see 10-localization.md
 ```
+
+**Corrected — only these two files actually exist** (`JsonSettingsStore.cs`/`SqliteLogbookRepository.cs`/
+`SqliteReceiveHistoryStore.cs`, all resolving under this same `<app-data>/ScanlineStudio/` root).
+`rigs.json`/`macros.json`/`plugins/`/a user-override `locale/` folder, all originally sketched here,
+were never built and don't match the "Schema" section below anyway — that section's real,
+buildable design keeps every module's settings as a NAMED SECTION inside the one `settings.json`
+(via `AppSettings.Sections`), not as separate per-topic files, so a standalone `rigs.json`/
+`macros.json` would have been the wrong shape even if built. [[11-plugin-system]]'s plugin host
+(a `<app-data>/plugins/` discovery directory) and [[10-localization]]'s user-override locale folder
+are both still unbuilt design sketches from their own specs, not files this document should have
+implied already exist.
 
 ## Schema
 
@@ -85,7 +92,7 @@ A one-shot importer (`tools/legacy-config-importer/`, a small console app, and/o
 
 ## Secrets
 
-Any credential-shaped setting (e.g. optional QRZ.com credentials for [[08-logging]]'s online lookup) is never stored in plain JSON in `settings.json`; it is stored via the OS credential store (`Windows Credential Manager` / `libsecret` on Linux / `Keychain` on macOS) through a small `ICredentialStore` abstraction, with only a "credential present: yes/no" flag in `settings.json` itself.
+Any credential-shaped setting (e.g. optional QRZ.com credentials for [[08-logging]]'s online lookup) is meant to never be stored in plain JSON in `settings.json`; the design is an OS credential store (`Windows Credential Manager` / `libsecret` on Linux / `Keychain` on macOS) through a small `ICredentialStore` abstraction, with only a "credential present: yes/no" flag in `settings.json` itself. **Not actually built — a real gap, not just an unimplemented design**: `ICredentialStore` does not exist anywhere in the codebase, and the one credential-shaped setting that has actually shipped, `QrzLookupSettings.Password` (`ScanlineStudio.Core.Logbook`, backing [[08-logging]]'s QRZ.com lookup), is a plain `string?` persisted directly in `settings.json`'s `"QrzLookup"` section via the ordinary `GetSection`/`WithSection` path — today's real behavior contradicts this section's own design, not just an open DoD checkbox.
 
 ## Testing
 
@@ -98,4 +105,4 @@ Any credential-shaped setting (e.g. optional QRZ.com credentials for [[08-loggin
 - [x] `ISettingsStore` implemented with source-generated JSON (de)serialization, atomic file writes (write-to-temp + rename, to avoid a crash mid-write corrupting `settings.json`) — `JsonSettingsStore`.
 - [ ] Migration chain mechanism implemented and exercised by at least one real version bump before v1 ships.
 - [ ] Legacy INI importer covers the fields exercised by the default legacy install; documented list of intentionally-unsupported legacy keys.
-- [ ] `ICredentialStore` implemented per OS, verified no credential ever appears in `settings.json`.
+- [ ] `ICredentialStore` implemented per OS, verified no credential ever appears in `settings.json` — currently the reverse is true: `QrzLookupSettings.Password` is the one shipped credential-shaped setting and it IS stored in plain JSON in `settings.json` today (see "Secrets" above).

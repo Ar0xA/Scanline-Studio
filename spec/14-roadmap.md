@@ -15,8 +15,11 @@ Order is chosen so that at the end of every phase there is a **runnable, demoabl
 **Superseded 2026-08-15 by `[[18-path-to-1.0]]`** for Tier 0/Tier 1's "DONE" status specifically —
 a full milestone audit (`docs/audit-playbook.md`, 8 parallel `auditor` passes) found the core TX
 loop broken with the default radio backend, a core-loop regression that postdates the "DONE"
-marking below. This section's Tier 2 backlog remains valid and unaffected; see `[[18-path-to-1.0]]`
-for the current priority list to work from.
+marking below. This section's Tier 2 backlog remains valid and unaffected.
+**Chain continues, corrected 2026-08-22**: `[[18-path-to-1.0]]` is itself now complete (1.0 COMPLETE,
+2026-08-16), and its own successor `[[19-path-to-1.1]]`'s confirmed 1.1 target (the TX template
+editor redesign) is implemented too (2026-08-18) — see `[[19-path-to-1.1]]` for the current priority
+list to work from, not `[[18-path-to-1.0]]`.
 
 Supersedes ad-hoc prioritization scattered across "Must-implement backlog," "Explicitly deferred
 beyond v1," "Release gates," "Open items requiring a decision," and "Phase 4+ backlog" below —
@@ -120,12 +123,12 @@ Full detail: `spec/14-roadmap-archive.md`.
   lump risks duplication.
 - ~~QRZ.com callsign lookup~~ — **stale entry, removed 2026-08-14**: verified against current source
   before starting work on it — `LookupQrzCommand` is real, bound, calls the real
-  `ILogbookSessionService.LookupCallsignAsync` backend (`RxImagePaneViewModel.cs:713`); `NameDisplay`/
+  `ILogbookSessionService.LookupCallsignAsync` backend (`RxImagePaneViewModel.cs:1098-1106`, citation corrected 2026-08-22); `NameDisplay`/
   `QthDisplay`/`GridDisplay` all real. This was already shipped 2026-08-11/12 (`spec/16-gui-wiring-
   survey.md`'s QRZ.com tab entry), predating this Tier list — carried forward as open by mistake.
 - CW-ID/FSK residuals (subsystem itself shipped 2026-08-12, these are real leftovers, not "done"):
   ~~NR/RST sub-packet has real backend settings but zero Options UI~~ — **DONE 2026-08-15**
-  (`OptionsWindowView.axaml:469-473`, `NrRstEnabled`/`NrRstText`, mirrors the `CwText`/
+  (`OptionsWindowView.axaml:483-487`, citation corrected 2026-08-22, `NrRstEnabled`/`NrRstText`, mirrors the `CwText`/
   `FskIdTxEnabled` sibling controls' pattern; 1 round auditor code-review, 2 doc-only nits fixed).
   Still open: `MacroTextResolver` only covers `%m`/`%D`/`%T`, not his-callsign/name/QTH/RST
   tokens (`%c`/`%n`/`%q`/`%r`/`%s`/`%R`/`%N`) since those need a "current QSO" context concept that
@@ -133,7 +136,7 @@ Full detail: `spec/14-roadmap-archive.md`.
   writes to `OverrideCallsign`, and "Log QSO" (**DONE 2026-08-15**, see below) now reads it into a
   real logbook entry via `PrefillForNewEntry`.
   VOX and Sound-file ID (`.mmv` playback) are explicitly **not built** — `OptionsWindowView.axaml:
-  475-479` (VOX disabled), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
+  494-501` (VOX disabled, citation corrected 2026-08-22), `AnalogFmSstvEncoder.cs:274-277` ("out of v1 scope," silently transmits
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
@@ -197,12 +200,17 @@ Full detail: `spec/14-roadmap-archive.md`.
 ### Tier 3 — parked, no near-term plan (existing "Explicitly deferred beyond v1" list + additions)
 
 Perspective correction/webcam capture, full Hamlib extended command-set coverage, plugin sandboxing
-beyond same-process isolation, legacy `.MDT` log import, the full QSL/template designer (`.mtm`
-import), SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
+beyond same-process isolation, legacy `.MDT` log import, legacy `.mtm` template **import**
+(**narrowed 2026-08-22**: this used to read "the full QSL/template designer (`.mtm` import)" — the
+modern template designer itself shipped 2026-08-18, [[15-template-designer]]; only importing
+legacy's own `.mtm` files remains parked), SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
 (no legacy precedent — verified zero OCR anywhere in `yoniq-old/`). Adding, same tier: **Phase 5
 plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in `src/` yet); waterfall's
-3 deferred sub-items (interactive notch-filter marker — no notch DSP block exists to back it;
-dedicated signal-strength meter; legacy debug "digital scope" tool); **flrig client backend** and
+3 deferred sub-items (interactive notch-filter marker — no notch DSP block exists to back it; a
+dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itself (narrowed
+2026-08-22 — a separate, CAT-sourced S-meter now exists, `RadioState.SignalStrengthDb` →
+`RadioStatusViewModel.RxLevelDb`, via rigctld's `l STRENGTH`/Hamlib; this item is specifically about
+a waterfall-native meter, not "no S-meter exists at all"); legacy debug "digital scope" tool); **flrig client backend** and
 **OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
 real post-launch user demand shows up, not a design-now item).
 
@@ -272,7 +280,7 @@ someone actually asks for one of these, not before.
   - `miniaudio.h` (dual Unlicense/MIT-0, Scanline Studio elects MIT-0) recorded in [LICENSES.md](../LICENSES.md), including disclosure of the embedded (but compiled-out via `MA_NO_DECODING`) `dr_wav`/`dr_flac`/`dr_mp3` source.
   - **Still open**: Windows (WASAPI)/macOS (CoreAudio) have never been run against real or virtual hardware — this dev sandbox is Linux-only, so this needs a human on each OS; do not assume the PulseAudio-specific findings above (silent hot-unplug, close-hang) do or don't apply there without testing.
   - **Audio 1b done, Windows/macOS legs unverified**: added `BuildNativeShimWindows` (`cl.exe`) and `BuildNativeShimMacOS` (`clang -dynamiclib`) MSBuild targets alongside the existing Linux one, each following miniaudio's own documented per-platform build requirements (`native/miniaudio.h`'s own "2.1 Windows"/"2.2 macOS"/"2.3 Linux" sections) rather than guessed flags — e.g. Windows needs no include paths or linked libraries at all (WASAPI/WinMM load via `LoadLibrary` at runtime), matching macOS's equivalent claim for CoreAudio/AudioToolbox. Added a `ilammy/msvc-dev-cmd` CI step so `cl.exe` is actually on `PATH` on `windows-latest` (not there by default outside a Developer Command Prompt). Linux path regression-tested (full suite still green); Windows/macOS cannot be tested from this Linux-only sandbox.
-  - **CI signal received after the Engine 0-6 push (`IAudioEngine` composition): `windows-latest` fails.** Root cause not yet investigated. **Deliberately deferred, user decision** — not being chased now; revisit once more of the program exists rather than context-switching into a Windows-only native-build debugging detour mid-audio-engine-work. Do not assume this is fixed or investigate it without being asked.
+  - **CI signal received after the Engine 0-6 push (`IAudioEngine` composition): `windows-latest` fails.** At the time this was deliberately deferred (user decision — not chased immediately, to avoid a context-switching Windows-only native-build debugging detour mid-audio-engine-work). **Resolved** — see the "Windows CI fix" section later in this document (root cause found and fixed: an MSB4126 env-var leak; verified green on all 3 legs). This historical entry is kept for context, not as an open item.
   - Went through 3 rounds of Opus verification against the finished Audio 0-9/1b/6b implementation, each round finding real bugs (not nitpicks) in the previous round's own fixes: a Windows DLL export gap, a device-id conversion gap on macOS/Windows, a context-mutex lifecycle race (TOCTOU against a concurrent teardown), several Dispose-vs-concurrent-use races (fixed with `ReaderWriterLockSlim` on every session/ring type), a `RefreshAsync`/`Dispose` TOCTOU in the enumerator, and a self-join deadlock (a `TaskCompletionSource` completing synchronously on the drain thread, then that same thread trying to `Join()` itself). Stopped at 3 rounds by explicit user decision, not because issues ran out — reasoning: further review of the audio engine *in isolation* has diminishing returns; the more valuable next review is once real cross-component interaction exists to observe (see the planned `IAudioEngine` composition below).
   - **Composing `MiniAudioCaptureSession`/`MiniAudioPlaybackSession` into a real `IAudioEngine`** (`MiniAudioEngine`, in `ScanlineStudio.Core.Audio.MiniAudio` — must live there, not `ScanlineStudio.Core.Audio`: the sessions are `internal` and `AssemblyInfo.cs`'s `InternalsVisibleTo` only grants the MiniAudio test project). Plan verified by an Opus plan-review pass that actually read the current session/interface source rather than a summary (this project's established methodology) — it found 3 real gaps the original breakdown missed, each independently re-confirmed against source before being adopted here (not taken on trust):
     - **Engine 0**: capture overrun/dropped-frame counter through the native shim (`yoniq_audio.c`/`.h` → `NativeAudio.cs` → `MiniAudioCaptureSession`) — closes a stated-but-unfulfilled promise in `IAudioEngine.cs`'s own doc comment ("exposed once piece Audio 5/6 implements the capture/playback paths" — confirmed via grep that no such counter exists anywhere yet). Needed for Engine 5's diagnostics.
@@ -283,7 +291,7 @@ someone actually asks for one of these, not before.
     - **Engine 5a**: engine-level real-audio integrity test — a short deterministic tone (seconds, not the ~2-minute Martin M1 fixture) through a real virtual sink/monitor, asserting continuity/peak/no dropouts, clean overrun/underrun counters, and no `SamplesCaptured` firing after `StopCaptureAsync` completes.
     - **Engine 5b**: the real payoff test, split from the original single "Engine 5" once the plan review flagged it as too slow/flaky/non-localizing to combine — an actual SSTV encode → `MiniAudioEngine.EnqueuePlaybackSamples` → real virtual cable → `MiniAudioEngine` capture → `SamplesCaptured` → real SSTV decode → image-tolerance comparison, the first time the real audio stack and the real DSP stack run together rather than through `FakeAudioEngine`. Shortest real mode (R24, ~24s) instead of Martin M1 (~114s); staged asserts (VIS detected → correct line count → image tolerance) so a failure localizes; framed as an integration smoke test, not the primary correctness gate for either stack — `AnalogFmSstvDecoder` has no slant/clock-drift correction yet, so accumulated sample-clock drift between two independent miniaudio devices is a known, accepted source of flakiness here.
     - **Engine 6**: DI registration in `ScanlineStudio.Host/Program.cs` — expanded once the plan review checked what "just add two `AddSingleton` lines" actually required: `ScanlineStudio.Host.csproj` had no `ProjectReference` to `ScanlineStudio.Core.Audio.MiniAudio` and none of the three per-OS native-shim copy targets the test project needed for the same documented reason (.NET doesn't propagate a `ProjectReference`'s native build artifacts) — both confirmed missing and added. Registered by type (`AddSingleton<IAudioEngine, MiniAudioEngine>()`), not an eagerly-constructed instance, so native context init doesn't run at process start on a machine with no audio server. `IAudioEngine` is `IAsyncDisposable`-only with no `IDisposable`, and `Program.cs` never disposed the host at all (confirmed) — added an explicit `DisposeAsync` on the classic-desktop lifetime's exit. Resolve-construct-dispose smoke test. Nothing resolves `IAudioEngine` from UI yet (`ScanlineStudio.Application` has zero real source files today) — `ScanlineStudio.UI/App.axaml.cs`'s existing `App.Services` static is a pre-existing service-locator pattern [[01-architecture]] itself forbids for new code, and audio must not be wired through it.
-- [[06-sstv-dsp]]: encode/decode round-trip passing for the core mode set, against `FakeAudioEngine` and real audio; sample-clock calibration (slant correction) implemented. FSK/CW station ID **explicitly deferred, not v1 scope** (user decision, overriding an earlier "regulatory requirement" framing here — see [[06-sstv-dsp]]'s Station ID section for the full breakdown and why: CW ID specifically is real legacy functionality but not required for the program to work as an SSTV encoder/decoder). The one non-station-ID piece of that area, the post-image footer tone, is done — see the mode-table entry below.
+- [[06-sstv-dsp]]: encode/decode round-trip passing for the core mode set, against `FakeAudioEngine` and real audio; sample-clock calibration (slant correction) implemented. FSK/CW station ID was **explicitly deferred, not v1 scope** at the time this was written (user decision, overriding an earlier "regulatory requirement" framing here — see [[06-sstv-dsp]]'s Station ID section for the full breakdown and why: CW ID specifically is real legacy functionality but not required for the program to work as an SSTV encoder/decoder) — **shipped 2026-08-12** (RX and TX both, 6 implementation phases; see the Must-implement backlog's CW-ID/FSK entry for the full history). This sentence is kept for the deferral's original rationale, not as a current-status claim. The one non-station-ID piece of that area, the post-image footer tone, is done — see the mode-table entry below.
   - Mode-by-mode sequencing, each verified individually before moving to the next (explicit user instruction, not a shortcut). **43 of 43 modes done — every mode in the legacy table now has an entry** (`SstvModeRegistry`, all cross-checked against `CSSTVSET::GetTiming`, all read from the actual TX line-generator functions in `Main.cpp` per CLAUDE.md's TX/RX-split and no-assumptions rules — several near-misses caught this way: Scottie's real sync position, Robot 72 vs. Robot 36, MP vs. MR, R24's VIS-code parity bit, RM8/RM12's genuinely-new monochrome shape, and SC2's misleading-looking TX source, all below): Martin M1/M2, Scottie S1/S2/DX, Robot 36/72, AVT, MR73–175, ML180–320, MP73–175, the whole PD-series, Pasokon P3/P5/P7, MN73/110/140, MC110/140/180, R24, RM8/RM12, SC2-180/120/60. Five scanline-codec families exist now (`ScanlineCodecFactory`): `RgbSequential`, `YCbCrRobot` (alternating chroma), `YCbCrSequential` (Robot 72's non-alternating Y+R-Y+B-Y, now also R24), `YCbCrLinePaired` (MP/PD/MN's two-luma-lines-per-chroma-pair, added `RowsPerTransmissionLine` to `IScanlineEncoder`/`Decoder` to support it), `MonoAveragedPaired` (RM8/RM12's monochrome, row-averaging shape, added for this pair). A two-stage "extended VIS" mechanism (escape byte 0x23 + a second raw byte, see `VisHeader`) was added for the MR/ML/MP families.
   - **RM8/RM12 done**, `Main.cpp`'s `LineRM` — a genuinely new shape, not a variant of anything implemented so far: no chroma at all (`GetRY`'s R-Y/B-Y outputs are computed but discarded), and each transmission averages *two* consecutive source rows' luminance into one scanned value, confirmed via the RX decode switch (`Main.cpp`, `case smRM8: case smRM12:`, distinct from R24/R72/MR/ML's shared block) which writes that single decoded value into both of the two output rows it addresses. Needed a new `ColorEncoding.MonoAveragedPaired` family (`MonoAveragedPairedScanlineEncoder`/`Decoder`). While tracing `LineRM`'s own `mp->m_wLine++` alongside the outer TX dispatch loop's own increment, caught and corrected a mistake in the earlier R24 entry: that same double-increment structure exists in `LineR24` too, meaning the TX loop for R24 (and RM8/RM12) only runs half as many times as it looks like at a glance, and reads rows accordingly — see `R24`'s updated doc comment in `SstvModeRegistry`. **Deliberately not ported**: legacy's RM8/RM12 RX applies its own extra gain correction (`d *= 256.0/(256.0-32.0)`) on top of a raw calibration pipeline (`GetPictureLevel`/`GetPixelLevel`) that this port doesn't replicate for *any* mode — applying that specific correction inside this port's much simpler linear frequency-to-pixel mapping would be a mismatched, uninterpretable number, not a faithful port; see `CreateMonoAveragedMode`'s doc comment. Also required a test-methodology fix, not a codec fix: the shared full-color gradient fixture used by every other mode's round-trip test isn't fair to a genuinely monochrome mode (R and G vary independently in that fixture; a real monochrome decode can only ever output R=G=B, so per-channel delta was ~42 on the first attempt) — added a dedicated grayscale fixture and test (`EncodeThenDecode_RoundTripsWithinTolerance_MonoFamily`) instead of loosening the tolerance or changing the encoder/decoder.
   - **MN73/110/140 and MC110/140/180 done**, both `Main.cpp`'s `LineMN`/`LineMC`. Both use a "narrow" frequency range (`NARROW_SYNC`=1900Hz, `NARROW_LOW`=2044Hz, `NARROW_HIGH`=2300Hz, via `ColorToFreqNarrow` in source) instead of the normal 1500–2300Hz. MN is line-paired (same Y-RY-BY-Y2 shape as MP, just narrow-range, `YCbCrLinePaired`); MC is plain sequential R/G/B (`RgbSequential`). **VIS-code search result, confirmed not assumed**: neither has a standard or extended VIS code anywhere in `sstv.cpp`'s VIS-decode switch (both stages searched directly) — legacy instead sends a distinct, small, fixed FSK mode-announce packet in place of a VIS header (`Main.cpp:7395-7424`: `[0x2d][0x15][modeCode][modeCode^0x15]`, 6-bit LSB-first via `WriteFSK`, `sstv.cpp:2942`). This is *not* the general station-ID FSK subsystem (the separate 0x2a-prefixed callsign packet, still unported — see the FSK/CW station ID item above) — it's a small, self-contained sub-protocol, ported as `VisHeader.GenerateNarrowModeSegments`/`SstvModeDefinition.NarrowModeCode`, with matching decode-side discrimination logic added to `AnalogFmSstvDecoder` (`TryDecodeHeader` distinguishes a normal-VIS-shaped preamble from a narrow-packet-shaped one by sampling a window right after the shared 300ms leader, since the two diverge immediately after that point). User's explicit instruction followed here: "do what YONIQ does," not invent a fake VIS code just because the existing mechanism was convenient. Verified with a dedicated `NarrowModeHeader_IsDetected_ForMnFamily` test, decoupled from the frequency-range bug below.
@@ -309,7 +317,7 @@ someone actually asks for one of these, not before.
   - **`CSSTVDEM` investigation, reframed then partially fixed.** Went to start the "port the real sync-search/AFC pipeline" task above and found the premise was wrong before writing any code: legacy's per-pixel addressing (`Main.cpp:4144-4148`, `y = n/m_TW`, `ps = fmod(n, m_TW)`) is the *same* nominal-timing arithmetic this port already uses — there's no rediscovered per-line sync point during image reception. The real difference is narrower: legacy processes the recorded audio one raw sample at a time and, for each pixel, keeps whichever single sample is first at that pixel's computed index (`GetPictureLevel`/`GetPixelLevel` both simply dereference `*ip` — no window, no average). This port instead block-averaged the whole per-pixel dwell window (discarding the first quarter as a settling margin) — an invented technique, not traced from source. User's direction: "legacy is truth, follow that." Fixed: `IScanlineDecoder.DecodeLine`'s callback (renamed `averageFrequencyInWindow`→`sampleFrequencyAt` across the interface, `AnalogFmSstvDecoder`, and all 5 scanline decoders — an honest-naming fix, not just internals, since the old name was actively wrong about what it now does) reads a single sample at the pixel's window-start instead of averaging. Also caught and fixed in the same pass, once the "single sample" pattern existed: Robot's tone-selector re-decides on *every* sample of its window with no "first wins" gate (`Main.cpp:4286-4297`), so its real effective reading is the window's *last* sample, not an average and not the first sample either — `RobotScanlineDecoder` now reads `(endSample-1, endSample)` for that one case.
     - **Measured, not assumed, how much this actually helps**: re-ran the same 11025Hz experiment from the earlier investigation above. Real, consistent improvement across nearly every previously-failing mode (Robot36 21.3→13.4 delta, Robot72 15.2→13.4, MR73 20.2→16.1, ML180 24.5→19.6, ML240 18.8→15.1, ML280 18.0→14.6, ML320 15.9→12.9, Scottie S2 10.9→10.2), and MR115 now crosses the passing threshold outright (10.17→passes). One mode (Martin M2) moved slightly the wrong way (14.28→14.49, within noise). **This confirms the fix is real and correctly targeted — legacy's actual mechanism, not a guess — but it does not fully close the gap alone**: several modes still fail the 10.0-delta tolerance at 11025Hz. Full closure likely needs either the AFC drift-tracking loop (`SyncFreq`/`m_AFCDiff`, still unported) or a closer look at whether this port's `PllFmDemodulator` settles as fast as legacy's exact filter chain at very short pixel-dwell times — kept as further, separately-scoped follow-up work, not blindly attempted in the same pass. The 44100Hz stand-in remains in the test suite for now; it is a pragmatic Phase 1 accommodation, not a hidden correctness bug, given this finding.
     - Existing full suite (44100Hz) unaffected: 104/104 in `ScanlineStudio.Core.Sstv.Tests`, solution-wide build clean, since single-sample-vs-window-average makes no measurable difference once there are enough samples per pixel to begin with.
-    - The genuinely large piece originally feared for this task — the VIS/preamble lock state machine (`m_SyncMode` 0-8/256/512-513, `sstv.cpp:2085-2270`) — remains unstarted and is now understood to be a separate, still-large concern from the pixel-readout fix above (it governs *when* image reception starts, not how pixels are sampled once it has). Not started without further explicit direction, consistent with how every other large-scope item this phase has been handled.
+    - The genuinely large piece originally feared for this task — the VIS/preamble lock state machine (`m_SyncMode` 0-8/256/512-513, `sstv.cpp:2085-2270`) — was, at the time this entry was written, unstarted and understood to be a separate, still-large concern from the pixel-readout fix above (it governs *when* image reception starts, not how pixels are sampled once it has). **Superseded**: broken into 7 pieces and completed — see this same section's later "VIS/preamble lock state machine — ... Complete" entry below for the full history (`VisLockStateMachine.cs`).
   - **AFC (`CSSTVDEM::SyncFreq`) — ported.** User's explicit direction: "legacy is truth, verify before accepting." Read `SyncFreq` (`sstv.cpp:2339-2376`) fully: it feeds a *separate* zero-crossing frequency discriminator (`CFQC`, `sstv.cpp:347-489` — entirely distinct from the PLL-based main demodulator this port already has) with the same raw audio sample the PLL sees, watches for a run of consecutive samples (`m_AFCB`..`m_AFCE`, mode-dependent: 1.0/2.0ms for Martin M1/M2+SC2+MC, 1.5/3.0ms for everyone else, `sstv.cpp:1162-1177`) that plausibly reads as the mode's sync tone (1200Hz normal / 1900Hz `NARROW_SYNC` for MN/MC, each with its own acceptance band and a 15-lock-event long-term moving average, `CSmooz`), and once locked, computes a persistent correction (`m_AFCDiff`) added to every subsequently demodulated sample. Explicitly excluded for AVT in legacy (`sstv.cpp:2258`'s `mode != smAVT` guard) — ported the same exclusion. Traced the internal x16384/BWH-scaled arithmetic all the way through and confirmed (not assumed) that, since `IirFilter.Process` is a purely linear biquad cascade, working entirely in real Hz throughout is mathematically identical to legacy's scaled representation — a representational simplification, not a numeric approximation.
     - New files: `MovingAverage` (`CSmooz` port), `ZeroCrossingFrequencyCounter` (`CFQC` port), `AfcTracker` (`SyncFreq`'s state machine). Wired into `AnalogFmSstvDecoder`: since this decoder demodulates the whole sample buffer upfront before mode detection can know whether/how AFC applies (unlike legacy's single real-time pass), AFC runs as a second pass over the *raw* samples (now also retained, `_rawSamples`) once the mode is known, correcting the already-demodulated buffer in place — a deferred, not approximated, adaptation: the zero-crossing counter and AFC state machine still see the exact same raw samples in the exact same order legacy's own would have, only the wall-clock timing of when that processing happens differs.
     - **Verified against legacy's own formulas, not just "tests pass."** A driftless same-process round-trip has no real carrier offset for AFC to correct, so `SstvRoundTripTests` passing/failing can't validate this feature either way — confirmed empirically: re-ran the 11025Hz experiment with AFC wired in and got the same pass/fail pattern as before it (9 failures, same modes, deltas within ~0.3 of their pre-AFC values), exactly the expected outcome for a feature that corrects drift no synthetic test has. Instead added `AfcTests` — direct, source-derived tests feeding synthetic tones (with and without a deliberate frequency offset) straight into `ZeroCrossingFrequencyCounter`/`AfcTracker`, checking the locked correction against hand-derived expected values to tight (0.01Hz) tolerance. Caught a real test-authoring mistake this way, not an implementation bug: `SyncFreq`'s `d -= 128` (a small fixed calibration nudge, ~3.125Hz for normal-bandwidth modes) means even a perfectly on-frequency reading locks a small nonzero correction, not exactly 0 — the first draft of these tests assumed otherwise and failed against the (correct) implementation until the expected values were re-derived by hand from the same formula.
@@ -606,7 +614,7 @@ Full detail: `spec/14-roadmap-archive.md`.
 
 Full detail: `spec/14-roadmap-archive.md`.
 
-## Pre-Phase-2 gate: shortcut/simplification audit — IN PROGRESS
+## Pre-Phase-2 gate: shortcut/simplification audit — DONE (all bands closed)
 
 User's call, before committing to Phase 2 (radio layer): rather than run the milestone-audit
 playbook's Phase 3 chain audit immediately, first inventory every known DSP-in-pipeline
@@ -619,8 +627,8 @@ best available code and the widest available real-audio coverage, not the other 
 1. Compile inventory of simplifications (done, see table below — a fork/subagent research pass).
 2. Independently verify that inventory with the `auditor` subagent — check each claim against real
    source, re-derive risk tiers, search for anything missed in roadmap ranges the first pass
-   under-covered, and produce a full must-fix-to-nice-to-have priority ranking. **IN PROGRESS as of
-   this entry, not yet returned.**
+   under-covered, and produce a full must-fix-to-nice-to-have priority ranking. **Done** — all bands
+   below (Band 2 through Band 4) are closed.
 3. Fix the prioritized items (expected to be more involved than initially hoped — user's own
    assessment before seeing the auditor's ranking).
 4. Capture ~5-6 new real golden-vector fixtures from the legacy binary, covering mode
@@ -1241,7 +1249,7 @@ Full detail: `spec/14-roadmap-archive.md`.
 
 ## Phase 3 — Minimal UI, first end-to-end path — DONE
 
-`MainWindow` walking skeleton (waterfall, RX image panel, TX controls) wired to Phase 1/2 services through `ScanlineStudio.Application`, shipped as 3 real Dock panes plus a fixed radio/frequency status strip. `ILocalizationService` + `Translate` in place from the start. Minimal image pipeline (load + fit-to-mode resize) shipped.
+`MainWindow` walking skeleton (waterfall, RX image panel, TX controls) wired to Phase 1/2 services through `ScanlineStudio.Application`, shipped as 3 real panes in the then-current `Dock.Avalonia` layout plus a fixed radio/frequency status strip — **that layout was later fully replaced** by a fixed Receive/Transmit/Gallery/Logbook `TabControl` shell (see [[09-ui]]'s "Main window layout" section); `Dock.Avalonia` is not a package reference of `ScanlineStudio.UI.csproj` today. `ILocalizationService` + `Translate` in place from the start. Minimal image pipeline (load + fit-to-mode resize) shipped.
 
 Full detail: `spec/14-roadmap-archive.md`.
 
@@ -1263,8 +1271,8 @@ UI and remaining dialogs before it needs a plugin system. Phase 5 is now just ex
 - [[03-cat-layer]]: linked Hamlib backend — **done early** (see "Linked Hamlib backend" section above,
   landed right after Phase 2 instead of waiting for Phase 4). `TemplateCatProtocol` fallback still here.
 - **Maybe later** (not committed, no code/design yet): flrig client backend — flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld users, worth adding if that demand shows up post-launch. OmniRig-as-client similarly deferred. Revisit once Hamlib/rigctld coverage is in and actual user requests make the priority call for real, rather than guessing now.
-- [[07-image-pipeline]]: full crop/resize/overlay, stock library, RX history — **done** (`ITransmitImagePreparer`, `TxImageEditorPaneViewModel`/`TxImageEditorPaneView`, `IStockImageLibrary`, `IReceiveHistoryStore`; filter/preset support deferred to [[11-plugin-system]], Phase 5, not part of this interface).
-- [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed. Not started — the callsign/country lookup piece is additionally blocked on a human emailing Clublog for a `cty.dat` API key (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note); the logbook/ADIF core doesn't depend on that and can proceed first.
+- [[07-image-pipeline]]: full crop/resize/overlay, stock library, RX history — **done** (`ITransmitImagePreparer`, `TxImageEditorPaneViewModel`/`TxImageEditorPaneView`, `IStockImageLibrary`, `IReceiveHistoryStore`). **Filters shipped too, corrected**: this line used to say filter/preset support was deferred to [[11-plugin-system]] as a separate plugin surface — instead it shipped in-interface as `ITransmitImagePreparer.ApplyAdjustments` (brightness/contrast/saturation/gamma/sharpen/denoise), and template rendering shipped as `ApplyTemplate` ([[15-template-designer]]); [[11-plugin-system]] never gained an `IImageFilter` extension point.
+- [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed. **Mostly done, corrected 2026-08-22** — this line used to say "Not started." The logbook store, ADIF import/export, ADIF-UDP forwarding, QRZ.com online lookup/upload, and the Logbook UI pane all shipped (2026-08-07 through 2026-08-15). Only the **offline** callsign/country lookup remains not started, blocked on a human emailing Clublog for a `cty.dat` API key (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note).
 - [[09-ui]]: remaining dialogs from the inventory table — `OptionsDialog` (tabbed general/TX/RX/audio settings), `RadioSettingsDialog`, `MacroKeyEditor`, `ColorSettingsDialog`, `LanguageSettingsDialog`. (Moved from Phase 5 — `PluginManagerDialog` stays in Phase 5, it has no purpose without the plugin host it's Phase 5's own primary deliverable.)
 - [[12-settings]]: legacy `.ini` importer, migration chain exercised by a real version bump. (Moved from Phase 5.)
 - [[10-localization]]: remaining views localized, community-translation-friendly locale-file workflow documented. (Moved from Phase 5.)
@@ -1409,7 +1417,7 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
 
 | Missing backend primitive | What exists today | mock2 elements it blocks |
 |---|---|---|
-| ~~Operator-callsign/profile setting~~ — **corrected and done** (2026-08-08): the "zero grep hits" claim below was wrong (`OperatorSettings.Callsign` already existed, `247fde7`); the "unblocks 4 mock2 items" claim was also wrong — Identification (FSK/CW/Tail ID) is blocked on the whole FSK/CW-ID subsystem this project already deferred separately ([[06-sstv-dsp]]'s Station ID section), not on a setting, and stays blocked. `OperatorSettings` gained `Name`/`Grid`; a new `IMacroTextResolver` (scoped to `%m`/`%D`/`%T`/`{name}`/`{grid}` — legacy's own his-callsign/RST/greeting tokens need a "current QSO" form this port doesn't have, deferred same as CW-ID) now backs the Outgoing-metadata card's callsign/name/grid fields and the overlay editor's real insert-field picker/TX-macro substitution. See `PROJECT_BRIEF.md` for the full account. | `OperatorSettings.Callsign`/`Name`/`Grid`, `IMacroTextResolver` | Outgoing-metadata card (partial: callsign/name/grid only, not RST/to-station/report), overlay editor's insert-field picker + TX-macro substitution — 2 of the originally-claimed 4 mock2 items, not 4; Identification card and CW-ID text generation itself remain blocked on the separately-deferred FSK/CW-ID subsystem |
+| ~~Operator-callsign/profile setting~~ — **corrected and done** (2026-08-08): the "zero grep hits" claim below was wrong (`OperatorSettings.Callsign` already existed, `247fde7`); the "unblocks 4 mock2 items" claim was also wrong — Identification (FSK/CW/Tail ID) was blocked on the whole FSK/CW-ID subsystem this project had separately deferred ([[06-sstv-dsp]]'s Station ID section), not on a setting. **That subsystem shipped 2026-08-12** (corrected 2026-08-22 — this row used to say "stays blocked"). `OperatorSettings` gained `Name`/`Grid`; `IMacroTextResolver` (scoped to `%m`/`%D`/`%T`/`{name}`/`{grid}`/`{freq}`/`{mode}`/`{dist}`/`{bearing}` — legacy's own his-callsign/RST/greeting tokens still need a "current QSO" form this port doesn't have) now backs the Outgoing-metadata card's callsign/name/grid fields and the overlay editor's real insert-field picker/TX-macro substitution. See `PROJECT_BRIEF.md` for the full account. | `OperatorSettings.Callsign`/`Name`/`Grid`, `IMacroTextResolver` | Outgoing-metadata card (partial: callsign/name/grid only, not RST/to-station/report), overlay editor's insert-field picker + TX-macro substitution — 2 of the originally-claimed 4 mock2 items, not 4; the Identification card and CW-ID text generation itself are no longer blocked (FSK/CW-ID subsystem shipped) |
 | ~~**Decode-time signal telemetry**~~ (SNR, squelch, BPF/AGC/notch state, buffer/clipping %, noise floor, L/R levels) — **Tier A done** (2026-08-08, `cf76a08`), Tier B/C explicitly deferred, not silently dropped: `ISstvDecoder` gained `SignalPeakLevel`/`IsLevelOverdriven` (peak amplitude + legacy's own `DrawLvl` red-meter-bar threshold — NOT legacy's separate `m_OverFlow` raw-sample flag, a genuinely different legacy quantity this port's post-BPF AGC input can't reproduce; NOT the mock2 "Clipping %" figure either, legacy never computed a percentage, only this threshold), `SyncFrequencyCorrectionHz` (AFC's own correction passthrough), `BufferedSampleCount` (promoted from `internal`). Still unbacked, each deliberately scoped out (see `~/.claude/plans/steady-humming-osprey.md` for the full research): true SNR/SNR-histogram/noise-floor (legacy has zero equivalent anywhere — `CNoise` is a noise *generator* for test/sim, not a measurement — needs a product decision on what "SNR" even means for this port, not a legacy-verification pass), notch-filter state (`CNotch`, `fir.h:123`, entirely unported — no filter exists yet to report the state of), true L/R stereo levels (legacy and this port are both mono-only in the demod path), squelch (zero legacy grounding at all, confirmed via `grep -a`). | `ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven`/`SyncFrequencyCorrectionHz`/`BufferedSampleCount` | RX input-chain telemetry card (partial: level + buffer only), per-line SNR/histogram ("Signal quality" card, still fully blocked) |
 | ~~**Slant/sync correction readouts**~~ (ppm, offset px) — **done** (2026-08-08, `94831b6`): `ISstvDecoder` gained `SlantPpm` (legacy's own `DrawSlantInfo` ppm formula) and `SyncOffsetSamples` (legacy's `m_AutoStopPos`, a quantity legacy itself never displays). | `ISstvDecoder.SlantPpm`/`SyncOffsetSamples` | Sync/slant correction readouts card |
 | ~~**`ReceiveHistoryEntry`'s field set**~~ — **partially done** (2026-08-08): gained `Note`
@@ -1470,15 +1478,17 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
   2044/2300) exposed as `TxControlsPaneViewModel.ToneMapText`, zero new DSP, zero new wiring beyond
   a `[NotifyPropertyChangedFor]` computed property. Also skipped the plan+auditor cycle (same
   low-risk-UI-plumbing reasoning as device name). | `ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync`, `TxControlsPaneViewModel.OutputDeviceName`/`ToneMapText` | TX telemetry readouts row (device name + tone map done; sample-clock/occupied-bandwidth/monitor remain blocked — occupied bandwidth now abandoned, not just unbuilt) |
-| **OCR/QRZ lookup** | Nothing | Frame metadata card's callsign/grid fields, gallery search on those |
+| **OCR** | Nothing | Frame metadata card's callsign-OCR field |
+| **QRZ lookup** | **Shipped 2026-08-11/12** (`QrzCallsignLookup`, `ScanlineStudio.Core.Logbook`), corrected 2026-08-22 — this row used to lump QRZ in with OCR as fully unbuilt | Frame metadata card's grid field, gallery search on it (both still gated on OCR above for the callsign that would drive a lookup) |
 
 Already covered, not gaps: TX power/ALC/SWR history (`TxControlsPaneViewModel.TelemetryHistory`, real
 data via `RadioState` polling), decode progress (`IReceivedImageBuffer.Progress`), PTT lock,
 tune-and-hold, stereo capture, buffer/thread-priority settings.
 
 **New UI shell mock2 elements omitted for lack of real backing data** (found while building the
-fixed Menu/header/3-tab shell, see `/home/artien/.claude/plans/wondrous-crafting-ladybug.md` —
-wired everything real, these had no real data behind them today):
+fixed Menu/header/tab shell — 3 tabs at the time, a 4th (Logbook) landed 2026-08-08, see
+`/home/artien/.claude/plans/wondrous-crafting-ladybug.md` — wired everything real, these had no real
+data behind them today):
 - ~~Manual "lock to a specific mode" RX decode override + the mock2 Mode card's quick-mode-button
   grid~~ — **backend done** (2026-08-08): the roadmap's own framing was deliberately vague pending
   research. Traced the real legacy click handler (`TMmsstv::SBMClick`, `Main.cpp:6096-6122`, calling
@@ -1489,8 +1499,10 @@ wired everything real, these had no real data behind them today):
   `RequestReSync`, reusing the exact same `Commit()`/anchor-correction pipeline VIS auto-detect
   itself uses. Went through 2 rounds of auditor plan-readiness review (round 1 caught a real
   audio-thread-crash blocker in the anchor choice; round 2 caught a stale-pending-anchor edge case
-  forcing AVT mid-another-mode's-resolution). Backend-only — no UI wired yet (mock2's Auto/Locked
-  segment + quick-mode grid is the eventual consumer). See `PROJECT_BRIEF.md` for the full account.
+  forcing AVT mid-another-mode's-resolution). **UI wired since** (corrected 2026-08-22) — the Mode
+  card's Auto/Locked segment and the RX/TX quick-mode-button grids both call `ForceMode`/
+  `QuickSelectModeCommand` today (Tier-0 sweep, 2026-08-14; see [[18-path-to-1.0]] High item 7). See
+  `PROJECT_BRIEF.md` for the full account.
 - ~~Live decode "Remaining time" / per-line progress readout~~ — **backing data done** (2026-08-07):
   new `IReceivedImageBuffer.Progress` (`double?`, `null` when idle, `[0,1]` fraction while decoding,
   snapped to exactly `1.0` on the completing scanline group), computed in `ReceivedImageBuffer.cs`
@@ -1528,8 +1540,12 @@ wired everything real, these had no real data behind them today):
   and its decoder-trace pane — no such structured event log exists; would need a new decode-
   history recorder distinct from `ReceiveHistoryStore`. Medium-large.
 - Frame metadata card (callsign OCR, grid/QRZ, VIS/frequency stamp, OCR confidence, dropped
-  lines, file size, note, flag) — none of these fields exist on `ReceiveHistoryEntry` or
-  anywhere else; OCR/QRZ lookup is a wholly new feature. Large.
+  lines, file size, note, flag) — **partially done, corrected 2026-08-22**: this line used to say
+  none of these fields exist on `ReceiveHistoryEntry` — `Note`/`IsFlagged`/`DecodeState`/
+  `LinkedQsoId` all shipped since (2026-08-08 and later, see [[07-image-pipeline]]'s "RX history"
+  section), and file size shipped via `IReceivedImageBuffer.Saved` ([[18-path-to-1.0]] High item 5's
+  packaging cluster). Callsign OCR, grid/QRZ auto-fill, VIS/frequency stamp, OCR confidence, and
+  dropped-line count remain wholly unbuilt. Medium remaining, down from Large.
 - Unattended RX (scan/watch list, dwell time, alert-on-decode) — no scanning/watch feature
   exists in `IRadioSessionService`/`ISstvSessionService`. Large.
 - "Decode rows colored by state" (yellow=decoding/green=saved+logged/red=partial) — the flat
@@ -1539,9 +1555,11 @@ wired everything real, these had no real data behind them today):
 - VOX tone-burst preamble row in the Transmit tab's TX-mode card — cross-reference the VOX
   bullet above; no new note.
 - Whole Identification card (FSK ID/CW ID/Tail) — **correction (2026-08-08)**: not actually
-  blocked on the operator-profile setting (that's now done, see the root-cause map above); blocked
-  on the separately-deferred FSK/CW-ID audio subsystem itself (cross-reference "TX macros / CW-ID"
-  above and [[06-sstv-dsp]]'s Station ID section). Stays blocked.
+  blocked on the operator-profile setting (that's now done, see the root-cause map above); was
+  blocked on the separately-deferred FSK/CW-ID audio subsystem itself (cross-reference "TX macros /
+  CW-ID" above and [[06-sstv-dsp]]'s Station ID section). **That subsystem shipped 2026-08-12**
+  (corrected 2026-08-22) — the Identification card is wired to the Options window's Identification
+  tab (`FskIdTxEnabled`), no longer blocked.
 - TX output device name / TX sample-clock / occupied-bandwidth / monitor-audio-while-
   transmitting readouts — none of these are exposed anywhere in `ScanlineStudio.Core.Audio`
   today. Small-medium each.
@@ -1552,14 +1570,19 @@ wired everything real, these had no real data behind them today):
   nothing renders it yet; a future chart binds directly, no translation step needed.
 - Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
   freq-mode/date burned into the picture) — **partially done (2026-08-08)**: callsign/name/grid
-  fields now real (`OperatorSettings`/`IMacroTextResolver`). FSK ID/CW ID content generation stays
-  blocked on the separately-deferred FSK/CW-ID subsystem; "to station"/report/QSO-context fields
-  still need a "current QSO" form concept that doesn't exist yet. Was medium-large, now small-medium
-  remaining.
+  fields now real (`OperatorSettings`/`IMacroTextResolver`). FSK ID/CW ID content generation was
+  blocked on the separately-deferred FSK/CW-ID subsystem — **shipped 2026-08-12** (corrected
+  2026-08-22), no longer blocked; "to station"/report/QSO-context fields still need a "current QSO"
+  form concept that doesn't exist yet. Was medium-large, now small remaining.
 - TX image editor: Move/Scale/Rotate/Box/Line/Mask/Pick tools, Undo/Redo, zoom/snap-grid,
-  brightness/contrast/saturation/gamma/sharpen/denoise adjustments — `ITransmitImagePreparer`
-  only implements Crop/Resize/ApplyOverlay; none of these operations exist in the pipeline.
-  Large, several independent features.
+  brightness/contrast/saturation/gamma/sharpen/denoise adjustments — **largely done, corrected
+  2026-08-22**: this line used to say `ITransmitImagePreparer` only implements Crop/Resize/
+  ApplyOverlay with none of the rest existing. Since shipped: `Rotate` ([[18-path-to-1.0]] High item
+  3), the 6 adjustment sliders via `ApplyAdjustments` ([[18-path-to-1.0]] Medium tier), and Undo/Redo
+  (snapshot-based, [[18-path-to-1.0]] Medium tier's last sub-piece). Box/text/image compositing
+  shipped too, via [[15-template-designer]]'s `ApplyTemplate`. Still absent: dedicated
+  Move/Scale-as-separate-tools, Line/Mask/Pick tools, and zoom/snap-grid. Small-medium remaining,
+  down from Large.
 - Insert-field token picker in the overlay editor — **done (2026-08-08)**: 5 of 12 mock2 chips
   (MY CALL/MY GRID/MY NAME/DATE/UTC) are real via `IMacroTextResolver`; the other 5 (HIS
   CALL/HIS GRID/FREQ/MODE/HIS RSV) need the same "current QSO" form / FSK-ID dependency
@@ -1584,7 +1607,9 @@ wired everything real, these had no real data behind them today):
   primitives/field-set entries above. Flagged filter can run client-side over the current ≤32-row
   retention scale, no new query field needed. Backend-only, no UI binding yet.
 - Gallery sort by callsign/SNR, and per-frame Export/Re-decode actions — no callsign/SNR data
-  exists on entries, and `IReceiveHistoryStore` has no export/re-decode operation. Small-medium.
+  exists on entries, so that sort remains blocked. **Export shipped 2026-08-15** (corrected
+  2026-08-22, commit `90e2881`) — only the per-frame Re-decode action still has no operation to call.
+  Small remaining, down from small-medium.
 - Gallery Storage card's Sidecar-format and disk-free-space readouts — no JSON/EXIF sidecar is
   written today, and no free-space query exists anywhere. Small each.
 
@@ -1599,8 +1624,8 @@ just above; demod-type selector and auto-start-on-sync-detect — cross-referenc
 "AFC toggle"/"Auto-stop-at-end-of-signal" above; window-position/size memory — cross-reference
 "RX history retention limit" above; 7 waterfall/spectrum colors — cross-reference "Waterfall/
 color" above; CW ID text/frequency/speed + FSK encode/decode — cross-reference "TX macros /
-CW-ID" above, blocked on the separately-deferred FSK/CW-ID subsystem, not the (now-resolved)
-operator-profile setting; OmniRig 4th CAT backend — already tracked in
+CW-ID" above, **shipped 2026-08-12** (corrected 2026-08-22 — this line used to say blocked on the
+separately-deferred FSK/CW-ID subsystem; that subsystem is done); OmniRig 4th CAT backend — already tracked in
 `spec/03-cat-layer.md` as speculative/undesigned) — no new notes for any of those. Genuinely new
 gaps found while doing this pass, not previously tracked anywhere:
 - ~~Sound FIFO buffer size (RX/TX)~~, ~~sound-card thread (capture-drain) priority~~,
@@ -1650,9 +1675,9 @@ gaps found while doing this pass, not previously tracked anywhere:
   architecture at all; still open.
 - Sound-file ID (a recorded `.mmv`-style audio clip played instead of a CW-keyed tone) — distinct
   from CW-ID above (which is real and already tracked); this is a second, separate ID method with
-  its own file-path field. Small-medium once CW-ID's own FSK/CW-ID subsystem blocker is resolved
-  (not an operator-profile blocker, that part's already done), since they'd likely share the same
-  "ID method" selector.
+  its own file-path field. **No longer blocked** (corrected 2026-08-22 — the FSK/CW-ID subsystem this
+  line waited on shipped 2026-08-12); simply unbuilt now, small-medium, since it would likely share
+  the same "ID method" selector CW-ID already has.
 - ~~Tune-satellite-trigger toggle~~ — **done** (2026-08-07), explicitly **not a confirmed legacy
   port** (a citation attempt against `CtrBtn.cpp` only found a UI-enablement guard, not the actual
   post-tune state-transition logic — documented as an assumption, not verified). New
@@ -1660,10 +1685,11 @@ gaps found while doing this pass, not previously tracked anywhere:
   normal un-key/resume-RX step for that one call, implemented as a separate, local flag inside
   `PlayWithPttAsync` — deliberately not reusing the PTT-lock's own field, so `IsPttLocked` never
   lies about what's actually holding PTT keyed.
-- QRZ.com lookup enable — narrower than the already-tracked "OCR/QRZ lookup" gap under Frame
-  metadata above (that one covers OCR too); legacy's own QRZ integration also hardcoded a personal
-  account password, which is not being resurrected in any form — a real implementation needs its
-  own API-key configuration, not a straight port.
+- QRZ.com lookup enable — **shipped 2026-08-11/12** (corrected 2026-08-22), narrower than the
+  already-tracked "OCR/QRZ lookup" gap under Frame metadata above (that one still covers OCR, which
+  QRZ lookup itself doesn't resolve). Legacy's own QRZ integration hardcoded a personal account
+  password; this port did not resurrect that — `QrzLookupSettings` takes user-supplied credentials
+  (currently stored in plain JSON, see [[12-settings]]'s "Secrets" section for that separate gap).
 - ~~JPEG save quality (0-100)~~ — **DONE 2026-08-15**, see the Tier 2 entry above. Automatic
   RX-history save is still PNG-only by design (unchanged); the quality setting now applies to the
   Gallery pane's manual "Export frame" action, not automatic save.
@@ -1846,7 +1872,12 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
     **Dedicated signal-strength meter, legacy debug "digital scope" tool** — no mock2 slot exists for
     either, and this doc's own original text already judged the debug scope "probably the lowest-value
     item in this list."
-- [ ] **QRZ.com callsign lookup** — real legacy feature, verified directly against
+- [x] **QRZ.com callsign lookup** — **shipped 2026-08-11/12** (corrected 2026-08-22; also removed
+  from Tier 2's own list on 2026-08-14, see the "stale entry, removed" line near the top of this
+  document — this checkbox was simply never updated to match). `QrzCallsignLookup`/
+  `QrzLookupSettings`/`LookupQrzCommand` (`ScanlineStudio.Core.Logbook`) — user-supplied credentials,
+  legacy's hardcoded ones (below) not resurrected. Research below kept for citation detail. Real
+  legacy feature, verified directly against
   `yoniq-old/YONIQ-main` (2026-08-11), not assumed from the roadmap's own prior "genuinely new
   feature" framing (that was wrong — corrected here). Legacy's `qrzcom.cpp`/`qrzcom.h`: a
   `TThread` that GETs `http://xmldata.qrz.com/xml/current/?s=<sessionkey>;callsign=<callsign>` and
@@ -1966,8 +1997,8 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   through Hamlib/rigctld/flrig, which own their connection lifecycle entirely — there is no
   raw-serial-port concept left for this setting to gate. Not a conflict-to-investigate, an obsolete
   concept already fully superseded; see that doc's "Raw-serial RTS-pin PTT keying" entry.
-- [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW), blocked
-  on CW-ID's own subsystem landing first.
+- [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW). **No
+  longer blocked** (corrected 2026-08-22 — CW-ID's own subsystem shipped 2026-08-12); simply unbuilt.
 - [x] **JPEG save quality setting** — **DONE 2026-08-15**. Re-scoped 2026-08-12: not blocked on
   "images are PNG-only" in the sense originally written — legacy's real `m_JPEGQuality` applies to
   the manual "Save Image As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not
@@ -2022,8 +2053,9 @@ Populated during autonomous work on the "Must-implement backlog" above (2026-08-
 own instruction: "IF you get stumped by bugs, solution directions, ask the auditor for help. If the
 auditor can't figure it out, put it on the 'verify later with human' list" — this is that list, not
 a place to silently give up; every entry needs a one-line reason it's genuinely stuck, not just
-"medium effort"). Empty as of this list's creation — the Logbook UI pane item currently in progress
-is still in its normal plan-review flow, nothing routed here yet.
+"medium effort"). Empty as of this list's creation, when the Logbook UI pane item (shipped
+2026-08-08, see [[18-path-to-1.0]]/`spec/16-gui-wiring-survey.md`) was still in its normal
+plan-review flow — still empty today; nothing has been routed here.
 
 ## Release gates
 
@@ -2041,7 +2073,7 @@ Before any tagged release: full [[13-testing]] manual hardware checklist (real r
 > too for their fuller context.
 
 - ~~Project license~~ — **decided**: LGPL-3.0-or-later, matching upstream. See [LICENSES.md](../LICENSES.md). The remaining open sub-item is confirming the `Terms.txt` freeware-clause interpretation with the upstream author (JE3HHT) if the project ever moves toward commercial distribution — not a blocker for development.
-- [[08-logging]]: source and license-audit the callsign-prefix/country dataset before bundling (Phase 4) — `ARRL.DX` is already ruled out, see [LICENSES.md](../LICENSES.md). **Pre-audited 2026-08-02**: Clublog's `cty.dat` has no fee, but redistribution requires a human to email Clublog's helpdesk describing the proposed use and obtain an individual API key before the data can be downloaded/bundled — not a simple open-license drop-in. See [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note. Remaining before Phase 4: someone actually emails Clublog and gets the key (not agent-doable), then the real bundled-asset row gets added to LICENSES.md.
+- [[08-logging]]: source and license-audit the callsign-prefix/country dataset before bundling (Phase 4) — `ARRL.DX` is already ruled out, see [LICENSES.md](../LICENSES.md). **Pre-audited 2026-08-02**: Clublog's `cty.dat` has no fee, but redistribution requires a human to email Clublog's helpdesk describing the proposed use and obtain an individual API key before the data can be downloaded/bundled — not a simple open-license drop-in. See [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note. Phase 4's other deliverables have since shipped (logbook, ADIF import/export, QRZ.com online lookup — see [[08-logging]]); this is the one item remaining before **offline** callsign/country lookup specifically can ship: someone actually emails Clublog and gets the key (not agent-doable), then the real bundled-asset row gets added to LICENSES.md.
 - ~~[[05-audio-engine]]: confirm PortAudio latency is acceptable on Windows before committing to it as the sole backend, vs. adding a native WASAPI backend later~~ — **resolved, PortAudio rejected outright.** Two independent Opus consultations plus direct verification in this repo's own dev sandbox found PortAudio fails this spec's own requirements, not just a latency concern: no real device-change API in any released version, no PulseAudio/PipeWire host API on Linux (confirmed by creating a real virtual sink and showing a live PortAudio device probe couldn't see it at all — the exact virtual-cable workflow this spec requires, failing in practice), and no sample-rate conversion. Switched to `miniaudio`, whose WASAPI backend (`IAudioClient3` low-latency mode) *is* the native-WASAPI escape hatch this item used to hold open, without needing COM interop in `ScanlineStudio.Core.*`. See [[05-audio-engine]]'s Backend choice section for the full reasoning.
-- [[15-template-designer]]: the `.mtm`/`PARALIST.BIN` binary format needs a proper reverse-engineering pass (cross-checked against `Draw.cpp`'s own `Load`/`Save` methods) before any implementation work on that subsystem can start — flagged as a prerequisite, not yet done.
+- [[15-template-designer]]: **narrowed 2026-08-22** — this used to read as a prerequisite for the whole subsystem; the modern template designer shipped 2026-08-18 without needing it. The `.mtm`/`PARALIST.BIN` binary format still needs a proper reverse-engineering pass (cross-checked against `Draw.cpp`'s own `Load`/`Save` methods) before the legacy `.mtm` **import** path specifically can be built — flagged as a prerequisite for that one deferred piece, not yet done.
 - [LICENSES.md](../LICENSES.md): confirm whether Chilkat or FastReport actually back a real feature by building and running the legacy binary directly (not verifiable from source alone) — currently assumed unused/orphaned based on a source-only search.

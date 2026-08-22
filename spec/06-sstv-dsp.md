@@ -10,48 +10,92 @@ This is the heart of the application: encoding an image into an audio waveform f
 
 ## Mode definitions
 
-Every SSTV mode (Martin M1/M2, Scottie S1/S2/DX, Robot 36/72, PD-series, etc.) is data, not code, wherever possible:
+Every SSTV mode (Martin M1/M2, Scottie S1/S2/DX, Robot 36/72, PD-series, etc.) is data-shaped, not
+one-class-per-mode — but it's **compiled-in C#, not an external data file**: each mode is a
+`static readonly SstvModeDefinition` field in `ScanlineStudio.Core.Sstv.SstvModeRegistry`. Adding a
+mode is a recompile, not a data change; there is no `modes.json`/embedded-resource table. Real
+shape (`ScanlineStudio.Abstractions/Sstv/SstvModeDefinition.cs`), corrected from an earlier draft
+that named two types (`SyncPulseSpec`/`ChannelSpec`) that were never actually built this way:
 
 ```csharp
 namespace ScanlineStudio.Abstractions.Sstv;
 
 public sealed record SstvModeDefinition(
-    string Id,                     // "martin-m1"
+    string Id,                          // "martin-m1"
     string DisplayName,
+    int VisCode,
     int ImageWidth,
     int ImageHeight,
-    double LineDurationMs,
-    ColorEncoding ColorEncoding,   // RGB sequential, YCrCb, etc.
-    IReadOnlyList<SyncPulseSpec> SyncPulses,
-    IReadOnlyList<ChannelSpec> ScanChannels);
+    ColorEncoding ColorEncoding,        // RgbSequential, YCbCrRobot, YCbCrSequential, YCbCrLinePaired, MonoAveragedPaired
+    IReadOnlyList<LineSegment> LineSegments,
+    double LuminanceMinHz = 1500,
+    double LuminanceMaxHz = 2300,
+    int? ExtendedVisCode = null,        // non-null for the MR/MP/ML family (two-byte "extended VIS")
+    int? NarrowModeCode = null)         // non-null for the MN/MC family (no VIS at all -- a fixed 4-byte FSK packet instead)
+{
+    public double LineDurationMs => LineSegments.Sum(s => s.DurationMs);   // computed, not stored
+}
+
+// One timed segment of a scanline -- a fixed-frequency sync/porch/separator pulse, a
+// pixel-data-varying color-channel scan, or (Robot family) a tone selecting which of two
+// alternating chroma channels follows:
+public abstract record LineSegment(double DurationMs);
+public sealed record SyncSegment(double DurationMs, double FrequencyHz) : LineSegment(DurationMs);
+public sealed record ScanSegment(string ChannelName, double DurationMs) : LineSegment(DurationMs);
+public sealed record ToneSelectorSegment(double DurationMs, double LowFrequencyHz, double HighFrequencyHz) : LineSegment(DurationMs);
+public sealed record HoldPreviousFrequencySegment(double DurationMs) : LineSegment(DurationMs);
 
 public interface ISstvEncoder
 {
-    IAsyncEnumerable<float> EncodeAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct);
+    IAsyncEnumerable<float> EncodeAsync(SstvModeDefinition mode, IImageSource image, StationIdTransmitOptions stationId, CancellationToken ct);
 }
 
 public interface ISstvDecoder
 {
-    // Fed continuously from the audio engine's ring buffer; raises events as sync/lines are detected.
-    void PushSamples(ReadOnlyMemory<float> samples);
-    event Action<DecodedImageUpdate>? LineDecoded;   // incremental, so partial images render live like the legacy RxView
-    event Action<SstvModeDefinition>? ModeDetected;  // auto mode detection via sync pulse analysis
+    int SampleRate { get; }
+    void PushSamples(ReadOnlyMemory<float> samples);   // synchronous, decode-thread-blocking -- no ring buffer/marshaling inside this call itself
+    event Action<DecodedImageUpdate>? LineDecoded;     // incremental, so partial images render live like the legacy RxView
+    event Action<SstvModeDefinition>? ModeDetected;    // auto mode detection via VIS decode
+    event Action<SstvModeDefinition>? DecodeRestarted; // fires on the periodic decoder-restart cycle -- see "Decoder lifecycle" below
+    event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+    void ResetAgc();
+    void RequestReSync();
+    void ForceMode(SstvModeDefinition mode);
+    void RequestCorrectSlant();
+    double? SlantPpm { get; }
+    double SignalPeakLevel { get; }
+    bool IsLevelOverdriven { get; }
+    bool AutoSlantEnabled { get; }
+    bool StationIdDecodeEnabled { get; set; }
+    // + a handful more manual-correction/telemetry members -- see the interface's own doc comments
+    // for the full, current list rather than trusting this snippet to stay exhaustive.
 }
 ```
 
-Mode timing/frequency tables are ported from the legacy per-mode constants scattered through `sstv.cpp` into a single `modes.json` (or embedded resource) table read by `SstvModeDefinition`, so adding a mode is a data change, not a recompile — this is the concrete DSP-layer expression of "prefer composition over inheritance" from CLAUDE.md: modes are configured, not subclassed.
+## Decoder lifecycle
+
+The DI-registered `ISstvDecoder` is not `AnalogFmSstvDecoder` directly — it's
+`RestartableSstvDecoder` (`ScanlineStudio.Core.Sstv`), which periodically discards and reconstructs
+the whole decoder object graph under a lock. This exists to work around `AnalogFmSstvDecoder`'s
+absolute sample index being `int` (ultracode audit finding #34): left unbounded, a sustained live
+decode session would eventually overflow it. `RestartableSstvDecoder` restarts before that happens
+(warning around ~12h, critical around ~13h of continuous decode) and raises `RestartOverdue`/
+`RestartCriticallyOverdue` so the caller can react (`SstvSessionService` force-stops capture on the
+critical signal). Every consumer only ever holds `ISstvDecoder`, so the swap is transparent except
+for the `DecodeRestarted` event above.
 
 ## Signal chain
 
 ```
 Encode:  IImageSource → per-mode scanline sampler → FM/AFSK tone synthesizer → float[] samples → IAudioEngine.EnqueuePlaybackSamples
-Decode:  IAudioEngine.SamplesCaptured → FIR bandpass filter → FFT/Goertzel tone detector → sync detector → scanline reconstructor → DecodedImageUpdate
+Decode:  IAudioEngine.SamplesCaptured → FIR bandpass filter (SearchBandpassFilter) → FM demodulator (Hilbert/PLL) → sync detector → scanline reconstructor → DecodedImageUpdate
 ```
 
-- **Tone detection / FM demodulation** (`sstv.cpp`'s `CHILL`/`CPLL`/`CVCO`/`CFQC` + `fir.cpp`'s `CIIR`/`MakeIIR` equivalent): **implemented, ported directly** — per CLAUDE.md's "port first, invent second" rule for DSP/codec math, `ScanlineStudio.Core.Sstv` contains three demodulators selected at runtime by `DemodType`: `HilbertFmDemodulator` (a port of legacy's `CHILL`, `sstv.cpp:3005-3087` — legacy's actual compiled-in default, `m_Type=2`, and now this port's default for the main picture path too), `PllFmDemodulator` (a port of legacy's closed-loop PLL discriminator `CPLL`, still used for the `DemodType.Pll` option and independently for AVT training-lock), and `ZeroCrossingFrequencyCounter`. An earlier revision of this port used the PLL discriminator exclusively for the main picture path; it was superseded by the Hilbert port once profiling showed the PLL's slower/undershooting settling causing real golden-vector delta regressions on narrow-pitch modes (see `HilbertFmDemodulator`'s own doc comment for the full derivation history, verified across two rounds of auditor plan-review). An earlier from-scratch open-loop quadrature-mixing discriminator (unrelated to either of the above) was scrapped even before that, for the same reason. See `PllFmDemodulator`'s and `HilbertFmDemodulator`'s doc comments for their exact structures.
-- **FIR filtering** (`fir.cpp`'s standalone `MakeIIR`/biquad-cascade application, distinct from the PLL's internal loop/output filters): ported as `IirFilter`, used by `PllFmDemodulator`, `HilbertFmDemodulator`, and — as of the RX BPF subsystem — a separate general-purpose pre-demodulator bandpass stage (`SearchBandpassFilter`, a direct port of `CSSTVDEM::Do`'s `m_BPF.Do(...)` call, `sstv.cpp:1826-1833`, selectable via `RxBpfPreset` Off/Wide/Narrow/VeryNarrow) and a TX-side output bandpass (`TxOutputBandpassFilter`, a port of `CSSTVMOD`'s always-on `m_BPF`, `sstv.cpp:2759-2772,2914`). Both are now implemented.
+- **Tone detection / FM demodulation** (`sstv.cpp`'s `CHILL`/`CPLL`/`CVCO`/`CFQC` equivalent): **implemented, ported directly** — per CLAUDE.md's "port first, invent second" rule for DSP/codec math, `ScanlineStudio.Core.Sstv` contains three demodulators selected at runtime by `DemodType`: `HilbertFmDemodulator` (a port of legacy's `CHILL`, `sstv.cpp:3005-3087` — legacy's actual compiled-in default, `m_Type=2`, and now this port's default for the main picture path too), `PllFmDemodulator` (a port of legacy's closed-loop PLL discriminator `CPLL`, still used for the `DemodType.Pll` option and independently for AVT training-lock), and `ZeroCrossingFrequencyCounter`. An earlier revision of this port used the PLL discriminator exclusively for the main picture path; it was superseded by the Hilbert port once profiling showed the PLL's slower/undershooting settling causing real golden-vector delta regressions on narrow-pitch modes (see `HilbertFmDemodulator`'s own doc comment for the full derivation history, verified across two rounds of auditor plan-review). An earlier from-scratch open-loop quadrature-mixing discriminator (unrelated to either of the above) was scrapped even before that, for the same reason. See `PllFmDemodulator`'s and `HilbertFmDemodulator`'s doc comments for their exact structures. There is no separate FFT/Goertzel tone-detection stage in the decode chain — the FFT in this codebase (`RadixTwoFft`) backs the waterfall visualization only, not decode (see below).
+- **IIR filtering** (`fir.cpp`'s standalone `MakeIIR`/biquad-cascade application): ported as `IirFilter`, used internally by `PllFmDemodulator`/`HilbertFmDemodulator`/`ZeroCrossingFrequencyCounter`/`TankFilter`/`SyncEnvelopeDetector`/`AnalogFmSstvDecoder` — this is demodulator-internal machinery, not the RX/TX bandpass stage.
+- **FIR bandpass filtering** — a *separate* FIR port (`CFIR2`/`MakeFilter`, own coefficient tables and delay lines, distinct from the IIR machinery above): a general-purpose pre-demodulator bandpass stage (`SearchBandpassFilter`, a direct port of `CSSTVDEM::Do`'s `m_BPF.Do(...)` call, `sstv.cpp:1826-1833`, selectable via `RxBpfPreset` Off/Wide/Narrow/VeryNarrow) and a TX-side output bandpass (`TxOutputBandpassFilter`, a port of `CSSTVMOD`'s always-on `m_BPF`, `sstv.cpp:2759-2772,2914`). Both are now implemented.
 - **Waterfall/scope** (`Scope.cpp` equivalent): implemented in Phase 3, `ScanlineStudio.Core.Sstv.WaterfallSource` — rolling FFT magnitude frames (a new standard radix-2 FFT + Hann window, not a legacy port — see [[09-ui]]'s Aesthetic Directive note and `RadixTwoFft`'s own doc comment for why CLAUDE.md's port-first rule doesn't apply to a visualization feature), independent of decode state by construction (see the Definition-of-done item below). Rendered by `ScanlineStudio.UI.Controls.WaterfallControl`/`SpectrumTraceControl`, colorized/live-trace as of 2026-08-09 batches 8a/8b (a 6-stop heatmap gradient, mode-derived SSTV tone markers, peak-hold, continuous zoom/bandwidth — see [[14-roadmap]]'s now-DONE "Waterfall color/palette rendering" item and `PROJECT_BRIEF.md`) — the earlier "deliberately kept visually simple, flat grayscale" deprioritization was explicitly re-confirmed and then lifted by direct user request ("full item"), not silently reversed.
-- **VIS auto-detection**: implemented (`VisHeader`), decoding the standard leader-break-leader/start-bit/7-data-bit/parity/stop-bit sequence: see the caveat below.
+- **VIS auto-detection**: implemented — `VisHeader` holds the shared constants/TX generator; RX decode itself lives in `VisLockStateMachine` + `AnalogFmSstvDecoder.TryDecodeVisHeader` (+ `SstvModeRegistry.FindByFullVisByte`), decoding the standard leader-break-leader/start-bit/7-data-bit/parity/stop-bit sequence.
 - **Scanline reconstruction**: implemented across every mode family currently in `SstvModeRegistry` (Martin, Scottie, Robot 36/72, R24, the MR/ML/MP/MN/MC half-scan-chroma families, PD-series, Pasokon P3/P5/P7, RM8/RM12, SC2, AVT — see the Definition-of-done table below for the full list and remaining gaps). Legacy's AFC (`CSSTVDEM::SyncFreq`) and its `CSYNCINT` peak-interval sync-acquisition tracker are both ported (`AfcTracker`, `SyncIntervalTracker`), along with a `SyncSSTV`-style fold-and-argmax anchor correction (`SyncAnchorCorrector`) wired into `AnalogFmSstvDecoder` — this is a materially more complete port of legacy's real sync-search/clock-drift machinery than a nominal-timing-only decode.
 
 ## Auto mode detection
@@ -85,15 +129,18 @@ The **post-image footer tone** (`Main.cpp:6994-7013`, the `!sys.m_TXFSKID` branc
 
 ## Explicitly deferred (not v1)
 
-SSTV repeater/beacon mode (`RepSet.cpp`, `Repeater.txt`, unattended relay/beacon transmission) is real legacy functionality with no spec coverage here — deferred to post-v1 rather than silently dropped; see [[14-roadmap]] and [docs/removed-features.md](../docs/removed-features.md).
+SSTV repeater/beacon mode (`RepSet.cpp`, `Repeater.txt`, unattended relay/beacon transmission) is real legacy functionality with no spec coverage here — deferred to post-v1 rather than silently dropped; see [[14-roadmap]] (not yet in [docs/removed-features.md](../docs/removed-features.md) — add an entry there per CLAUDE.md §2's removal rule if this stays deferred past v1 rather than picked up).
 
 ## Real-time budget
 
-Decode must keep up with live audio in real time on modest hardware (this was true of the original Pentium-era MMSSTV and must remain true). The processing thread consuming the audio ring buffer (see [[05-audio-engine]]) runs the filter → detect → reconstruct pipeline per incoming block; block size is chosen (default ~256 samples at the DSP sample rate) to bound decode latency to well under one scanline duration for every supported mode.
+Decode must keep up with live audio in real time on modest hardware (this was true of the original Pentium-era MMSSTV and must remain true). The processing thread consuming the audio ring buffer (see [[05-audio-engine]]) runs the filter → detect → reconstruct pipeline per incoming block; the real drain granularity is `MiniAudioCaptureSession.DrainBufferFrames` (4096 frames, handed to `PushSamples` with no re-chunking) — roughly 372ms at 11025Hz, longer than a single scanline in every supported mode. Decode correctness does not depend on sub-scanline block latency (partial-line rendering is driven by `LineDecoded`'s own incremental updates, not by how finely PushSamples is chunked), but this is worth knowing if a future change ever needs a tighter live-preview latency bound.
 
 ## Testing
 
-This layer is the most amenable to deterministic testing in the whole system:
+This layer is the most amenable to deterministic testing in the whole system. Illustrative shape
+below, not a literal transcription of the real test (the actual `SstvRoundTripTests` uses a WAV
+round-trip with a per-channel average-delta tolerance across every mode via `[MemberData]`, not a
+single-image `MatchWithinTolerance(maxDeltaE:)` call):
 
 ```csharp
 [Theory]
@@ -113,7 +160,7 @@ public async Task Encode_Then_Decode_RoundTrips_Image(string modeId)
 }
 ```
 
-Additional targeted tests: FIR filter frequency response (verify passband/stopband against known coefficients), Goertzel tone detection against synthetic tone bursts with added noise (verify detection holds down to a defined SNR threshold), VIS code detection against all standard VIS codes plus corrupted/partial ones (must not false-positive), and a deliberately clock-offset fixture verifying slant correction (see above).
+Additional targeted tests: FIR filter frequency response (verify passband/stopband against known coefficients), FM demodulator tone detection against synthetic tone bursts with added noise (verify detection holds down to a defined SNR threshold), VIS code detection against all standard VIS codes plus corrupted/partial ones (must not false-positive), and a deliberately clock-offset fixture verifying slant correction (see above).
 
 **Golden vectors, not just round-trip tests.** Per CLAUDE.md's behavioral-parity rule: an encode→decode round-trip test can pass while both the encoder and decoder are wrong in the same compensating way — it does not prove the new implementation matches the *legacy* implementation's actual output, which matters because the legacy DSP core is `double`-precision throughout (`m_SampFreq`, `m_TxSampFreq`, all filter/FFT intermediates) while this spec proposes `float` samples. At minimum, capture intermediate outputs from a real run of the legacy binary (FIR filter output for a known input, FFT magnitude frame for a known tone, final decoded pixel values for a known transmitted image) and check the new implementation against them within a documented tolerance — this is the only way to catch a systematic numeric drift that a self-consistent round-trip test structurally cannot detect.
 
@@ -122,7 +169,7 @@ Additional targeted tests: FIR filter frequency response (verify passband/stopba
 - [x] Slant correction implemented (Auto Slant: `TankFilter`/`SyncEnvelopeDetector`/`SlantTracker`) and covered by clock-offset fixture tests (`SlantTests.cs` and friends — 500ppm and 1% mismatch scenarios; see the "Sample clock calibration" section above).
 - [x] Post-image footer tone implemented (`AnalogFmSstvEncoder.GenerateFooterSegments`) — the non-station-ID part of what this item used to cover.
 - [x] FSK/CW station ID: implemented (see the "Station identification" section above) — FSK ID TX/RX, the signal-report appendix, CW ID, and the settings surface are all done. Not a v1 blocker per the user's original decision, but built anyway.
-- [x] At least one golden-vector test comparing against legacy-binary-captured output exists for the filter stage and the full decode path, with a documented tolerance (`GoldenVectorTests.cs`/`GoldenVectorFixtureReaderTests.cs`, `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/`, covering robot-36/martin-m1/scottie-s1/robot-72/pd90/rm8/mn110/avt against real legacy-binary-captured `.bmp` output).
+- [x] At least one golden-vector test comparing against legacy-binary-captured output exists for the filter stage and the full decode path, with a documented tolerance (`GoldenVectorTests.cs`/`GoldenVectorFixtureReaderTests.cs`, `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/`, covering robot-36/martin-m1/scottie-s1/scottie-dx/robot-72/pd90/rm8/mr73/r24/mn110/avt against real legacy-binary-captured `.bmp` output — 11 modes as of this writing, grown from the original 8).
 
 ## Definition of done
 

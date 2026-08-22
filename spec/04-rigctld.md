@@ -51,7 +51,6 @@ local reference clone, not just prose):
 | `M <mode> <passband>` | set | set mode |
 | `t` | query | get PTT state |
 | `T <0\|1>` | set | set PTT |
-| `\chk_vfo` | query | VFO support check |
 
 **Response framing** (source-verified — this was flagged as the single highest-risk unknown in an
 earlier plan-review pass, resolved by reading `rigctl_parse.c` directly rather than reasoning about it):
@@ -79,9 +78,12 @@ Mode tokens are Hamlib's own (`USB`, `LSB`, `CW`, `CWR`, `AM`, `FM`, `RTTY`, `RT
 in particular need an explicit mapping decision, not an assumed correspondence) — an unrecognized-but-
 valid token maps to `RadioMode.Unknown`, never throws.
 
-Transport is a plain `TcpTransport : IRadioTransport` (host/port, default `localhost:4532`), owned
-internally by `RigctldClientProtocol` (see [[02-radio-layer]] — `IRadioProtocol` no longer takes a
-transport parameter, each protocol owns its own).
+Transport is a plain `TcpTransport : IRadioTransport` (host/port), owned internally by
+`RigctldClientProtocol` (see [[02-radio-layer]] — `IRadioProtocol` no longer takes a transport
+parameter, each protocol owns its own). `RigctldConnectionSpec(string Host, int Port)` has no
+built-in default — Hamlib's own `rigctld` binary defaults to `localhost:4532` when a user starts it
+without arguments, but Scanline Studio's own settings (`RadioConnectionSettings.Host`/`.Port`) start
+`null` and the user must supply both values in the Options window before connecting.
 
 ## Server mode (dropped — kept here only as a record of what was speced)
 
@@ -126,32 +128,38 @@ an architectural one.
 
 ## Telemetry (SWR/ALC/power meters)
 
-[[14-roadmap]]'s Piece 6 needed live PWR/ALC/SWR readout for a TX safety cutoff — the one deliberate
-exception to the extended-command Non-goal below. `ProbeCapabilitiesAsync` additionally probes `l
-SWR`/`l ALC`/`l RFPOWER_METER` once at connect, same RPRT-error-means-absent convention as `f`/`m`/`t`.
-Verified directly against a local Hamlib clone's `tests/rigctl_parse.c`
-(`declare_proto_rig(get_level)`): rigctld always runs with `interactive=1`/`prompt=0`, so a supported
-float-typed level (SWR/ALC/RFPOWER_METER are all in `RIG_LEVEL_FLOAT_LIST`, `rig.h`) responds with
-exactly one `%g` line — the same single-line shape as `f`/`m`/`t`, reusing the same read helpers.
+[[14-roadmap]]'s Piece 6 needed live PWR/ALC/SWR readout for a TX safety cutoff, plus an S-meter
+readout for receive — the one deliberate exception to the extended-command Non-goal below.
+`ProbeCapabilitiesAsync` additionally probes `l SWR`/`l ALC`/`l RFPOWER_METER`/`l STRENGTH` once at
+connect, same RPRT-error-means-absent convention as `f`/`m`/`t`. Verified directly against a local
+Hamlib clone's `tests/rigctl_parse.c` (`declare_proto_rig(get_level)`): rigctld always runs with
+`interactive=1`/`prompt=0`, so a supported level responds with exactly one `%g` line — the same
+single-line shape as `f`/`m`/`t`, reusing the same read helpers, whether the level is float-typed
+(SWR/ALC/RFPOWER_METER, all in `RIG_LEVEL_FLOAT_LIST`, `rig.h`) or int-typed (STRENGTH, documented
+"arg int (dB)" in `rig.h`) — rigctld's line protocol emits both kinds as plain text, so the same
+float-parsing read path works for STRENGTH too; only the stored C# type differs (`RadioState`'s
+`SignalStrengthDb` rounds the parsed value to `int?`).
 
-Meters are read only while the same poll's own `t` readback shows the rig transmitting (a real
-Hamlib meter reading is TX-only and meaningless at RX time; gating avoids doubling every poll's
-round-trip count for a reading nobody looks at outside an active transmit). A per-meter read failure
-(RPRT error, or an unparseable line) yields `null` for that field only — it must never abort the
-whole poll the way a bad `f` response does, since meters are far more likely than `f`/`m`/`t` to
-intermittently error. Meter values parse with `CultureInfo.InvariantCulture` (a real bug caught
-before shipping: the culture-sensitive default overload would parse "1.5" as 15 under a culture
-where '.' is a thousands separator, turning a normal SWR reading into an instant false cutoff trip).
-SWR's documented range is "0.0 ... infinite" (`rig.h`) — a literal `"inf"` response parses as
-`float.PositiveInfinity` (a real, cutoff-worthy value), not a parse failure; `"nan"` maps to `null`
-(not a known-bad direction).
+SWR/ALC/power are read only while the same poll's own `t` readback shows the rig transmitting (a
+real Hamlib meter reading is TX-only and meaningless at RX time; gating avoids doubling every poll's
+round-trip count for a reading nobody looks at outside an active transmit). STRENGTH is gated the
+**opposite** way — read only while the rig is **not** transmitting, since an S-meter reading is
+meaningless while the rig's own receiver is muted for TX (see `RadioState.SignalStrengthDb`'s own
+doc comment). A per-meter read failure (RPRT error, or an unparseable line) yields `null` for that
+field only — it must never abort the whole poll the way a bad `f` response does, since meters are
+far more likely than `f`/`m`/`t` to intermittently error. Meter values parse with
+`CultureInfo.InvariantCulture` (a real bug caught before shipping: the culture-sensitive default
+overload would parse "1.5" as 15 under a culture where '.' is a thousands separator, turning a
+normal SWR reading into an instant false cutoff trip). SWR's documented range is "0.0 ... infinite"
+(`rig.h`) — a literal `"inf"` response parses as `float.PositiveInfinity` (a real, cutoff-worthy
+value), not a parse failure; `"nan"` maps to `null` (not a known-bad direction).
 
 This is a convenience backstop riding the existing ~250ms poll cadence plus a PTT-off round trip —
 never a substitute for the rig's own hardware SWR protection.
 
 ## Non-goals
 
-- Full Hamlib protocol coverage (extended command set, all `rigctl` verbs) beyond the `l SWR`/`l ALC`/`l RFPOWER_METER` telemetry probes above is not a v1 goal — only the subset needed for frequency/mode/PTT/telemetry, matching what Scanline Studio's own domain model (`RadioState`) can represent.
+- Full Hamlib protocol coverage (extended command set, all `rigctl` verbs) beyond the `l SWR`/`l ALC`/`l RFPOWER_METER`/`l STRENGTH` telemetry probes above is not a v1 goal — only the subset needed for frequency/mode/PTT/telemetry, matching what Scanline Studio's own domain model (`RadioState`) can represent.
 
 ## Testing
 
@@ -161,10 +169,10 @@ never a substitute for the rig's own hardware SWR protection.
 ## Definition of done
 
 - [x] Client mode implements `f`/`F`/`m`/`M`/`t`/`T`, fixture-tested (both response shapes per command) —
-      `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 35 fixture tests in
-      `RigctldClientProtocolTests` (20 original + 15 covering the `l SWR`/`l ALC`/`l RFPOWER_METER`
-      telemetry probes: full-capability reads, RX-time gating, per-meter failure isolation,
-      infinity/invariant-culture parsing). `\chk_vfo`/VFO support is not implemented — not needed by
+      `RigctldClientProtocol`/`RigctldProtocolFactory` (`ScanlineStudio.Core.Radio.Rigctld`), 24 fixture tests in
+      `RigctldClientProtocolTests`, including coverage of the `l SWR`/`l ALC`/`l RFPOWER_METER`/`l STRENGTH`
+      telemetry probes: full-capability reads, TX-time and RX-time gating, per-meter failure isolation,
+      infinity/invariant-culture parsing. `\chk_vfo`/VFO support is not implemented — not needed by
       `RadioState`'s current domain model, left for a future pass if a real need shows up.
 - [x] Real interop verified against a real Hamlib `rigctld` build — automated via
       `RigctldDummyRigIntegrationTests` (4 tests, real `rigctld -m 1` against Hamlib's own hardware-free

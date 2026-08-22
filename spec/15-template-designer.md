@@ -173,11 +173,15 @@ competing:
    explicit contract, not an emergent side effect).
 2. **Live-bound elements, base+diff-overlay templates**: text elements store literal characters
    mixed with unresolved macro-tokens (resolved at render/send time, never baked in at type-time);
-   image elements store a *source binding* (last-RX/live-RX/file/clipboard) rather than raw pixels,
-   re-resolving each render. Templates persist as an immutable base document + a mutable per-session
-   diff overlay, so loading never destroys in-progress work and "reset this element" is one delete.
-   Real open risk: `LastRxImage` is a moving target — binding-vs-snapshot semantics if a new frame
-   lands mid-edit needs an explicit decision, not an assumption.
+   image elements carry an `ImageSourceOrigin` (kind + payload) recording where they came from.
+   Templates persist as an immutable base document + a mutable per-session diff overlay, so loading
+   never destroys in-progress work and "reset this element" is one delete.
+   **Resolved, shipped differently than proposed here**: the binding-vs-snapshot risk below was real,
+   but the shipped answer isn't a uniform live "source binding" that re-resolves every render — only
+   `File`/`RxHistory` origins carry a re-resolvable payload (a file path / a `ReceiveHistoryEntry.Id`);
+   `LastRx`/`Clipboard` are explicitly one-time snapshots at insertion time (`Payload` stays `null`,
+   "ephemeral, nothing to re-resolve" per `ImageSourceOrigin`'s own doc comment) — a new RX frame
+   landing mid-edit never retroactively changes an already-inserted `LastRx` element.
 3. **Slot-fill bar + ready rack**: elements optionally carry a named "slot" key; a second, always-
    visible panel lists one row per slot, tabbable, editable without touching the canvas — same
    document, second view, not a mode switch (satisfies requirement 3 by construction). Complemented
@@ -185,17 +189,25 @@ competing:
    for swapping the whole document. This is the direct mechanism for "fast template recall" and the
    fill-bar functional requirement above — they're the same thing looked at from two angles.
 
-New templates persist in a new, documented format (JSON manifest + referenced image assets,
-consistent with [[12-settings]]'s JSON-first approach) — carried forward from this document's
-original proposal, still correct under the redesign.
+New templates persist in a new format (JSON manifest + referenced image assets, consistent with
+[[12-settings]]'s JSON-first approach) — carried forward from this document's original proposal,
+still correct under the redesign. **Actual shipped on-disk schema** (`TemplateStore`,
+`ScanlineStudio.Application`, not previously documented here): one directory per template, named by
+its `templateId`, each fully self-contained — `template.json` (a `TemplateManifest`,
+source-generated via `PersistedTemplateJsonContext`, RELATIVE asset paths only, never absolute),
+an `assets/` subfolder holding each `TemplateImageElement`'s embedded picture, and a `thumbnail.png`
+rendered once at save time (never recomputed later). `LoadAsync`/`ListAsync` both tolerate a
+truncated/corrupt `template.json` (`JsonException`/`IOException`/`UnauthorizedAccessException`) by
+skipping that one template rather than failing the whole rack listing — `SaveAsync` itself is not
+yet atomic (a plain `File.WriteAllTextAsync`, no temp-file-then-rename), so a crash/power-loss
+mid-save is the real-world source of that corruption case, not a hypothetical one.
 
 ## Friction risks in what's already confirmed (need resolving before/during plan-review)
 
-- **Auto-fit font is under-specified**: needs a per-element fit mode (shrink-to-fit as the default
-  and, given decision 2 above, probably sufficient on its own — wrap-mode is low-priority). More
-  important: a **render-time overflow policy** — a box sized at design time for "W1AW" will clip a
-  macro-expanded "VK9/PA0XYZ/P" unless overflow is handled at *resolve* time, not just design time.
-  Needs min/max font clamps too.
+- **Auto-fit font — shipped**: shrink-to-fit is the (sole) fit mode, with a render-time overflow
+  policy and a minimum-font-size floor both implemented (`TransmitImagePreparer.ComputeFittedFontSizePx`'s
+  shrink-to-fit search, clipped to `TemplateElement.Bounds` rather than overflowing once the search
+  bottoms out at its floor — Phase 0 plan-review blocker 4). No longer a gap.
 - **Text-only template + no base image loaded**: currently an undefined case. Transparent has to
   resolve to *something* when transmitted (black is the conventional answer) — needs to be a
   deliberate, visibly-indicated choice, not an accident.
@@ -281,25 +293,30 @@ with no successor planned under this redesign (see Non-goals above).
 
 ### Proposed shape for the import path (once undeferred)
 
+**Updated against the real shipped element model** — the placeholder `ITemplateElement`/`TemplateLine`/
+`TemplateText`/`TemplatePicture`/`TemplateGroup` sketch this section originally proposed never
+shipped under those names; the modern editor's real model (`ScanlineStudio.Abstractions.Imaging`,
+[[07-image-pipeline]]) is `TemplateElement` (abstract base: `Bounds`, `Z`) with concrete
+`TemplateTextElement`/`TemplateImageElement`/`TemplateBoxElement` subtypes, composited via
+`ITransmitImagePreparer.ApplyTemplate(IImageSource existingBase, TemplateDocument document)` — no
+`CDrawLine`/`CDrawGroup` equivalent exists (a legacy line or group element would need its own new
+subtype, or a documented drop, at import time). An import adapter converges onto that model:
+
 ```csharp
 namespace ScanlineStudio.Abstractions.Templates;
 
-public interface ITemplateElement { Rectangle Bounds { get; } void Render(IDrawingContext ctx); }
-
-public sealed record TemplateLine(...) : ITemplateElement;
-public sealed record TemplateBox(...) : ITemplateElement;
-public sealed record TemplateText(string Text, FontSpec Font, ...) : ITemplateElement;
-public sealed record TemplatePicture(IImageSource Image, ...) : ITemplateElement;
-public sealed record TemplateGroup(IReadOnlyList<ITemplateElement> Children) : ITemplateElement;
-
 public interface ITemplateStore
 {
-    Task<ITemplateDocument> ImportLegacyAsync(string mtmPath, CancellationToken ct);
+    Task<TemplateDocument> ImportLegacyAsync(string mtmPath, CancellationToken ct);
 }
 ```
 
-`ITemplateElement` here should converge with whatever element model the modern editor (above) ships
-with, not duplicate it — this is an import adapter onto that model, not a parallel one.
+`ImportLegacyAsync` returns a `TemplateDocument` (`ScanlineStudio.Abstractions.Imaging`) directly —
+an import adapter onto the already-shipped model, not a parallel one — mapping each legacy `CDraw`
+subtype onto the closest existing `TemplateElement` subtype (`CDrawText`→`TemplateTextElement`,
+`CDrawPic`→`TemplateImageElement`, `CDrawBox`/`CDrawBoxS`→`TemplateBoxElement`) and reporting
+`CDrawOle`/any unsupported element per the drop policy above, rather than blocking the whole
+import.
 
 ### Definition of done (for this sub-effort specifically, once picked up)
 

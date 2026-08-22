@@ -2,9 +2,9 @@
 
 ## Vision
 
-YONIQ v2 is a modern, cross-platform amateur radio application focused on stability, maintainability, extensibility and hardware interoperability.
+Scanline Studio is a modern, cross-platform amateur radio application — a rewrite of YONIQ/MMSSTV — focused on stability, maintainability, extensibility and hardware interoperability.
 
-The application shall preserve all current functionality while introducing a clean architecture suitable for long-term development.
+The application shall preserve observable behavior, user data, and feature scope, except where a capability is explicitly and documentedly dropped (see [docs/removed-features.md](../docs/removed-features.md)), while introducing a clean architecture suitable for long-term development.
 
 ---
 
@@ -15,7 +15,7 @@ The application shall preserve all current functionality while introducing a cle
 - Runtime language switching
 - CAT abstraction
 - Native rigctld support
-- Plugin architecture
+- Plugin architecture (goal; not yet started — see [[11-plugin-system]])
 - Dependency Injection
 - Comprehensive automated testing
 
@@ -24,7 +24,7 @@ The application shall preserve all current functionality while introducing a cle
 ## Principles
 
 - Preserve existing functionality
-- Prefer refactoring over rewriting
+- Prefer refactoring over rewriting within the new codebase (the initial port itself is a deliberate full rewrite — see CLAUDE.md §2)
 - Minimize breaking changes
 - Separate UI from business logic
 - Separate radio protocol implementations
