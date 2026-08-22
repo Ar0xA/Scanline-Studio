@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
@@ -88,160 +90,14 @@ internal static partial class Program
             Console.Error.WriteLine($"Failed to open log file at '{logPath}': {ex}. Continuing with console logging only.");
         }
 
-        hostBuilder.Services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
-
-        // First IHttpClientFactory consumer in this codebase (QrzLogbookUploader) -- no prior
-        // registration to match, this is the standard AddHttpClient() entry point.
-        hostBuilder.Services.AddHttpClient();
-
-        // Singleton, not transient: resolved exactly once at startup (App.axaml.cs) as the app's
-        // one root view-model, but a second resolve would silently fork
-        // TxControlsPaneViewModel.RadioStatus (assigned once in this constructor, from a singleton
-        // TxControlsPaneViewModel) into a second, out-of-sync RadioStatusViewModel instance -- the
-        // exact forked-persistence failure the RadioStatus wiring is designed to avoid. Only one
-        // resolve site exists today, so this was a dormant risk, not an active bug; registering it
-        // correctly here closes it off rather than leaving it to bite a future second call site.
-        hostBuilder.Services.AddSingleton<MainViewModel>();
-
-        // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
-        // (re-reads settings.json from disk each time, no stale in-memory copy carried over).
-        hostBuilder.Services.AddTransient<OptionsSettingsService>();
-        hostBuilder.Services.AddTransient<OptionsWindowViewModel>();
-
-        // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
-        // Always boots into English; restoring a persisted non-English culture is a separate,
-        // later step (once ScanlineStudio.Settings has a culture section to restore from).
-        var localeDirectory = Path.Combine(AppContext.BaseDirectory, "assets", "locale");
-        hostBuilder.Services.AddSingleton<ILocalizationService>(sp =>
-            new JsonLocalizationService(localeDirectory, sp.GetRequiredService<ILogger<JsonLocalizationService>>()));
-
-        hostBuilder.Services.AddSingleton<IFilePickerService, FilePickerService>();
-
-        // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
-        // automatically by DI straight into MainViewModel's constructor (replaces the former
-        // AppDockFactory, which built these same 4 instances by hand). TxImageEditorPaneViewModel is
-        // NOT registered here -- it's constructed dynamically per edit session (with runtime-only
-        // args: the picked image + target mode), same as before.
-        hostBuilder.Services.AddSingleton<WaterfallPaneViewModel>();
-        hostBuilder.Services.AddSingleton<RxImagePaneViewModel>();
-        hostBuilder.Services.AddSingleton<RxHistoryPaneViewModel>();
-        hostBuilder.Services.AddSingleton<TxControlsPaneViewModel>();
-        hostBuilder.Services.AddSingleton<LogbookPaneViewModel>();
-
-        // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
-        // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio
-        // context for real, which must not run at process start on a machine with no audio server.
-        // Nothing resolves these from the UI yet (ScanlineStudio.Application has no real source files today,
-        // confirmed via this project's own Opus plan-review pass) -- this registration exists so
-        // the composition root is ready once something does, not because a consumer exists now.
-        // Neither type may be referenced from ScanlineStudio.UI directly per spec/01-architecture.md's
-        // layering rule (UI only talks to ScanlineStudio.Application service interfaces); resolving them
-        // here, in ScanlineStudio.Host, does not violate that.
-        hostBuilder.Services.AddSingleton<IAudioEngine, MiniAudioEngine>();
-        hostBuilder.Services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
-
-        // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
-        // concurrent session, matching the single IAudioEngine instance above).
-        // Factories, not eagerly-constructed instances: the decoder reads both decoder settings and
-        // the process-lifetime DSP sample rate; encoder and waterfall resolve that decoder-owned rate
-        // so capture/RX/display/TX cannot silently disagree.
-        // Ultracode audit finding #34: RestartableSstvDecoder (not AnalogFmSstvDecoder directly)
-        // periodically discards/reconstructs the whole decoder object graph to avoid an int-overflow
-        // before its int absolute-index space can overflow -- see that class's own doc comment. Every
-        // consumer only ever holds ISstvDecoder, so this swap is fully transparent.
-        RegisterSstvServices(hostBuilder.Services);
-
-        // Image pipeline (step 5) -- ReceivedImageBuffer's constructor takes ISstvDecoder, resolved
-        // automatically from the registration above (it subscribes to LineDecoded/DecodeRestarted
-        // itself; see that class's own doc comment for why this is layering-legal).
-        hostBuilder.Services.AddSingleton<IImageFileLoader, ImageFileLoader>();
-        hostBuilder.Services.AddSingleton<IReceivedImageBuffer, ReceivedImageBuffer>();
-        // Gallery pane's "Export frame" (2026-08-15) -- re-saves an already-received image file to a
-        // user-chosen location, optionally re-encoded as JPEG.
-        hostBuilder.Services.AddSingleton<IReceivedFrameExporter, ReceivedFrameExporter>();
-        // TX template editor persistence (Phase 5, spec/15-template-designer.md) -- IImageSourceWriter
-        // is the missing "write an IImageSource out as a PNG" counterpart to IImageFileLoader;
-        // TemplateStore (Application layer) depends on it, IImageFileLoader, and
-        // ITransmitImagePreparer, never ImageSharp directly.
-        hostBuilder.Services.AddSingleton<IImageSourceWriter, ImageSourceWriter>();
-        hostBuilder.Services.AddSingleton<ITemplateStore, TemplateStore>();
-
-        // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
-        // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the
-        // DI graph depends on it as a constructor parameter the way ReceivedImageBuffer's ISstvDecoder
-        // subscription gets triggered automatically -- its own event subscriptions only happen once
-        // something actually asks the container to build one).
-        hostBuilder.Services.AddSingleton<IStockImageLibrary, StockImageLibrary>();
-        hostBuilder.Services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
-        hostBuilder.Services.AddSingleton<ReceiveHistoryRecorder>();
-
-        // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
-        // (same history.db file as RX history above), ADIF import/export, ADIF-over-UDP streaming
-        // (generalized 2026-08-15 from a GridTracker-only streamer to fan the same WSJT-X
-        // LoggedADIF datagram out to any configured destination -- GridTracker, N1MM Logger+,
-        // Log4OM, or anything else that speaks the same protocol), and QRZ.com Logbook API upload.
-        // No UI wired to ADIF UDP streaming yet this piece -- settings only reachable by
-        // hand-editing settings.json until the Options-dialog piece lands.
-        hostBuilder.Services.AddSingleton<ILogbookRepository, SqliteLogbookRepository>();
-        hostBuilder.Services.AddSingleton<IAdifExporter, AdifExporter>();
-        hostBuilder.Services.AddSingleton<IAdifImporter, AdifImporter>();
-        hostBuilder.Services.AddSingleton<IAdifUdpStreamer, AdifUdpStreamer>();
-
-        // QRZ.com Logbook API (upload/push) -- own named HttpClient with an explicit timeout, same
-        // rationale as QrzXmlLookup below: a hung QRZ connection must not pin the Logbook pane's
-        // upload path on the default 100s (functional-audit finding: QrzLogbookUploader requests
-        // this exact name via IHttpClientFactory.CreateClient, so without this registration it got
-        // default HttpClient options -- 100s -- instead). Credentials travel in a POST body here,
-        // not a GET query string, so (unlike QrzXmlLookup below) the default request-logging
-        // handler never logs them in plaintext -- RemoveAllLoggers() is not needed.
-        hostBuilder.Services.AddHttpClient("QrzLogbookApi", c => c.Timeout = TimeSpan.FromSeconds(15));
-        hostBuilder.Services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
-
-        // QRZ.com XML Callbook lookup (spec/08-logging.md's "QRZ.com lookup" section) -- a
-        // DIFFERENT QRZ product from the upload API above (username/password auth, pull/enrich
-        // direction, not API-key/push). Its own named HttpClient with an explicit timeout, same
-        // rationale as QrzLogbookApi above: a hung QRZ connection must not pin a Receive-tab
-        // "Lookup QRZ" button disabled for the default 100s.
-        //
-        // RemoveAllLoggers() IS needed here, unlike QrzLogbookApi above (real-window-testing-caught
-        // gap in an earlier draft): IHttpClientFactory's own built-in LoggingHttpMessageHandler logs
-        // the full request URI at Information level by default -- and this API sends credentials as
-        // GET query parameters (QRZ's own wire format, not this app's choice), so without this call,
-        // a real QRZ password lands in ~/.local/share/ScanlineStudio/logs/app.log in plaintext every
-        // time this client is used, regardless of anything QrzCallsignLookup's own Log class does or
-        // doesn't log. Confirmed via a real manual test against the live QRZ server: the log line
-        // read "GET https://xmldata.qrz.com/xml/current/?username=...&password=<plaintext>&agent=..."
-        // before this fix.
-        hostBuilder.Services.AddHttpClient("QrzXmlLookup", c => c.Timeout = TimeSpan.FromSeconds(15)).RemoveAllLoggers();
-        hostBuilder.Services.AddSingleton<IQrzCallsignLookup, QrzCallsignLookup>();
-
-        // TX image editor (spec/07-image-pipeline.md's "TX image editor" section) -- the
-        // Crop/Resize/ApplyOverlay pipeline both TxImageEditorPaneViewModel's live preview and
-        // TxControlsPaneViewModel's mode-change reflow run against.
-        hostBuilder.Services.AddSingleton<ITransmitImagePreparer, TransmitImagePreparer>();
-        hostBuilder.Services.AddSingleton<IMacroTextResolver, MacroTextResolver>();
-
-        // Radio layer -- all three backends now registered (Settings/Options Piece 3): None,
-        // rigctld, and linked Hamlib. RadioController's constructor takes
-        // IEnumerable<IRadioProtocolFactory>, resolved automatically from every factory registered
-        // here, and requires exactly one CanHandle match per connection attempt -- the real gap
-        // this closes is that NEITHER NoneRadioProtocolFactory nor HamlibProtocolFactory was
-        // registered before, so the default "none" BackendId (or a user picking Hamlib in Options)
-        // would throw InvalidOperationException on connect, silently masked by the bare try/catch
-        // below. HamlibProtocolFactory.Create() is safe to call unconditionally even when
-        // libhamlib isn't installed on this machine -- HamlibRuntime's constructor catches
-        // discovery failure internally (IsAvailable=false) rather than throwing; the throw only
-        // happens later, if the user actually selects Hamlib and tries to connect.
-        hostBuilder.Services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
-        hostBuilder.Services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
-        hostBuilder.Services.AddSingleton<IRadioProtocolFactory>(sp => HamlibProtocolFactory.Create(loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
-        hostBuilder.Services.AddSingleton<IRadioController, RadioController>();
-
-        // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
-        // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
-        hostBuilder.Services.AddSingleton<IRadioSessionService, RadioSessionService>();
-        hostBuilder.Services.AddSingleton<ISstvSessionService, SstvSessionService>();
-        hostBuilder.Services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
+        // Tier C audit finding: extracted from Main into its own testable method (previously all
+        // ~150 lines of pure `IServiceCollection` registration lived inline in Main, structurally
+        // untestable -- SstvCompositionRootTests.cs could only exercise RegisterSstvServices below,
+        // 3 of ~35 registrations. A missing/broken registration (or a missing startup step entirely
+        // -- exactly how the culture-restore blocker above went unnoticed) surfaced only at first
+        // real resolve in a real run. Same extraction shape RegisterSstvServices already established
+        // for the SSTV DSP core registrations below.
+        RegisterServices(hostBuilder.Services);
 
         // A DI-graph error (a missing registration, a bad factory lambda) here is otherwise an
         // unlogged crash before the window ever appears -- there is no logger to report through
@@ -286,6 +142,32 @@ internal static partial class Program
         catch (Exception ex)
         {
             Log.ReceiveHistoryRecorderResolveFailed(logger, ex);
+        }
+
+        // Tier C audit finding (blocker): restoring a persisted non-English culture was never
+        // actually implemented, despite two separate doc comments (LocalizationSettings.cs's own,
+        // JsonLocalizationService.cs's own) explicitly assigning this exact step to the composition
+        // root. A user's chosen language reverted to English on every relaunch, while the Options
+        // dialog kept SHOWING the persisted (non-English) choice -- it reads the raw settings
+        // section directly, not the live service's CurrentCulture -- so the dialog visibly
+        // disagreed with what was actually on screen. Must run before SetupWithLifetime below: that
+        // resolves MainViewModel and starts evaluating XAML `{loc:Translate}` bindings, so restoring
+        // the culture any later would be a no-op for everything already on screen. Same defensive
+        // shape as every other startup step here -- a bad/unrecognized persisted culture code (or
+        // any other failure) must not prevent the UI from starting, just leave it in English.
+        try
+        {
+            var localizationSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
+                .GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings);
+            if (localizationSettings?.CultureCode is { } cultureCode)
+            {
+                host.Services.GetRequiredService<ILocalizationService>().SetCultureAsync(CultureInfo.GetCultureInfo(cultureCode)).GetAwaiter().GetResult();
+                Log.CultureRestored(logger, cultureCode);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.CultureRestoreFailed(logger, ex);
         }
 
         // Apply a settings-driven process priority, if configured -- a QoL knob, not a startup
@@ -401,6 +283,166 @@ internal static partial class Program
         }
     }
 
+    internal static void RegisterServices(IServiceCollection services)
+    {
+        services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
+
+        // First IHttpClientFactory consumer in this codebase (QrzLogbookUploader) -- no prior
+        // registration to match, this is the standard AddHttpClient() entry point.
+        services.AddHttpClient();
+
+        // Singleton, not transient: resolved exactly once at startup (App.axaml.cs) as the app's
+        // one root view-model, but a second resolve would silently fork
+        // TxControlsPaneViewModel.RadioStatus (assigned once in this constructor, from a singleton
+        // TxControlsPaneViewModel) into a second, out-of-sync RadioStatusViewModel instance -- the
+        // exact forked-persistence failure the RadioStatus wiring is designed to avoid. Only one
+        // resolve site exists today, so this was a dormant risk, not an active bug; registering it
+        // correctly here closes it off rather than leaving it to bite a future second call site.
+        services.AddSingleton<MainViewModel>();
+
+        // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
+        // (re-reads settings.json from disk each time, no stale in-memory copy carried over).
+        services.AddTransient<OptionsSettingsService>();
+        services.AddTransient<OptionsWindowViewModel>();
+
+        // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
+        // Always boots into English; restoring a persisted non-English culture happens later in Main
+        // (Tier C audit finding -- this comment used to say "a separate, later step, once
+        // ScanlineStudio.Settings has a culture section to restore from" and that step never actually
+        // landed even after the section did; see the culture-restore block in Main).
+        var localeDirectory = Path.Combine(AppContext.BaseDirectory, "assets", "locale");
+        services.AddSingleton<ILocalizationService>(sp =>
+            new JsonLocalizationService(localeDirectory, sp.GetRequiredService<ILogger<JsonLocalizationService>>()));
+
+        services.AddSingleton<IFilePickerService, FilePickerService>();
+
+        // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
+        // automatically by DI straight into MainViewModel's constructor (replaces the former
+        // AppDockFactory, which built these same 4 instances by hand). TxImageEditorPaneViewModel is
+        // NOT registered here -- it's constructed dynamically per edit session (with runtime-only
+        // args: the picked image + target mode), same as before.
+        services.AddSingleton<WaterfallPaneViewModel>();
+        services.AddSingleton<RxImagePaneViewModel>();
+        services.AddSingleton<RxHistoryPaneViewModel>();
+        services.AddSingleton<TxControlsPaneViewModel>();
+        services.AddSingleton<LogbookPaneViewModel>();
+
+        // Piece Engine 6. Registered by type, not an eagerly-constructed instance (unlike
+        // ISettingsStore above) -- MiniAudioEngine's constructor initializes the native miniaudio
+        // context for real, which must not run at process start on a machine with no audio server.
+        // Nothing resolves these from the UI yet (ScanlineStudio.Application has no real source files today,
+        // confirmed via this project's own Opus plan-review pass) -- this registration exists so
+        // the composition root is ready once something does, not because a consumer exists now.
+        // Neither type may be referenced from ScanlineStudio.UI directly per spec/01-architecture.md's
+        // layering rule (UI only talks to ScanlineStudio.Application service interfaces); resolving them
+        // here, in ScanlineStudio.Host, does not violate that.
+        services.AddSingleton<IAudioEngine, MiniAudioEngine>();
+        services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
+
+        // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
+        // concurrent session, matching the single IAudioEngine instance above).
+        // Factories, not eagerly-constructed instances: the decoder reads both decoder settings and
+        // the process-lifetime DSP sample rate; encoder and waterfall resolve that decoder-owned rate
+        // so capture/RX/display/TX cannot silently disagree.
+        // Ultracode audit finding #34: RestartableSstvDecoder (not AnalogFmSstvDecoder directly)
+        // periodically discards/reconstructs the whole decoder object graph to avoid an int-overflow
+        // before its int absolute-index space can overflow -- see that class's own doc comment. Every
+        // consumer only ever holds ISstvDecoder, so this swap is fully transparent.
+        RegisterSstvServices(services);
+
+        // Image pipeline (step 5) -- ReceivedImageBuffer's constructor takes ISstvDecoder, resolved
+        // automatically from the registration above (it subscribes to LineDecoded/DecodeRestarted
+        // itself; see that class's own doc comment for why this is layering-legal).
+        services.AddSingleton<IImageFileLoader, ImageFileLoader>();
+        services.AddSingleton<IReceivedImageBuffer, ReceivedImageBuffer>();
+        // Gallery pane's "Export frame" (2026-08-15) -- re-saves an already-received image file to a
+        // user-chosen location, optionally re-encoded as JPEG.
+        services.AddSingleton<IReceivedFrameExporter, ReceivedFrameExporter>();
+        // TX template editor persistence (Phase 5, spec/15-template-designer.md) -- IImageSourceWriter
+        // is the missing "write an IImageSource out as a PNG" counterpart to IImageFileLoader;
+        // TemplateStore (Application layer) depends on it, IImageFileLoader, and
+        // ITransmitImagePreparer, never ImageSharp directly.
+        services.AddSingleton<IImageSourceWriter, ImageSourceWriter>();
+        services.AddSingleton<ITemplateStore, TemplateStore>();
+
+        // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
+        // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the
+        // DI graph depends on it as a constructor parameter the way ReceivedImageBuffer's ISstvDecoder
+        // subscription gets triggered automatically -- its own event subscriptions only happen once
+        // something actually asks the container to build one).
+        services.AddSingleton<IStockImageLibrary, StockImageLibrary>();
+        services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
+        services.AddSingleton<ReceiveHistoryRecorder>();
+
+        // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
+        // (same history.db file as RX history above), ADIF import/export, ADIF-over-UDP streaming
+        // (generalized 2026-08-15 from a GridTracker-only streamer to fan the same WSJT-X
+        // LoggedADIF datagram out to any configured destination -- GridTracker, N1MM Logger+,
+        // Log4OM, or anything else that speaks the same protocol), and QRZ.com Logbook API upload.
+        // No UI wired to ADIF UDP streaming yet this piece -- settings only reachable by
+        // hand-editing settings.json until the Options-dialog piece lands.
+        services.AddSingleton<ILogbookRepository, SqliteLogbookRepository>();
+        services.AddSingleton<IAdifExporter, AdifExporter>();
+        services.AddSingleton<IAdifImporter, AdifImporter>();
+        services.AddSingleton<IAdifUdpStreamer, AdifUdpStreamer>();
+
+        // QRZ.com Logbook API (upload/push) -- own named HttpClient with an explicit timeout, same
+        // rationale as QrzXmlLookup below: a hung QRZ connection must not pin the Logbook pane's
+        // upload path on the default 100s (functional-audit finding: QrzLogbookUploader requests
+        // this exact name via IHttpClientFactory.CreateClient, so without this registration it got
+        // default HttpClient options -- 100s -- instead). Credentials travel in a POST body here,
+        // not a GET query string, so (unlike QrzXmlLookup below) the default request-logging
+        // handler never logs them in plaintext -- RemoveAllLoggers() is not needed.
+        services.AddHttpClient("QrzLogbookApi", c => c.Timeout = TimeSpan.FromSeconds(15));
+        services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
+
+        // QRZ.com XML Callbook lookup (spec/08-logging.md's "QRZ.com lookup" section) -- a
+        // DIFFERENT QRZ product from the upload API above (username/password auth, pull/enrich
+        // direction, not API-key/push). Its own named HttpClient with an explicit timeout, same
+        // rationale as QrzLogbookApi above: a hung QRZ connection must not pin a Receive-tab
+        // "Lookup QRZ" button disabled for the default 100s.
+        //
+        // RemoveAllLoggers() IS needed here, unlike QrzLogbookApi above (real-window-testing-caught
+        // gap in an earlier draft): IHttpClientFactory's own built-in LoggingHttpMessageHandler logs
+        // the full request URI at Information level by default -- and this API sends credentials as
+        // GET query parameters (QRZ's own wire format, not this app's choice), so without this call,
+        // a real QRZ password lands in ~/.local/share/ScanlineStudio/logs/app.log in plaintext every
+        // time this client is used, regardless of anything QrzCallsignLookup's own Log class does or
+        // doesn't log. Confirmed via a real manual test against the live QRZ server: the log line
+        // read "GET https://xmldata.qrz.com/xml/current/?username=...&password=<plaintext>&agent=..."
+        // before this fix.
+        services.AddHttpClient("QrzXmlLookup", c => c.Timeout = TimeSpan.FromSeconds(15)).RemoveAllLoggers();
+        services.AddSingleton<IQrzCallsignLookup, QrzCallsignLookup>();
+
+        // TX image editor (spec/07-image-pipeline.md's "TX image editor" section) -- the
+        // Crop/Resize/ApplyOverlay pipeline both TxImageEditorPaneViewModel's live preview and
+        // TxControlsPaneViewModel's mode-change reflow run against.
+        services.AddSingleton<ITransmitImagePreparer, TransmitImagePreparer>();
+        services.AddSingleton<IMacroTextResolver, MacroTextResolver>();
+
+        // Radio layer -- all three backends now registered (Settings/Options Piece 3): None,
+        // rigctld, and linked Hamlib. RadioController's constructor takes
+        // IEnumerable<IRadioProtocolFactory>, resolved automatically from every factory registered
+        // here, and requires exactly one CanHandle match per connection attempt -- the real gap
+        // this closes is that NEITHER NoneRadioProtocolFactory nor HamlibProtocolFactory was
+        // registered before, so the default "none" BackendId (or a user picking Hamlib in Options)
+        // would throw InvalidOperationException on connect, silently masked by the bare try/catch
+        // below. HamlibProtocolFactory.Create() is safe to call unconditionally even when
+        // libhamlib isn't installed on this machine -- HamlibRuntime's constructor catches
+        // discovery failure internally (IsAvailable=false) rather than throwing; the throw only
+        // happens later, if the user actually selects Hamlib and tries to connect.
+        services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
+        services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
+        services.AddSingleton<IRadioProtocolFactory>(sp => HamlibProtocolFactory.Create(loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton<IRadioController, RadioController>();
+
+        // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
+        // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
+        services.AddSingleton<IRadioSessionService, RadioSessionService>();
+        services.AddSingleton<ISstvSessionService, SstvSessionService>();
+        services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
+    }
+
     internal static void RegisterSstvServices(IServiceCollection services)
     {
         services.AddSingleton<ISstvDecoder>(CreateSstvDecoder);
@@ -410,12 +452,44 @@ internal static partial class Program
 
     internal static RestartableSstvDecoder CreateSstvDecoder(IServiceProvider services)
     {
+        var loggerFactory = services.GetRequiredService<ILoggerFactory>();
         var appSettings = services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
-        var audioSettings = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
-            ?? new AudioDeviceSettings();
+
+        // Tier C audit finding (risk): GetSection's own Deserialize call throws JsonException for a
+        // wrong-typed value in a hand-edited/version-skewed settings.json (e.g. "SampleRate": "auto")
+        // -- unlike JsonSettingsStore.LoadAsync itself (already hardened against a corrupt FILE),
+        // this is the third instance in this codebase of an unguarded settings-SECTION read reaching
+        // a DI factory with no try/catch. Since this factory backs a singleton, a throw here is not
+        // even one-shot: DI does not cache a failed construction, so the NEXT resolve (unguarded,
+        // reached via SetupWithLifetime -> MainViewModel below) retries and throws again -- past the
+        // one caller (StartReceivingAsync's own try/catch above) that happened to catch it the first
+        // time. Same "log and fall back to defaults" pattern already established everywhere else in
+        // this file for exactly this failure class.
+        AudioDeviceSettings audioSettings;
+        try
+        {
+            audioSettings = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+                ?? new AudioDeviceSettings();
+        }
+        catch (JsonException ex)
+        {
+            Log.SettingsSectionReadFailed(loggerFactory.CreateLogger(nameof(Program)), AudioDeviceSettings.SectionKey, ex);
+            audioSettings = new AudioDeviceSettings();
+        }
+
         var sampleRate = SstvSampleRate.NormalizePersisted(audioSettings.SampleRate);
-        var decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
-            ?? new SstvDecoderSettings();
+
+        SstvDecoderSettings decoderSettings;
+        try
+        {
+            decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                ?? new SstvDecoderSettings();
+        }
+        catch (JsonException ex)
+        {
+            Log.SettingsSectionReadFailed(loggerFactory.CreateLogger(nameof(Program)), SstvDecoderSettings.SectionKey, ex);
+            decoderSettings = new SstvDecoderSettings();
+        }
 
         // Absent or out-of-range values use the documented legacy-derived defaults. SenseLevel's
         // distinct out-of-range fallback remains inside AnalogFmSstvDecoder's constructor.
@@ -433,7 +507,7 @@ internal static partial class Program
             rxBpfPreset: rxBpfPreset,
             rxBufferMode: rxBufferMode,
             sampleRate: sampleRate,
-            loggerFactory: services.GetRequiredService<ILoggerFactory>());
+            loggerFactory: loggerFactory);
     }
 
     internal static AnalogFmSstvEncoder CreateSstvEncoder(IServiceProvider services) =>
@@ -485,5 +559,14 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Host teardown (DisposeAsync) threw; exiting anyway")]
         public static partial void TeardownThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Restored persisted UI culture '{CultureCode}'")]
+        public static partial void CultureRestored(ILogger logger, string cultureCode);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI culture; continuing in English")]
+        public static partial void CultureRestoreFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to read settings section '{SectionKey}'; using defaults")]
+        public static partial void SettingsSectionReadFailed(ILogger logger, string sectionKey, Exception ex);
     }
 }
