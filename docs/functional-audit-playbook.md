@@ -5908,3 +5908,40 @@ bug; round 2 found and fixed a real regression round 1's own fix introduced; rou
 one trivial hardening fix applied. Scope necessarily expanded beyond the original two files to
 `Core.Imaging` and `UI` to fix the round-2 regression -- not scope creep, a direct consequence of
 this chunk's own fix. Committed.
+
+## Chunk 5 (Core.Logbook): SqliteLogbookRepository.cs, SqliteReceiveHistoryStore.cs
+
+**Round 1** -- GO (unconditional). Explicitly chased chunk 1-4's tracked failure class plus SQL/
+concurrency-specific risks: SQL injection (none -- every dynamic `CommandText` fragment is constant,
+all values go through `AddWithValue`), `AddWithValue` type-inference mismatches against declared
+column types (none), the retention-trim exemption logic under a concurrent `SetNoteAsync`/
+`SetFlaggedAsync`/`SetLinkedQsoIdAsync` race (sound -- single atomic `DELETE`, SQLite serializes it),
+the in-place schema migration's concurrency claim (verified correct -- `BEGIN IMMEDIATE` takes the
+write lock before the `PRAGMA table_info` probe runs, so a racing process can't act on stale schema),
+and the `GLOB '*_partial_????????.png'` backfill pattern against `ReceiveHistoryRecorder`'s actual
+current abandoned-image filename format (still matches exactly).
+
+One risk found, same failure class as every prior chunk: `SqliteLogbookRepository.SearchAsync` used
+a plain `Enum.Parse<RadioMode>` on the stored `Mode` column with no fallback, unlike
+`SqliteReceiveHistoryStore.ParseDecodeState`'s own defensive pattern just a few hundred lines away in
+the sibling file -- one unrecognized value (a future/older app version, hand-edited or
+restored-from-backup DB) would throw out of a read-only query and take down the ENTIRE logbook list,
+not just that row. Unreachable with today's writers, but cheap and exactly on-pattern to fix. Fixed:
+added a `ParseMode` helper mirroring `ParseDecodeState`'s `TryParse`-falls-back-to-a-safe-default
+shape (`RadioMode.Unknown`, whose own doc comment already requires this). Added
+`SearchAsync_UnrecognizedModeValue_FallsBackToUnknown_InsteadOfThrowing`, which writes a bad `Mode`
+value directly via raw SQL (bypassing `AddAsync`'s own serialization, which can never itself produce
+an unrecognized value) to prove the fallback path. Remaining findings (all nit-tier, no test-coverage
+implication, logged as deferred backlog, not fixed): `SearchAsync` has no failure logging unlike its
+sibling writes, `MaxEntries: 0` from a hand-edited settings file still wipes every untouched row
+(already-tracked chunk-4 backlog item, confirmed but not re-fixed here), `SqliteLogbookRepository`
+has no migration path at all for a future schema change (asymmetric with its sibling, not a bug
+today -- there's only ever been one schema version), unused `SqliteCommand` objects are never
+explicitly disposed (safe in practice via connection close), and a stale test-fixture comment in
+`SqliteReceiveHistoryStoreTests.cs` still describes the pre-chunk-4 completed-image filename shape.
+117/117 `Core.Logbook.Tests` pass, clean build.
+
+**Chunk 5 CLOSED (2026-08-22)** -- 1 round, clean GO, one on-pattern trivial fix applied with a new
+regression test, per standing practice. Committed. **This closes the entire `Core.Logbook` sweep**
+(chunks 1-5, `docs/functional-audit-playbook.md`'s own Tier B scope table) -- next up per that
+table: `Core.Imaging`, then `UI/ViewModels`.
