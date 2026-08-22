@@ -3229,6 +3229,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             // never affects pipeline output -- same tier as Locked itself just above.
             or nameof(ImageElementViewModel.IsBackground)
             or nameof(ImageElementViewModel.BlocksHitTesting)
+            // Tier B audit finding: IsSelected/IsEditingText are the SAME pure-interaction-state
+            // shape as Locked/IsBackground/BlocksHitTesting just above -- neither can ever affect
+            // pipeline output, but wasn't filtered, so clicking a different element on the canvas
+            // (which flips IsSelected false on the old element and true on the new) fired TWO extra
+            // full Crop->Resize->ApplyAdjustments->ApplyTemplate passes, two extra
+            // RescanTemplateVariables sweeps, and two extra PreviewImage bitmap allocations for a
+            // pure selection change -- output stayed correct, this is a perf-only fix.
+            or nameof(ITemplateElementViewModel.IsSelected)
+            or nameof(OverlayElementViewModel.IsEditingText)
             // Code-review nit, fixed here: HasStroke is a derived bool of StrokeColor (raised by
             // OnStrokeColorChanged), not new information -- without this, every stroke-color edit
             // fired two full Crop->Resize->ApplyTemplate passes (one from StrokeColor's own
@@ -3664,6 +3673,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// rect.</summary>
     private void ApplyState(EditorSnapshot snapshot)
     {
+        // Tier B audit finding: Undo/Redo (both funnel through here) never reset these three, unlike
+        // PushUndoSnapshot/PushUndoSnapshotCoalesced, which both do -- an Undo/Redo IS a real state
+        // change, same as any other edit, so it must disarm a pending Cancel/Recall confirmation
+        // (IsCancelArmed's own doc comment: "a stale arm from long before would silently skip the
+        // warning on a LATER, unrelated Cancel click") and reset any in-progress property-coalescing
+        // window. Without the latter reset specifically: Undo landing inside an open coalescing
+        // window (e.g. Undo right after a slider drag, before that drag's own coalesce window would
+        // naturally close) left _pendingCoalesceProperty pointing at the now-reverted property, so
+        // the VERY NEXT edit to that same property silently coalesced into the Undo's own restored
+        // snapshot instead of pushing a fresh step -- the edit became invisibly non-undoable, with
+        // HasUnsavedEdits reading false while the document was actually dirty.
+        IsCancelArmed = false;
+        _pendingRecallTemplateId = null;
+        _pendingCoalesceProperty = null;
+
         _suspendPreview = true;
         try
         {
