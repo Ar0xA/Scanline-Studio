@@ -6196,3 +6196,44 @@ chunk" -- the raise-assertion test gap is optional hardening, not a gate, logged
 backlog rather than added now to keep pace through the remaining large `UI/ViewModels` scope.
 
 **Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, no fixes needed.
+
+## Chunk 3: QsoLinkWindowViewModel.cs, ReadyRackViewModel.cs (+ TemplateListRowViewModel, ReadyRackSlotViewModel)
+
+**Round 1** -- GO (unconditional). Chased 5 specific race/state-machine hypotheses, all cleared:
+`QsoLinkWindowViewModel`'s manual re-entrancy guards (no TOCTOU -- `AsyncRelayCommand.ExecuteAsync`
+runs synchronously up to its first `await`, and both guarded methods set `IsBusy = true` before
+that point), the `_createdQsoId` double-QSO-creation guard (airtight, three layers deep), the
+two-store non-transactional write order in both link paths (correct, and a swallowed reverse-FK
+failure is genuinely inert -- traced every `ReceivedImageId` consumer, nothing reads it), the
+`ReadyRackViewModel.CanPin` full-rack-no-op fix's completeness (complete -- `TogglePinAsync`
+re-reads the pin list fresh every call, so a stale `CanPin` can never over-pin), and the delete
+arm/confirm state machine surviving an unrelated `RefreshAsync` (safe -- template ids are
+GUID-suffixed, never reused).
+
+Found no blocker. Two risk-tier UI-state-staleness findings, both fixed as trivial same-round
+hardening (the auditor's own words: "worth taking opportunistically," not gating): (1) a failed
+`DeleteAsync` used to clear `_pendingDeleteId` unconditionally BEFORE the delete attempt, so a
+failure left the row's own `IsPendingDelete` still true (still rendering "confirm delete") while
+the tracking field was already null -- the next click on that same row read as a fresh arm instead
+of a confirm, taking three clicks to actually retry; now stays armed on failure so the very next
+click retries directly. (2) `RefreshAsync`'s error banner (`StatusMessage`) was only ever cleared
+by `DeleteAsync`'s own success path -- a transient failure (e.g. a locked settings file) left it up
+forever even after later successful refreshes; now cleared on every successful refresh. Also fixed
+the same class of asymmetry in `QsoLinkWindowViewModel.SearchAsync`, which never cleared
+`ErrorMessage` on success unlike its sibling command methods. Added
+`DeleteAsync_ConfirmClickThrows_StaysArmedSoTheNextClickRetriesInsteadOfReArming` -- the auditor
+flagged the missing delete-failure test as precisely what let the first bug survive. 675/675
+`UI.Tests` pass (was 674 after chunk 1, +1), clean solution-wide build.
+
+Logged as deferred backlog, not fixed (all narrow, self-healing, or design-level, not one-line
+fixes): a Gallery-originated QSO's QRZ-upload rejection is silently dropped from the UI (logged at
+Warning server-side, but the dialog closes on success with no on-screen indication -- unlike the
+sibling `LogbookPaneViewModel` call site for the same API, which does surface it; needs a design
+decision since the dialog currently always closes on success, not a one-liner); the constructor's
+own fire-and-forget initial `SearchAsync()` call can interleave with a user-triggered search (rare,
+self-heals on the next search); a hand-edited settings file with a duplicate pinned template id
+survives the dangling-id sweep (unreachable via the UI); two overlapping `RefreshAsync` calls could
+theoretically clobber each other's pin-list write (narrow, self-correcting on the next pin).
+
+**Chunk 3 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes + one regression test per
+standing practice.

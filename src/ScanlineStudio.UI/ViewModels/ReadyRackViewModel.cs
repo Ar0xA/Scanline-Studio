@@ -241,6 +241,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             RefreshFilteredTemplates();
             OnPropertyChanged(nameof(HasNoTemplates));
             OnPropertyChanged(nameof(TemplateCount));
+
+            // Tier B audit finding: only DeleteAsync's own success path used to clear this -- a
+            // transient failure here (e.g. a locked settings file) left the error banner up forever
+            // afterward, even once a later refresh succeeded cleanly.
+            StatusMessage = null;
         }
         catch (Exception ex)
         {
@@ -341,14 +346,20 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             return;
         }
 
-        _pendingDeleteId = null;
         try
         {
             await _templateStore.DeleteAsync(row.Id);
+            _pendingDeleteId = null;
             StatusMessage = null;
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: this used to clear _pendingDeleteId unconditionally BEFORE the
+            // try, so a failed delete left the row's own IsPendingDelete=true (still rendering
+            // "confirm delete") while _pendingDeleteId was already null -- the next click on that
+            // SAME row read as a fresh arm (no visible change, since it was already showing armed)
+            // instead of a confirm, taking three clicks to actually retry. Stays armed on failure
+            // instead, so the very next click on this row retries the delete directly.
             Log.DeleteFailed(_logger, row.Id, ex);
             StatusMessage = _localization.GetString("Panes.TxImageEditor.DeleteTemplateFailed");
             return;
