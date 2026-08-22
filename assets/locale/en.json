@@ -269,6 +269,7 @@
   "Panes.RxHistory.NoteWatermark": "Add a note...",
   "Panes.RxHistory.FlagLabel": "Flagged",
   "Panes.RxHistory.Error.EntryNoLongerExists": "This entry no longer exists -- it may have aged out of history.",
+  "Panes.RxHistory.Error.RefreshFailed": "Could not refresh the history list.",
   "Panes.RxHistory.Error.SaveNoteFailed": "Could not save the note.",
   "Panes.RxHistory.Error.SaveFlagFailed": "Could not update the flag.",
   "Panes.RxHistory.Error.ExportFrameFailed": "Could not export the frame.",

@@ -3119,6 +3119,80 @@ public sealed class PaneViewModelTests
         Assert.Null(vm.ExportStatusMessage);
     }
 
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RefreshAsync_QueryThrows_SetsErrorMessageAndKeepsStaleEntries()
+    {
+        // Tier B audit finding (round 1): RefreshAsync's catch block used to log and return with no
+        // ErrorMessage set. RefreshAsync fires on every incoming frame during an active session
+        // (OnRecorded), so a persistent failure (a locked/corrupt SQLite file) left the Gallery frozen
+        // on stale contents forever with zero user-visible indication anything was wrong.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Single(vm.Entries);
+
+        historyStore.ThrowOnQuery = new InvalidOperationException("database is locked");
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.Error.RefreshFailed", vm.ErrorMessage);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RefreshAsync_SucceedsAfterAPriorFailure_ClearsErrorMessage()
+    {
+        // Tier B audit finding (round 1): ErrorMessage is nulled only once RefreshAsync's query has
+        // actually succeeded, not unconditionally at the top of the method -- otherwise an unrelated
+        // stale error would flash away just because a refresh happened to start.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+            ThrowOnQuery = new InvalidOperationException("database is locked"),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.RxHistory.Error.RefreshFailed", vm.ErrorMessage);
+
+        historyStore.ThrowOnQuery = null;
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ExportFrameAsync_PickerThrows_SetsErrorMessage()
+    {
+        // Tier B audit finding (round 1): the picker call used to sit outside ExportFrameAsync's try
+        // block, so an exception from the platform storage provider escaped uncaught -- the Export
+        // button just appeared to silently do nothing, with no log line and no ErrorMessage.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var frameExporter = new FakeReceivedFrameExporter();
+        var filePicker = new FakeFilePickerService { ThrowOnPickSaveImageFile = new InvalidOperationException("storage provider unavailable") };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, frameExporter, filePicker);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ExportFrameCommand.ExecuteAsync(null);
+
+        Assert.Equal("Panes.RxHistory.Error.ExportFrameFailed", vm.ErrorMessage);
+        Assert.Empty(frameExporter.Calls);
+    }
+
     /// <summary>QsoLinkWindowViewModel.Linked has no public raise method (by design -- only its own
     /// LinkSelectedAsync/CreateAndLinkAsync fire it) -- reflection is the only way to simulate "the
     /// dialog just linked something" without actually driving a full search/create round-trip through
