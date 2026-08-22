@@ -6366,3 +6366,76 @@ also do).
 **Chunk 5 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 2 real bugs in the owning VM
 (a dead fill-bar control silently discarding operator input, and a canvas/preview divergence);
 round 2 clean GO with one more real bug found and fixed in the same pass.
+
+## Chunk 6: RadioStatusViewModel.cs (+ FrequencyPresetButtonViewModel, FrequencyPresetEditorRowViewModel)
+
+Densest chunk so far in prior-scrutiny terms -- many doc comments cite specific already-fixed
+"auditor-caught"/"code-review"/"plan-review" findings from before this sweep started. Treated as a
+reason to look harder, not a reason to assume clean.
+
+**Round 1** -- NOT GO. One real blocker plus several precedented risk-tier findings:
+
+- **[blocker]** `StoreCurrentPresetAsync` appended a row to `EditorRows` then called the
+  `SavePresetsCommand`, ignoring its outcome -- a failed save left the row in place with no shipped
+  UI able to remove it (`EditorRows`/`RemovePresetRowCommand` are deliberately unmapped), so a retry
+  after the failure appended a SECOND row, persisting a duplicate, permanently undeletable preset
+  once the save eventually succeeded. Same failure shape as the already-documented 2026-08-11
+  `_currentFrequencyHz > 0` fix ("would silently persist an unremovable preset"), just triggered by
+  retry-after-failure instead of never-polled state.
+- **[risk]** None of the 3 reentrancy-suppression flags (`_suppressModeCommand`/
+  `_suppressReceivingCommand`/`_suppressVolumePersist`) was exception-safe -- a throw from a
+  property setter's own `PropertyChanged` fan-out would leave a flag stuck `true` for the process
+  lifetime, permanently and silently dead-ing the Receiving toggle / mode command / volume
+  persistence with zero trace.
+- **[risk]** `SetModeSafeAsync` was the one command method diverging from every sibling's
+  `ErrorMessage` on-entry-null pattern -- a stale error could survive a later successful mode
+  change. `SetFrequencyAsync` still had the bare-cast truncation bug `SavePresetsAsync` already
+  fixed (auditor-caught 2026-08-11) but the fix was never applied to this sibling.
+- **[risk]** The constructor's own "retry `StartReceivingAsync`" logic set `IsReceiving = true`
+  inline, synchronously -- round 1 traced this to `JsonSettingsStore.LoadAsync`'s synchronous
+  `File.Exists`/`File.OpenRead` prefix running on the constructor's OWN calling thread (the UI
+  thread) before the first real `await`, a real startup-stall risk the file's own comment had
+  previously argued away, directly parallel to `SstvSessionService.StartReceivingAsync`'s own
+  established `Task.Run` wrap for the identical prefix.
+
+Fixed: split `SavePresetsAsync` into a thin `[RelayCommand]` wrapper around a new
+`SavePresetsInternalAsync() -> Task<bool>` (same command-wraps-internal-bool pattern as chunk 4's
+`LogbookPaneViewModel.RefreshAsync`/`RefreshInternalAsync`), letting `StoreCurrentPresetAsync` roll
+back its own appended row on failure; all 5 suppression-flag set/reset sites now wrapped in
+`try/finally`; `SetModeSafeAsync` now nulls `ErrorMessage` on entry; `SetFrequencyAsync` now uses
+`Math.Round` matching its sibling; the constructor now defers the retry's property set via
+`Dispatcher.UIThread.Post` instead of setting it inline. Two tests added/extended (a rollback
+assertion on the existing failure test, a new fail-then-retry-succeeds test proving exactly one
+preset persists, not two). 683/683 `UI.Tests` pass, clean solution-wide build.
+
+**Round 2** (fresh agent, full re-scan) -- **GO.** Verified the `StoreCurrentPresetAsync`/
+`SavePresetsInternalAsync` split is behaviorally identical to the pre-split command for its own
+direct "Save presets" button callers, confirmed the rollback can't remove the wrong row (reference
+identity -- `FrequencyPresetEditorRowViewModel` is a class, not a record, unlike its
+`FrequencyPresetButtonViewModel` sibling; explicitly flagged this as load-bearing on that type
+staying a class), confirmed both new/updated tests are genuine discriminators (fail against the
+pre-fix code, not tautologies), confirmed the constructor's deferred property set has no observable
+consumer that could see a transiently-wrong value (only two `Classes.` AXAML bindings read
+`IsReceiving`, both re-evaluate on the deferred set; net effect is strictly better than before --
+one dispatcher-turn "not receiving" flicker at startup instead of the PRE-fix behavior's own
+documented false "Receiving" for a possibly-long window), and confirmed all 5 try/finally wraps are
+structurally correct (flag-set and property-set both inside `try`, reset alone in `finally`, no
+reordering). Explicit "do not dispatch a round 3" call. Fixed the one cheap nit in the same pass: a
+stale doc comment claiming `ErrorMessage` has "5 write sites" (now 10, growing as sibling methods
+get fixed to match each other -- corrected to describe the actual, still-evolving count rather than
+re-pin a specific stale number).
+
+Deferred backlog, not fixed (explicitly judged not worth blocking on both rounds): no
+`IDisposable`/teardown path for the VM at all (benign -- DI-singleton lifetime -- except a pending
+400ms volume-debounce write is silently dropped with no flush if the app closes inside that
+window); asymmetric cancellation-vs-failure logging inside `PersistVolumeDebouncedAsync`;
+`SavePresetsInternalAsync` silently drops an unparseable-frequency row (unreachable, no shipped
+editor UI); `_catLinked`'s initial value can read `true` during a `RadioController`-side
+reconnect-backoff window; `FrequencyDisplay`/`ModeDisplay` deliberately not cleared on link-drop
+(self-consistent today, coupled to `CanStoreCurrentPreset`'s guard in a way that's undocumented as
+such); `StoreCurrentPresetAsync` pairs the rig's real frequency with the UI's `SelectedRadioMode`
+even if a prior `SetModeAsync` call actually failed (single-property scope, pre-existing).
+
+**Chunk 6 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed a real blocker (duplicate,
+undeletable presets on retry-after-failure) plus 4 precedented risk-tier fixes; round 2 clean GO
+with one more trivial fix (a stale doc comment) applied per standing practice.

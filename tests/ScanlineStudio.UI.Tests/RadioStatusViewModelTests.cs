@@ -140,6 +140,31 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.NotNull(vm.ErrorMessage);
+        // Tier B audit finding: this used to leave the appended row in EditorRows on a failed save
+        // -- since no shipped UI exposes EditorRows/RemovePresetRowCommand to delete it, a retry
+        // after the failure appended a SECOND row on top of the first, persisting a duplicate,
+        // permanently undeletable preset the moment the save eventually succeeded.
+        Assert.Empty(vm.EditorRows);
+    }
+
+    [AvaloniaFact]
+    public async Task StoreCurrentPresetCommand_RetryAfterAFailedSave_DoesNotPersistADuplicate()
+    {
+        var radioSession = new FakeRadioSessionService { ThrowOnSaveFrequencyPresets = true };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null); // fails
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.ThrowOnSaveFrequencyPresets = false;
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null); // retry, succeeds
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(radioSession.Presets);
+        Assert.Single(vm.Presets);
     }
 
     [AvaloniaFact]

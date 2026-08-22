@@ -51,11 +51,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private string? _errorMessage;
 
     /// <summary>Ultracode audit finding #34's automatic-restart mechanism -- deliberately a SEPARATE
-    /// property from <see cref="ErrorMessage"/>, not a reuse of it: <see cref="ErrorMessage"/> already
-    /// has 5 write sites with no priority order, 3 of which null it unconditionally on entry to an
-    /// unrelated action (editing the frequency box, applying a preset, hitting Tune), and
-    /// <see cref="SetReceivingSafeAsync"/>'s own success path nulls it too -- reusing it here would let
-    /// any of those silently wipe a maintenance message the user hasn't acted on yet.</summary>
+    /// property from <see cref="ErrorMessage"/>, not a reuse of it: <see cref="ErrorMessage"/> has
+    /// many write sites with no priority order across this class's near-identical command methods
+    /// (Tier B audit finding: stale count corrected here, was "5" -- now 10 assignment sites across
+    /// 7 methods and still growing as sibling methods get fixed to match each other, e.g.
+    /// <see cref="SetModeSafeAsync"/>'s own added null-on-entry), several of which null it
+    /// unconditionally on entry to an unrelated action (editing the frequency box, applying a
+    /// preset, hitting Tune, changing mode), and <see cref="SetReceivingSafeAsync"/>'s own success
+    /// path nulls it too -- reusing it here would let any of those silently wipe a maintenance
+    /// message the user hasn't acted on yet.</summary>
     [ObservableProperty]
     private string? _maintenanceMessage;
 
@@ -234,17 +238,27 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // wedged audio server, hang outright), not a single Dispatcher.Post hop. Accepted anyway:
         // on any healthy machine this resolves in well under a second, and the pathological-hang
         // case is a pre-existing risk in SetReceivingSafeAsync itself, not something this retry
-        // introduces -- not fixed here. Safe to fire synchronously from THIS constructor either
-        // way: RefreshAsync offloads via Task.Run, so this always yields before any of that device
-        // I/O runs, and the awaited chain in front of it (settings load) is a small local file read
-        // that completes inline regardless -- the constructor itself never blocks waiting for a
-        // result, it only kicks off work that continues after the constructor has already
-        // returned. A no-op when the earlier attempt already succeeded (the overwhelmingly common
-        // case): the `!_isReceiving` guard above skips the property set entirely, so
-        // OnIsReceivingChanged never fires and no redundant StartReceivingAsync call happens.
+        // introduces -- not fixed here. A no-op when the earlier attempt already succeeded (the
+        // overwhelmingly common case): the `!_isReceiving` guard above skips the property set
+        // entirely, so OnIsReceivingChanged never fires and no redundant StartReceivingAsync call
+        // happens.
+        //
+        // Tier B audit finding, correcting this comment's own prior claim: the settings-file read
+        // this retry's own await chain reaches (JsonSettingsStore.LoadAsync -> File.Exists/
+        // File.OpenRead) is NOT "inline regardless" -- it's the identical synchronous prefix
+        // SstvSessionService.StartReceivingAsync's OWN doc comment cites as the reason IT wraps that
+        // same call in Task.Run (a network-mounted/wedged settings path can make it genuinely slow
+        // or hang), and calling an async method runs synchronously up to its first real await --
+        // meaning this used to run that prefix inline on THIS constructor's own calling thread
+        // (App.axaml.cs resolves MainViewModel, and hence this VM, on the UI thread), a real
+        // startup-stall risk this comment previously argued away. Deferred via Dispatcher.UIThread.Post
+        // instead: the constructor returns immediately either way, and the property set (which
+        // raises PropertyChanged for the toggle binding) still happens on the UI thread, just as a
+        // queued callback rather than inline -- matching this class's own established
+        // deferred-cross-thread-work convention everywhere else in this file.
         if (!_isReceiving)
         {
-            IsReceiving = true;
+            Dispatcher.UIThread.Post(() => IsReceiving = true);
         }
     }
 
@@ -268,9 +282,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             FrequencyDisplay = $"{state.FrequencyHz / 1_000_000.0:0.000000} MHz";
             ModeDisplay = state.Mode.ToString();
 
-            _suppressModeCommand = true;
-            SelectedRadioMode = state.Mode;
-            _suppressModeCommand = false;
+            // Tier B audit finding: try/finally, not a bare set-then-reset -- a throw from
+            // SelectedRadioMode's own PropertyChanged fan-out (a binding/converter/subscriber) used
+            // to leave _suppressModeCommand stuck true for the process lifetime, permanently and
+            // silently suppressing every future user mode change (OnSelectedRadioModeChanged would
+            // keep early-returning forever). Same fix applied to every other suppression-flag
+            // set/reset pair in this class.
+            try
+            {
+                _suppressModeCommand = true;
+                SelectedRadioMode = state.Mode;
+            }
+            finally
+            {
+                _suppressModeCommand = false;
+            }
 
             IsKeyed = state.IsTransmitting;
             RigMetersDisplay = FormatRigMeters(state);
@@ -365,9 +391,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                _suppressVolumePersist = true;
-                TxVolumePercent = percent;
-                _suppressVolumePersist = false;
+                // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
+                // fix for _suppressModeCommand.
+                try
+                {
+                    _suppressVolumePersist = true;
+                    TxVolumePercent = percent;
+                }
+                finally
+                {
+                    _suppressVolumePersist = false;
+                }
             });
         }
         catch (Exception ex)
@@ -399,7 +433,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         try
         {
             ErrorMessage = null;
-            await _radioSession.SetFrequencyAsync((long)(mhz * 1_000_000)).ConfigureAwait(false);
+            // Math.Round, not a bare cast (Tier B audit finding -- the sibling SavePresetsAsync had
+            // this exact fix already, auditor-caught 2026-08-11, but it was never applied here): the
+            // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
+            // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
+            await _radioSession.SetFrequencyAsync((long)Math.Round(mhz * 1_000_000)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -442,8 +480,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private async Task StoreCurrentPresetAsync()
     {
         Log.StoreCurrentPresetInvoked(_logger, _currentFrequencyHz, SelectedRadioMode);
-        EditorRows.Add(new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, _currentFrequencyHz, SelectedRadioMode), RemovePresetRowCommand));
-        await SavePresetsAsync().ConfigureAwait(false);
+        var row = new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, _currentFrequencyHz, SelectedRadioMode), RemovePresetRowCommand);
+        EditorRows.Add(row);
+
+        // Tier B audit finding: this used to call the SavePresetsCommand's own method and ignore
+        // the outcome -- if the save failed, the just-added row stayed in EditorRows with nothing
+        // ever removing it (SavePresetsInternalAsync's own failure path deliberately leaves
+        // EditorRows untouched, matching its "report the error, don't discard unsaved edits"
+        // contract). Since no shipped UI exposes EditorRows/RemovePresetRowCommand at all ("Edit
+        // favourites list" is deliberately unmapped, see this method's own class-level doc comment),
+        // a retry after the failure appended a SECOND row on top of the first, persisting a
+        // duplicate, permanently undeletable preset the moment the save eventually succeeded.
+        if (!await SavePresetsInternalAsync().ConfigureAwait(false))
+        {
+            Dispatcher.UIThread.Post(() => EditorRows.Remove(row));
+        }
     }
 
     private bool CanStoreCurrentPreset() => _currentFrequencyHz > 0;
@@ -462,8 +513,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         EditorRows.Remove(row);
     }
 
+    /// <summary>Bound to the "Save presets" button -- the actual work (and its success/failure
+    /// signal) lives in <see cref="SavePresetsInternalAsync"/> below, same
+    /// command-wraps-internal-bool split as <c>LogbookPaneViewModel.RefreshAsync</c>/
+    /// <c>RefreshInternalAsync</c>'s own established pattern, needed so
+    /// <see cref="StoreCurrentPresetAsync"/> can react to a failed save without duplicating this
+    /// method's own body.</summary>
     [RelayCommand]
-    private async Task SavePresetsAsync()
+    private async Task SavePresetsAsync() => await SavePresetsInternalAsync().ConfigureAwait(false);
+
+    private async Task<bool> SavePresetsInternalAsync()
     {
         var presets = new List<FrequencyPreset>();
         foreach (var row in EditorRows)
@@ -483,11 +542,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             ErrorMessage = null;
             await _radioSession.SaveFrequencyPresetsAsync(presets).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() => RebuildPresetCollections(presets));
+            return true;
         }
         catch (Exception ex)
         {
             Log.SavePresetsFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.SavePresetsFailed"));
+            return false;
         }
     }
 
@@ -532,9 +593,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         Dispatcher.UIThread.Post(() =>
         {
             MaintenanceMessage = _localization.GetString("RadioStatus.Error.RxMaintenanceRequired");
-            _suppressReceivingCommand = true;
-            IsReceiving = false;
-            _suppressReceivingCommand = false;
+            // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same fix
+            // for _suppressModeCommand.
+            try
+            {
+                _suppressReceivingCommand = true;
+                IsReceiving = false;
+            }
+            finally
+            {
+                _suppressReceivingCommand = false;
+            }
         });
     }
 
@@ -575,9 +644,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             Dispatcher.UIThread.Post(() =>
             {
                 ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed");
-                _suppressReceivingCommand = true;
-                IsReceiving = !value;
-                _suppressReceivingCommand = false;
+                // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
+                // fix for _suppressModeCommand.
+                try
+                {
+                    _suppressReceivingCommand = true;
+                    IsReceiving = !value;
+                }
+                finally
+                {
+                    _suppressReceivingCommand = false;
+                }
             });
         }
     }
@@ -593,9 +670,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             await _sstvSession.StopReceivingAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                _suppressReceivingCommand = true;
-                IsReceiving = false;
-                _suppressReceivingCommand = false;
+                // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
+                // fix for _suppressModeCommand.
+                try
+                {
+                    _suppressReceivingCommand = true;
+                    IsReceiving = false;
+                }
+                finally
+                {
+                    _suppressReceivingCommand = false;
+                }
+
                 ErrorMessage = null;
             });
         }
@@ -657,6 +743,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private async Task SetModeSafeAsync(RadioMode value)
     {
+        // Tier B audit finding: every sibling command (SetFrequencyAsync/ApplyPresetAsync/
+        // SavePresetsAsync/TuneAsync null ErrorMessage on entry; SetReceivingSafeAsync/
+        // HaltReceivingAsync null it on success) manages ErrorMessage around its own outcome -- this
+        // one didn't, so a stale "No radio connected" from an earlier failed action could survive a
+        // later, genuinely successful mode change with nothing to clear it.
+        ErrorMessage = null;
         try
         {
             await _radioSession.SetModeAsync(value).ConfigureAwait(false);
