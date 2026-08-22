@@ -7478,3 +7478,72 @@ invariants' premises), not pattern-matched from the auditor's own suggested one-
 **Area 2 CLOSED (2026-08-22)** -- 1 round (GO, no blockers), 3 real risk-tier bugs fixed (2 of
 them regressions from the SAME prior widening, both latent behind `SetPttLockAsync` having zero
 production callers today but real and precisely characterized). Areas 3-5 remain.
+
+### Area 3: RX lifecycle + TX entry points (lines 1067-1458)
+
+`StartReceivingAsync`, `StopReceivingAsync`, `TransmitAsync`, `GetStationIdTransmitOptionsAsync`,
+`TuneAsync`, `Get`/`SetTxVolumePercentAsync`.
+
+**Round 1 verdict: NOT GO** -- 2 blockers, 3 risk-tier findings (batchable), several nits.
+
+**Blocker 1 (fixed): concurrent Start/Stop RX check-then-act silently drops a user command.**
+`_isReceiving` was read at entry and published only after several awaits in both methods, with no
+gate between them (unlike `_pttLockGate`'s identical shape for `SetPttLockAsync`). Real UI repro:
+`RadioStatusViewModel.SetReceivingSafeAsync` is fire-and-forget with no busy guard, and
+`HaltReceivingAsync` is a separate command hitting `StopReceivingAsync` concurrently -- a Start
+parked mid-flight (e.g. in device enumeration) let a concurrent Stop read `_isReceiving == false`
+and silently no-op, leaving capture live with the UI reporting "not receiving" and no error
+surfaced; the mirror ordering dropped a Start instead. Fix: new `_rxTransitionGate` (`SemaphoreSlim`,
+same shape as `_pttLockGate`) serializes the two methods' bodies (each extracted unchanged into a
+private `...LockedAsync` method). `StartReceivingAsync` waits on the caller's own `ct` (consistent
+with its existing cancellation contract). `StopReceivingAsync` -- called from `DisposeAsync` with no
+caller-supplied bound -- waits with a BOUNDED, uncancellable wait (`_cleanupTimeout`, matching every
+other cleanup-path wait in this file) instead: an unbounded wait there would let a slow, still-
+resolving concurrent Start (itself unbounded, a separate risk-tier finding below) hang
+`DisposeAsync` indefinitely, and would have deadlocked the pre-existing Round-21 test outright (that
+test awaits `DisposeAsync()` to completion before ever releasing the gate the racing Start holds).
+On timeout, `StopReceivingAsync` logs and returns without acting -- safe because by the time
+`DisposeAsync` calls it, `_disposed` is already true, so the racing Start's own pre-existing
+recheck-then-throw unwinds and closes the session it opened on its own.
+
+**Blocker 2 (fixed): `GetStationIdTransmitOptionsAsync` validated only the lower bound on
+`CwWpm`/`CwToneFrequencyHz`**, despite its own doc comment claiming full boundary validation and its
+sibling `TuneAsync` (30 lines away) actually implementing it. A corrupted/hand-edited settings.json
+value like `CwWpm: 1` (passes the old `> 0` check; 1110ms/dot, minutes of PTT-keyed CW after every
+image, none of `TuneAsync`'s own duration backstop on this path) or `CwToneFrequencyHz: 40000`
+(passes `> 0`; aliases above this file's encoder Nyquist to an arbitrary on-air tone) reached the
+transmitter with PTT keyed. Fix: widened both fallback checks from `> 0` to the Options dialog's own
+product-decided legitimate range (`OptionsWindowView.axaml`'s own `NumericUpDown` bounds: WPM
+10-50, tone 100-3000 Hz) -- outside that range, falls back to the documented default exactly like
+the pre-existing zero/negative case. Also closes `+Infinity` (passes a bare `> 0` unlike NaN, which
+a NaN comparison already excludes) via the new upper bound.
+
+Two regression tests added per blocker (`SstvSessionServicePttSafetyTests.cs`'s new "Tier B Area 3
+findings" section; `SstvSessionServiceStationIdTests.cs`). A third test attempting to cover
+`+Infinity` directly was dropped after discovering `System.Text.Json`'s default writer throws on
+`+Infinity` before the test's own settings-writing helper can even construct the scenario --
+documented in a comment where the test would have gone; the upper-bound fix's correctness for that
+case is covered by the 40000Hz test's own bound plus C# relational-pattern semantics (confirmed by
+round 2). 251/251 `Application.Tests` pass (was 248, +3), clean solution-wide build.
+
+**Round 2 (confirmation) verdict: GO.** Verified independently (static read, no shell access in
+that role): no reentrancy/self-deadlock across all 4 call sites into the gated methods; the bounded-
+timeout design on `StopReceivingAsync` is load-bearing, not just defensive (an unbounded wait would
+have deadlocked the pre-existing Round-21 test and, in production, `DisposeAsync` itself); both new
+regression tests genuinely fail against the pre-fix code; the WPM/tone bounds were independently
+re-derived from `OptionsWindowView.axaml` rather than trusted; NaN/±Infinity handling confirmed
+correct by C# relational-pattern semantics. Flagged 4 items, none blocking: (1) the bounded-timeout
+path narrows rather than fully closes the race for a >5s-wedged Start (already covered by the
+deferred unbounded-reads risk-tier finding, and now logged instead of silent); (2) a new bounded
+stall on the audio drain thread when `OnDecoderRestartCriticallyOverdue`'s synchronous
+`StopReceivingAsync()` call contends for the gate; (3) a stale field-doc/test-comment describing the
+old uncancellable-only wait; (4) a test timing-margin flake risk in the new concurrency test's
+default 300ms budget. All 4 addressed in a follow-up pass (doc/comment updates + widened test
+timeout to 30s) -- re-verified 251/251 pass, clean solution-wide build.
+
+**Area 3 CLOSED (2026-08-22)** -- 2 rounds (NOT GO -> GO), 2 real blockers fixed (a concurrency
+race with a live UI repro, and a settings-boundary validation gap with a live PTT-keyed-transmit
+consequence). 3 risk-tier findings and assorted nits from round 1 remain intentionally deferred/
+batched (unbounded device/settings reads in `StartReceivingAsync`; the `_disposed`
+recheck-then-publish ordering; a missing fault-observer on one abandoned-task site). Areas 4-5
+remain.
