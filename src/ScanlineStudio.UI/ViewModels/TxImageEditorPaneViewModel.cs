@@ -202,7 +202,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     // Fixed known-macro token names (Phase 3: name/grid pre-existing, freq/mode new) -- a {word}
     // token matching one of these is a MACRO reference, not a variable, and must never grow a
     // fill-bar row of its own.
-    private static readonly HashSet<string> KnownMacroTokenNames = new(StringComparer.Ordinal) { "name", "grid", "freq", "mode" };
+    //
+    // Tier B audit finding: this set was never updated when MacroTextResolver.ResolveBraceTokens
+    // added "dist"/"bearing" (2026-08-18) -- {dist}/{bearing} were silently treated as USER
+    // variables instead, growing phantom fill-bar rows the operator could type into, whose value
+    // MacroTextResolver's own switch intercepts before ever reaching the variables dictionary --
+    // so anything typed into those rows was accepted, displayed, persisted, and permanently
+    // ignored. Reachable directly from the UI: the TEXT STYLE tab's own chips insert both tokens.
+    private static readonly HashSet<string> KnownMacroTokenNames = new(StringComparer.Ordinal) { "name", "grid", "freq", "mode", "dist", "bearing" };
 
     // Suppresses RecomputePreview() while RotateCommand is mid-update (rotated working copy but
     // not-yet-transformed CropRect/overlay positions) -- without this, each overlay element's own
@@ -2494,6 +2501,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 {
                     referenced.Add(token);
                 }
+                else if (token is "dist" or "bearing")
+                {
+                    // Tier B audit follow-up: {dist}/{bearing} resolve FROM the "his_grid" variable
+                    // (MacroTextResolver.TryResolveDistanceBearing), not from a literal {his_grid}
+                    // token -- without this, a template referencing ONLY {dist}/{bearing} (the DIST/
+                    // BEARING chips' own real output) never got a fill-bar row at all, so the
+                    // operator had no way to type HIS grid in and both tokens resolved to "" forever.
+                    referenced.Add("his_grid");
+                }
             }
         }
 
@@ -2558,9 +2574,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // only place that can flip CanClearTemplateVariables from false to true.
         ClearTemplateVariablesCommand.NotifyCanExecuteChanged();
         var token = $"{{{key}}}";
+        // Tier B audit finding: {dist}/{bearing} resolve FROM the "his_grid" variable
+        // (MacroTextResolver.TryResolveDistanceBearing), not from a literal {his_grid} token in the
+        // element's own Text -- an element reading e.g. "DIST {dist}" contains no "{his_grid}"
+        // substring at all, so the plain Contains(token) check below never matched it, leaving the
+        // canvas TextBlock showing a stale distance/bearing after a his_grid fill-bar edit even
+        // though RefreshOverlayElementCanvasFontSizes()/RecomputePreview() below both read
+        // ResolvedText fresh and updated correctly -- a canvas-vs-preview divergence.
+        var alsoRefreshDistanceBearing = key == "his_grid";
         foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
         {
-            if (element.Text.Contains(token, StringComparison.Ordinal))
+            if (element.Text.Contains(token, StringComparison.Ordinal)
+                || (alsoRefreshDistanceBearing && (element.Text.Contains("{dist}", StringComparison.Ordinal) || element.Text.Contains("{bearing}", StringComparison.Ordinal))))
             {
                 element.NotifyResolvedTextChanged();
             }
