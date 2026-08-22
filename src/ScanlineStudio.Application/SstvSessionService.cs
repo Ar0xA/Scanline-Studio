@@ -363,7 +363,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// unwired manual diagnostic aid.</summary>
     public async Task SetPttLockAsync(bool locked, CancellationToken ct = default)
     {
-        await _pttLockGate.WaitAsync(ct).ConfigureAwait(false);
+        // Tier B audit finding: the command dispatch further down already special-cases the UNLOCK
+        // direction to keep the emergency-unlock escape hatch un-cancellable at the backend gate
+        // (round 19's own fix, see that call site's own comment for the full reasoning -- "it must
+        // stay queued and eventually reach the rig, not be cancellable away"), but this earlier gate
+        // wait was still unconditionally `ct`-cancellable -- a caller cancelling while queued behind
+        // a wedged prior command (up to _cleanupTimeout) could abort the emergency unlock before it
+        // ever reaches the command dispatch at all, the same class of gap one level up. Same
+        // conditional token this method already uses for the command dispatch below.
+        await _pttLockGate.WaitAsync(locked ? ct : CancellationToken.None).ConfigureAwait(false);
 
         // Round-8 finding: this call's own handle into _keyedTransmitCompletion -- local as well as
         // field so the finally below can clear the field ONLY if it still points at this
@@ -525,9 +533,27 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // concurrent un-keyer just skips its clears and logs PttUnkeyRaceLostToNewerKey instead
                 // of wiping this call's state) -- same "erring true costs at most one spurious Warning"
                 // rule this file already applies everywhere else.
-                Interlocked.Increment(ref _pttKeyEpoch);
-                _pttLeftKeyedByCall = true;
-                SafeLog(() => Log.PttKeyCommandFailedMayHaveKeyed(_logger));
+                // Tier B audit finding: this write used to be unconditional inside the catch --
+                // but with RigId == "none" (the default, no-radio-configured state), the whole
+                // production chain (RadioSessionService -> RadioController -> NoneRadioProtocol)
+                // throws SYNCHRONOUSLY, before pttCommand is ever assigned (still null here). That
+                // path never sent anything to a real backend, so nothing was ever physically keyed
+                // -- but the unconditional write latched _pttLeftKeyedByCall=true anyway, violating
+                // that field's own documented invariant ("never fires for the benign RigId=='none'
+                // path," see its own doc comment) permanently: neither clear site can ever run
+                // without a confirmed un-key, which needs a real rig that was never involved.
+                // DisposeAsync's backstop then fires a false Critical "PTT MAY STILL BE KEYED" on a
+                // machine with no radio at all, and every SUBSEQUENT transmit's own baseline reads
+                // this same stale true, repeating the false Critical for the rest of the process
+                // (the round-30 signal-erosion class, now reachable with no radio configured).
+                // Gated on pttCommand actually having been issued -- only a genuine dispatch to a
+                // real backend can mean "may have physically keyed."
+                if (pttCommand is not null)
+                {
+                    Interlocked.Increment(ref _pttKeyEpoch);
+                    _pttLeftKeyedByCall = true;
+                    SafeLog(() => Log.PttKeyCommandFailedMayHaveKeyed(_logger));
+                }
 
                 // Round-30 finding (risk): this fault-observer attachment used to sit AFTER the
                 // recovery-un-key await below (up to _cleanupTimeout, ~5s) -- but both shipped
@@ -596,7 +622,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // logging-provider failure substituted in its place -- the state record itself
                 // doesn't depend on this guard (UnkeyForCleanupAsync's own round-20 fix latches
                 // _pttUnkeyFailedOnRealRig before it can throw), only which exception surfaces.
-                if (Volatile.Read(ref _keyedTransmitCount) == 1)
+                //
+                // Tier B audit finding: this comment's own premise -- "_keyedTransmitCount was
+                // already incremented for THIS call at the publish above (guarded by
+                // rigIsRealAtKeyTime, same as this catch)" -- stopped being true once this catch's
+                // own filter above widened from `when (rigIsRealAtKeyTime)` to `when (locked)`: the
+                // publish is still gated on rigIsRealAtKeyTime alone, so this catch can now run on
+                // paths where THIS call never published at all. A bare count==1 check can then
+                // misfire in both directions: it can read a DIFFERENT concurrent call's own
+                // registration as "safe to recover" and un-key the rig out from under that other
+                // call's genuinely in-flight, on-air transmission mid-frame -- the exact harm this
+                // whole guard exists to prevent -- or it can read 0 and skip a recovery this call
+                // itself should have run. keyedCompletion is non-null if and only if THIS call's own
+                // publish actually ran, so it's the correct, call-scoped guard the count alone no
+                // longer is.
+                if (keyedCompletion is not null && Volatile.Read(ref _keyedTransmitCount) == 1)
                 {
                     try
                     {

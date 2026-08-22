@@ -735,6 +735,37 @@ public sealed class SstvSessionServicePttSafetyTests
     }
 
     [Fact]
+    public async Task TierBAuditFinding_SetPttLockAsync_NoRadioConfigured_NeverRecordsPossiblyKeyed()
+    {
+        // Tier B audit finding (companion to Round7's own test above, opposite conclusion): with
+        // RigId == "none", the production chain (RadioSessionService -> RadioController ->
+        // NoneRadioProtocol) throws SYNCHRONOUSLY, before pttCommand is ever assigned -- nothing
+        // was ever dispatched to a real backend, so nothing could have been physically keyed. The
+        // catch's own state-latching write used to be unconditional on `locked` alone, so this
+        // benign no-radio case used to ALSO record "possibly keyed," permanently violating
+        // _pttLeftKeyedByCall's own documented "never fires for RigId=='none'" invariant --
+        // DisposeAsync's backstop would then fire a false Critical on a machine with no radio at
+        // all. ThrowSynchronouslyOnNoneRig reproduces the real production shape (a plain async
+        // fault, the fake's own default, does not distinguish "dispatched then failed" from
+        // "never dispatched" the way the real chain does).
+        var (service, _, radio, logger) = CreateService();
+        radio.RigId = "none";
+        radio.ThrowSynchronouslyOnNoneRig = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.SetPttLockAsync(true));
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Critical);
+        Assert.DoesNotContain(logger.Entries, e => e.Message.Contains("MAY HAVE BEEN KEYED", StringComparison.Ordinal));
+
+        // DisposeAsync's backstop must find nothing to do -- no un-key attempt, no Critical.
+        logger.Entries.Clear();
+        await service.DisposeAsync();
+
+        Assert.Empty(radio.PttCalls);
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Critical);
+    }
+
+    [Fact]
     public async Task Round7_PlayWithPttAsync_LeaveKeyedWrite_NeverWritesFalseWhenThisCallDidNotKey()
     {
         // Round-7 finding: the _pttLeftKeyedByCall write in PlayWithPttAsync's leaveKeyedAfterCall
