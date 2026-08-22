@@ -8014,3 +8014,62 @@ solution-wide build.
 **Group 5 CLOSED (2026-08-22)** -- 1 round (no blockers; 3 risk-tier findings fixed
 opportunistically per the round's own explicit no-escalation call). 2 risk-tier findings and 8 nits
 remain intentionally deferred.
+
+### Group 6: window close-request wiring (final Tier C group)
+
+`src/ScanlineStudio.UI/Views/QsoLinkWindowView.axaml.cs`, `OptionsWindowView.axaml.cs`,
+`AboutWindowView.axaml.cs` (19 lines each) -- three identically-shaped `Window` subclasses whose
+constructor wires `DataContextChanged` -> `vm.RequestClose += Close`, never explicitly
+unsubscribed.
+
+**Round 1 verdict: GO** -- no blockers. Specifically traced (not assumed) whether the never-
+unsubscribed pattern matters given Group 5's own finding that `MainWindow.axaml.cs` constructs a
+FRESH dialog instance every open: confirmed genuinely harmless here (unlike `MainWindow.axaml.cs`'s
+own `DataContextChanged` handler, which subscribes to app-lifetime-singleton events) --
+`DataContextChanged` fires exactly once per window instance (verified: only 3 `DataContext =`
+assignment sites exist in the whole codebase, all in `MainWindow.axaml.cs`'s own object
+initializers, no AXAML sets it either), and all three publishing ViewModels are transient/per-open
+(`OptionsWindowViewModel` is DI `AddTransient` with no `Dispose`, so MS.DI's disposable-tracking
+leak class doesn't apply; the other two are plain `new` per open) with no long-lived subscriber
+rooting them -- the Window<->VM reference cycle this pattern creates is GC-collectable with no
+external root once the dialog closes.
+
+Two risk-tier findings fixed anyway (both genuine, both cheap): (1) `RequestClose` can fire AFTER
+the window already closed -- a user closing the dialog via the title-bar X while a still-in-flight
+await (a real QRZ HTTP POST for `QsoLinkWindowView`, a settings-save + `SetCultureAsync` for
+`OptionsWindowView`) later completes and its continuation reaches `RequestClose?.Invoke()`, calling
+`Close()` on an already-closed window -- relying on `Window.Close()` being benign when called twice
+rather than guaranteeing it. Fixed by unsubscribing on `Closed` in both files (not
+`AboutWindowView`, whose VM is fully synchronous with no await to race). (2) `QsoLinkWindowView`
+had no `Closing` guard against an in-flight write -- closing mid-write hides the only surface that
+can show a logbook/QRZ failure, and since the duplicate-QSO guard (`_createdQsoId`) is per-VM-
+instance state a fresh dialog open doesn't carry over, a user who X-es out during a slow write and
+retries could log and push a duplicate QSO -- the exact hazard this ViewModel's own design already
+guards against everywhere else (its Cancel COMMAND already has an `IsBusy` gate; this window-level
+close path didn't). Fixed with a `Closing` handler checking `IsBusy`.
+
+1 nit deferred (an `.axaml`-only Escape/default-button inconsistency: `AboutWindowView`'s Close
+button has `IsDefault`/`IsCancel`, the other two don't -- cosmetic, not this file's `.axaml.cs`).
+Not given dedicated tests -- both fixes are tightly coupled to real `Window`/`Closing`/`Closed`
+lifecycle events requiring a live Avalonia context, consistent with Group 5's own established
+precedent for the identical constraint. 738/738 UI.Tests pass (no regression), clean solution-wide
+build.
+
+**Group 6 CLOSED (2026-08-22)** -- 1 round (GO, no blockers), 2 risk-tier findings fixed
+opportunistically. **This closes the entire Tier C sweep.**
+
+## TIER C FUNCTIONAL-AUDIT SWEEP -- FULLY CLOSED (2026-08-22)
+
+All 6 groups closed: Settings persistence (1 round, 1 risk fixed), Localization runtime (escalated,
+2 rounds, 1 blocker + 2 risks fixed), Host startup/logging (escalated, 2 rounds, 2 blockers + 1
+risk fixed), UI value converters (1 round, 6 converters fixed for an unguarded-throw pattern),
+large UI code-behind (1 round, 3 risks fixed), window close-request wiring (1 round, 2 risks
+fixed). 3 blockers and roughly 13 risk-tier/consistency fixes total, concentrated almost entirely
+in two areas: startup/localization (both escalations, all 3 blockers) and unguarded exception
+surfaces in code that runs early/often (converters, dialog handlers). The recurring failure class
+across the whole tier was **sibling inconsistency** -- near-identical code paths where one had a
+guard/validation/fallback and its twin didn't -- exactly what a per-file sweep catches and a batch
+pass does not. Tier C as a whole needs no follow-up round; the small number of deferred risk-tier
+items across all 6 groups are documented in each group's own writeup above and are ordinary
+backlog, not audit debt. This closes Tier C alongside Tier A and Tier B -- the entire
+`docs/functional-audit-playbook.md` scope (`src/` in full, all tiers) is now closed.
