@@ -318,4 +318,45 @@ public sealed class QrzCallsignLookupTests
         Assert.True(secondLookup.Success);
         Assert.Equal(2, loginCount);
     }
+
+    [Fact]
+    public async Task LookupAsync_RequestTimesOut_ReturnsFailureNotAnException()
+    {
+        var handler = new FakeHttpMessageHandler
+        {
+            ThrowOnSend = new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException()),
+        };
+        var lookup = new QrzCallsignLookup(new FakeHttpClientFactory(handler), NullLogger<QrzCallsignLookup>.Instance);
+
+        var result = await lookup.LookupAsync("W1AW", "user", "pass");
+
+        Assert.False(result.Success);
+        Assert.Equal("The request to QRZ.com timed out.", result.ErrorReason);
+    }
+
+    [Fact]
+    public async Task LookupAsync_GenuineCancellation_ThrowsRatherThanReturningFailure()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var lookup = new QrzCallsignLookup(new FakeHttpClientFactory(handler), NullLogger<QrzCallsignLookup>.Instance);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lookup.LookupAsync("W1AW", "user", "pass", cts.Token));
+    }
+
+    [Fact]
+    public async Task TestCredentialsAsync_RequestTimesOut_ReturnsFailureNotAnException()
+    {
+        var handler = new FakeHttpMessageHandler
+        {
+            ThrowOnSend = new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException()),
+        };
+        var lookup = new QrzCallsignLookup(new FakeHttpClientFactory(handler), NullLogger<QrzCallsignLookup>.Instance);
+
+        var result = await lookup.TestCredentialsAsync("user", "pass");
+
+        Assert.False(result.Success);
+        Assert.Equal("The request to QRZ.com timed out.", result.ErrorReason);
+    }
 }

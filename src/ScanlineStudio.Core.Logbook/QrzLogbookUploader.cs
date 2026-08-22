@@ -26,11 +26,17 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
     }
 
     /// <summary>Best-effort per <see cref="IQrzLogbookUploader"/>'s implicit contract (mirrors
-    /// <c>AdifUdpStreamer.SendLoggedQsoAsync</c>'s own documented one, after that class's
-    /// auditor pass found the same gap): catches every realistic failure mode (network failure,
-    /// an unreadable/malformed response body) and reports it via <see cref="QrzUploadResult"/>
-    /// rather than throwing, so a QRZ outage or misconfiguration never blocks the caller from
-    /// persisting the QSO locally. Deliberately does not catch <see cref="OperationCanceledException"/>.</summary>
+    /// <c>AdifUdpStreamer.SendLoggedQsoAsync</c>'s own documented one): catches every realistic
+    /// failure mode (network failure, a request timeout, an unreadable/malformed response body)
+    /// and reports it via <see cref="QrzUploadResult"/> rather than throwing, so a QRZ outage or
+    /// misconfiguration never blocks the caller from persisting the QSO locally. A timeout DOES
+    /// surface as <see cref="OperationCanceledException"/> in .NET (via the inner
+    /// <see cref="TimeoutException"/>), same as <see cref="System.Net.Http.HttpClient.Timeout"/>'s
+    /// documented behavior -- auditor-caught gap: an earlier version rethrew every
+    /// <see cref="OperationCanceledException"/> unconditionally, so a QRZ server hang threw out of
+    /// this method AFTER the caller had already persisted the QSO locally, surfacing as "log
+    /// failed" on an already-saved record and inviting a duplicate on retry. Genuine caller
+    /// cancellation (<paramref name="ct"/> itself) still propagates.</summary>
     public async Task<QrzUploadResult> UploadAsync(string adifText, string apiKey, CancellationToken ct = default)
     {
         try
@@ -64,6 +70,13 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
             Log.UploadRejected(_logger, reason);
             return new QrzUploadResult(false, null, reason);
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Only the linked HttpClient.Timeout could have fired here, since a genuine caller
+            // cancellation (ct itself) would have set ct.IsCancellationRequested.
+            Log.UploadTimedOut(_logger);
+            return new QrzUploadResult(false, null, "The request to QRZ.com timed out.");
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -94,7 +107,7 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
         return fields;
     }
 
-    private static string UnescapeFormValue(string value) => Uri.UnescapeDataString(value.Replace('+', ' '));
+    private static string UnescapeFormValue(string value) => Uri.UnescapeDataString(value.Replace('+', ' ')).Trim();
 
     private static partial class Log
     {
@@ -106,6 +119,9 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ.com logbook upload request failed")]
         public static partial void UploadRequestFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ.com logbook upload timed out")]
+        public static partial void UploadTimedOut(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ.com logbook upload returned an unparseable response: {Body}")]
         public static partial void UploadMalformedResponse(ILogger logger, string body);
