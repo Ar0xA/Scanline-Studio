@@ -19,7 +19,14 @@ public static class MaidenheadLocator
     /// (a-x, 5'lon/2.5'lat each) -- the standard 3-tier Maidenhead locator system. A 2-character
     /// (field only) or odd-length locator is rejected (never a real, complete grid reference) rather
     /// than silently guessing at a partial position. Case-insensitive (both the field letters and the
-    /// subsquare letters) -- operators type grids in either case interchangeably in practice.</summary>
+    /// subsquare letters) -- operators type grids in either case interchangeably in practice.
+    /// Tier B audit finding: an 8-character extended locator (a normal, widely-used VHF/microwave-
+    /// grade precision) used to be rejected outright -- strictly MORE precise than the accepted
+    /// 6-character form, with no reason to reject it. The trailing 2 digits (an extended-square
+    /// refinement finer than this method's own 6-character precision) are validated as digits and
+    /// then dropped rather than adding a 4th precision tier's own math -- same output precision as a
+    /// 6-character locator, just no longer a hard rejection for operators who happen to type the
+    /// fuller form.</summary>
     public static bool TryToLatLon(string? locator, out double latitude, out double longitude)
     {
         latitude = 0;
@@ -30,7 +37,7 @@ public static class MaidenheadLocator
         }
 
         var g = locator.Trim();
-        if (g.Length is not (4 or 6)) // 4 and 6 are both even, so a separate parity check is redundant
+        if (g.Length is not (4 or 6 or 8))
         {
             return false;
         }
@@ -42,13 +49,26 @@ public static class MaidenheadLocator
             return false;
         }
 
+        if (g.Length == 8 && (!char.IsAsciiDigit(upper[6]) || !char.IsAsciiDigit(upper[7])))
+        {
+            return false;
+        }
+
         longitude = ((upper[0] - 'A') * 20.0) - 180.0 + ((upper[2] - '0') * 2.0);
         latitude = ((upper[1] - 'A') * 10.0) - 90.0 + ((upper[3] - '0') * 1.0);
 
-        if (g.Length == 6)
+        if (g.Length is 6 or 8)
         {
             if (upper[4] is < 'A' or > 'X' || upper[5] is < 'A' or > 'X')
             {
+                // Tier B audit finding: every OTHER false-return path above leaves latitude/longitude
+                // at their pre-zeroed defaults, but this one used to leave them at the SW-corner
+                // values already computed above -- a stale, non-zero out-param on a false return.
+                // Harmless today (the sole caller pre-zeroes its own outs and checks the bool first),
+                // but this is a public static API, and it's the exact "one path missing a guard its
+                // siblings already have" shape this whole sweep keeps finding.
+                latitude = 0;
+                longitude = 0;
                 return false;
             }
 
