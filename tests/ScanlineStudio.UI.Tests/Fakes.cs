@@ -543,7 +543,10 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public Exception? ThrowOnPickSaveImageFile { get; set; }
 
-    public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
+    public Exception? ThrowOnPickImageFile { get; set; }
+
+    public Task<string?> PickImageFileAsync() =>
+        ThrowOnPickImageFile is { } ex ? Task.FromException<string?>(ex) : Task.FromResult(PathToReturn);
 
     public Task<string?> PickClipboardImageAsync() => Task.FromResult(ClipboardPathToReturn);
 

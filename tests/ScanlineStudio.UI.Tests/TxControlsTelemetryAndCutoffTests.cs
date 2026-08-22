@@ -213,13 +213,21 @@ public sealed class TxControlsTelemetryAndCutoffTests
     }
 
     [AvaloniaFact]
-    public void TogglingSwrCutoffEnabled_Persists()
+    public async Task TogglingSwrCutoffEnabled_PersistsAfterDebounceDelay()
     {
+        // Tier B audit finding: persisting the SWR safety settings is now debounced (matching
+        // RadioStatusViewModel.PersistVolumeDebouncedAsync's own established fix) -- overlapping
+        // un-awaited SaveAsync calls (rapid edits to SwrCutoffThreshold's TextBox in particular)
+        // could otherwise let a stale write clobber a fresher one.
         var radioSession = new FakeRadioSessionService();
         var vm = CreateViewModel(radioSession, new FakeSstvSessionService());
         Dispatcher.UIThread.RunJobs();
 
         vm.SwrCutoffEnabled = true;
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(radioSession.SafetySpec.SwrCutoffEnabled); // not persisted yet -- still debouncing
+
+        await Task.Delay(600);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(radioSession.SafetySpec.SwrCutoffEnabled);
