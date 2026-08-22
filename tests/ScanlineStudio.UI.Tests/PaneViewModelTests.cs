@@ -1819,6 +1819,42 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeChangeWhileABlankEditorIsOpenOverAnAlreadyAppliedEdit_StillReflowsLoadedImage()
+    {
+        // Tier B audit finding (blocker): OnSelectedModeChanged's blank-editor branch used to
+        // `return` right after reopening the blank editor, which ALSO skipped the reflow below --
+        // but a blank/untouched editor being open says nothing about whether _editState is null.
+        // Real, UI-reachable sequence: Apply an image (sets _editState/_loadedImage at modeA's
+        // dimensions), THEN click "Open blank editor" directly (OpenBlankEditorCommand is gated on
+        // CanChangeSourceOrMode = !IsEditorOpen, true again once Apply closed the editor -- nothing
+        // about that gate requires _editState to be null). _editState survives untouched. Changing
+        // mode with the blank editor now open used to leave _loadedImage stale at modeA's pixel
+        // dimensions while SelectedMode moved to modeB -- a mismatch AnalogFmSstvEncoder throws on,
+        // surfacing only as a context-free "Transmit failed".
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal((modeA.ImageWidth, modeA.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
+
+        await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        Assert.True(vm.IsEditorOpen);
+
+        vm.SelectedMode = modeB;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal((modeB.ImageWidth, modeB.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_SelectingANewMode_ClearsAlreadyLoadedImage()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
@@ -1868,6 +1904,48 @@ public sealed class PaneViewModelTests
         // Opening the editor must not, by itself, make the old flat-load path's image transmittable
         // -- only Apply does that now.
         Assert.False(vm.TransmitCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_PickerThrows_SetsErrorMessage()
+    {
+        // Tier B audit finding: every sibling failure path (OpenEditorForSourceAsync,
+        // OpenEditorWithLoadedSourceAsync, EditCurrentImageAsync) sets ErrorMessage on failure --
+        // this one didn't, so a picker failure was indistinguishable from the user pressing Cancel.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var filePicker = new FakeFilePickerService { ThrowOnPickImageFile = new InvalidOperationException("picker unavailable") };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsEditorOpen);
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SwrCutoffThresholdChangedRapidly_OnlyPersistsTheLatestValue()
+    {
+        // Tier B audit finding: SwrCutoffThreshold's TextBox is TwoWay/PropertyChanged-triggered, so
+        // typing "12" used to fire TWO overlapping, un-awaited PersistSafetySettingsAsync calls, each
+        // capturing its own value before its own await -- if the stale "1" call's SaveAsync happened
+        // to complete AFTER the fresh "12" call's, the persisted SWR safety cutoff would silently end
+        // up at 1.0 (an always-trips value) while the UI still showed 12. Debounce-and-cancel-
+        // supersedes (matching RadioStatusViewModel.PersistVolumeDebouncedAsync's own established fix
+        // for the identical hazard class) closes the race: only the LAST edit's value ever reaches
+        // SaveAsync.
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 3.0) };
+        var vm = new TxControlsPaneViewModel(new FakeSstvSessionService(), new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SwrCutoffThreshold = 1.0;
+        vm.SwrCutoffThreshold = 12.0;
+
+        Assert.Equal(3.0, radioSession.SafetySpec.SwrCutoffThreshold); // not persisted yet -- still debouncing
+
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(12.0, radioSession.SafetySpec.SwrCutoffThreshold);
     }
 
     [AvaloniaFact]
@@ -2296,11 +2374,18 @@ public sealed class PaneViewModelTests
         vm.SelectedMode = modeA;
         var editorOpenedCount = 0;
         vm.EditorOpened += _ => editorOpenedCount++;
+        // Tier B audit finding: this catch used to leave _currentEditor/_currentEditorIsBlank stale
+        // and never fire EditorClosed, unlike every other close path in this class -- MainViewModel's
+        // own EditorClosed subscriber is what nulls ActiveEditor, so skipping it left the docked
+        // editor view out of sync with IsEditorOpen now being false.
+        var editorClosedCount = 0;
+        vm.EditorClosed += () => editorClosedCount++;
 
         await vm.SelectImageCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(0, editorOpenedCount);
+        Assert.Equal(1, editorClosedCount);
         Assert.False(vm.IsEditorOpen);
         Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeA));
         Assert.NotNull(vm.ErrorMessage);

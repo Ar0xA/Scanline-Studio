@@ -76,6 +76,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     private bool _suppressSafetyPersist;
 
+    /// <summary>Tier B audit finding: matches <c>RadioStatusViewModel.PersistVolumeDebouncedAsync</c>'s
+    /// own established shape/reasoning for the identical hazard class -- SwrCutoffThreshold's TextBox
+    /// is TwoWay/PropertyChanged-triggered, so typing "12" used to fire TWO overlapping, un-awaited
+    /// PersistSafetySettingsAsync calls, each capturing its own value before its own await; if the
+    /// stale "1" call's SaveAsync happened to complete AFTER the fresh "12" call's, the persisted SWR
+    /// safety cutoff would silently end up at 1.0 (an always-trips value) while the UI still showed
+    /// 12. Debounce-and-cancel-supersedes closes the same race the volume slider's own doc comment
+    /// already names ("overlapping un-awaited SaveAsync calls racing each other could let a stale
+    /// write clobber a fresher one").</summary>
+    private static readonly TimeSpan SafetyPersistDebounce = TimeSpan.FromMilliseconds(400);
+
+    private CancellationTokenSource? _safetyPersistCts;
+
     private IImageSource? _loadedImage;
 
     /// <summary>Backlog item (user request, 2026-08-17) -- tracks the currently-open editor (null
@@ -548,10 +561,22 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var spec = await _radioSession.GetSafetySettingsAsync();
             Dispatcher.UIThread.Post(() =>
             {
-                _suppressSafetyPersist = true;
-                SwrCutoffEnabled = spec.SwrCutoffEnabled;
-                SwrCutoffThreshold = spec.SwrCutoffThreshold;
-                _suppressSafetyPersist = false;
+                // Tier B audit finding: try/finally, not a bare set-then-reset -- these two property
+                // sets raise PropertyChanged into live Avalonia bindings, which can throw; a throw
+                // here used to leave _suppressSafetyPersist stuck true for the process lifetime,
+                // silently and permanently breaking PersistSafetySettingsAsync -- the exact failure
+                // this method's own doc comment warns about ("the user's safety setting didn't take
+                // effect with nothing telling them so"), just triggered a different way.
+                try
+                {
+                    _suppressSafetyPersist = true;
+                    SwrCutoffEnabled = spec.SwrCutoffEnabled;
+                    SwrCutoffThreshold = spec.SwrCutoffThreshold;
+                }
+                finally
+                {
+                    _suppressSafetyPersist = false;
+                }
             });
         }
         catch (Exception ex)
@@ -560,13 +585,35 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
+    private void SchedulePersistSafetySettings()
+    {
+        // Debounced (not one settings write per keystroke) -- also avoids the correctness hazard
+        // SafetyPersistDebounce's own doc comment names: overlapping un-awaited SaveAsync calls
+        // racing each other could let a stale write clobber a fresher one.
+        _safetyPersistCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _safetyPersistCts = cts;
+        _ = PersistSafetySettingsDebouncedAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold), cts.Token);
+    }
+
     /// <summary>Error, not Warning -- a silently-failed SWR-cutoff-setting write means the user's
     /// safety setting didn't take effect with nothing telling them so.</summary>
-    private async Task PersistSafetySettingsAsync()
+    private async Task PersistSafetySettingsDebouncedAsync(RadioSafetySpec spec, CancellationToken ct)
     {
         try
         {
-            await _radioSession.SaveSafetySettingsAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold));
+            await Task.Delay(SafetyPersistDebounce, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException)
+        {
+            // Normal control flow -- a newer edit superseded this one. Not worth a log line, same
+            // convention as RadioStatusViewModel.PersistVolumeDebouncedAsync's own identical catch.
+            return;
+        }
+
+        try
+        {
+            await _radioSession.SaveSafetySettingsAsync(spec, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -581,7 +628,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _ = PersistSafetySettingsAsync();
+        SchedulePersistSafetySettings();
     }
 
     partial void OnSwrCutoffThresholdChanged(double value)
@@ -591,7 +638,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _ = PersistSafetySettingsAsync();
+        SchedulePersistSafetySettings();
     }
 
     /// <summary>Marshaled to the UI thread, same pattern as <c>RadioStatusViewModel.OnStateChanged</c>.
@@ -680,21 +727,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="SelectedMode"/>, same pattern as <c>RadioStatusViewModel.OnStateChanged</c>.</summary>
     private void OnModeDetected(SstvModeDefinition mode)
     {
-        if (!AutoFollowRxMode)
-        {
-            return;
-        }
-
-        // IsEditorOpen is re-checked INSIDE the posted lambda, not before Post -- this method runs
-        // on the audio drain thread (this method's own doc comment above) but IsEditorOpen is only
-        // ever written on the UI thread, so a bare pre-Post read here has no guaranteed visibility
-        // of a UI-thread editor-open that raced it (code-review finding on spec/18-path-to-1.0.md
-        // High item 2: a stale "not open yet" read could let this slip through right as the editor
-        // opens, reintroducing the exact crash this whole fix targets). Checking again once already
-        // marshalled onto the UI thread is race-free.
+        // IsEditorOpen AND AutoFollowRxMode are both re-checked INSIDE the posted lambda, not before
+        // Post -- this method runs on the audio drain thread (this method's own doc comment above)
+        // but both are only ever written on the UI thread, so a bare pre-Post read here has no
+        // guaranteed visibility of a UI-thread write that raced it (code-review finding on
+        // spec/18-path-to-1.0.md High item 2: a stale "not open yet" read could let this slip
+        // through right as the editor opens, reintroducing the exact crash this whole fix targets --
+        // AutoFollowRxMode is the same class of read, Tier B audit finding: it was left outside the
+        // Post when IsEditorOpen was moved in for this exact reason, risking a stale-true read right
+        // after the operator un-ticked auto-follow performing an unwanted mode change). Checking
+        // again once already marshalled onto the UI thread is race-free.
         Dispatcher.UIThread.Post(() =>
         {
-            if (IsEditorOpen)
+            if (!AutoFollowRxMode || IsEditorOpen)
             {
                 return;
             }
@@ -848,7 +893,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: every sibling failure path here (OpenEditorForSourceAsync,
+            // OpenEditorWithLoadedSourceAsync, EditCurrentImageAsync) sets ErrorMessage on failure --
+            // this one didn't, so a picker failure (platform picker unavailable, revoked filesystem
+            // access) was indistinguishable from the user simply pressing Cancel.
             Log.PickImageFileFailed(_logger, ex);
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             return;
         }
 
@@ -958,9 +1008,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: CloseBlankEditorForReplacement/OnEditorCancelled both null
+            // _currentEditor/_currentEditorIsBlank and fire EditorClosed on every close -- this
+            // failure path (and the two other construction-failure catches below) didn't, leaving
+            // MainViewModel.ActiveEditor (set only by EditorOpened/EditorClosed) stale at whatever
+            // editor was active before, out of sync with IsEditorOpen now being false.
             Log.LoadTxSourceImageFailed(_logger, fileName, ex);
             IsEditorOpen = false;
+            _currentEditor = null;
+            _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+            EditorClosed?.Invoke();
             return;
         }
 
@@ -1060,9 +1118,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: see OpenEditorForSourceAsync's own load-failure catch for why --
+            // same fix here.
             Log.OpenTxEditorFailed(_logger, fileName, ex);
             IsEditorOpen = false;
+            _currentEditor = null;
+            _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+            EditorClosed?.Invoke();
         }
     }
 
@@ -1214,9 +1277,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: see OpenEditorForSourceAsync's own load-failure catch for why --
+            // same fix here.
             Log.OpenTxEditorFailed(_logger, SelectedFileName ?? "(re-edit)", ex);
             IsEditorOpen = false;
+            _currentEditor = null;
+            _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+            EditorClosed?.Invoke();
         }
     }
 
@@ -1328,11 +1396,25 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // any auto-reopen side effect, then this unconditionally reopens blank at whatever
         // SelectedMode is NOW (this property's own new value, already committed by the time this
         // partial method runs).
+        //
+        // Tier B audit finding: this branch used to `return` right after reopening the blank
+        // editor, which ALSO skipped the reflow below -- a blank/untouched editor being open says
+        // nothing about whether _editState is null. _editState survives Cancel of a re-edit (Cancel
+        // doesn't clear a prior Apply's state, only the in-progress edit), and OnEditorCancelled
+        // auto-reopens a fresh blank editor right after -- so "blank editor open" + "_editState
+        // still set from an earlier Apply" is a real, reachable combination, not a hypothetical.
+        // With the early return, CanTransmit's own doc comment's invariant ("_loadedImage is only
+        // ever sized to whatever SelectedMode was at that moment") silently broke: _loadedImage
+        // kept the OLD mode's pixel dimensions while SelectedMode moved on, and Transmit had no
+        // extra gate to catch the mismatch before handing a wrong-sized image straight to
+        // AnalogFmSstvEncoder (which throws ArgumentException, surfacing only as a context-free
+        // "Transmit failed"). Falling through instead of returning lets the shared reflow/clear
+        // logic below run exactly as it would with no editor open at all -- what's shown inside the
+        // (separately reopened) blank editor is unaffected either way.
         if (IsCurrentEditorBlankAndUntouched())
         {
             CloseBlankEditorForReplacement();
             _ = OpenBlankEditorAsync();
-            return;
         }
 
         if (value is null || _editState is not { } edit)
