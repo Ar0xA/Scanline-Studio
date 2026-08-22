@@ -321,7 +321,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// by design (must still work post-dispose, see that method's own doc comment), so it waits on this
     /// gate uncancellably AND bounded (by <c>_cleanupTimeout</c>) rather than indefinitely -- see that
     /// method's own doc comment for why an unbounded wait here is not safe, and what happens (skips its
-    /// own body, logs, returns) on a timeout.</summary>
+    /// own body, logs, returns) on a timeout. Tier B audit finding (Area 4): <see cref="StartReceivingAsync"/>'s
+    /// own wait is ALSO bounded by <c>_cleanupTimeout</c> now (in addition to the caller's own token) --
+    /// an abandoned RX-resume (<see cref="ResumeReceivingBoundedAsync"/>'s own timed-out call, still
+    /// genuinely running inside a native capture-start call that does not respect `ct` mid-flight) can
+    /// hold this gate indefinitely, and every later Start needed its own bound to avoid hanging behind
+    /// it forever -- unlike Stop's timeout, Start's THROWS <see cref="TimeoutException"/> rather than
+    /// silently no-op'ing, since a caller of Start needs to know capture did not actually start.</summary>
     private readonly SemaphoreSlim _rxTransitionGate = new(1, 1);
 
     /// <summary>Manual-keying diagnostic aid (e.g. a "PTT lock" button) -- keys PTT immediately and
@@ -1135,7 +1141,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // before the publish that actually matters.
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        await _rxTransitionGate.WaitAsync(ct).ConfigureAwait(false);
+        // Tier B audit finding (Area 4): bounded like StopReceivingAsync's own gate wait, not just
+        // cancellable by the caller's own `ct` -- without this, an ABANDONED RX-resume
+        // (ResumeReceivingBoundedAsync's own rxResumeCts already expired, so ITS OWN token is no
+        // longer any help) can hold this gate forever if its own StartReceivingLockedAsync call is
+        // still genuinely stuck inside StartCaptureAsync (round-16's own established "a native call
+        // does not actually respect `ct` mid-flight" fact) -- every LATER caller of this method
+        // (including the direct UI Start-RX path, which passes CancellationToken.None) would then
+        // hang indefinitely trying to acquire an effectively-permanently-held semaphore, with no log,
+        // no throw, just a stuck Receiving toggle. Same _cleanupTimeout budget, same reasoning as
+        // StopReceivingAsync's own bound -- see that method's own comment.
+        if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false))
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "StartReceivingAsync (rxTransitionGate wait timed out)", new TimeoutException()));
+            throw new TimeoutException("Timed out waiting to start receiving -- a concurrent RX transition did not finish in time.");
+        }
+
         try
         {
             await StartReceivingLockedAsync(ct).ConfigureAwait(false);
@@ -1202,6 +1223,35 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
 
             throw new ObjectDisposedException(GetType().FullName);
+        }
+
+        // Tier B audit finding (Area 4): same shape as the _disposed recheck just above, for a
+        // DIFFERENT abandoned-resume hazard that recheck doesn't cover -- an ABANDONED RX-resume
+        // (ResumeReceivingBoundedAsync's own rxResumeCts already expired, per that method's own
+        // comment; round-16's own established "a native call does not actually respect `ct`
+        // mid-flight" fact means StartCaptureAsync above can still be genuinely running well past
+        // that point) reaching HERE would publish `_isReceiving = true` regardless of what happened
+        // in the meantime -- including a NEWER PlayWithPttAsync call that is by then actively
+        // transmitting, turning capture ON mid-keyed-TX even though that method's own entry-time
+        // `wasReceiving` read correctly saw `false` and skipped pausing RX for it. `ct.IsCancellationRequested`
+        // is a reliable signal this specific call IS exactly that abandoned resume:
+        // ResumeReceivingBoundedAsync passes rxResumeCts.Token all the way through as this method's
+        // own `ct`, and no other caller of this method ever cancels its own token (the direct UI
+        // Start-RX path passes CancellationToken.None). Same close-the-just-opened-session-then-throw
+        // shape as the _disposed recheck above.
+        if (ct.IsCancellationRequested)
+        {
+            try
+            {
+                await _audioEngine.StopCaptureAsync().WaitAsync(_cleanupTimeout, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SafeLog(() => Log.CleanupStepFailed(_logger, "StopCapture (abandoned resume, caller gave up waiting)", ex));
+            }
+
+            throw new OperationCanceledException(
+                "Abandoned RX-resume: the caller gave up waiting before StartCaptureAsync finished -- not publishing IsReceiving.", ct);
         }
 
         _audioEngine.SamplesCaptured += _decoderHandler;

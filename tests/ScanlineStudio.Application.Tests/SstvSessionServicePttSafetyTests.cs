@@ -2309,6 +2309,80 @@ public sealed class SstvSessionServicePttSafetyTests
         Assert.False(((FakeAudioEngine)engine).IsCapturing);
     }
 
+    // ------------------------------------------------------------------ Tier B Area 4 findings
+
+    [Fact]
+    public async Task TierBAuditFinding_StartReceivingAsync_TimesOutRatherThanHangingForever_WhenGateIsStrandedByAnAbandonedResume()
+    {
+        // Tier B audit finding (Area 4): StartReceivingAsync's own _rxTransitionGate wait used to be
+        // bounded only by the caller's own `ct` (StopReceivingAsync's identical wait was already
+        // bounded by _cleanupTimeout, an asymmetry between two near-identical siblings). An ABANDONED
+        // RX-resume that is still genuinely stuck inside StartCaptureAsync (round-16's own established
+        // "a native call does not respect `ct` mid-flight" fact) holds this gate forever -- every
+        // LATER caller (including the direct UI Start-RX path, CancellationToken.None) then hung
+        // indefinitely with no log and no throw. Simulated here directly: park a first Start inside
+        // the gate (holding _rxTransitionGate), then prove a second Start with no token of its own
+        // times out instead of hanging.
+        var startCaptureGate = new TaskCompletionSource();
+        var (service, _, _, logger) = CreateService(
+            wrapEngine: inner => new GatedStartCaptureAudioEngine(inner, startCaptureGate.Task, hangOnCallNumber: 1),
+            cleanupTimeout: TimeSpan.FromMilliseconds(50));
+
+        var firstStart = service.StartReceivingAsync();
+        Assert.False(firstStart.IsCompleted, "first StartReceivingAsync should still be parked inside the gated StartCaptureAsync call, still holding _rxTransitionGate");
+
+        // THE property: a second Start, with no token of its own to ever cancel it, still gives up
+        // rather than hanging forever behind the first call's own permanently-held gate.
+        await Assert.ThrowsAsync<TimeoutException>(() => service.StartReceivingAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Contains(logger.Entries, e => e.Message.Contains("rxTransitionGate wait timed out", StringComparison.Ordinal));
+
+        // Cleanup: release the gate so the first (still-parked) call can finish and not leak a hung
+        // background continuation into a later test.
+        startCaptureGate.SetResult();
+        await firstStart.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task TierBAuditFinding_StartReceivingAsync_CallerGaveUpWhileStartCaptureStillRunning_DoesNotPublishIsReceiving()
+    {
+        // Tier B audit finding (Area 4): the direct twin of the finding above, one step later --
+        // even once the gate itself is acquired, an ABANDONED RX-resume (ResumeReceivingBoundedAsync's
+        // own rxResumeCts already expired) can still be genuinely running StartCaptureAsync well past
+        // the point its own caller gave up waiting. Reaching the publish point afterward would turn
+        // capture ON regardless of what happened meanwhile -- including a NEWER PlayWithPttAsync call
+        // that is by then actively transmitting (capture going live mid-keyed-TX), even though that
+        // method's own entry-time `wasReceiving` read correctly saw `false` and skipped pausing RX for
+        // it (RaiseCapturePausedForTransmitChanged never even fires). `ct.IsCancellationRequested` is
+        // the same reliable "this IS the abandoned resume" signal ResumeReceivingBoundedAsync's own
+        // token threading already relies on elsewhere in this file.
+        var startCaptureGate = new TaskCompletionSource();
+        var stopCaptureCount = 0;
+        var (service, _, _, _) = CreateService(
+            wrapEngine: inner => new GatedStartCaptureAudioEngine(
+                new RecordingOrderAudioEngine(inner, onStopPlayback: () => { }, onStopCapture: () => stopCaptureCount++),
+                startCaptureGate.Task, hangOnCallNumber: 1));
+
+        using var cts = new CancellationTokenSource();
+        var startTask = service.StartReceivingAsync(cts.Token);
+        Assert.False(startTask.IsCompleted, "StartReceivingAsync should still be parked inside the gated StartCaptureAsync call");
+
+        // Simulates ResumeReceivingBoundedAsync's own caller giving up (rxResumeCts firing) WHILE the
+        // native call is still genuinely in flight -- the exact abandoned-resume shape.
+        cts.Cancel();
+
+        // The native call itself does not respect `ct` (matches MiniAudioEngine's own real contract,
+        // and round-16's own established fact for this specific call) -- it still completes normally.
+        startCaptureGate.SetResult();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => startTask.WaitAsync(TimeSpan.FromSeconds(5)));
+
+        // THE property: the session StartCaptureAsync just opened must be closed, and _isReceiving
+        // must never have been published true -- not left for a later, unrelated PlayWithPttAsync
+        // call to see as "already receiving" against a session it doesn't actually still own.
+        Assert.False(service.IsReceiving);
+        Assert.Equal(1, stopCaptureCount);
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private static async Task WaitForAsync(Func<bool> condition, TimeSpan timeout)
