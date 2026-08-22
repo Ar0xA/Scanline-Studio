@@ -663,6 +663,89 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_NewReceptionStartsWhileAwaitingOwnCallsign_DropsTheStaleWrite()
+    {
+        // Tier B audit finding: GetOperatorCallsignAsync's own await is a real, uncached settings
+        // disk read (JsonSettingsStore.LoadAsync has no cache) -- during a bulk-WAV-decode's
+        // back-to-back transmissions, a NEW reception's ModeDetected/Generation bump can land in
+        // that exact window, after which the write below would silently re-apply the OLD reception's
+        // decoded callsign onto the NEW one now on screen. Same class OnSaved's own
+        // IReceivedImageBuffer.Generation guard already covers (see that method's doc comment); this
+        // write site didn't have the equivalent before this fix.
+        var gate = new TaskCompletionSource<string?>();
+        var sstvSession = new FakeSstvSessionService { OperatorCallsignGate = gate };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.OverrideCallsign);
+
+        buffer.Generation++; // a new reception starts while the settings read is still in flight
+        gate.SetResult("W1AW");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStaleDecodedNrRst()
+    {
+        // Tier B audit finding: DecodedNrRst is the same per-RECEPTION "who is this station"
+        // category as OverrideCallsign/Lookup* (also decoded from the previous station's FSK
+        // sub-packet) but was the one left out of OnModeDetected's reset.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "0012"));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("5950012", vm.DecodedNrRst);
+
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.DecodedNrRst);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStalePerReceptionErrorMessages()
+    {
+        // Tier B audit finding: QrzLookupErrorMessage/FrameMetadataErrorMessage/SaveFrameErrorMessage
+        // are per-RECEPTION status text, same category as Note/IsFlagged (already reset here), but
+        // weren't cleared -- a QRZ lookup failure or a stale "entry no longer exists" from the
+        // PREVIOUS frame kept showing on the RxFrameMeta card after a new reception blanked the
+        // fields the error text was actually about. Set directly (as
+        // ModeDetectedEvent_ClearsStalePerReceptionCallsignAndLookupFields does for its own fields)
+        // to pin this specific staleness bug without depending on the command paths that would
+        // normally populate them.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var modeA = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(modeA);
+        Dispatcher.UIThread.RunJobs();
+        vm.QrzLookupErrorMessage = "Not found: k1abc";
+        vm.FrameMetadataErrorMessage = "Panes.RxFrameMeta.Error.EntryNoLongerExists";
+        vm.SaveFrameErrorMessage = "Panes.RxFrameMeta.Error.SaveFrameFailed";
+
+        var modeB = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(modeB);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.QrzLookupErrorMessage);
+        Assert.Null(vm.FrameMetadataErrorMessage);
+        Assert.Null(vm.SaveFrameErrorMessage);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_UpdatedEvent_SetsProgress_AndLineProgressTextReflectsIt()
     {
         var localization = new FakeLocalizationService();

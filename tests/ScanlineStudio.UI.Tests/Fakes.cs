@@ -178,7 +178,13 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public string? OperatorCallsign { get; set; }
 
-    public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) => Task.FromResult(OperatorCallsign);
+    /// <summary>When set, <see cref="GetOperatorCallsignAsync"/> awaits this instead of completing
+    /// synchronously -- lets a test hold the call mid-flight (matching the real, uncached settings
+    /// disk read it stands in for) to reproduce a generation-changes-while-awaiting race.</summary>
+    public TaskCompletionSource<string?>? OperatorCallsignGate { get; set; }
+
+    public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) =>
+        OperatorCallsignGate?.Task ?? Task.FromResult(OperatorCallsign);
 
     public StationIdTransmitOptions StationIdTransmitOptionsToReturn { get; set; } = StationIdTransmitOptions.None;
 
