@@ -67,6 +67,28 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
+    public async Task LogQsoAsync_PostPersistStepThrows_StillReturnsThePersistedRecord_DoesNotThrow()
+    {
+        // Closes a real bug flagged by Tier A Batch 10 chunk 10c (docs/functional-audit-playbook.md):
+        // this method's own doc comment claims everything after persistence is "best-effort and must
+        // never ... block on it" -- but a throw from the ADIF-UDP/settings/export span used to
+        // propagate OUT of LogQsoAsync AFTER the record was already committed, and both real UI
+        // callers treat a thrown exception as "logging failed," re-enabling their own retry
+        // affordance -- a genuine duplicate QSO on retry, since the first attempt's persistence
+        // already succeeded. The QSO must still come back as successfully logged.
+        var repository = new FakeLogbookRepository();
+        var adifUdp = new FakeAdifUdpStreamer { ExceptionToThrow = new IOException("network unreachable") };
+        var service = CreateService(repository, adifUdp);
+
+        var result = await service.LogQsoAsync(SampleRecord());
+
+        Assert.Single(repository.Records);
+        Assert.Equal(repository.Records[0].Id, result.Record.Id);
+        Assert.Equal(0, result.AdifUdpSentCount);
+        Assert.False(result.QrzUploaded);
+    }
+
+    [Fact]
     public async Task LogQsoAsync_AdifUdpStreamerIsAlwaysCalled_GatingIsInternalToTheStreamer()
     {
         // LogbookSessionService never reads AdifUdpStreamingSettings itself -- the real
