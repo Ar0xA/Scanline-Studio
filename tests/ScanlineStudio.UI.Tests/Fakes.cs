@@ -435,6 +435,8 @@ internal sealed class FakeTemplateStore : ITemplateStore
 
     public List<string> DeletedIds { get; } = [];
 
+    public Exception? DeleteExceptionToThrow { get; set; }
+
     public string CreateTemplateId(string name) => $"{name}_{Guid.NewGuid():N}";
 
     public string GetAssetPath(string templateId, string assetFileName) => $"/fake/templates/{templateId}/assets/{assetFileName}";
@@ -454,6 +456,11 @@ internal sealed class FakeTemplateStore : ITemplateStore
 
     public Task DeleteAsync(string templateId, CancellationToken ct = default)
     {
+        if (DeleteExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
         _templates.Remove(templateId);
         DeletedIds.Add(templateId);
         return Task.CompletedTask;
