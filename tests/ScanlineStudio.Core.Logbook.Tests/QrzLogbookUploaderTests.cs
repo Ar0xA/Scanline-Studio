@@ -87,13 +87,50 @@ public sealed class QrzLogbookUploaderTests
             ResponseFactory = _ => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("RESULT=OK&LOGID=1&COUNT=1") },
         };
         var uploader = new QrzLogbookUploader(new FakeHttpClientFactory(handler), NullLogger<QrzLogbookUploader>.Instance);
+        // Deliberately contains characters that need percent-encoding (&, <, >, newline) so this
+        // test proves the full ADIF VALUE round-trips byte-for-byte, not just that an "ADIF=" key
+        // is present -- chunk 1 of this sweep found two silent-data-loss bugs in this exact ADIF
+        // pipeline, and a presence-only assertion would not have caught either.
+        const string adif = "<call:6>N0CALL<comment:15>Tom & Jerry <3\r\n<eor>";
 
-        await uploader.UploadAsync("<call:6>N0CALL<eor>", "my-api-key");
+        await uploader.UploadAsync(adif, "my-api-key&special=1");
 
         Assert.Equal("https://logbook.qrz.com/api", handler.LastRequest?.RequestUri?.ToString());
         Assert.Equal(HttpMethod.Post, handler.LastRequest?.Method);
-        Assert.Contains("KEY=my-api-key", handler.LastRequestBody);
-        Assert.Contains("ACTION=INSERT", handler.LastRequestBody);
-        Assert.Contains("ADIF=", handler.LastRequestBody);
+
+        using var expectedContent = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["KEY"] = "my-api-key&special=1",
+            ["ACTION"] = "INSERT",
+            ["ADIF"] = adif,
+        });
+        var expectedBody = await expectedContent.ReadAsStringAsync();
+        Assert.Equal(expectedBody, handler.LastRequestBody);
+    }
+
+    [Fact]
+    public async Task UploadAsync_RequestTimesOut_ReturnsFailureNotAnException()
+    {
+        var handler = new FakeHttpMessageHandler
+        {
+            ThrowOnSend = new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout.", new TimeoutException()),
+        };
+        var uploader = new QrzLogbookUploader(new FakeHttpClientFactory(handler), NullLogger<QrzLogbookUploader>.Instance);
+
+        var result = await uploader.UploadAsync("<call:6>N0CALL<eor>", "test-key");
+
+        Assert.False(result.Success);
+        Assert.Equal("The request to QRZ.com timed out.", result.ErrorReason);
+    }
+
+    [Fact]
+    public async Task UploadAsync_GenuineCancellation_ThrowsRatherThanReturningFailure()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var uploader = new QrzLogbookUploader(new FakeHttpClientFactory(handler), NullLogger<QrzLogbookUploader>.Instance);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => uploader.UploadAsync("<call:6>N0CALL<eor>", "test-key", cts.Token));
     }
 }

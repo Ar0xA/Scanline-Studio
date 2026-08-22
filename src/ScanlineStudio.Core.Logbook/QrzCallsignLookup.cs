@@ -60,6 +60,13 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
             Log.TestSucceeded(_logger);
             return new QrzLoginResult(true, null);
         }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Only the linked HttpClient.Timeout could have fired here, since a genuine caller
+            // cancellation (ct itself) would have set ct.IsCancellationRequested.
+            Log.TestTimedOut(_logger);
+            return new QrzLoginResult(false, "The request to QRZ.com timed out.");
+        }
         catch (OperationCanceledException)
         {
             throw;
@@ -101,6 +108,13 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
 
             var retryOutcome = await LookupWithSessionAsync(callsign, freshKey, ct).ConfigureAwait(false);
             return retryOutcome.ToResult();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Only the linked HttpClient.Timeout could have fired here, since a genuine caller
+            // cancellation (ct itself) would have set ct.IsCancellationRequested.
+            Log.LookupTimedOut(_logger);
+            return new QrzCallsignLookupResult(false, null, null, null, "The request to QRZ.com timed out.");
         }
         catch (OperationCanceledException)
         {
@@ -246,10 +260,16 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credentials test request failed")]
         public static partial void TestRequestFailed(ILogger logger, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credentials test timed out")]
+        public static partial void TestTimedOut(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ login failed during a callsign lookup: {Reason}")]
         public static partial void LookupLoginFailed(ILogger logger, string? reason);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ callsign lookup request failed")]
         public static partial void LookupRequestFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ callsign lookup timed out")]
+        public static partial void LookupTimedOut(ILogger logger);
     }
 }
