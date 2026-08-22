@@ -46,7 +46,29 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <c>SstvSessionService.PlayWithPttAsync</c>'s cleanup path passing a fresh token from one that
     /// (incorrectly) reuses the possibly-cancelled transmit token -- see
     /// <c>SstvSessionServiceTests.TransmitAsync_TokenCancelledMidTransmit_StillUnkeysPttAndRestartsCapture</c>.</summary>
-    public async Task SetPttAsync(bool tx, CancellationToken ct = default)
+    /// <summary>Tier B audit finding (test-fidelity gap): when true, a RigId=="none" call throws
+    /// SYNCHRONOUSLY before this method's own async state machine ever starts -- matching the
+    /// real production chain's actual shape (RadioSessionService -> RadioController ->
+    /// NoneRadioProtocol, none of which is `async`, so the throw happens before the caller's own
+    /// `pttCommand` local is ever assigned). The plain async version below always returns SOME
+    /// Task object to the caller, even for the immediate-throw case (a faulted one) -- so a test
+    /// against the default (false) shape cannot distinguish "the command was dispatched and then
+    /// failed" from "the command was never dispatched at all," the exact distinction
+    /// SstvSessionService.SetPttLockAsync's own pttCommand-is-not-null guard depends on. Defaults
+    /// to false so every EXISTING test (relying on the original async-fault shape) is unaffected.</summary>
+    public bool ThrowSynchronouslyOnNoneRig { get; set; }
+
+    public Task SetPttAsync(bool tx, CancellationToken ct = default)
+    {
+        if (ThrowSynchronouslyOnNoneRig && RigId == "none")
+        {
+            throw new InvalidOperationException("No radio is connected -- nothing to key PTT on.");
+        }
+
+        return SetPttAsyncCore(tx, ct);
+    }
+
+    private async Task SetPttAsyncCore(bool tx, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var callNumber = Interlocked.Increment(ref _callCount);
