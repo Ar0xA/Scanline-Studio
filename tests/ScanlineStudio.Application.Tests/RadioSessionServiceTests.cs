@@ -102,6 +102,54 @@ public sealed class RadioSessionServiceTests
     }
 
     [Fact]
+    public async Task TestConnectionAsync_PollThrowsAndDisposeAlsoThrows_ReportsTheOriginalPollFailure()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 10 chunk 10c (docs/functional-audit-playbook.md):
+        // a throwing DisposeAsync inside the finally block used to REPLACE whatever the try/catch
+        // above had already decided to return -- masking the real poll failure behind an unrelated
+        // teardown error. The double-fault case is the only thing that actually distinguishes "the
+        // finally block's exception propagates" from "it's caught and logged, the original result
+        // stands" -- a single-fault test (poll only) can't tell the two apart.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol
+        {
+            PollExceptionToThrow = new InvalidOperationException("connection refused"),
+            DisposeExceptionToThrow = new IOException("handle already closed"),
+        };
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestConnectionAsync(spec);
+
+        Assert.False(result.Success);
+        Assert.Null(result.RigId);
+        Assert.Equal("connection refused", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task TestConnectionAsync_FactoryCreateThrows_ReturnsFailure_DoesNotPropagate()
+    {
+        // Closes a coverage gap flagged by Tier A Batch 10 chunk 10c: matches[0].Create(spec) used
+        // to run OUTSIDE the try/catch -- a throwing factory leaked past this method's own interface
+        // contract (IRadioSessionService.TestConnectionAsync's doc comment says it always returns a
+        // result, never throws).
+        var controller = new FakeRadioController();
+        var factory = new FakeRadioProtocolFactory(new FakeRadioProtocol())
+        {
+            CreateExceptionToThrow = new InvalidOperationException("factory misconfigured"),
+        };
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestConnectionAsync(spec);
+
+        Assert.False(result.Success);
+        Assert.Null(result.RigId);
+        Assert.Equal("factory misconfigured", result.ErrorMessage);
+    }
+
+    [Fact]
     public async Task TestConnectionAsync_NoFactoryRegisteredForSpec_ReturnsFailure()
     {
         var controller = new FakeRadioController();

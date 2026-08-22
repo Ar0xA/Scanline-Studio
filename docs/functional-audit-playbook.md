@@ -5624,4 +5624,95 @@ Full `ScanlineStudio.Application.Tests` run: 230 passed, 0 failed. `ScanlineStud
 
 ## Chunk 10b CLOSED
 
-Chunk 10c remains open.
+## Chunk 10c round 1: OptionsSettingsService.cs, LogbookSessionService.cs, RadioSessionService.cs
+
+Last chunk of Batch 10 and of the whole Tier A approved plan table. None of the three files are
+legacy ports (all new orchestration/session-service code); single round per this batch's own
+downgraded rigor.
+
+Verdict: go for production as-is -- no round 2 needed.
+
+`OptionsSettingsService.cs` was the chunk's primary risk area: the auditor traced all 37
+`OptionsSnapshot` fields end-to-end across `Defaults`/`LoadAsync`/`SaveAsync` and confirmed zero
+mismatches, zero dropped fields, zero inconsistent fallbacks. Two apparent asymmetries were checked
+and confirmed correct, not bugs: `CwText ?? string.Empty` has no `NrRstText` counterpart because the
+two fields have different read-path semantics, and the `SaveAsync` sample-rate fallback (lines
+~159-161) matches real legacy behavior (`Option.cpp:421-424`, `CLOCKMAX=48500` from `ComLib.h:53`).
+Two minor nits (a `SampleRate`-normalization divergence from legacy for out-of-range persisted
+values, and a silent `ProcessPriority` downgrade for non-High persisted values) were explicitly NOT
+flagged as needing fixes -- both are hardening-only or already contract-consistent. No fix needed;
+zero functional bugs in this file.
+
+**Two real bugs found and fixed in `RadioSessionService.TestConnectionAsync`, both mutation-verified.**
+This method's own interface doc comment (`IRadioSessionService.TestConnectionAsync`) promises it
+always returns a result, never throws.
+1. `matches[0].Create(spec)` ran OUTSIDE the try/catch -- a throwing factory (e.g. a misconfigured
+   backend) propagated straight out, breaking that contract. Fixed by moving `Create` inside an outer
+   try that also wraps the existing inner try/catch/finally.
+2. The `finally` block's `await protocol.DisposeAsync()` had no guard of its own -- a throwing
+   `DisposeAsync` REPLACED whatever the inner try/catch had already decided to return, masking a real
+   poll failure behind an unrelated teardown error. This is the identical hazard
+   `RadioController.DisconnectAsync` already guards against for the same `protocol.DisposeAsync()`
+   call; applied the same fix here (catch, log via new `Log.TestConnectionDisposeFailed`, don't
+   rethrow). New test `TestConnectionAsync_PollThrowsAndDisposeAlsoThrows_ReportsTheOriginalPollFailure`
+   double-faults on purpose (poll throws AND dispose throws) -- a single-fault test can't distinguish
+   "the finally block's exception propagates" from "it's caught, the original result stands." New
+   test `TestConnectionAsync_FactoryCreateThrows_ReturnsFailure_DoesNotPropagate` covers finding 1.
+   Both mutation-verified: reverting each fix in turn reproduced the predicted unhandled-exception/
+   masked-result failure, then the file was restored and confirmed via `git diff --stat` to match the
+   intended fix exactly.
+
+**One real bug found and fixed in `LogbookSessionService.LogQsoAsync`, mutation-verified.** The
+method's own doc comment claims persistence "happens first" and "everything after this line is
+best-effort and must never undo or block on it" -- but that wasn't actually enforced. Everything
+after `_repository.AddAsync` (settings load, ADIF export, ADIF-UDP send, QRZ upload) ran unguarded,
+so a throw there (e.g. a permissions error reading `settings.json`) propagated out of `LogQsoAsync`
+AFTER the QSO record was already committed. Both real UI callers (`LogbookPaneViewModel`,
+`QsoLinkWindowViewModel`) treat any thrown exception here as "logging failed" and re-enable their own
+retry affordance -- a user retrying then creates a genuine DUPLICATE QSO record, since the first
+attempt's persistence already succeeded. QRZ upload itself was already exception-safe
+(`QrzLogbookUploader.UploadAsync` catches everything but cancellation); only the settings/export/
+ADIF-UDP span needed the same treatment. Fixed by wrapping that span in a try/catch that logs via new
+`Log.PostPersistStepFailed` and returns a degraded-but-honest `LogQsoResult` (record persisted and
+returned, telemetry zeroed) instead of throwing. New test
+`LogQsoAsync_PostPersistStepThrows_StillReturnsThePersistedRecord_DoesNotThrow` mutation-verified:
+narrowing the catch clause to `OperationCanceledException` only reproduced the predicted unhandled
+`IOException` propagating out of `LogQsoAsync`, then the file was restored and confirmed via
+`git diff --stat` (43 insertions/19 deletions) to match the intended fix exactly.
+
+Auditor's verdict: go for production as-is -- no round 2 needed, per this batch's own single-round
+default.
+
+Full `ScanlineStudio.Application.Tests` run: 233 passed, 0 failed (up from 230 at chunk 10b close --
+3 new tests, all mutation-verified). No `ScanlineStudio.UI.Tests` re-run needed: neither
+`RadioSessionService`'s nor `LogbookSessionService`'s constructor signature changed, and a grep
+confirmed no UI test constructs either class directly.
+
+## Chunk 10c CLOSED
+
+## Tier A Batch 10 -- CLOSED
+
+All three chunks (10a `MaidenheadLocator.cs`, 10b `TemplateStore.cs`/`MacroTextResolver.cs`, 10c
+`OptionsSettingsService.cs`/`LogbookSessionService.cs`/`RadioSessionService.cs`) closed with a clean
+single-round "go for production" verdict each, per this batch's downgraded rigor. Real bugs found and
+fixed across the batch: MaidenheadLocator's antipodal-NaN bug, TemplateStore's corrupt-manifest
+robustness gap, RadioSessionService's two TestConnectionAsync exception-contract violations, and
+LogbookSessionService's post-persist exception-safety gap. All fixes mutation-verified; all real
+coverage gaps closed in the same round they were found.
+
+## TIER A -- FULLY CLOSED
+
+All 10 batches of the approved plan table are closed. Summary across the whole sweep: ~50 files
+audited across roughly 30 chunks, using the `auditor` subagent per chunk at either full 2-round rigor
+(real control-flow/DSP/concurrency files) or single-round rigor (data tables, pure functions,
+orchestration code per each batch's own downgrade note), with every real coverage gap closed by a
+mutation-verified test in the same round it was found.
+
+Real functional bugs found and fixed along the way (not an exhaustive list, the highlights): Batch
+5's sync-interval scan-order bug, MaidenheadLocator's antipodal-NaN bug (Batch 10), TemplateStore's
+corrupt-manifest robustness gap (Batch 10), RadioSessionService's TestConnectionAsync
+exception-contract violations (Batch 10), LogbookSessionService's post-persist exception-safety gap
+(Batch 10), WavFile's malformed-input handling gaps, and MiniAudioDeviceEnumerator's carry-over
+logging gap from Batch 1. The large majority of individually-audited files came back clean --
+zero functional bugs, only doc-comment/citation-drift corrections and mutation-verified coverage-gap
+closures.
