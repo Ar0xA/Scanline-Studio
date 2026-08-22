@@ -138,7 +138,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
                 DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture),
                 reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
                 reader.IsDBNull(4) ? null : reader.GetInt64(4),
-                reader.IsDBNull(5) ? null : Enum.Parse<RadioMode>(reader.GetString(5)),
+                reader.IsDBNull(5) ? null : ParseMode(reader.GetString(5)),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
                 reader.IsDBNull(7) ? null : reader.GetString(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
@@ -152,6 +152,14 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         return results;
     }
+
+    /// <summary>Falls back to <see cref="RadioMode.Unknown"/> rather than throwing (that value's own
+    /// doc comment requires this) -- a plain <c>Enum.Parse</c> would take down the entire logbook
+    /// list over one row a future/older app version or a hand-edited DB wrote a value this build
+    /// doesn't recognize into, matching <c>SqliteReceiveHistoryStore.ParseDecodeState</c>'s own
+    /// defensive pattern for the same class of problem.</summary>
+    private static RadioMode ParseMode(string value) =>
+        Enum.TryParse<RadioMode>(value, out var parsed) ? parsed : RadioMode.Unknown;
 
     private static void BindParameters(SqliteCommand command, QsoRecord record)
     {
