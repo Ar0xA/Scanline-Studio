@@ -6298,3 +6298,71 @@ test. 680/680 `UI.Tests` pass, clean build.
 recurring status-message-clobber class this sweep tracks, twice already in chunk 3, plus a genuine
 missing re-entrancy guard); round 2 clean GO with one more real bug found and fixed in the same
 pass per the auditor's own explicit recommendation.
+
+## Chunk 5: OverlayElementViewModel.cs
+
+**Round 1** -- NOT GO. `OverlayElementViewModel.cs` ITSELF was verified clean -- exhaustive
+property-notification cascade re-derivation from every getter body (`RotationTransform`/
+`ForegroundBrush`/`ShadowRenderTransform`/`CanvasStackStepX/YPixels`/`CanvasFontWeight`/
+`CanvasFontStyle`/`ResolvedText`) found no gaps, and the `HasStroke`/`HasShadow`/`HasStack`/
+`*ForPicker` "un-nulling" fix (a documented prior real bug: a `ColorPicker` bound directly to a
+nullable color silently un-nulled it, baking a black outline/shadow into every fresh text element by
+default) is symmetric across all three. But investigating `ResolvedText`'s dual-trigger design (one
+of this round's assigned questions) surfaced two real bugs in the OWNING view-model,
+`TxImageEditorPaneViewModel.cs` (not its own audited chunk yet -- chunk 11-13, much later):
+
+1. **[blocker]** `KnownMacroTokenNames` (excludes real MACRO tokens from being treated as
+   user-fillable template VARIABLES) was never updated when `MacroTextResolver` added `{dist}`/
+   `{bearing}` (2026-08-18) -- so those tokens grew phantom fill-bar rows whose typed value the
+   resolver's own switch silently discarded (it intercepts `dist`/`bearing` before ever reaching the
+   variables dictionary). Reachable directly via the TEXT STYLE tab's own DIST/BEARING chips.
+2. **[risk]** `{dist}`/`{bearing}` resolve FROM the `his_grid` variable, not a literal `{his_grid}`
+   token -- so `OnTemplateVariableValueChanged`'s literal-token-match check never notified an
+   element referencing only `{dist}`/`{bearing}` when `his_grid` was edited, leaving its canvas
+   `TextBlock` stale while the mini-preview (which recomputes independently) updated correctly.
+
+Fixed in the same pass (cheap, well-scoped, directly tied to what this round investigated -- not
+deferred to chunk 11-13): added `"dist"`, `"bearing"` to `KnownMacroTokenNames`;
+`OnTemplateVariableValueChanged` now also notifies any element containing `{dist}`/`{bearing}`
+specifically when the changed key is `his_grid`. Extended the existing
+`RescanTemplateVariables_KnownMacroTokens_NeverProduceAFillBarRow` test's own doc comment/scope
+(closing the exact drift it had already warned about) and added
+`OnTemplateVariableValueChanged_HisGridEdited_RefreshesDistAndBearingElementsToo` (two separate
+elements, isolating the fix from the pre-existing literal-token-match path). 681/681 `UI.Tests`
+pass, clean solution-wide build.
+
+**Round 2** (fresh agent, full re-scan) -- **GO.** Re-read `MacroTextResolver.ResolveBraceTokens`'s
+switch fresh and confirmed `KnownMacroTokenNames` now matches exactly (6 cases, no 7th missing);
+confirmed the `his_grid`-edit fix's scope is correct (an element referencing both `{his_grid}` and
+`{dist}`/`{bearing}` gets exactly one notify, no double-fire) and that `dist`/`bearing` are the ONLY
+switch cases reading the variables dictionary, so no sibling instance of the same bug shape exists
+elsewhere. Found one more real (pre-existing, exposed rather than caused by this round's fixes) gap:
+`RescanTemplateVariables` only ever created a fill-bar row for a key LITERALLY referenced in some
+element's `Text` -- a template using ONLY the DIST/BEARING chips (which insert `{dist}`/`{bearing}`,
+never a literal `{his_grid}`) got no row at all, so the operator had no way to type HIS grid in and
+both tokens silently resolved to empty forever. Fixed in the same pass: `RescanTemplateVariables`
+now also adds `his_grid` to the referenced-keys set whenever `{dist}` or `{bearing}` is found. This
+changed correct, intended behavior for the ORIGINAL `RescanTemplateVariables_KnownMacroTokens_...`
+test (which had `{dist}`/`{bearing}` folded into its "produces zero rows" assertion from round 1's
+own fix) -- reverted that test to its original 4-macro scope (name/grid/freq/mode, which truly
+produce zero rows) and added a new, dedicated
+`RescanTemplateVariables_DistOrBearingReferenced_CreatesAHisGridRow` test for the indirect-resolution
+case. 682/682 `UI.Tests` pass, clean build.
+
+Deferred backlog, not fixed (explicitly out of scope both rounds -- a project-wide convention issue
+shared with an already-passed `Core.Imaging`/chunk-2 sibling, not a chunk-5 regression):
+`ShadowRenderTransform`/`CanvasStackStepX/YPixels` scale off the whole working-copy `ImageHeight`
+rather than the crop-aware target height `CanvasFontSize`/`CanvasStrokeThicknessPixels` correctly
+use, rendering up to 2x too large under an active crop (preview-only, never feeds the real
+pipeline); `RotationTransform` has no NaN/Infinity guard unlike the real pipeline (canvas-only,
+reachable via a plain rotation TextBox); the hand-reflected `BitmapPatternGrid`'s claimed match to
+ImageSharp.Drawing's real `Brushes.Percent20` tile could not be independently re-verified read-only
+(binary-only package); missing raise-tests for several derived properties (chunk 2's own flagged
+test-coverage-gap class, persisting here). Also noted for whoever eventually audits
+`TxImageEditorPaneViewModel.cs`'s own chunk: a stale doc comment claiming `OnTemplateVariableValueChanged`
+is "the ONLY place `_templateVariables` gains a new key" (constructor seeding and `ApplyState` both
+also do).
+
+**Chunk 5 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 2 real bugs in the owning VM
+(a dead fill-bar control silently discarding operator input, and a canvas/preview divergence);
+round 2 clean GO with one more real bug found and fixed in the same pass.

@@ -4455,11 +4455,64 @@ public sealed class TxImageEditorPaneViewModelTests
         // silently ignored, the macro branch always wins) or leave a real macro unexpectedly
         // resolving through the variable path. This pins today's agreement behaviorally: every
         // currently-known macro name must be excluded from the variable scan.
+        //
+        // Tier B audit finding: KnownMacroTokenNames was never updated when {dist}/{bearing} were
+        // added to MacroTextResolver (2026-08-18) -- exactly the drift this test's own doc comment
+        // warned about. {dist}/{bearing} aren't included in THIS test's Text, though: unlike
+        // name/grid/freq/mode, they resolve INDIRECTLY through the "his_grid" variable, so
+        // referencing them legitimately DOES produce a row -- named "his_grid", never "dist"/
+        // "bearing" themselves. See RescanTemplateVariables_DistOrBearingReferenced_CreatesAHisGridRow
+        // below for that behavior; this test stays scoped to the four macros that produce no row at
+        // all, which is still the exact invariant KnownMacroTokenNames itself must uphold for them.
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
         ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{name} {grid} {freq} {mode}";
 
         Assert.Empty(vm.TemplateVariableRows);
+    }
+
+    [AvaloniaFact]
+    public void RescanTemplateVariables_DistOrBearingReferenced_CreatesAHisGridRow()
+    {
+        // Tier B audit follow-up: {dist}/{bearing} resolve FROM "his_grid" (see
+        // OnTemplateVariableValueChanged's own test above), but RescanTemplateVariables only ever
+        // created a fill-bar row for a key LITERALLY referenced in some element's Text -- a template
+        // using only the DIST/BEARING chips (which insert {dist}/{bearing}, never a literal
+        // {his_grid}) got no row at all, so the operator had no way to type HIS grid in and both
+        // tokens resolved to empty forever.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "DIST {dist} BEARING {bearing}";
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_grid", row.Key);
+    }
+
+    [AvaloniaFact]
+    public void OnTemplateVariableValueChanged_HisGridEdited_RefreshesDistAndBearingElementsToo()
+    {
+        // Tier B audit finding: {dist}/{bearing} resolve FROM the "his_grid" variable
+        // (MacroTextResolver.TryResolveDistanceBearing), not from a literal {his_grid} token in an
+        // element's own Text -- an element reading "DIST {dist}" contains no "{his_grid}" substring,
+        // so the plain Contains(token) check in OnTemplateVariableValueChanged never matched it,
+        // leaving the canvas TextBlock's ResolvedText stale after a his_grid fill-bar edit even
+        // though the mini-preview (which recomputes independently) updated correctly. Two elements:
+        // one with a literal {his_grid} token (so the fill-bar row exists at all -- RescanTemplateVariables
+        // only creates a row for a key actually referenced somewhere) and a SEPARATE one with only
+        // {dist}/{bearing}, isolating the fix from the pre-existing literal-token-match path.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "HIS GRID: {his_grid}";
+        vm.AddOverlayElementCommand.Execute(null);
+        var distBearingElement = (OverlayElementViewModel)vm.OverlayElements[1];
+        distBearingElement.Text = "DIST {dist} BEARING {bearing}";
+        var row = Assert.Single(vm.TemplateVariableRows, r => r.Key == "his_grid");
+
+        var raised = false;
+        distBearingElement.PropertyChanged += (_, e) => raised |= e.PropertyName == nameof(OverlayElementViewModel.ResolvedText);
+        row.Value = "JO65";
+
+        Assert.True(raised);
     }
 
     [AvaloniaFact]
