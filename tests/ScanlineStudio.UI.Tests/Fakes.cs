@@ -824,6 +824,8 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
 
     public Exception? ThrowOnLog { get; set; }
 
+    public Exception? ThrowOnSearch { get; set; }
+
     public Exception? ThrowOnUpdate { get; set; }
 
     public Exception? ThrowOnImport { get; set; }
@@ -838,6 +840,12 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
 
     public IReadOnlyList<QsoRecord> ImportResultToReturn { get; set; } = [];
 
+    /// <summary>When set, <see cref="LogQsoAsync"/> suspends on this instead of completing
+    /// immediately -- a dedicated gate for this one operation (this project's own "deterministic
+    /// gates, not a shared race" convention), letting a test simulate the UI thread doing something
+    /// else (e.g. selecting a different row) while a real QRZ-upload-shaped await is still pending.</summary>
+    public TaskCompletionSource<LogQsoResult>? LogGate { get; set; }
+
     public Task<LogQsoResult> LogQsoAsync(QsoRecord record, CancellationToken ct = default)
     {
         if (ThrowOnLog is not null)
@@ -846,12 +854,22 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         }
 
         Records.Add(record);
+        if (LogGate is not null)
+        {
+            return LogGate.Task;
+        }
+
         return Task.FromResult(LogResultToReturn ?? new LogQsoResult(record, 0, 0, false, null));
     }
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default)
     {
         LastSearchQuery = query;
+        if (ThrowOnSearch is not null)
+        {
+            throw ThrowOnSearch;
+        }
+
         return Task.FromResult<IReadOnlyList<QsoRecord>>(Records);
     }
 

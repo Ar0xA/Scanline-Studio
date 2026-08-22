@@ -25,6 +25,29 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
     private string? _editingId;
 
+    /// <summary>Round-2 audit finding: <see cref="LoadIntoForm"/> used to not carry this field over
+    /// at all, so <see cref="BuildRecordFromForm"/> always passed a hardcoded <see langword="null"/>
+    /// for it -- editing and saving a QSO that had been linked to an RX-history frame (via
+    /// <see cref="QsoLinkWindowViewModel"/>) silently destroyed that reverse FK on every Update, even
+    /// though nothing on this form lets the user see or change it. The entry-side link
+    /// (<see cref="ReceiveHistoryEntry.LinkedQsoId"/>) is the authoritative copy the Gallery UI
+    /// actually reads and survives independently, so this was never user-visible data loss -- but a
+    /// real silent field-drop nonetheless, exactly this sweep's tracked failure class.</summary>
+    private string? _editingReceivedImageId;
+
+    /// <summary>Bumped by every action that changes WHAT the form represents -- <see cref="New"/>'s
+    /// own click and a row-selection change (<see cref="OnSelectedEntryChanged"/>) -- never by
+    /// <see cref="ResetForm"/> itself (called internally by <see cref="LogAsync"/>/<see cref="UpdateAsync"/>
+    /// on their own success path, which must NOT look like a navigation event to this guard).
+    /// <see cref="LogAsync"/>/<see cref="UpdateAsync"/> capture this before their own multi-second
+    /// await (<see cref="ILogbookSessionService.LogQsoAsync"/> can make a real QRZ HTTPS upload) and
+    /// compare it after -- if it changed, the user has since selected a different row or clicked New,
+    /// so the eventual <see cref="ResetForm"/>/status-message write is skipped rather than silently
+    /// wiping whatever the user is now doing (Tier B audit finding: no guard existed at all before
+    /// this, unlike <see cref="QsoLinkWindowViewModel"/>'s own explicit re-entrancy guards for the
+    /// same class of race).</summary>
+    private int _formGeneration;
+
     [ObservableProperty]
     private string? _callsignFilter;
 
@@ -180,9 +203,23 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
     /// <summary>Bound to the Refresh button -- <c>[RelayCommand]</c> methods must return
     /// <see cref="Task"/>, not <c>Task&lt;bool&gt;</c>, so the actual work (and its success/failure
-    /// signal) lives in <see cref="RefreshInternalAsync"/> below.</summary>
+    /// signal) lives in <see cref="RefreshInternalAsync"/> below.
+    ///
+    /// Tier B audit finding: <see cref="RefreshInternalAsync"/> itself deliberately does NOT clear
+    /// <see cref="StatusMessage"/> on success -- every OTHER caller of it (<see cref="LogAsync"/>/
+    /// <see cref="UpdateAsync"/>/<see cref="ImportAdifAsync"/>/<see cref="ExportAdifAsync"/>) sets
+    /// its OWN status message right after refreshing and must not have that clobbered by a generic
+    /// "refresh succeeded" no-op. This standalone command is the one caller that genuinely wants
+    /// "clear the banner on success" -- without it, a Search failure's error message stuck around
+    /// forever, even once a later search succeeded.</summary>
     [RelayCommand]
-    private async Task RefreshAsync() => await RefreshInternalAsync();
+    private async Task RefreshAsync()
+    {
+        if (await RefreshInternalAsync())
+        {
+            StatusMessage = null;
+        }
+    }
 
     /// <summary>Returns <see langword="false"/> on failure so callers that chain more UI feedback
     /// after a refresh (e.g. <see cref="ImportAdifAsync"/>'s "Imported N" status line) don't clobber
@@ -226,6 +263,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             return;
         }
 
+        _formGeneration++;
         LoadIntoForm(value);
     }
 
@@ -237,6 +275,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     private void New()
     {
         Log.NewInvoked(_logger);
+        _formGeneration++;
         ResetForm();
         StatusMessage = null;
     }
@@ -260,6 +299,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     public void PrefillForNewEntry(string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare)
     {
         Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
+        _formGeneration++;
         ResetForm();
         StatusMessage = null;
         FormCallsign = callsign;
@@ -277,6 +317,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     private void ResetForm()
     {
         _editingId = null;
+        _editingReceivedImageId = null;
         IsEditing = false;
         SelectedEntry = null;
         FormCallsign = null;
@@ -298,6 +339,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     private void LoadIntoForm(QsoRecord record)
     {
         _editingId = record.Id;
+        _editingReceivedImageId = record.ReceivedImageId;
         IsEditing = true;
         FormCallsign = record.Callsign;
         FormStartUtc = record.StartUtc;
@@ -321,6 +363,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanLog))]
     private async Task LogAsync()
     {
+        // Tier B audit finding: LogQsoAsync can make a real, multi-second QRZ HTTPS upload
+        // (LogbookSessionService.LogQsoAsync). Captured BEFORE that await -- if the user selects a
+        // different row or clicks New while this is in flight, _formGeneration changes, and every
+        // write below that would otherwise clobber their now-current form/status is skipped instead
+        // of silently wiping whatever they've since navigated to.
+        var formGeneration = _formGeneration;
         var record = BuildRecordFromForm(Guid.NewGuid().ToString());
 
         LogQsoResult result;
@@ -331,15 +379,31 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.LogFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.Logbook.Error.LogFailed");
+            if (formGeneration == _formGeneration)
+            {
+                StatusMessage = _localization.GetString("Panes.Logbook.Error.LogFailed");
+            }
+
             return;
         }
 
         // ResetForm() (not New()) -- New() would null the status line this just set.
         var statusMessage = BuildLogStatusMessage(result);
-        ResetForm();
-        StatusMessage = statusMessage;
+        if (formGeneration == _formGeneration)
+        {
+            ResetForm();
+        }
+
+        // Tier B audit finding: this used to set StatusMessage BEFORE the trailing refresh below,
+        // so a refresh failure's own SearchFailed message silently clobbered it -- the QSO (and any
+        // QRZ upload) had already genuinely succeeded or failed by this point, and the user never
+        // saw which. Set AFTER the refresh instead, so this method's own outcome always wins
+        // regardless of whether the follow-up list refresh happened to succeed.
         await RefreshInternalAsync();
+        if (formGeneration == _formGeneration)
+        {
+            StatusMessage = statusMessage;
+        }
     }
 
     private bool CanUpdate() => _editingId is not null && !string.IsNullOrWhiteSpace(FormCallsign);
@@ -352,7 +416,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             return;
         }
 
-        var record = BuildRecordFromForm(_editingId);
+        var formGeneration = _formGeneration;
+        var record = BuildRecordFromForm(_editingId, _editingReceivedImageId);
 
         try
         {
@@ -361,19 +426,36 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.UpdateFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.Logbook.Error.UpdateFailed");
+            if (formGeneration == _formGeneration)
+            {
+                StatusMessage = _localization.GetString("Panes.Logbook.Error.UpdateFailed");
+            }
+
             return;
         }
 
         // Deliberately no ADIF-UDP/QRZ status line here -- UpdateQsoAsync never re-pushes (see
         // its own doc comment), so there is nothing to report beyond "saved." ResetForm() (not
         // New()) -- New() would null the status line just set below.
-        ResetForm();
-        StatusMessage = _localization.GetString("Panes.Logbook.Status.Updated");
+        if (formGeneration == _formGeneration)
+        {
+            ResetForm();
+        }
+
+        // Same reordering as LogAsync's own fix, same reasoning: set AFTER the trailing refresh so
+        // a refresh failure can't clobber this method's own genuine "saved" outcome.
         await RefreshInternalAsync();
+        if (formGeneration == _formGeneration)
+        {
+            StatusMessage = _localization.GetString("Panes.Logbook.Status.Updated");
+        }
     }
 
-    private QsoRecord BuildRecordFromForm(string id) => new(
+    /// <summary><paramref name="receivedImageId"/> defaults to <see langword="null"/> for a brand
+    /// new QSO (<see cref="LogAsync"/> -- no RX-history link can exist yet for a record that doesn't
+    /// exist yet); <see cref="UpdateAsync"/> passes <see cref="_editingReceivedImageId"/> explicitly
+    /// so editing an already-linked QSO preserves that link instead of silently dropping it.</summary>
+    private QsoRecord BuildRecordFromForm(string id, string? receivedImageId = null) => new(
         id,
         FormCallsign!.Trim(),
         FormStartUtc,
@@ -388,7 +470,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare,
         FormCountry,
         FormNotes,
-        null);
+        receivedImageId);
 
     /// <summary>ADIF-UDP forwarding status clause: a distinct "not forwarded (no destinations
     /// configured)" string when <see cref="LogQsoResult.AdifUdpEnabledCount"/> is 0, rather than a
@@ -429,8 +511,17 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             // A malformed file can leave SOME rows already committed before the exception surfaces
             // (LogbookSessionService.ImportAdifFileAsync persists record-by-record, non-
             // transactionally) -- refresh so the user sees what DID get imported, and say so.
-            await RefreshInternalAsync();
-            StatusMessage = _localization.GetString("Panes.Logbook.Error.ImportPartial");
+            //
+            // Tier B audit finding: only report ImportPartial if that recovery refresh itself
+            // actually succeeded -- this used to overwrite unconditionally, so if the refresh ALSO
+            // failed, its own Error.SearchFailed message (which is the one telling the user the list
+            // they're looking at might not even reflect the partial import) was silently discarded
+            // in favor of a message implying the list is now trustworthy.
+            if (await RefreshInternalAsync())
+            {
+                StatusMessage = _localization.GetString("Panes.Logbook.Error.ImportPartial");
+            }
+
             return;
         }
 
@@ -457,7 +548,19 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // again, with the same query, inside ExportAdifFileAsync itself) actually exports -- Entries
         // can otherwise be stale relative to the live filter (e.g. CallsignFilter edited but Refresh
         // never clicked before hitting Export).
-        await RefreshInternalAsync();
+        //
+        // Tier B audit finding: this used to ignore the refresh's own success/failure. If it failed,
+        // Entries stayed at whatever it was before (a DIFFERENT query's stale results, or empty),
+        // and the code below still proceeded to export (the real file is always correct --
+        // ExportAdifFileAsync re-queries independently) and then reported "Exported N" using that
+        // stale Entries.Count -- a provably wrong number shown to the user, with the actual error
+        // that explains it silently discarded. Bails out on failure instead, leaving
+        // RefreshInternalAsync's own Error.SearchFailed message in place.
+        if (!await RefreshInternalAsync())
+        {
+            return;
+        }
+
         var query = BuildCurrentQuery();
 
         try
