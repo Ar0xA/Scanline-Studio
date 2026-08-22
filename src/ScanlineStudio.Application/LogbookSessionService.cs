@@ -143,15 +143,31 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     public async Task<QrzCallsignLookupResult> LookupCallsignAsync(string callsign, CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-
-        if (qrzLookupSettings.Enabled != true || string.IsNullOrEmpty(qrzLookupSettings.Username) || string.IsNullOrEmpty(qrzLookupSettings.Password))
+        // Tier B audit finding: this method's own interface doc comment claims the same "never
+        // throws, always returns a result" contract as LogQsoAsync -- but unlike LogQsoAsync's own
+        // settings read (wrapped in a try/catch since Tier A Batch 10 chunk 10c, for the identical
+        // reason), this one ran unguarded. A hand-edited settings.json with a malformed QrzLookup
+        // section throws JsonException out of GetSection; an unreadable settings.json throws
+        // UnauthorizedAccessException out of LoadAsync (not caught by JsonSettingsStore's own
+        // whole-file-parse catch, which only covers IOException). Contained today by
+        // RxImagePaneViewModel.LookupQrzAsync's own catch-all, but the contract violation is real.
+        try
         {
-            return new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options.");
-        }
+            var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+            var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
-        return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username, qrzLookupSettings.Password, ct).ConfigureAwait(false);
+            if (qrzLookupSettings.Enabled != true || string.IsNullOrEmpty(qrzLookupSettings.Username) || string.IsNullOrEmpty(qrzLookupSettings.Password))
+            {
+                return new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options.");
+            }
+
+            return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username, qrzLookupSettings.Password, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.LookupCallsignSettingsReadFailed(_logger, callsign, ex);
+            return new QrzCallsignLookupResult(false, null, null, null, ex.Message);
+        }
     }
 
     public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default) =>
@@ -170,5 +186,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QSO {Id} was persisted, but the ADIF-UDP/QRZ best-effort steps afterward failed")]
         public static partial void PostPersistStepFailed(ILogger logger, string id, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "LookupCallsignAsync({Callsign}) failed reading QRZ lookup settings")]
+        public static partial void LookupCallsignSettingsReadFailed(ILogger logger, string callsign, Exception exception);
     }
 }

@@ -7094,3 +7094,66 @@ via genuinely discriminating regression tests before closing.
 
 **Chunk 1 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 2 real risk-tier fixes applied
 without a confirmation round.
+
+## Chunk 2: RadioSessionService.cs + LogbookSessionService.cs
+
+`SstvSessionService.cs` (the same directory's much larger, concurrency-sensitive file) deliberately
+excluded from this chunk's scope -- it gets its own heavier plan-review process later, per the
+user's own cadence decision (see the sweep's own intro note above).
+
+**Round 1** -- unconditional GO, no blockers, 3 risk-tier findings (auditor explicitly recommended
+2 of the 3 as follow-ups to apply, not blockers requiring another round):
+
+- **[risk]** `LogbookSessionService.LookupCallsignAsync` violates its own interface doc comment's
+  "never throws, always returns a result" contract (the SAME contract `LogQsoAsync` already has,
+  fixed in Tier A Batch 10 chunk 10c) -- unlike `LogQsoAsync`'s own settings read, which IS wrapped
+  in a try/catch for the identical reason, this one ran unguarded. Two reachable throws: a
+  hand-edited `settings.json` with a malformed `QrzLookup` section throws `JsonException` out of
+  `GetSection`; an unreadable settings file throws `UnauthorizedAccessException` out of `LoadAsync`
+  (not caught by `JsonSettingsStore`'s own whole-file-parse catch, which only covers `IOException` --
+  literally the scenario this file's own OWN chunk-10c fix comment names). Contained today by
+  `RxImagePaneViewModel.LookupQrzAsync`'s own catch-all (a UI-layer net, not user-visible data
+  loss), but the contract violation itself is real.
+- **[risk, deferred to backlog]** Unserialized read-modify-write on `settings.json` (Load → 
+  `WithSection` → Save with an await between, no lock) in `RadioSessionService`'s
+  `SaveSafetySettingsAsync`/`SaveFrequencyPresetsAsync` can silently drop a concurrent write from an
+  unrelated setting saved in the same window. Real, but codebase-wide (the correct fix is a
+  serializing `UpdateAsync(Func<AppSettings,AppSettings>)` on `ISettingsStore` itself, not a
+  per-caller patch) and explicitly recommended as backlog, not this chunk's fix -- a worse variant
+  already exists off this chunk's own scope in `OptionsSettingsService.cs` (saves from a
+  dialog-open-time snapshot, discarding ANY concurrent write made while the dialog is open), noted
+  for when that file's own chunk comes up.
+- **[risk, coverage gap, fixed via tests]** Zero test coverage existed anywhere for the safety-
+  settings round-trip (`GetSafetySettingsAsync`/`SaveSafetySettingsAsync`) -- correct by inspection
+  (exactly 2 fields, both mapped in both directions; a missing section correctly yields the
+  documented default `SwrCutoffThreshold = 3.0`), but nothing would catch a future regression (a
+  third field added and wired only one direction).
+
+Also verified clean (not findings): `TestConnectionAsync`'s exception containment is airtight
+across factory-create/poll/dispose, all independently tested including a double-fault case;
+`LogQsoAsync`'s persist-first ordering and post-persist guard correct and tested; QRZ
+enabled+non-empty-credential gating symmetric between upload and lookup; no secrets reach any log
+call; no cross-call state cached incorrectly in either service (the one real cache,
+`QrzCallsignLookup`'s session, is correctly keyed and invalidated on credential change).
+
+Fixed: `LookupCallsignAsync`'s settings read now wrapped in `try/catch (Exception ex) when (ex is
+not OperationCanceledException)`, logging via a new `Log.LookupCallsignSettingsReadFailed` and
+returning `new QrzCallsignLookupResult(false, null, null, null, ex.Message)` -- matching
+`LogQsoAsync`'s own established shape for the identical class of failure. Two regression tests
+added (`LookupCallsignAsync_SettingsLoadThrows_ReturnsFailureInsteadOfThrowing`, using a new
+`FakeSettingsStore.LoadAsyncException` hook; `GetSafetySettingsAsync_NoSectionConfigured_
+ReturnsDefaults` + `SaveSafetySettingsAsync_ThenGet_RoundTripsBothFields` closing the coverage
+gap). 31/31 `Application.Tests` pass for this pair, 240/240 full suite (one unrelated,
+non-reproducing timing flake in `SstvSessionServicePttSafetyTests.cs` on the first full-suite run,
+confirmed pre-existing and not caused by this chunk -- passed both in isolation and on a clean
+re-run of the full suite), clean solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with no blockers, and
+the auditor explicitly recommended the applied fixes as follow-ups rather than requiring another
+round, same precedent as chunk 1 and Tier A's own "unconditional go" chunks. The one deferred
+finding (unserialized settings read-modify-write) was explicitly recommended as backlog by the
+auditor itself, not a gap in this round's own coverage.
+
+**Chunk 2 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier bug fixed
+(contract-violating unguarded settings read) plus a coverage gap closed with 2 new tests; 1 finding
+explicitly deferred to backlog per the auditor's own recommendation.
