@@ -159,13 +159,38 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     /// <summary>Gallery tab's All/Today filter (spec/09-ui.md) -- real, backed by
     /// <see cref="IReceiveHistoryStore.QueryAsync"/>'s own <c>From</c>/<c>To</c> filter fields.
-    /// Defaults to <see langword="true"/>, matching the mock2 draft's own default selection.
-    /// Band/Unlogged/Flagged/free-text filters from that same draft are omitted -- there is no
-    /// frequency/callsign/grid field on <see cref="ReceiveHistoryEntry"/> to filter by, and
-    /// <c>LinkedQsoId</c> is never set to anything but <see langword="null"/> by any code path
-    /// today (spec/14-roadmap.md backlog).</summary>
+    /// Defaults to <see langword="true"/>, matching the mock2 draft's own default selection. A
+    /// server-side query filter, unlike <see cref="SearchText"/>/<see cref="FilterUnloggedOnly"/>/
+    /// <see cref="FilterFlaggedOnly"/> below, which run client-side over <see cref="Entries"/> --
+    /// see <see cref="FilteredEntries"/>'s own doc comment for why.</summary>
     [ObservableProperty]
     private bool _showTodayOnly = true;
+
+    /// <summary>Gallery tab's free-text search box -- client-side substring match (case-insensitive)
+    /// against <see cref="ReceiveHistoryEntry.Note"/> and <see cref="ReceiveHistoryEntry.ModeId"/>,
+    /// the only two fields on the entry a free-text search can honestly claim to cover today --
+    /// there is still no callsign/grid field on <see cref="ReceiveHistoryEntry"/> to search
+    /// (spec/16-gui-wiring-survey.md), so this does NOT search those, despite an earlier watermark
+    /// implying it did (fixed alongside this, see <c>Panes.RxHistory.SearchWatermark</c>).</summary>
+    [ObservableProperty]
+    private string? _searchText;
+
+    /// <summary>Gallery tab's "Unlogged" filter toggle -- <see cref="ReceiveHistoryEntry.LinkedQsoId"/>
+    /// IS now set by real code (<c>QsoLinkWindowViewModel.LinkSelectedAsync</c>/
+    /// <c>CreateAndLinkAsync</c>), unlike when this filter was first scoped out as unbuildable
+    /// (spec/14-roadmap.md's own now-stale backlog note, corrected 2026-08-22). Client-side, not a
+    /// new <see cref="ReceiveHistoryFilter"/> field -- the retention-trimmed row count this queries
+    /// against is small enough (spec/14-roadmap.md's own reasoning for <see cref="FilterFlaggedOnly"/>
+    /// below applies equally here) that a new store-level query parameter isn't worth it yet.</summary>
+    [ObservableProperty]
+    private bool _filterUnloggedOnly;
+
+    /// <summary>Gallery tab's "Flagged" filter toggle -- client-side over <see cref="Entries"/>' own
+    /// already-real <see cref="ReceiveHistoryEntry.IsFlagged"/>, per spec/14-roadmap.md's own note
+    /// that this can run client-side over the current retention-trimmed row count with no new query
+    /// field needed.</summary>
+    [ObservableProperty]
+    private bool _filterFlaggedOnly;
 
     /// <summary>Resolved saved-image folder for the Gallery tab's Storage card -- real, loaded
     /// once via <see cref="IReceiveHistoryStore.GetImagesDirectoryAsync"/>.</summary>
@@ -235,6 +260,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             UpdateEntryCountText();
             SelectLatestCommand.NotifyCanExecuteChanged();
+            UpdateFilteredEntries();
         };
         UpdateEntryCountText();
         _historyStore.Recorded += OnRecorded;
@@ -247,6 +273,52 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<RxHistoryEntryViewModel> Entries { get; } = [];
+
+    /// <summary>The Gallery grid's actual `ItemsSource` -- <see cref="Entries"/> narrowed by
+    /// <see cref="SearchText"/>/<see cref="FilterUnloggedOnly"/>/<see cref="FilterFlaggedOnly"/>,
+    /// recomputed client-side (see <see cref="UpdateFilteredEntries"/>) rather than as a new
+    /// <see cref="IReceiveHistoryStore.QueryAsync"/> parameter. Deliberately a SEPARATE collection
+    /// from <see cref="Entries"/>, not a replacement for it: the Receive tab's Previous-frames strip
+    /// binds directly to <see cref="Entries"/> and must keep showing every recent frame regardless of
+    /// whatever the Gallery tab's own filter row currently has active.</summary>
+    public ObservableCollection<RxHistoryEntryViewModel> FilteredEntries { get; } = [];
+
+    partial void OnSearchTextChanged(string? value) => UpdateFilteredEntries();
+
+    partial void OnFilterUnloggedOnlyChanged(bool value) => UpdateFilteredEntries();
+
+    partial void OnFilterFlaggedOnlyChanged(bool value) => UpdateFilteredEntries();
+
+    private void UpdateFilteredEntries()
+    {
+        IEnumerable<RxHistoryEntryViewModel> query = Entries;
+
+        if (FilterUnloggedOnly)
+        {
+            query = query.Where(e => e.Entry.LinkedQsoId is null);
+        }
+
+        if (FilterFlaggedOnly)
+        {
+            query = query.Where(e => e.Entry.IsFlagged);
+        }
+
+        if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            var needle = SearchText.Trim();
+            query = query.Where(e =>
+                (e.Entry.Note is not null && e.Entry.Note.Contains(needle, StringComparison.OrdinalIgnoreCase)) ||
+                e.Entry.ModeId.Contains(needle, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var filtered = query.ToList();
+
+        FilteredEntries.Clear();
+        foreach (var item in filtered)
+        {
+            FilteredEntries.Add(item);
+        }
+    }
 
     public string FramesTodayDisplay => _localization.GetString("MainWindow.StatusBar.FramesTodayValueFormat", FramesTodayCount);
 
