@@ -6119,3 +6119,49 @@ rotation+shadow); round 2 found and fixed a real memory regression round 1's own
 round 3 clean GO with two risk-tier findings deferred to backlog (redesign-sized, not a review-round
 fix). Committed. **This closes the entire `Core.Imaging` sweep** (chunks 1-3) -- next up per the
 Tier B scope table: `UI/ViewModels`.
+
+## UI/ViewModels sweep -- IN PROGRESS, started 2026-08-22
+
+Scope: 20 files, 12,260 lines -- by far the largest remaining Tier B area (vs. ~3,300 lines total
+for the just-closed `Core.Logbook` + `Core.Imaging` sweeps combined). Triage: 3 trivial (skipped) --
+`ViewModelBase.cs` (empty base class), `WaterfallViewMode.cs` (enum), `ITemplateElementViewModel.cs`
+(pure interface, no method bodies -- read as context when auditing its 3 implementers, not audited
+standalone). Grouped rounds, smallest/lowest-risk first; full chunk list and live status tracked in
+`PROJECT_BRIEF.md`.
+
+## Chunk 1: MainViewModel.cs, AboutWindowViewModel.cs, WaterfallPaneViewModel.cs
+
+**Round 1** -- GO (unconditional). Chased this project's tracked failure class plus
+UI-sweep-specific concerns: `WaterfallPaneViewModel.OnFrame`'s "at most one Dispatcher.UIThread.Post
+in flight, latest-wins" coalescing logic (re-derived from scratch -- correct; the load-bearing
+detail is `_postScheduled = false` being set INSIDE the lock, BEFORE `LatestFrame` is assigned, so a
+throwing `PropertyChanged` subscriber can't wedge the flag), cross-thread `[ObservableProperty]`
+mutation (clean everywhere -- both off-UI-thread entry points across all three files correctly
+marshal via `Dispatcher.UIThread.Post` before touching an observable), and
+`MainViewModel`'s two constructor fire-and-forget async calls (`LoadCallsignAsync` already has its
+own try/catch; `OpenBlankEditorCommand.ExecuteAsync(null)` did not, and the risky block it reaches
+in `TxControlsPaneViewModel` isn't fully covered by that command's own try/catch -- an exception
+there would surface only as a nondeterministic, context-free "unobserved task exception" log at GC
+time, not a crash, but with no diagnostic pointing at what actually failed).
+
+Two risk-tier findings, both fixed as trivial same-round hardening per standing practice: (1) the
+missing try/catch on `OpenBlankEditorCommand.ExecuteAsync(null)`, wrapped to match
+`LoadCallsignAsync`'s own pattern with a new targeted log message; (2) a first-run-only ordering
+hazard -- on a fresh install with no `settings.json` yet, `JsonSettingsStore.LoadAsync` returns an
+already-completed task, so the whole auto-open-blank-editor chain used to run synchronously INLINE
+in the constructor, before `RadioStatus` was assigned two lines later (harmless today since nothing
+on that path reads `RadioStatus`, but a real hazard as the constructor grows) -- fixed by moving the
+call to after the `RadioStatus` assignment. Added
+`WaterfallPaneViewModel_MultipleFramesBeforeUiThreadRuns_CoalescesToOnlyTheLatest`, closing a real
+coverage gap the auditor flagged: no existing test pushed more than one frame before
+`Dispatcher.UIThread.RunJobs()`, so the coalescing claim itself (not just the happy path) was
+previously untested. 674/674 `UI.Tests` pass (was 673, +1), clean solution-wide build.
+
+Logged as deferred backlog, not fixed: `MainViewModel` has zero dedicated test coverage at all (no
+test anywhere constructs one) -- the `EditorOpened`/`EditorClosed` -> `ActiveEditor` wiring and the
+`CallsignDisplay` fallback are both untested; a silent no-op (no log) if `AvailableModes` is ever
+empty at startup; `AboutWindowViewModel`'s null-only (not blank-aware) attribute fallbacks, not
+reachable via current MSBuild defaults.
+
+**Chunk 1 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes + one coverage gap closed per
+standing practice. Committed.

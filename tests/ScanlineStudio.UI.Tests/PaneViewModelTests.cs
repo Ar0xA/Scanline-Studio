@@ -72,6 +72,39 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void WaterfallPaneViewModel_MultipleFramesBeforeUiThreadRuns_CoalescesToOnlyTheLatest()
+    {
+        // Tier B audit finding: OnFrame's own doc comment claims "at most one Post ever in flight --
+        // a frame arriving while one is pending just replaces _pendingFrame (latest-wins), it never
+        // queues a second post." No existing test exercised more than one frame before RunJobs(), so
+        // this pins that claim directly: three frames pushed back-to-back (as a real audio-drain-
+        // thread burst would) must collapse to exactly one PropertyChanged and the LAST frame shown,
+        // not the first, and not three separate updates.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var frame1 = new WaterfallFrame([0f, 1f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
+        var frame2 = new WaterfallFrame([2f, 3f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
+        var frame3 = new WaterfallFrame([4f, 5f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
+        var latestFrameChangeCount = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(WaterfallPaneViewModel.LatestFrame))
+            {
+                latestFrameChangeCount++;
+            }
+        };
+
+        var source = (FakeWaterfallSource)sstvSession.Waterfall;
+        source.Emit(frame1);
+        source.Emit(frame2);
+        source.Emit(frame3);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(frame3, vm.LatestFrame);
+        Assert.Equal(1, latestFrameChangeCount);
+    }
+
+    [AvaloniaFact]
     public void WaterfallPaneViewModel_ModeDetectedEvent_UpdatesCurrentModeOnUiThread()
     {
         // Auditor-caught (batch 8 plan review): ISstvSessionService.ModeDetected fires synchronously
