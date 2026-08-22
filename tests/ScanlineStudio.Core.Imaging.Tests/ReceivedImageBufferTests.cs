@@ -67,17 +67,18 @@ public sealed class ReceivedImageBufferTests
     }
 
     [Fact]
-    public void Updated_FiresOnBothLineDecodedAndDecodeRestarted()
+    public void Updated_FiresOnModeDetectedAndLineDecodedAndDecodeRestarted()
     {
         var decoder = new FakeSstvDecoder();
         var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         var updateCount = 0;
         buffer.Updated += () => updateCount++;
 
+        decoder.RaiseModeDetected(TestMode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, new MutableTestImageSource(1, 1, new Rgb24[1])));
         decoder.RaiseDecodeRestarted(TestMode);
 
-        Assert.Equal(2, updateCount);
+        Assert.Equal(3, updateCount);
     }
 
     [Fact]
@@ -145,11 +146,14 @@ public sealed class ReceivedImageBufferTests
     }
 
     [Fact]
-    public void Progress_FinalCompletingEvent_SnapsToExactlyOne()
+    public void Progress_FinalCompletingEvent_ReachesExactlyOne()
     {
-        // 10-row image, step-1 family: events at 0,1,2,...,9. The Line=9 event (Line+step=10>=10)
-        // must read exactly 1.0, not 10.0/10.0's own asymptotic near-miss for paired families --
-        // this pins the snap-to-1.0 behavior directly, not just that it happens to equal 1.0 here.
+        // 10-row image, step-1 family: events at 0,1,2,...,9. The Line=9 event has
+        // Line+step == 10 == imageHeight exactly (never overshoots), so (Line+step)/imageHeight is
+        // exactly 1.0 with no special-casing needed -- Tier B audit finding, correcting an earlier
+        // version of this comment that claimed a dedicated "snap" branch was load-bearing here (it
+        // was provably dead code: Clamp's own upper bound already produced 1.0 in every reachable
+        // case).
         var decoder = new FakeSstvDecoder();
         var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
         decoder.RaiseModeDetected(TestMode);
@@ -160,6 +164,29 @@ public sealed class ReceivedImageBufferTests
         decoder.RaiseLineDecoded(new DecodedImageUpdate(9, image));
 
         Assert.Equal(1.0, buffer.Progress);
+    }
+
+    [Fact]
+    public void Progress_ReplayedLinesGoingBackwards_DoesNotRelearnTheStep()
+    {
+        // Tier B audit finding: AnalogFmSstvDecoder's replay path (and a user-triggered Correct
+        // Slant redraw) can re-emit LineDecoded for already-decoded rows, restarting back at Line=0
+        // mid-image. _observedStep must NOT be re-derived from that backward jump (which would
+        // compute a negative/wrong step) -- ComputeProgress's own guard only ever learns the step
+        // once (_observedStep is null), so a replayed Line=0 after the step is already learned must
+        // leave it untouched. Verified indirectly: if the step were corrupted to 0-1=-1 by the
+        // replayed jump, the next real line's progress would differ from the value below.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        decoder.RaiseModeDetected(TestMode);
+        var image = new MutableTestImageSource(1, 10, new Rgb24[10]);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image)); // step not yet learned
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, image)); // step learned = 1
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image)); // replay jumps back to row 0
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, image)); // a real line, post-replay
+        Assert.Equal(4.0 / 10.0, buffer.Progress); // (3 + step(1)) / 10 -- only correct if step is still 1
     }
 
     [Fact]
