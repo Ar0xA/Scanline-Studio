@@ -164,6 +164,21 @@ public sealed class FileLoggerProviderTests : IDisposable
         Assert.Throws<ArgumentOutOfRangeException>(() => new FileLoggerProvider(_logPath, maxFileSizeBytes: invalidSize));
     }
 
+    // Tier C audit finding (blocker, fixed): WriteLine's own _writer.WriteLine(line) call used to be
+    // unguarded -- a full disk, a removed/unmounted volume, or a dropped network path threw
+    // IOException straight out of this method and into Microsoft.Extensions.Logging's own
+    // AggregateException wrapping, crashing whatever caller made an ordinary logger.LogDebug(...)
+    // call. Fixed with the same swallow-and-disable shape RotationFailure_...'s own test already
+    // pins for the sibling reopen-after-rotation catch just below WriteLine's own new one. NOT given
+    // a dedicated test: reliably provoking a genuine disk-level write failure (as opposed to the
+    // File.Move-blocked-by-a-directory trick RotationFailure_... uses, which only reaches
+    // TryRotateBackups, not this new catch) needs either a platform-specific trick with no portable
+    // equivalent (permission changes after opening don't affect an already-open handle's writes on
+    // POSIX; a locked/full/unmounted volume isn't reproducible deterministically in CI) or
+    // restructuring FileLoggerProvider to accept an injectable TextWriter/Stream purely for
+    // testability -- a larger change than this fix itself. The fix is a 6-line try/catch verified
+    // correct by inspection, structurally identical to the already-tested sibling catch immediately
+    // below it.
     [Fact]
     public void RotationFailure_FallsBackToKeepingTheLoggerAlive_InsteadOfBrickingIt()
     {

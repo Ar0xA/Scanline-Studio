@@ -1,14 +1,110 @@
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
+using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.Host.Tests;
 
 public sealed class SstvCompositionRootTests
 {
+    [Fact]
+    public async Task RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup()
+    {
+        // Tier C audit finding: Program.cs's own ~150-line DI registration block used to live
+        // inline in Main -- structurally untestable, so a missing registration (or a missing
+        // STARTUP STEP entirely, exactly how the culture-restore blocker fixed alongside this test
+        // went unnoticed) surfaced only at first real resolve in a real run. Extracted into
+        // RegisterServices (mirroring RegisterSstvServices's own existing shape) specifically so
+        // this test can exist. Resolves the same things Main() itself resolves at startup
+        // (MainViewModel and OptionsWindowViewModel transitively pull in almost every other
+        // registration -- panes, the Application-layer services, the radio/logbook/image backends).
+        // IAudioEngine/IAudioDeviceEnumerator are substituted with fakes -- MiniAudioEngine's own
+        // constructor genuinely initializes a native audio context (Program.cs's own registration
+        // comment: "must not run at process start on a machine with no audio server"), which is not
+        // safe to do from a CI test host; every OTHER registration below is exactly what
+        // RegisterServices itself defines, unmodified.
+        //
+        // Round-2 confirmation finding: all three substitute registrations MUST come AFTER
+        // RegisterServices, not before -- DI is last-registration-wins, so registering the fake
+        // ISettingsStore first (as an earlier version of this test did) got silently SHADOWED by
+        // RegisterServices's own real JsonSettingsStore registration, resolving against (and
+        // creating SQLite files under) the real developer machine's actual settings.json/profile
+        // directory instead of this test's own isolated fake.
+        var services = new ServiceCollection();
+        services.AddLogging();
+        Program.RegisterServices(services);
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
+        services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        // Not `using` -- ISstvSessionService's real implementation is IAsyncDisposable-only, same
+        // reason Program.cs's own teardown handler goes through DisposeAsync explicitly rather than
+        // a synchronous Dispose()/`using` (see that handler's own doc comment).
+        await using var provider = services.BuildServiceProvider();
+
+        var mainViewModel = provider.GetRequiredService<MainViewModel>();
+        var optionsViewModel = provider.GetRequiredService<OptionsWindowViewModel>();
+        _ = provider.GetRequiredService<ReceiveHistoryRecorder>();
+        _ = provider.GetRequiredService<ISettingsStore>();
+
+        Assert.NotNull(mainViewModel);
+        Assert.NotNull(optionsViewModel);
+    }
+
+    [Fact]
+    public void CreateSstvDecoder_CorruptAudioDeviceSettingsSection_FallsBackToDefaultsInsteadOfThrowing()
+    {
+        // Tier C audit finding (risk): GetSection's own Deserialize call throws JsonException for a
+        // wrong-typed value in a hand-edited/version-skewed settings.json (e.g. "SampleRate": "auto")
+        // -- unlike JsonSettingsStore.LoadAsync itself (already hardened against a corrupt FILE), this
+        // was the third instance of an unguarded settings-SECTION read reaching a DI factory with no
+        // try/catch. Since this factory backs a singleton, a throw here was not even one-shot: DI does
+        // not cache a failed construction, so the NEXT resolve would retry and throw again, past the
+        // one caller that happened to catch it the first time.
+        var settings = new AppSettings();
+        settings.Sections[AudioDeviceSettings.SectionKey] = JsonDocument.Parse("\"not an AudioDeviceSettings object\"").RootElement;
+        var services = new ServiceCollection();
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(settings));
+        services.AddLogging();
+        Program.RegisterSstvServices(services);
+        using var provider = services.BuildServiceProvider();
+
+        var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
+
+        Assert.Equal(SstvSampleRate.Default, decoder.SampleRate);
+    }
+
+    [Fact]
+    public void CreateSstvDecoder_CorruptDecoderSettingsSection_FallsBackToDefaultsInsteadOfThrowing()
+    {
+        // Same finding as above, the SstvDecoderSettings section's own independent read/catch.
+        var settings = new AppSettings();
+        settings.Sections[SstvDecoderSettings.SectionKey] = JsonDocument.Parse("42").RootElement;
+        var services = new ServiceCollection();
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(settings));
+        services.AddLogging();
+        Program.RegisterSstvServices(services);
+        using var provider = services.BuildServiceProvider();
+
+        var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
+
+        Assert.True(decoder.AutoSlantEnabled);
+    }
+
+    private sealed class NullAudioDeviceEnumerator : IAudioDeviceEnumerator
+    {
+        public IReadOnlyList<AudioDeviceInfo> InputDevices { get; } = [];
+
+        public IReadOnlyList<AudioDeviceInfo> OutputDevices { get; } = [];
+
+        public Task RefreshAsync(CancellationToken ct = default) => Task.CompletedTask;
+    }
+
     [Fact]
     public void SstvServices_UseThePersistedConfiguredSampleRateThroughActualRegistrations()
     {

@@ -80,9 +80,28 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 return;
             }
 
-            _writer.WriteLine(line);
+            // Tier C audit finding (blocker): the write itself used to be unguarded -- AutoFlush
+            // means every line is a real syscall, so a full disk, a removed/unmounted volume, or a
+            // dropped network path threw IOException straight out of this method, past FileLogger.Log,
+            // and into Microsoft.Extensions.Logging's own AggregateException wrapping -- an ordinary
+            // `logger.LogDebug(...)` call on a decode thread, inside a catch block, or in a timer
+            // callback could crash the process. This class's own doc comment already promises "must
+            // not crash the app"; only the ObjectDisposedException half of that promise was actually
+            // enforced (the `if (_disposed) return;` above). Same disable-and-swallow shape as the
+            // reopen-after-rotation catch just below.
+            long length;
+            try
+            {
+                _writer.WriteLine(line);
+                length = _writer.BaseStream.Length;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                _disposed = true;
+                return;
+            }
 
-            if (_writer.BaseStream.Length >= _maxFileSizeBytes)
+            if (length >= _maxFileSizeBytes)
             {
                 _writer.Dispose();
                 TryRotateBackups();
