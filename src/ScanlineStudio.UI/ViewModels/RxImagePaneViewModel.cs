@@ -632,10 +632,25 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             // this one (accidentally flagging/annotating the wrong saved image).
             _lastSavedPath = null;
             _currentEntryId = null;
-            _suppressFrameMetadataEdits = true;
-            Note = null;
-            IsFlagged = false;
-            _suppressFrameMetadataEdits = false;
+            // Tier B audit finding: try/finally, not a bare set-then-reset -- these two property sets
+            // raise PropertyChanged into live Avalonia bindings, which can throw; a throw here used to
+            // leave _suppressFrameMetadataEdits stuck true for the process lifetime AND skip every
+            // statement below it in this lambda, including the OverrideCallsign/Lookup* resets a few
+            // lines down -- letting station A's callsign leak into station B's reception and, via
+            // LogQsoCommand, into a real logbook row. Same fix
+            // RxHistoryPaneViewModel._suppressSelectedEntryEdits already applied for the identical
+            // flag shape earlier in this sweep.
+            try
+            {
+                _suppressFrameMetadataEdits = true;
+                Note = null;
+                IsFlagged = false;
+            }
+            finally
+            {
+                _suppressFrameMetadataEdits = false;
+            }
+
             OnPropertyChanged(nameof(CanEditFrameMetadata));
             // Round-1 plan-review finding (Log QSO / rx-log-qso.md): these 4 are per-RECEPTION
             // "who is this station" state, same category as DetectedMode/StartedAt above, but were
@@ -651,6 +666,22 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             LookupName = null;
             LookupQth = null;
             LookupGrid = null;
+            // Tier B audit finding: DecodedNrRst is the same per-RECEPTION "who is this station"
+            // category as the four fields above (also decoded from station A's FSK sub-packet, see
+            // ApplyStationIdDecodedAsync) but was the one left out of this reset -- latent only
+            // because no view currently binds it (OptionsWindowView.axaml notes it as a separate,
+            // still-unbound gap); fixed now so it doesn't become a live wrong-value bug the moment it
+            // is bound.
+            DecodedNrRst = null;
+            // Tier B audit finding: these three are per-RECEPTION error/status text, same category as
+            // Note/IsFlagged above, but weren't cleared here -- a QRZ lookup failure or a stale
+            // "entry no longer exists" from the PREVIOUS frame kept showing on the RxFrameMeta card
+            // after a new reception started and blanked the fields the error text was actually about.
+            // Same shape RxHistoryPaneViewModel_ExportFrameAsync_SwitchingSelectionAfterward_
+            // ClearsStaleExportStatusMessage already fixed for the sibling pane earlier in this sweep.
+            QrzLookupErrorMessage = null;
+            FrameMetadataErrorMessage = null;
+            SaveFrameErrorMessage = null;
         });
     }
 
@@ -715,6 +746,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     {
         if (info.Callsign is { } decodedCallsign)
         {
+            // Tier B audit finding: GetOperatorCallsignAsync's own await genuinely yields the UI
+            // thread for a real, uncached settings-file disk read (JsonSettingsStore.LoadAsync has no
+            // cache) -- during a bulk-WAV-decode's back-to-back transmissions (the SAME interleaving
+            // OnSaved's own doc comment already calls "the likely interleaving, not an edge case"),
+            // station B's ModeDetected/OverrideCallsign=null reset can land in this exact window,
+            // after which the write below would silently re-apply station A's now-stale callsign onto
+            // B's current frame. Same class OnSaved already guards via IReceivedImageBuffer.Generation
+            // (see that method's own doc comment); this write site didn't have the equivalent.
+            var generation = _receivedImage.Generation;
             string? ownCallsign;
             try
             {
@@ -725,6 +765,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
                 // Best-effort, same reasoning as LoadCaptureDeviceNameAsync -- a failure here must not
                 // crash the decode-event handling chain; the field simply doesn't auto-fill this time.
                 Log.GetOperatorCallsignFailed(_logger, ex);
+                return;
+            }
+
+            if (_receivedImage.Generation != generation)
+            {
+                // A new reception has started while the settings read above was in flight -- this
+                // callsign belongs to the frame that's no longer current. Drop it rather than write a
+                // stale value onto the new one.
                 return;
             }
 
@@ -878,10 +926,19 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
 
         _currentEntryId = entry.Id;
-        _suppressFrameMetadataEdits = true;
-        Note = entry.Note;
-        IsFlagged = entry.IsFlagged;
-        _suppressFrameMetadataEdits = false;
+        // Tier B audit finding: try/finally -- see OnModeDetected's own comment on the same fix for
+        // the same flag.
+        try
+        {
+            _suppressFrameMetadataEdits = true;
+            Note = entry.Note;
+            IsFlagged = entry.IsFlagged;
+        }
+        finally
+        {
+            _suppressFrameMetadataEdits = false;
+        }
+
         OnPropertyChanged(nameof(CanEditFrameMetadata));
     });
 

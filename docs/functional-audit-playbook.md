@@ -6585,3 +6585,73 @@ scope. Explicit "close chunk 8" call.
 **Chunk 8 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 1 real blocker (Save could
 silently persist post-load-failure defaults over real settings, for any field) plus 4 precedented
 risk-tier/nit fixes; round 2 clean GO, no further action.
+
+## Chunk 9: RxImagePaneViewModel.cs
+
+Already touched once before, during Core.Logbook chunk 4 (the `Saved`/`NotifySaved` ordering fix in
+`ReceiveHistoryRecorder.cs`) -- round 1 explicitly re-verified that fix is still correct in context
+before auditing anything new, per standing practice.
+
+**Round 1** -- NOT GO. 2 risk-tier findings plus 2 smaller precedented gaps, all four in the same
+tracked failure class:
+
+- **[risk]** `_suppressFrameMetadataEdits` was set/reset bare (no `try/finally`) at 2 sites
+  (`OnModeDetected`, `OnHistoryRecorded`) -- same flag shape `RxHistoryPaneViewModel
+  ._suppressSelectedEntryEdits` already had fixed earlier in this sweep (chunk 7), but strictly
+  worse here: a throw from the `Note`/`IsFlagged` property setters' `PropertyChanged` fan-out would
+  skip every statement AFTER it in the same lambda too, including the `OverrideCallsign`/`Lookup*`
+  resets a few lines below `OnModeDetected`'s own guarded block -- letting a previous station's
+  callsign leak into the next reception and, via `LogQsoCommand`, into a real logbook row.
+- **[risk]** `ApplyStationIdDecodedAsync`'s `OverrideCallsign` write ran after
+  `await _sstvSession.GetOperatorCallsignAsync()` -- a genuinely uncached settings-file disk read
+  (`JsonSettingsStore.LoadAsync` has no cache) -- with no staleness guard. During a bulk-WAV-decode's
+  back-to-back transmissions (the SAME interleaving `OnSaved`'s own doc comment already calls "the
+  likely interleaving, not an edge case"), a new reception's `ModeDetected`/`Generation` bump can
+  land in that exact window, after which the write would silently re-apply the OLD reception's
+  decoded callsign onto the NEW one now on screen. `OnSaved` already guards the identical class via
+  `IReceivedImageBuffer.Generation`; this write site didn't have the equivalent.
+- **[one-liner]** `DecodedNrRst` is the same per-RECEPTION "who is this station" category as
+  `OverrideCallsign`/`Lookup*` (also decoded from the previous station's FSK sub-packet) but was the
+  one left out of `OnModeDetected`'s reset block -- latent only because no view currently binds it
+  yet.
+- **[nit, fixed anyway]** `QrzLookupErrorMessage`/`FrameMetadataErrorMessage`/`SaveFrameErrorMessage`
+  are per-RECEPTION status text, same category as `Note`/`IsFlagged` (already reset), but weren't
+  cleared -- a QRZ lookup failure or a stale "entry no longer exists" from the PREVIOUS frame kept
+  showing on the RxFrameMeta card after a new reception blanked the fields the error text was
+  actually about. Same shape `RxHistoryPaneViewModel_ExportFrameAsync_
+  SwitchingSelectionAfterward_ClearsStaleExportStatusMessage` already fixed for the sibling pane
+  (chunk 7).
+
+Fixed: both `_suppressFrameMetadataEdits` sites wrapped in try/finally, matching the sibling's own
+fix shape. `ApplyStationIdDecodedAsync` now captures `_receivedImage.Generation` immediately before
+the await and bails if it changed by the time the await resumes, before both the self-filter check
+and the `OverrideCallsign` write -- the `CompactNr`/`NrText` branches call `ApplyDecodedNrRst`
+synchronously with no intervening await, so correctly left unguarded. `OnModeDetected`'s reset block
+now also nulls `DecodedNrRst` and all three error-message properties. Three regression tests added
+(`RxImagePaneViewModel_StationIdDecodedEvent_NewReceptionStartsWhileAwaitingOwnCallsign_
+DropsTheStaleWrite`, `..._ModeDetectedEvent_ClearsStaleDecodedNrRst`, `..._ModeDetectedEvent_
+ClearsStalePerReceptionErrorMessages`), backed by a new `FakeSstvSessionService
+.OperatorCallsignGate` `TaskCompletionSource` hook that holds the callsign-lookup await open so a
+test can bump `FakeReceivedImageBuffer.Generation` mid-flight -- genuinely reproduces the race, not
+just inspection. No dedicated test for the try/finally fix (same defensive/correct-by-inspection
+judgment call as the sibling's own precedent). 696/696 `UI.Tests` pass (was 693, +3), clean
+solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Verified both try/finally sites reset the
+flag unconditionally and place every previously-skippable statement after the guarded block,
+confirmed the generation capture is genuinely before the await and the check genuinely after (and
+before the write), and traced the guard's soundness against the REAL `ReceivedImageBuffer`'s own
+generation-bump sites (not just the fake) -- `ModeDetected`/`DecodeRestarted` bump `_generation`
+synchronously on the decode thread, always before this VM's own posted reset can run, so there's no
+window where the VM's reset has already fired but the guard still sees an unchanged generation.
+Confirmed `DecodedNrRst` and the three error messages aren't cleared from any other event, and that
+a mid-reception QRZ failure correctly persists until the NEXT `ModeDetected` (the stated intent, not
+a bug). One nit noted, not actioned: `finally` resets the suppression flag to `false` rather than
+restoring a prior value, which is safe only because neither site can currently be reentered
+synchronously (both run only as `Dispatcher.UIThread.Post` lambdas) -- would need save/restore if a
+third, potentially-nesting site is ever added. Explicit "close the chunk" call.
+
+**Chunk 9 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 2 real risk-tier bugs
+(non-exception-safe suppression flag with a worse blast radius than its sibling; missing generation
+guard on a callsign write after a genuinely-slow uncached disk-read await) plus 2 smaller precedented
+gaps; round 2 clean GO, no further action.
