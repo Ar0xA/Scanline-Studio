@@ -7800,3 +7800,88 @@ a literal `null` array element, all in one manifest). 15/15 Core.Localization.Te
 blocker), 2 rounds total (NOT GO -> residual-gap-fixed). 1 real blocker (with one residual gap
 caught and fixed in confirmation) + 2 real risks fixed. 4 risk-tier/nit findings remain
 intentionally deferred.
+
+### Group 3: Host startup/logging
+
+`src/ScanlineStudio.Host/Program.cs` (489) -- the composition root: DI container wiring, startup
+sequencing, `Main` entry point. `src/ScanlineStudio.Host/FileLoggerProvider.cs` (187) -- custom
+`ILoggerProvider` that writes log files to disk.
+
+**Round 1 verdict: NO-GO** -- 2 blockers, 6 risks, 5 nits. Per Tier C's own escalation rule, this
+group needed a confirmation round.
+
+**Blocker 1 (fixed): `FileLoggerProvider.WriteLine`'s own file write had no exception guard.**
+`AutoFlush = true` means every log line is a real syscall -- a full disk, a removed/unmounted
+volume, or a dropped network path threw `IOException` straight out of this method, into
+`Microsoft.Extensions.Logging`'s own `AggregateException` wrapping, crashing whatever caller made
+an ordinary `logger.LogDebug(...)` call (a decode thread, a catch block, a timer callback). This
+directly contradicted the type's own doc comment ("must not crash the app"); only the
+`ObjectDisposedException` half of that promise was actually enforced. Fixed with the same
+swallow-and-disable shape the existing reopen-after-rotation catch (a few lines below, already
+tested) uses.
+
+**Blocker 2 (fixed): the persisted UI language was never restored at startup.** Despite two
+separate doc comments (`LocalizationSettings.cs`'s own, `JsonLocalizationService.cs`'s own)
+explicitly assigning this exact step to the composition root, and `Program.cs`'s own comment
+claiming it was "a separate, later step" once a culture section existed to restore from -- that
+step never landed even after the section did. A user's chosen language reverted to English on
+every relaunch, while the Options dialog kept showing the persisted (non-English) choice (it reads
+the raw settings section directly, not the live service's `CurrentCulture`), so the dialog visibly
+disagreed with what was actually rendered. Fixed: a new guarded startup step (same defensive shape
+as every sibling step) reads the section and calls `ILocalizationService.SetCultureAsync`, placed
+before `SetupWithLifetime` so the restore takes effect for the first window shown, not after.
+
+**Risk (fixed, recommended alongside the blockers): `CreateSstvDecoder`'s two settings-section
+reads had no exception handling** -- the third instance of this codebase's recurring "unguarded
+settings-section read reaching a DI factory" pattern (after Group 1's `JsonSettingsStore` and Group
+2's `JsonLocalizationService`, both file-level). Since this factory backs a singleton, a throw here
+was not even one-shot: DI does not cache a failed construction, so the next resolve retries and
+throws again, past whatever caller happened to catch the first one. Fixed with the same
+log-and-fall-back-to-defaults pattern.
+
+**Structural change (round 1's own T1 finding): extracted `Program.cs`'s ~150-line inline DI
+registration block into a new `RegisterServices(IServiceCollection)` method**, mirroring the
+existing `RegisterSstvServices`'s own shape -- previously this block lived directly inside `Main`,
+structurally untestable, which is exactly how Blocker 2 (a missing STARTUP STEP, not a missing
+registration) went unnoticed for as long as it did. New test resolves the actual things `Main()`
+itself resolves at startup (`MainViewModel`, `OptionsWindowViewModel`, `ReceiveHistoryRecorder`),
+substituting `IAudioEngine`/`IAudioDeviceEnumerator` with fakes since `MiniAudioEngine`'s
+constructor genuinely initializes a native audio context, unsafe from a CI test host.
+
+Deferred (real, explicitly not required to close): `FileLoggerProvider` is never disposed in
+production (harmless only because `AutoFlush = true`); permanently-failing rotation degrades into
+per-line close/reopen thrash; a global lock + synchronous flush per line on the DSP hot path at a
+Debug logging floor; the only unguarded startup-resolve site (`SetupWithLifetime` itself, mitigated
+by the `AppDomain` unhandled-exception hook); `lifetime.Start` throwing skips host teardown; assorted
+nits (no date in log timestamps, a discarded shutdown exit code, an ignored trailing `--log-level`
+with no value).
+
+5 new regression tests added (`SstvCompositionRootTests.cs`: DI-graph resolution,
+2 corrupt-settings-section fallback tests; a documented-not-tested note in
+`FileLoggerProviderTests.cs` explaining why Blocker 1's exact write-failure scenario isn't
+reliably reproducible without either a platform-specific trick or an injectable-stream refactor
+disproportionate to the fix itself). 23/23 Host.Tests pass (was 20, +3 net -- one further round-2
+test-hygiene fix corrected without changing the count), clean solution-wide build.
+
+**Round 2 (confirmation) verdict: GO.** Verified independently: the `ObjectDisposedException` arm
+in Blocker 1's catch filter is load-bearing, not cargo-cult -- a DIFFERENT reachable path
+(`OpenWriter` throwing something other than `IOException`/`UnauthorizedAccessException` during
+rotation's reopen) leaves `_writer` disposed with `_disposed` still false, so the NEXT `WriteLine`
+needs this exact arm; Blocker 2's ordering (before `SetupWithLifetime`), its use of the real
+`ILocalizationService` (not a hand-rolled switch), and its section-key/type match against the
+Options-dialog save path were all traced and confirmed; R1's two settings-section reads are
+independently guarded (a first-section failure doesn't skip the second); the `RegisterServices`
+extraction is complete (no dropped/duplicated/reordered registration, `RegisterSstvServices` still
+called exactly once from inside it). One real risk finding in the NEW test itself (not production
+code): `RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup`'s fake `ISettingsStore`
+was registered BEFORE `Program.RegisterServices`, so DI's last-registration-wins semantics silently
+shadowed it with the REAL `JsonSettingsStore` -- the test was unintentionally resolving against
+(and writing SQLite files into) the developer's actual profile directory. Fixed: reordered so the
+fakes are registered after `RegisterServices`, matching how the audio fakes were already ordered.
+Re-verified 23/23 pass, clean solution-wide build.
+
+**Group 3 CLOSED (2026-08-22)** -- escalated to Tier B rigor per Tier C's own rule (2 rounds:
+NOT GO -> GO), 2 real blockers + 1 real risk fixed, plus a structural testability improvement
+(the `RegisterServices` extraction) that the round-1 auditor explicitly credited as the reason
+Blocker 2 went unnoticed for as long as it did. 6 risk-tier findings and 5 nits remain
+intentionally deferred.
