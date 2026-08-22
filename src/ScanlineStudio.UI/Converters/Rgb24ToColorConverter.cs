@@ -1,4 +1,5 @@
 using System.Globalization;
+using Avalonia;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
@@ -26,12 +27,18 @@ public sealed class Rgb24ToColorConverter : IValueConverter
     {
         Rgb24 color => Color.FromRgb(color.R, color.G, color.B),
         null => Colors.Black,
-        _ => throw new NotSupportedException($"Expected {nameof(Rgb24)}, got {value.GetType()}."),
+        // Tier C audit finding (risk): was `throw new NotSupportedException(...)` -- reachable via
+        // Avalonia's own AvaloniaProperty.UnsetValue on a broken/not-yet-resolved binding path (e.g.
+        // SelectedTextElement being null at startup or while a box element is selected), not just a
+        // genuinely-wrong-typed value. UnsetValue is Avalonia's own "cannot convert this" signal --
+        // returning it keeps the target at its default with no exception in the binding pipeline,
+        // same reasoning as the null arm just above.
+        _ => AvaloniaProperty.UnsetValue,
     };
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) => value switch
     {
         Color color => new Rgb24(color.R, color.G, color.B),
-        _ => throw new NotSupportedException($"Expected {nameof(Color)}, got {value?.GetType().ToString() ?? "null"}."),
+        _ => AvaloniaProperty.UnsetValue,
     };
 }
