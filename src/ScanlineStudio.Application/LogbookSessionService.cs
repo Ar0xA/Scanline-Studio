@@ -52,27 +52,48 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         // best-effort and must never undo or block on it.
         var persisted = await _repository.AddAsync(record, ct).ConfigureAwait(false);
 
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var stationCallsign = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)?.Callsign;
-
-        var writer = new StringWriter();
-        _adifExporter.Export([persisted], writer, stationCallsign);
-        var adifText = writer.ToString();
-
-        var adifUdpResult = await _adifUdpStreamer.SendLoggedQsoAsync(adifText, ct).ConfigureAwait(false);
-
-        var qrzUploaded = false;
-        string? qrzError = null;
-        var qrzSettings = appSettings.GetSection(QrzUploadSettings.SectionKey, QrzUploadSettingsJsonContext.Default.QrzUploadSettings) ?? new QrzUploadSettings();
-        if (qrzSettings.Enabled == true && !string.IsNullOrEmpty(qrzSettings.ApiKey))
+        // Round-1 code-review finding (Tier A Batch 10 chunk 10c, real bug fixed): this doc comment's
+        // own "must never ... block on it" claim wasn't actually enforced -- everything below used to
+        // run unguarded, so a throw here (settings load, ADIF export, or ADIF-UDP send -- e.g. a
+        // permissions error reading settings.json) propagated OUT of LogQsoAsync AFTER the record was
+        // already committed. Both real UI callers (LogbookPaneViewModel/QsoLinkWindowViewModel) treat
+        // any thrown exception here as "logging failed" and re-enable their own retry affordance --
+        // a user retrying then creates a genuine DUPLICATE QSO record, since the first attempt's
+        // persistence already succeeded. QRZ upload itself was already exception-safe
+        // (QrzLogbookUploader.UploadAsync catches everything but cancellation) -- only this settings/
+        // export/ADIF-UDP span needed the same treatment.
+        try
         {
-            var qrzResult = await _qrzUploader.UploadAsync(adifText, qrzSettings.ApiKey, ct).ConfigureAwait(false);
-            qrzUploaded = qrzResult.Success;
-            qrzError = qrzResult.ErrorReason;
-        }
+            var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+            var stationCallsign = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)?.Callsign;
 
-        Log.QsoLogged(_logger, persisted.Id, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded);
-        return new LogQsoResult(persisted, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded, qrzError);
+            var writer = new StringWriter();
+            _adifExporter.Export([persisted], writer, stationCallsign);
+            var adifText = writer.ToString();
+
+            var adifUdpResult = await _adifUdpStreamer.SendLoggedQsoAsync(adifText, ct).ConfigureAwait(false);
+
+            var qrzUploaded = false;
+            string? qrzError = null;
+            var qrzSettings = appSettings.GetSection(QrzUploadSettings.SectionKey, QrzUploadSettingsJsonContext.Default.QrzUploadSettings) ?? new QrzUploadSettings();
+            if (qrzSettings.Enabled == true && !string.IsNullOrEmpty(qrzSettings.ApiKey))
+            {
+                var qrzResult = await _qrzUploader.UploadAsync(adifText, qrzSettings.ApiKey, ct).ConfigureAwait(false);
+                qrzUploaded = qrzResult.Success;
+                qrzError = qrzResult.ErrorReason;
+            }
+
+            Log.QsoLogged(_logger, persisted.Id, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded);
+            return new LogQsoResult(persisted, adifUdpResult.SentCount, adifUdpResult.EnabledCount, qrzUploaded, qrzError);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // The QSO IS already logged (line 53 succeeded) -- report that honestly, with degraded
+            // best-effort telemetry (nothing sent/uploaded), rather than throwing and making a caller
+            // believe logging itself failed.
+            Log.PostPersistStepFailed(_logger, persisted.Id, ex);
+            return new LogQsoResult(persisted, 0, 0, false, null);
+        }
     }
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default) => _repository.SearchAsync(query, ct);
@@ -146,5 +167,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Imported {Count} QSO(s) from {FilePath}")]
         public static partial void AdifImported(ILogger logger, string filePath, int count);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QSO {Id} was persisted, but the ADIF-UDP/QRZ best-effort steps afterward failed")]
+        public static partial void PostPersistStepFailed(ILogger logger, string id, Exception exception);
     }
 }

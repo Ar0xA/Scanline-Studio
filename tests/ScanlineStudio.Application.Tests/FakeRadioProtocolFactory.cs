@@ -12,6 +12,11 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
 
     public Exception? PollExceptionToThrow { get; set; }
 
+    // Tier A Batch 10 chunk 10c: lets a test drive the double-fault scenario (PollAsync throws AND
+    // DisposeAsync also throws) -- RadioSessionService.TestConnectionAsync must report the ORIGINAL
+    // poll failure, not have it masked by an unrelated teardown error.
+    public Exception? DisposeExceptionToThrow { get; set; }
+
     public bool Disposed { get; private set; }
 
     public Task<RadioState> PollAsync(CancellationToken ct)
@@ -26,6 +31,11 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
     public ValueTask DisposeAsync()
     {
         Disposed = true;
+        if (DisposeExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
         return ValueTask.CompletedTask;
     }
 }
@@ -42,11 +52,21 @@ internal sealed class FakeRadioProtocolFactory(FakeRadioProtocol protocol, Type?
 
     public List<RadioConnectionSpec> CreateCalls { get; } = [];
 
+    // Tier A Batch 10 chunk 10c: lets a test drive Create() throwing -- RadioSessionService.
+    // TestConnectionAsync must report a failure result, not let this propagate uncaught (its own
+    // interface contract says it always returns a result).
+    public Exception? CreateExceptionToThrow { get; set; }
+
     public bool CanHandle(RadioConnectionSpec spec) => spec.GetType() == _handlesType;
 
     public IRadioProtocol Create(RadioConnectionSpec spec)
     {
         CreateCalls.Add(spec);
+        if (CreateExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
         return protocol;
     }
 }

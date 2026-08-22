@@ -10,10 +10,14 @@ internal sealed class FakeAdifUdpStreamer : IAdifUdpStreamer
 
     public int CallCount { get; private set; }
 
+    // Tier A Batch 10 chunk 10c: lets a test drive LogbookSessionService.LogQsoAsync's post-persist
+    // failure path (a throw here must not undo/mask that the QSO was already committed).
+    public Exception? ExceptionToThrow { get; set; }
+
     public Task<AdifUdpSendResult> SendLoggedQsoAsync(string adifText, CancellationToken ct = default)
     {
         CallCount++;
         LastAdifText = adifText;
-        return Task.FromResult(ResultToReturn);
+        return ExceptionToThrow is { } ex ? Task.FromException<AdifUdpSendResult>(ex) : Task.FromResult(ResultToReturn);
     }
 }

@@ -60,21 +60,46 @@ public sealed partial class RadioSessionService : IRadioSessionService
             return new RadioConnectionTestResult(false, null, RadioCapabilities.None, message);
         }
 
-        var protocol = matches[0].Create(spec);
+        // Round-1 code-review finding (Tier A Batch 10 chunk 10c, real risk fixed): `Create` used to
+        // run OUTSIDE this try -- a throwing factory leaked out of a method whose own interface
+        // contract (IRadioSessionService.TestConnectionAsync's doc comment) says it always returns a
+        // result, never throws.
         try
         {
-            await protocol.PollAsync(ct).ConfigureAwait(false);
-            Log.TestConnectionSucceeded(_logger, protocol.RigId);
-            return new RadioConnectionTestResult(true, protocol.RigId, protocol.Capabilities, null);
+            var protocol = matches[0].Create(spec);
+            try
+            {
+                await protocol.PollAsync(ct).ConfigureAwait(false);
+                Log.TestConnectionSucceeded(_logger, protocol.RigId);
+                return new RadioConnectionTestResult(true, protocol.RigId, protocol.Capabilities, null);
+            }
+            catch (Exception ex)
+            {
+                Log.TestConnectionFailed(_logger, spec.GetType().Name, ex);
+                return new RadioConnectionTestResult(false, null, RadioCapabilities.None, ex.Message);
+            }
+            finally
+            {
+                // Round-1 code-review finding: a throwing DisposeAsync here used to REPLACE whatever
+                // the try/catch above already decided to return, masking the real poll failure behind
+                // an unrelated teardown error -- the exact hazard RadioController.cs's own
+                // DisconnectAsync already guards against for the identical `protocol.DisposeAsync()`
+                // call ("a broken backend's own DisposeAsync must not abort the rest of the
+                // teardown"). Contained here the same way, not propagated.
+                try
+                {
+                    await protocol.DisposeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Log.TestConnectionDisposeFailed(_logger, spec.GetType().Name, ex);
+                }
+            }
         }
         catch (Exception ex)
         {
             Log.TestConnectionFailed(_logger, spec.GetType().Name, ex);
             return new RadioConnectionTestResult(false, null, RadioCapabilities.None, ex.Message);
-        }
-        finally
-        {
-            await protocol.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -135,5 +160,8 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestConnectionAsync failed for {SpecType}")]
         public static partial void TestConnectionFailed(ILogger logger, string specType, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestConnectionAsync: disposing the throwaway test protocol for {SpecType} failed; the poll result above still stands")]
+        public static partial void TestConnectionDisposeFailed(ILogger logger, string specType, Exception exception);
     }
 }
