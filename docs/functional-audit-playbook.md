@@ -6655,3 +6655,103 @@ third, potentially-nesting site is ever added. Explicit "close the chunk" call.
 (non-exception-safe suppression flag with a worse blast radius than its sibling; missing generation
 guard on a callsign write after a genuinely-slow uncached disk-read await) plus 2 smaller precedented
 gaps; round 2 clean GO, no further action.
+
+## Chunk 10: TxControlsPaneViewModel.cs
+
+**Round 1** -- NOT GO. 1 real blocker plus 6 risk-tier findings:
+
+- **[blocker]** `OnSelectedModeChanged`'s blank-editor branch `return`ed right after reopening the
+  blank editor at the new mode's size -- which ALSO skipped the reflow logic below it (re-crop/
+  resize/adjust/template `_editState.Original` at the new mode's dimensions into
+  `_loadedImage`/`PreviewImage`). A blank/untouched editor being open says nothing about whether
+  `_editState` is null -- it survives from an earlier Apply (Apply an image, then click "Open blank
+  editor" directly, gated only on `!IsEditorOpen`, not on `_editState` being null). With the early
+  return, `_loadedImage` kept the OLD mode's pixel dimensions while `SelectedMode` moved to the new
+  mode -- a mismatch `AnalogFmSstvEncoder` throws `ArgumentException` on when Transmit is clicked,
+  surfacing only as a context-free "Transmit failed". Same defect class spec/18-path-to-1.0.md High
+  item 2 was closed on, reopened by the blank-editor-relaxation feature.
+- **[risk]** `_suppressSafetyPersist` set/reset bare (no `try/finally`) inside a `Dispatcher
+  .UIThread.Post` lambda -- same shape chunk 9's `_suppressFrameMetadataEdits` finding, immediately
+  preceding this chunk.
+- **[risk]** `AutoFollowRxMode` read on the audio drain thread BEFORE the `Dispatcher.UIThread.Post`
+  marshal, while its sibling `IsEditorOpen` check was explicitly moved INSIDE the `Post` for the
+  exact same cross-thread-visibility reason (this method's own doc comment cites the precedent). A
+  stale read could perform an unwanted `SelectedMode` change right after the operator un-ticked
+  auto-follow.
+- **[risk, explicitly NOT fixed]** No unsubscribe path for `ModeDetected`/`TransmitProgressChanged`,
+  and the `radioSession.StateChanges.Subscribe(...)` `IDisposable` is discarded; `Dispose()` only
+  cancels `_transmitCts`. Round 1 flagged this as a leak risk, but `TxControlsPaneViewModel` is
+  `AddSingleton` in `Program.cs` -- the IDENTICAL shape chunk 9's own round 1 examined for
+  `RxImagePaneViewModel` (also `AddSingleton`, also multiple undisposed subscriptions) and judged
+  "correct as written; adding IDisposable would be noise" (not even a finding there). Applying this
+  chunk's own finding would have created an inconsistency with that direct, one-chunk-old
+  precedent for the identical pattern -- skipped, and round 2 explicitly confirmed the skip is
+  sound.
+- **[risk]** `SwrCutoffThreshold`'s TextBox is TwoWay/PropertyChanged-triggered, so typing "12" fired
+  TWO overlapping, un-awaited `PersistSafetySettingsAsync` calls, each capturing its own value
+  before its own await -- if the stale "1" call's `SaveAsync` completed AFTER the fresh "12" call's,
+  the persisted SWR safety cutoff would silently end up at 1.0 (an always-trips value) while the UI
+  showed 12.
+- **[risk]** `SelectImageAsync`'s picker-failure catch was log-only, unlike every sibling failure
+  path (`OpenEditorForSourceAsync`, `OpenEditorWithLoadedSourceAsync`, `EditCurrentImageAsync`),
+  which all set `ErrorMessage` -- a picker failure was indistinguishable from the user pressing
+  Cancel.
+- **[risk]** Three editor-construction-failure catch blocks left `_currentEditor`/
+  `_currentEditorIsBlank` stale and never fired `EditorClosed`, unlike every OTHER close path in
+  this class (`CloseBlankEditorForReplacement`, `OnEditorCancelled`, `OnEditorApplied` all reset the
+  same trio). `MainViewModel`'s own `EditorClosed` subscriber is what nulls `ActiveEditor` (the
+  docked editor view's real content) -- skipping it left the View out of sync with `IsEditorOpen`
+  now being false.
+
+Fixed: removed the early `return` so the blank-editor branch falls through into the shared clear/
+reflow logic (the blank-editor reopening touches different fields than the reflow, so nothing
+double-runs or collides). `_suppressSafetyPersist` wrapped in try/finally. `AutoFollowRxMode`'s
+check moved inside the `Post` lambda alongside `IsEditorOpen`'s existing one.
+`PersistSafetySettingsAsync` split into `SchedulePersistSafetySettings()` +
+`PersistSafetySettingsDebouncedAsync(spec, ct)`, matching `RadioStatusViewModel
+.PersistVolumeDebouncedAsync`'s established debounce-and-cancel-supersedes shape exactly (400ms
+delay, `TaskCanceledException` as normal control flow) -- both `OnSwrCutoffEnabledChanged` and
+`OnSwrCutoffThresholdChanged` now schedule through it. `SelectImageAsync`'s catch now sets
+`ErrorMessage` with the same key its siblings use. All three editor-construction-failure catches
+now reset `_currentEditor`/`_currentEditorIsBlank` and fire `EditorClosed` (confirmed harmless even
+when fired redundantly -- the event's one subscriber, `MainViewModel`'s `ActiveEditor = null`, is
+idempotent).
+
+Five regression tests added/updated (`TxControlsPaneViewModel_
+ModeChangeWhileABlankEditorIsOpenOverAnAlreadyAppliedEdit_StillReflowsLoadedImage` for the blocker,
+`..._SelectImageCommand_PickerThrows_SetsErrorMessage`, `..._SwrCutoffThresholdChangedRapidly_
+OnlyPersistsTheLatestValue`, extended `..._SettingsLoadThrowsWhileOpeningTheEditor_
+ResetsIsEditorOpen_InsteadOfStayingStuckOpen` with an `EditorClosed` counter, and
+`TxControlsTelemetryAndCutoffTests.cs`'s `TogglingSwrCutoffEnabled_Persists` updated to
+`..._PersistsAfterDebounceDelay` to match the new debounce behavior), backed by a new
+`FakeFilePickerService.ThrowOnPickImageFile` hook. No dedicated test for the try/finally fix or the
+`AutoFollowRxMode` cross-thread-read fix (same defensive/correct-by-inspection judgment as chunk
+9's precedent -- a cross-thread race can't be proven from a single-threaded test without new
+infrastructure). 699/699 `UI.Tests` pass (was 696, +3 net-new, one pre-existing test adapted),
+clean solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Verified the blank-editor fall-through can't
+double-run (the reopened blank editor touches disjoint fields from the reflow) and can't dangle
+(traced that `_loadedImage != null` always implies `_editState != null`, so the new null-clear is a
+provable no-op on the `_editState is null` path). Confirmed both try/finally and moved-check fixes
+are correct. Explicitly confirmed the `AddSingleton` registration and agreed the R3 skip is sound,
+citing the same chunk-9 precedent with no new reasoning to distinguish this file. Traced the
+debounce fix's value-capture timing against CommunityToolkit's generated setter (field write happens
+before the changed-partial-method fires, so the captured `RadioSafetySpec` is always the fresh
+post-edit value, never stale) and confirmed the updated test is a legitimate behavior adaptation,
+not a weakened assertion. Confirmed all three `EditorClosed`-on-failure sites and that firing it
+redundantly is harmless. One trivial nit actioned in the same pass: a stale doc comment
+("Error, not Warning...") had been left on `SchedulePersistSafetySettings` after the log call it
+described moved to the new `PersistSafetySettingsDebouncedAsync` -- moved the comment to follow the
+code it documents. Two more nits noted, not actioned (both precedent-matching or cosmetic-only): the
+superseded `_safetyPersistCts` is cancelled but never disposed (same as
+`RadioStatusViewModel._volumePersistCts`'s own precedent); a debounce supersede landing AFTER the
+400ms delay but mid-`SaveSafetySettingsAsync` logs at Error via the generic catch (cosmetic --
+persisted end state is still correct, the superseding call does its own full write). Explicit "close
+the chunk" call.
+
+**Chunk 10 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 1 real blocker (mode change
+while a blank editor sat over a previously-applied edit skipped the mode/image-size reflow, feeding
+a mismatched image straight to the encoder) plus 5 precedented risk-tier fixes, explicitly declined
+1 risk-tier finding as inconsistent with an established one-chunk-old precedent; round 2 clean GO
+with one more trivial fix (a misplaced doc comment) applied per standing practice.
