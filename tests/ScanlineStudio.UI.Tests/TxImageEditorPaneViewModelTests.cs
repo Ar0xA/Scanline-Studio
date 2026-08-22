@@ -1896,6 +1896,21 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task RefreshRxHistoryPickerAsync_QueryThrows_SetsStatusMessage()
+    {
+        // Tier B audit finding: this was the one sibling among the image-source add/refresh paths
+        // with no StatusMessage on failure -- log-only, so a failure (e.g. an unreadable RX history
+        // SQLite file) left the "From RX history" flyout silently empty with no explanation.
+        var historyStore = new FakeReceiveHistoryStore { ThrowOnQuery = new InvalidOperationException("database is locked") };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), historyStore);
+
+        await vm.RefreshRxHistoryPickerCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.StatusMessage);
+        Assert.Empty(vm.RxHistoryPickerEntries);
+    }
+
+    [AvaloniaFact]
     public async Task AddImageFromRxHistoryAsync_LoadsFullResolutionAndAddsSelectsElement()
     {
         // IReceiveHistoryStore has no full-resolution loader (only thumbnails) -- this pins that the
@@ -4999,6 +5014,61 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveTemplateAsync_OverwriteFailsPartway_LeavesThePreExistingTemplateIntact()
+    {
+        // Tier B audit finding (blocker): this used to DeleteAsync the pre-existing template BEFORE
+        // writing anything, then unconditionally delete-on-failure again in the catch -- a save that
+        // failed ANY time after the up-front delete permanently destroyed the operator's real,
+        // pre-existing template with no way to recover it. Save must now leave the old template
+        // completely untouched if the overwrite fails.
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest card";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var firstSaved = Assert.Single(await templateStore.ListAsync());
+        var originalDocument = await templateStore.LoadAsync(firstSaved.Id);
+
+        vm.AddBoxElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest card";
+        templateStore.SaveExceptionToThrow = new IOException("disk full");
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        templateStore.SaveExceptionToThrow = null;
+        var stillSaved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal(firstSaved.Id, stillSaved.Id);
+        var documentAfterFailure = await templateStore.LoadAsync(stillSaved.Id);
+        Assert.Equal(originalDocument.Elements.Count, documentAfterFailure.Elements.Count);
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateAsync_ResolvesExistingIdFromTheTemplateStore_NotTheReadyRacksOwnPossiblyStaleList()
+    {
+        // Tier B audit finding: this used to resolve existingId from ReadyRack.AllTemplates, a
+        // separate VM's own in-memory projection populated by a fire-and-forget RefreshAsync call --
+        // saving before that refresh completes read a stale, EMPTY list, so an overwrite of a real
+        // existing template silently degraded into creating a duplicate instead. _templateStore is
+        // now read directly, independent of whether ReadyRack's own list has caught up.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(); // fresh, never refreshed -- AllTemplates starts empty
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest card";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var firstSaved = Assert.Single(await templateStore.ListAsync());
+        Assert.Empty(readyRack.AllTemplates); // proves the read below can't be coming from here
+
+        vm.AddBoxElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest card";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        var secondSaved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal(firstSaved.Id, secondSaved.Id);
+    }
+
+    [AvaloniaFact]
     public async Task SaveTemplateAsync_DifferentName_CreatesASeparateEntry()
     {
         var templateStore = new FakeTemplateStore();
@@ -5154,6 +5224,48 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(vm.UndoCommand.CanExecute(null));
         vm.UndoCommand.Execute(null);
         Assert.Equal(originalElementCount, vm.OverlayElements.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_OlderSlowerLoadCompletesAfterANewerFasterOne_DoesNotClobberTheNewerResult()
+    {
+        // Tier B audit finding: ReadyRackViewModel's Load command is a plain synchronous
+        // [RelayCommand] that just raises TemplateSelected into OnReadyRackTemplateSelected (an
+        // async void) -- nothing serializes two overlapping loads. Without a generation guard,
+        // clicking template A (slow) then quickly clicking template B (fast) let B populate the
+        // canvas first, then A's slower continuation overwrite it right back with A -- the operator
+        // ends up looking at the template they did NOT just ask for.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var idA = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(idA, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var idB = templateStore.CreateTemplateId("B");
+        await templateStore.SaveAsync(idB, "B", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.1, 0.1, 0.1, 0.1, 0, false, new Rgb24(1, 1, 1), null, 0, 1.0),
+            new PersistedBoxElement(0.2, 0.2, 0.1, 0.1, 1, false, new Rgb24(2, 2, 2), null, 0, 1.0),
+            new PersistedBoxElement(0.3, 0.3, 0.1, 0.1, 2, false, new Rgb24(3, 3, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var rowA = readyRack.AllTemplates.Single(t => t.Name == "A");
+        var rowB = readyRack.AllTemplates.Single(t => t.Name == "B");
+
+        var gateA = new TaskCompletionSource<PersistedTemplateDocument>();
+        templateStore.LoadGates[idA] = gateA;
+        readyRack.LoadCommand.Execute(rowA); // starts A's load, suspends on the gate
+        readyRack.LoadCommand.Execute(rowB); // B has no gate -- resolves synchronously, wins the canvas
+
+        Assert.Equal(3, vm.OverlayElements.Count); // B's content
+
+        gateA.SetResult(templateStore.Templates[idA].Document); // A's slow load finally completes
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        // Must still show B -- A's now-stale completion must be discarded, not clobber the canvas.
+        Assert.Equal(3, vm.OverlayElements.Count);
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "Ready Rack ... recall silently replaces

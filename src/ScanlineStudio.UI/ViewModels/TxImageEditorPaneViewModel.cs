@@ -339,6 +339,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// event into <see cref="OnReadyRackTemplateSelected"/>, so one guard there covers both surfaces.</summary>
     private string? _pendingRecallTemplateId;
 
+    /// <summary>Tier B audit finding: <see cref="ReadyRackViewModel"/>'s Load/RecallSlot commands are
+    /// plain synchronous <c>[RelayCommand]</c>s that just raise <see cref="ReadyRackViewModel.TemplateSelected"/>
+    /// into <see cref="OnReadyRackTemplateSelected"/> (an <c>async void</c>) -- CommunityToolkit's
+    /// default no-concurrent-execution gate never applies here, so nothing serializes two overlapping
+    /// loads. Without this, clicking template A (slow asset load) then quickly clicking template B
+    /// (fast) let B populate the canvas first, then A's slower continuation overwrite it right back
+    /// with A -- the operator ends up looking at the template they did NOT just ask for. Bumped
+    /// before <see cref="LoadTemplateAsync"/>'s own first await, checked again right before
+    /// <see cref="LoadTemplateIntoLiveEditor"/> actually mutates the canvas; a stale load is silently
+    /// dropped rather than clobbering a newer one.</summary>
+    private int _templateLoadGeneration;
+
     // Adjustment sliders (spec/18-path-to-1.0.md Medium item) -- 0 is each one's own no-op
     // default (see ImageAdjustments' own doc comment for the exact per-field mapping). Applied
     // between Resize and ApplyOverlay (never touching already-burned-in overlay text pixels) --
@@ -479,9 +491,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         _pendingRecallTemplateId = null;
         StatusMessage = null;
+        var generation = ++_templateLoadGeneration;
         try
         {
-            await LoadTemplateAsync(templateId);
+            await LoadTemplateAsync(templateId, generation);
         }
         catch (Exception ex)
         {
@@ -1265,6 +1278,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private async Task RefreshRxHistoryPickerAsync()
     {
+        // Tier B audit finding: this was the one sibling among the 4 image-source add/refresh paths
+        // (AddImageFromFileAsync, AddImageFromClipboardAsync, AddImageFromRxHistoryAsync) with no
+        // StatusMessage on failure -- log-only, so a failure here (e.g. an unreadable RX history
+        // SQLite file) left the "From RX history" flyout silently empty (or stale, showing the
+        // PREVIOUS successful refresh's entries pointing at possibly-deleted files) with zero
+        // explanation. StatusMessage now cleared on entry / set on failure, same as the siblings.
+        StatusMessage = null;
         IReadOnlyList<ReceiveHistoryEntry> entries;
         try
         {
@@ -1273,6 +1293,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.RefreshRxHistoryPickerFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.RxHistoryPickerRefreshFailed");
             return;
         }
 
@@ -1613,24 +1634,44 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         IsSavingTemplate = true;
-
-        // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an existing
-        // name creates a duplicate entry, not an update/rename." CreateTemplateId always mints a
-        // fresh guid8-suffixed id (see its own doc comment) -- saving under a name that already
-        // exists in the rack's own list reuses THAT existing id instead, so the save overwrites in
-        // place (also preserves any pin referencing it, since pins are keyed by id). The old folder
-        // is deleted first (same DeleteAsync-then-write cleanup already used in the catch block
-        // below) so a save with FEWER elements than before doesn't leave orphaned asset PNGs behind
-        // under the reused id.
-        var existingId = ReadyRack.AllTemplates.FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))?.Id;
-        var templateId = existingId ?? _templateStore.CreateTemplateId(name);
+        string? existingId = null;
+        string? templateId = null;
         try
         {
-            if (existingId is { } idToReplace)
-            {
-                await _templateStore.DeleteAsync(idToReplace);
-            }
+            // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an
+            // existing name creates a duplicate entry, not an update/rename." CreateTemplateId
+            // always mints a fresh guid8-suffixed id (see its own doc comment) -- saving under a
+            // name that already exists reuses THAT existing id instead, so the save overwrites in
+            // place (also preserves any pin referencing it, since pins are keyed by id).
+            //
+            // Tier B audit finding: this used to resolve existingId from ReadyRack.AllTemplates, a
+            // separate VM's own in-memory projection populated by a FIRE-AND-FORGET RefreshAsync
+            // call at editor-open time (TxControlsPaneViewModel's own OpenEditorWithLoadedSourceAsync/
+            // EditCurrentImageAsync) -- saving before that refresh completes (or after it silently
+            // swallowed a transient failure) read a stale, possibly-EMPTY list, so an overwrite of a
+            // real existing template could silently degrade into creating a duplicate instead --
+            // exactly the bug this whole feature exists to fix. _templateStore.ListAsync() is the
+            // actual source of truth (same store SaveAsync/DeleteAsync below both write through).
+            existingId = (await _templateStore.ListAsync()).FirstOrDefault(t => string.Equals(t.Name, name, StringComparison.OrdinalIgnoreCase))?.Id;
+            templateId = existingId ?? _templateStore.CreateTemplateId(name);
 
+            // Tier B audit finding (blocker): this used to DeleteAsync(idToReplace) BEFORE writing
+            // anything, then unconditionally DeleteAsync(templateId) again in the catch below -- on
+            // the overwrite path both target the SAME existing id, so a save that fails ANY time
+            // after the up-front delete (SaveAsync alone does a thumbnail render + 2 file writes,
+            // any of which can throw: disk full, a network-backed MyPictures, an AV lock, a
+            // permissions change) permanently destroyed the operator's PRE-EXISTING template with no
+            // way to recover it -- StatusMessage just said "Save template failed." SaveAsync already
+            // overwrites template.json/thumbnail.png in place (Directory.CreateDirectory is
+            // idempotent), so no up-front delete is needed for the manifest/thumbnail at all. The
+            // one thing the up-front delete bought -- not leaving orphaned GUID-named asset PNGs
+            // behind from a PRIOR save of the same template (BuildPersistedElementAsync always mints
+            // a fresh GUID filename, by design, never reusing/overwriting a prior asset in place) --
+            // is deliberately accepted as a lesser, non-destructive trade-off (a slow accumulation of
+            // unreferenced files in that one template's own assets/ folder across repeated
+            // overwrite-saves) rather than risk deleting real, still-referenced data on a failure
+            // path. A proper orphan sweep would need ITemplateStore to expose per-asset deletion,
+            // which doesn't exist today and is out of scope for this fix.
             var elements = new List<PersistedTemplateElement>(OverlayElements.Count);
             foreach (var raw in RawOverlayElements)
             {
@@ -1647,22 +1688,27 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             Log.SaveTemplateFailed(_logger, name, ex);
             StatusMessage = _localization.GetString("Panes.TxImageEditor.SaveTemplateFailed");
 
-            // Code-review finding: a failure partway through the foreach above (e.g. WritePngAsync
-            // throws on element 2 of 3) already wrote element 1's asset PNG under this freshly-minted
-            // templateId's own folder, with no template.json ever referencing it -- ListAsync skips
-            // manifest-less folders, so that asset is permanently invisible garbage, one new orphaned
-            // folder per failed save, with no way for the operator to ever reach it via this app's
-            // own UI. DeleteAsync is safe to call unconditionally here: it no-ops if nothing was ever
-            // written (directory doesn't exist), and removes the whole folder -- assets included --
-            // if something partial was. Best-effort: a cleanup failure here must not mask or replace
-            // the original save failure already logged above.
-            try
+            // existingId is null check preserved (blocker fix): only clean up a folder THIS call
+            // freshly minted -- never delete a folder that pre-existed this save attempt. A failure
+            // partway through the foreach above (e.g. WritePngAsync throws on element 2 of 3)
+            // already wrote element 1's asset PNG under a brand-new templateId's own folder, with no
+            // template.json ever referencing it -- ListAsync skips manifest-less folders, so that
+            // asset is permanently invisible garbage, one new orphaned folder per failed save, with
+            // no way for the operator to ever reach it via this app's own UI. DeleteAsync is safe to
+            // call unconditionally on a NEW id: it no-ops if nothing was ever written (directory
+            // doesn't exist), and removes the whole folder -- assets included -- if something
+            // partial was. Best-effort: a cleanup failure here must not mask or replace the original
+            // save failure already logged above.
+            if (existingId is null && templateId is { } freshlyMintedId)
             {
-                await _templateStore.DeleteAsync(templateId);
-            }
-            catch (Exception cleanupEx)
-            {
-                Log.SaveTemplateCleanupFailed(_logger, templateId, cleanupEx);
+                try
+                {
+                    await _templateStore.DeleteAsync(freshlyMintedId);
+                }
+                catch (Exception cleanupEx)
+                {
+                    Log.SaveTemplateCleanupFailed(_logger, freshlyMintedId, cleanupEx);
+                }
             }
         }
         finally
@@ -1725,13 +1771,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// element's <see cref="IImageSource"/> via the EXISTING <see cref="IImageFileLoader.LoadOriginalAsync"/>
     /// (same loader Phase 2's file source already uses), maps back to <see cref="RawElementSnapshot"/>s,
     /// and feeds them into <see cref="LoadTemplateIntoLiveEditor"/>.</summary>
-    private async Task LoadTemplateAsync(string templateId)
+    private async Task LoadTemplateAsync(string templateId, int generation)
     {
         var document = await _templateStore.LoadAsync(templateId);
         var snapshots = new List<RawElementSnapshot>(document.Elements.Count);
         foreach (var element in document.Elements)
         {
             snapshots.Add(await ToRawElementSnapshotAsync(templateId, element));
+        }
+
+        if (generation != _templateLoadGeneration)
+        {
+            // A newer template selection has already started (and will apply ITS OWN result) since
+            // this one began -- discard this stale load rather than clobber the canvas with an
+            // out-of-date template.
+            Log.TemplateLoadDiscardedAsStale(_logger, templateId);
+            return;
         }
 
         LoadTemplateIntoLiveEditor(snapshots);
@@ -3932,5 +3987,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SaveTemplate cleanup of partially-written templateId={TemplateId} failed")]
         public static partial void SaveTemplateCleanupFailed(ILogger logger, string templateId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "LoadTemplate({TemplateId}) discarded as stale -- a newer template selection superseded it")]
+        public static partial void TemplateLoadDiscardedAsStale(ILogger logger, string templateId);
     }
 }
