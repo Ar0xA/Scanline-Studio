@@ -2310,9 +2310,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// <c>CropRect.X * CanvasDisplayWidth</c> formula) but element X/Y are CENTER-anchored
     /// (<see cref="ITemplateElementViewModel"/>'s own doc comment) -- the two conventions differ, so
     /// "align left" is <c>CropRect.X + element.Width / 2</c>, not a bare <c>CropRect.X</c> copy.
-    /// A single coalesced undo step (<see cref="PushUndoSnapshot"/>, not
-    /// <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/>'s own per-property
-    /// coalescing) since this assigns exactly one property per call, never both X and Y at once.</summary>
+    /// A single undo step via <see cref="PushUndoSnapshot"/> -- Tier B audit finding: an earlier
+    /// version of this doc comment claimed assigning "exactly one property per call" was enough to
+    /// avoid a second push, but each element type's own <c>OnXChanging</c>/<c>OnYChanging</c> hook
+    /// calls <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/> regardless of
+    /// property count -- <c>_suspendPreview</c> is what actually blocks the second push, same
+    /// pattern <see cref="SetAsBackground"/> already established.</summary>
     [RelayCommand]
     private void AlignSelectedElementToCrop(string alignment)
     {
@@ -2322,26 +2325,42 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         PushUndoSnapshot();
-        switch (alignment)
+        // Tier B audit finding: the X/Y assignments below used to run unguarded -- every element
+        // type's own OnXChanging/OnYChanging hook calls PushUndoSnapshotForGeometryChange, which
+        // isn't suppressed or coalesced against the PushUndoSnapshot() just above (that call's own
+        // job is clearing _pendingCoalesceProperty, not preventing a second push), so a single Align
+        // click pushed TWO undo steps for what visibly is one action -- the first Undo silently did
+        // nothing, only the second actually moved the element back. _suspendPreview (same pattern
+        // SetAsBackground/ApplySnappedElementBounds already use) blocks the per-property hook from
+        // pushing its own step.
+        _suspendPreview = true;
+        try
         {
-            case "Left":
-                element.X = CropRect.X + (element.Width / 2);
-                break;
-            case "Center":
-                element.X = CropRect.X + (CropRect.Width / 2);
-                break;
-            case "Right":
-                element.X = CropRect.X + CropRect.Width - (element.Width / 2);
-                break;
-            case "Top":
-                element.Y = CropRect.Y + (element.Height / 2);
-                break;
-            case "Middle":
-                element.Y = CropRect.Y + (CropRect.Height / 2);
-                break;
-            case "Bottom":
-                element.Y = CropRect.Y + CropRect.Height - (element.Height / 2);
-                break;
+            switch (alignment)
+            {
+                case "Left":
+                    element.X = CropRect.X + (element.Width / 2);
+                    break;
+                case "Center":
+                    element.X = CropRect.X + (CropRect.Width / 2);
+                    break;
+                case "Right":
+                    element.X = CropRect.X + CropRect.Width - (element.Width / 2);
+                    break;
+                case "Top":
+                    element.Y = CropRect.Y + (element.Height / 2);
+                    break;
+                case "Middle":
+                    element.Y = CropRect.Y + (CropRect.Height / 2);
+                    break;
+                case "Bottom":
+                    element.Y = CropRect.Y + CropRect.Height - (element.Height / 2);
+                    break;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
         }
 
         RecomputePreview();
@@ -2623,7 +2642,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// explicitly rather than trusting a property-changed cascade to add up to the same effect.</summary>
     private void OnTemplateVariableValueChanged(string key, string value)
     {
-        _templateVariables[key] = value;
+        // Tier B audit finding: this used to store an empty string unconditionally -- MacroTextResolver
+        // only renders a token VERBATIM (e.g. "{his_call}") when its key is ABSENT from
+        // _templateVariables; a PRESENT-but-empty key resolves to "", so blanking a fill-bar field
+        // used to render "DE " instead of "DE {his_call}" -- the exact "DE " state
+        // ClearTemplateVariablesCommand's own doc comment already classifies as a code-review
+        // blocker for the bulk-clear path (easy to transmit by mistake). Two UI paths to the same
+        // intent (clear one field vs. clear all) must produce the same result.
+        if (value.Length == 0)
+        {
+            _templateVariables.Remove(key);
+        }
+        else
+        {
+            _templateVariables[key] = value;
+        }
         // Moved here from RescanTemplateVariables (real-window finding, see that method's own
         // comment) -- this is now the ONLY place _templateVariables gains a new key, so it's the
         // only place that can flip CanClearTemplateVariables from false to true.
@@ -2710,7 +2743,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [RelayCommand]
     private void RemoveOverlayElement(ITemplateElementViewModel? element)
     {
-        if (element is null)
+        // Tier B audit finding: null-checked, but not checked for being a stale reference no longer
+        // in OverlayElements (e.g. a queued click racing an Undo, which replaces every element
+        // wholesale -- see ApplyState's own doc comment) -- same guard SetAsBackground/
+        // MoveElementUp/MoveElementDown/BringToFront/SendToBack all already have, checked BEFORE
+        // PushUndoSnapshot so a stale click doesn't leave a bogus undo step behind either.
+        // Collection.Remove itself already no-ops silently on an absent element, so without this
+        // guard the ONLY visible effect of a stale click used to be an extra undo step.
+        if (element is null || !OverlayElements.Contains(element))
         {
             return;
         }
@@ -2873,6 +2913,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
                 backgroundIndex = i;
                 break;
             }
+        }
+
+        // Tier B audit finding: already-at-the-back is an explicit no-op, same as BringToFront's own
+        // `index == OverlayElements.Count - 1` guard above -- without it, an element already at
+        // collection index 0 (no background present) fell through to the unconditional branch and
+        // had its own Z quietly decremented by 1 on every click forever (visually invisible, but a
+        // real undo-stack/HasUnsavedEdits pollution -- every click pushed a bogus step). Same for an
+        // element already sitting immediately after the background (target == index): Move(index,
+        // index) is a no-op, but the undo step and RecomputePreview pass weren't.
+        if (backgroundIndex < 0 ? index == 0 : backgroundIndex + 1 == index)
+        {
+            return;
         }
 
         PushUndoSnapshot();

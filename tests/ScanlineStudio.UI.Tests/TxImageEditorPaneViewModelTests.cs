@@ -334,6 +334,27 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RemoveOverlayElement_StaleReferenceNoLongerInTheCollection_IsATrueNoOp()
+    {
+        // Tier B audit finding: null-checked, but not checked for being a stale reference no longer
+        // in OverlayElements (e.g. a queued click racing an Undo, which replaces every element
+        // wholesale) -- same guard SetAsBackground/MoveElementUp/MoveElementDown/BringToFront/
+        // SendToBack all already have. ObservableCollection.Remove itself already no-ops silently on
+        // an absent element, so without this guard the only visible effect used to be a bogus undo
+        // step.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.RemoveOverlayElementCommand.Execute(element); // real removal -- 1 legit undo step on top of Add
+
+        vm.RemoveOverlayElementCommand.Execute(element); // stale reference, already removed
+
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
     public void Apply_RunsThePipelineAgainstTheOriginalSource_NotTheDownsampledWorkingCopy()
     {
         // Original exceeds the working-copy budget, so the working copy is guaranteed to be a
@@ -2849,14 +2870,26 @@ public sealed class TxImageEditorPaneViewModelTests
     [AvaloniaFact]
     public void AlignSelectedElementToCrop_PushesExactlyOneUndoStep()
     {
+        // Tier B audit finding: the previous version of this test compared UndoCommand.CanExecute
+        // (a bool) before/after a single Undo -- with AddOverlayElement having already pushed a
+        // step, that stays true whether Align pushed 1 or 2 steps, so it passed against the actual
+        // bug (element.X's own OnXChanging hook pushing a SECOND, redundant coalesced step on top of
+        // this command's own explicit PushUndoSnapshot, unguarded by _suspendPreview). A redundant
+        // second push captures the SAME pre-align state as the first, so a single-Undo value-based
+        // assertion can't tell "1 push" from "2 identical pushes" apart either (same reasoning
+        // SetAsBackground_PushesExactlyOneUndoStep's own comment documents) -- counts total undo
+        // depth instead: Add (1 action) then Align (should be exactly 1 more), then Undo exactly
+        // twice and assert NOTHING is left. A stray extra push would leave one more Undo available.
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
         vm.AddOverlayElementCommand.Execute(null);
-        var undoDepthBeforeAlign = vm.UndoCommand.CanExecute(null);
 
         vm.AlignSelectedElementToCropCommand.Execute("Left");
+
+        vm.UndoCommand.Execute(null);
         vm.UndoCommand.Execute(null);
 
-        Assert.Equal(undoDepthBeforeAlign, vm.UndoCommand.CanExecute(null));
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
     }
 
     // EditWindow redesign Phase 3, Inspector tab-selection flags.
@@ -4002,6 +4035,54 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void SendToBack_OnAnAlreadyBottommostElement_WithNoBackgroundPresent_IsATrueNoOp()
+    {
+        // Tier B audit finding: SendToBack was missing the already-at-bottom no-op guard its
+        // siblings (BringToFront/MoveElementUp/MoveElementDown) already have -- an element already
+        // at collection index 0 with no background present fell through to the unconditional
+        // "no background" branch, decrementing its own Z and pushing a bogus undo step on every
+        // click forever (cosmetically invisible -- Move(0, 0) is a no-op -- but real undo-stack/
+        // HasUnsavedEdits pollution).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        var bottommost = vm.OverlayElements[0];
+        var zBefore = bottommost.Z;
+
+        vm.SendToBackCommand.Execute(bottommost);
+
+        Assert.Equal(zBefore, bottommost.Z);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SendToBack_OnAnElementAlreadyImmediatelyAfterTheBackground_IsATrueNoOp()
+    {
+        // Tier B audit finding: same class as the no-background case above -- an element already
+        // sitting immediately after the background (target == index) fell through to the
+        // background-present branch, where Move(index, index) is a no-op but the undo step and
+        // RecomputePreview pass weren't.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var background = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackgroundCommand.Execute(background);
+        vm.AddOverlayElementCommand.Execute(null);
+        var justAboveBackground = vm.OverlayElements[1];
+        var zBefore = justAboveBackground.Z;
+
+        vm.SendToBackCommand.Execute(justAboveBackground);
+
+        Assert.Equal(zBefore, justAboveBackground.Z);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
     public void BringToFrontOnBackground_ThenSendToBackOnAnother_DoesNotCrashOrLoseTheElement()
     {
         // Auditor code-review finding (real crash/data-loss bug in the first corrected draft): if
@@ -4643,6 +4724,28 @@ public sealed class TxImageEditorPaneViewModelTests
         // "DE " with no callsign instead of an obvious "DE {his_call}" placeholder). A row.Value
         // assertion alone can't distinguish these two cases, since both display "" -- ResolvedText
         // is the only observable that actually tells them apart.
+        Assert.Equal("{his_call}", element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void OnTemplateVariableValueChanged_BlankedToEmpty_RemovesTheKeyInsteadOfStoringAnEmptyValue()
+    {
+        // Tier B audit finding: blanking a SINGLE fill-bar field (typing, not the bulk "Clear
+        // fields" command -- see ClearTemplateVariables_BlanksEveryValue_IncludingCurrentlyHiddenOnes
+        // above for that path's own already-correct behavior) used to store an empty string
+        // unconditionally, unlike the bulk-clear path. Same MacroTextResolver contract applies here:
+        // a present-but-empty key resolves to "", not the verbatim token -- two UI paths to the same
+        // "clear this field" intent must produce the same result.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "{his_call}";
+        var row = Assert.Single(vm.TemplateVariableRows);
+        row.Value = "K1ABC";
+        Assert.Equal("K1ABC", element.ResolvedText);
+
+        row.Value = string.Empty;
+
         Assert.Equal("{his_call}", element.ResolvedText);
     }
 
