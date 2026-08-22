@@ -157,6 +157,35 @@ public sealed class ReadyRackViewModelTests
     }
 
     [Fact]
+    public async Task DeleteAsync_ConfirmClickThrows_StaysArmedSoTheNextClickRetriesInsteadOfReArming()
+    {
+        // Tier B audit finding: _pendingDeleteId used to be cleared unconditionally BEFORE the
+        // delete attempt, so a failed delete left the row's own IsPendingDelete still true (still
+        // rendering "confirm delete") while _pendingDeleteId was already null -- the next click on
+        // that SAME row then read as a fresh arm (no visible change, since it was already showing
+        // armed), taking three clicks total to actually retry. Fixed to stay armed on failure.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "First");
+        await readyRack.RefreshAsync();
+        var row = readyRack.AllTemplates[0];
+        await readyRack.DeleteCommand.ExecuteAsync(row); // arm
+        Assert.True(row.IsPendingDelete);
+
+        templateStore.DeleteExceptionToThrow = new InvalidOperationException("simulated delete failure");
+        await readyRack.DeleteCommand.ExecuteAsync(row); // confirm click -- fails
+
+        Assert.True(row.IsPendingDelete);
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.Empty(templateStore.DeletedIds);
+
+        templateStore.DeleteExceptionToThrow = null;
+        await readyRack.DeleteCommand.ExecuteAsync(row); // retry, single click, no re-arm needed
+
+        Assert.Contains(row.Id, templateStore.DeletedIds);
+    }
+
+    [Fact]
     public async Task DeleteAsync_StillPinnedTemplate_AlsoRemovesItFromTheSlotAndSettings()
     {
         var templateStore = new FakeTemplateStore();

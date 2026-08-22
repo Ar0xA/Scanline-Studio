@@ -137,6 +137,11 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
             {
                 SearchResults.Add(result);
             }
+
+            // Tier B audit finding: LinkSelectedAsync/CreateAndLinkAsync both clear ErrorMessage on
+            // success; this method didn't, so a failed search's banner persisted across every later
+            // successful search.
+            ErrorMessage = null;
         }
         catch (Exception ex)
         {
