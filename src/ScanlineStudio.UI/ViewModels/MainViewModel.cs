@@ -72,6 +72,12 @@ public partial class MainViewModel : ViewModelBase
         txControls.EditorOpened += editor => ActiveEditor = editor;
         txControls.EditorClosed += () => ActiveEditor = null;
 
+        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, radioStatusLogger);
+
+        // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
+        // TxControlsPaneViewModel.RadioStatus's own doc comment for why.
+        txControls.RadioStatus = RadioStatus;
+
         // Backlog item (user request, 2026-08-17): "it should ALWAYS open the editor by default, no
         // need for a button" -- auto-open the blank-placeholder editor immediately so the Transmit
         // tab's center column is never empty on first landing. Triggered HERE, not from
@@ -82,15 +88,35 @@ public partial class MainViewModel : ViewModelBase
         // No persisted "last loaded image" restoration happens anywhere at startup (confirmed via
         // LoadTxPaneUiSettingsAsync, which only restores AutoFollowRxMode/favorite-mode picks), so
         // this can never clobber a remembered real image -- there isn't one.
-        _ = txControls.OpenBlankEditorCommand.ExecuteAsync(null);
-
-        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, radioStatusLogger);
-
-        // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
-        // TxControlsPaneViewModel.RadioStatus's own doc comment for why.
-        txControls.RadioStatus = RadioStatus;
+        //
+        // Tier B audit finding: moved to run AFTER RadioStatus is assigned above (was before) --
+        // on a fresh install with no settings.json yet, JsonSettingsStore.LoadAsync returns an
+        // already-completed task, so this whole async chain (including the EditorOpened callback
+        // above, synchronously) used to run to completion INLINE at this point in the constructor,
+        // before RadioStatus existed. Nothing on that path reads RadioStatus today, so this was
+        // harmless in practice, but it's a real first-run-only ordering hazard removed for free by
+        // reordering rather than something to rely on staying harmless as this constructor grows.
+        _ = OpenBlankEditorSafelyAsync(txControls);
 
         _ = LoadCallsignAsync();
+    }
+
+    // Tier B audit finding: OpenBlankEditorCommand.ExecuteAsync's own try/catch (inside
+    // TxControlsPaneViewModel.OpenEditorWithLoadedSourceAsync) does not cover every statement this
+    // command chain can reach (e.g. CloseBlankEditorForReplacement's own EditorClosed invocation) --
+    // an exception escaping there from this fire-and-forget call would surface only as a
+    // nondeterministic, context-free "unobserved task exception" log at GC time, same failure class
+    // LoadCallsignAsync's own try/catch already guards against just below. Isolated the same way.
+    private async Task OpenBlankEditorSafelyAsync(TxControlsPaneViewModel txControls)
+    {
+        try
+        {
+            await txControls.OpenBlankEditorCommand.ExecuteAsync(null);
+        }
+        catch (Exception ex)
+        {
+            Log.OpenBlankEditorFailed(_logger, ex);
+        }
     }
 
     public WaterfallPaneViewModel Waterfall { get; }
@@ -176,5 +202,8 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator callsign failed; menu-row chip stays hidden")]
         public static partial void LoadCallsignFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Auto-opening the blank TX editor at startup failed; Transmit tab may stay empty")]
+        public static partial void OpenBlankEditorFailed(ILogger logger, Exception ex);
     }
 }
