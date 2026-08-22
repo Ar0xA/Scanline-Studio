@@ -20,7 +20,10 @@ public sealed class DoubleToCornerRadiusConverter : IValueConverter
     {
         double d => new CornerRadius(d),
         null => null,
-        _ => throw new NotSupportedException($"Expected {nameof(Double)}, got {value.GetType()}."),
+        // Tier C audit finding (risk): was `throw new NotSupportedException(...)` -- reachable via
+        // Avalonia's own AvaloniaProperty.UnsetValue on a broken/not-yet-resolved binding path. See
+        // Rgb24ToColorConverter's own comment for the fuller reasoning (same fix, same finding).
+        _ => AvaloniaProperty.UnsetValue,
     };
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

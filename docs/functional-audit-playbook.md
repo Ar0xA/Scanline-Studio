@@ -7885,3 +7885,53 @@ NOT GO -> GO), 2 real blockers + 1 real risk fixed, plus a structural testabilit
 (the `RegisterServices` extraction) that the round-1 auditor explicitly credited as the reason
 Blocker 2 went unnoticed for as long as it did. 6 risk-tier findings and 5 nits remain
 intentionally deferred.
+
+### Group 4: UI value converters
+
+All 13 files in `src/ScanlineStudio.UI/Converters/` -- 12 `IValueConverter` + 1
+`IMultiValueConverter`. No dedicated test file existed for any of them before this round.
+
+**Round 1 verdict: GO** -- no blockers. Given this codebase had just hit the same "unguarded
+exception path in code that runs early/often" failure class in all 3 prior Tier C groups, this
+round was explicitly told to scrutinize hard rather than assume "no visible crash" means "no bug" --
+Avalonia binding exceptions are often swallowed/logged quietly by the binding engine itself, which
+can mask a real bug as "just a blank/default-looking control." One real class of finding surfaced
+anyway (fixed): 6 converters (`Rgb24ToColorConverter`, `Rgb24ToBrushConverter`,
+`DoubleToThicknessConverter`, `DoubleToCornerRadiusConverter`, `DoubleToHalfConverter`,
+`ImageFitModeToStretchConverter`) had a final `_ => throw new NotSupportedException(...)` switch
+arm that's reachable via Avalonia's own `AvaloniaProperty.UnsetValue` sentinel on a broken/not-yet-
+resolved binding path (e.g. a `SelectedTextElement` that's null at startup or while a box element
+is selected) -- not just a genuinely-wrong-typed value, which was the arm's original intent. Fixed
+by returning `AvaloniaProperty.UnsetValue` instead of throwing (Avalonia's own "cannot convert this"
+signal), matching the reasoning `Rgb24ToColorConverter`'s own existing `null` arm already used.
+
+Everything else verified correct by inspection: `UtcTimestampTextConverter`'s UTC-not-local
+timestamp math (the one place a real off-by-a-timezone bug would live) is exact in both directions;
+color math is correct; every `ConvertBack` implementation is genuinely reachable only where a
+TwoWay binding target exists (the other 10 converters' `NotSupportedException` `ConvertBack`s are
+correctly unreachable, not a bug); no converter formats a number/date with the wrong culture
+(the only formatting is deliberately, correctly `InvariantCulture`, since it's a machine-parseable
+field, not a display string -- no culture bug of the Group-2 class exists here); all 13 are
+stateless immutable singletons, UI-thread only, no boundary-hygiene violations.
+
+7 nits deferred (a dead `null` arm now unreachable in `Rgb24ToColorConverter`; sub-second timestamp
+truncation on the display round-trip, almost certainly intended; a font-family converter's silent
+fallback that would create a real canvas/pipeline WYSIWYG divergence the day a third font family is
+added, not today; and 4 lower-value ones) -- none required to close.
+
+21 new regression tests added in a new `tests/ScanlineStudio.UI.Tests/ConvertersTests.cs`: one
+shared theory test covering all 12 `IValueConverter` instances against `AvaloniaProperty.UnsetValue`
+(pins the whole fixed-class permanently, not one converter at a time) plus one for the
+`IMultiValueConverter`; a 3-case `Rgb24ToColorConverter` round-trip test; 5 tests for
+`UtcTimestampTextConverter`'s real logic (UTC-conversion correctness, `ConvertBack`'s zero-offset
+guarantee, the `AllowNull`-vs-required blank-text branches, unparseable-text `DoNothing`). The
+other 3 converters the auditor's own review verified correct by inspection (`DoubleToStarGridLengthConverter`,
+`WaterfallViewModeToColumnWidthConverter`, `RadioModeDisplayConverter`'s branching) were not given
+individual tests -- the shared theory test plus this sweep's own inspection already covers the
+class of bug this round was hunting; a dedicated test for logic that's simple, already read
+correct, and not the subject of a fix would be ceremony, not verification. 731/731 UI.Tests pass
+(was 710, +21), clean solution-wide build.
+
+**Group 4 CLOSED (2026-08-22)** -- 1 round (GO, no blockers) -- the fix (6 converters) was applied
+and tested opportunistically alongside the clean verdict, per the round's own explicit
+recommendation, rather than treated as requiring escalation.
