@@ -5945,3 +5945,39 @@ explicitly disposed (safe in practice via connection close), and a stale test-fi
 regression test, per standing practice. Committed. **This closes the entire `Core.Logbook` sweep**
 (chunks 1-5, `docs/functional-audit-playbook.md`'s own Tier B scope table) -- next up per that
 table: `Core.Imaging`, then `UI/ViewModels`.
+
+## Core.Imaging chunk 1: ImageFileLoader.cs, ImageSourceWriter.cs, ReceivedFrameExporter.cs, StockImageLibrary.cs
+
+Triage (9 `Core.Imaging` files): `ArrayImageSource.cs`, `ImageLibrarySettings.cs`,
+`ImageLibrarySettingsJsonContext.cs` trivial (skipped). 6 real-logic files, grouped into 3 rounds:
+this chunk (4 shared-pattern ImageSharp wrapper classes), `ReceivedImageBuffer.cs` (its own chunk --
+already got 3 rounds of scrutiny on its `Saved`/`Generation`/`NotifySaved` path via Core.Logbook
+chunk 4, this pass will cover the rest), `TransmitImagePreparer.cs` (65KB, its own chunk).
+
+**Round 1** -- NOT GO. Blocker: `StockImageLibrary` never called ImageSharp's `AutoOrient()` on any
+of its three load methods, while its sibling `ImageFileLoader` always does. The two classes are
+interchangeable branches of one caller switch in `TxControlsPaneViewModel.cs` (stock-picker vs
+file-picker source selection for TX) -- a phone JPEG with EXIF orientation loaded sideways when
+picked from the stock folder but correctly via Browse of the identical file. This project had
+already fixed this exact bug class once, in `ImageFileLoader` only (`spec/18-path-to-1.0.md` High
+item 3) -- the fix never propagated to its sibling.
+
+Fixed: added `AutoOrient()` to all three `StockImageLibrary` load methods, ordered before any
+resize/fit computation (fit must measure POST-orient dimensions, since orientation can swap width
+and height). Also fixed in the same pass: `CopyToImageSource` used to trust caller-supplied
+`(width, height)` instead of reading the image's own actual dimensions post-mutation (unlike its
+sibling in `ImageFileLoader`) -- closed the divergence risk by matching that shape exactly. Added a
+missing test file for `ImageSourceWriter` (a third independent hand-written pixel-copy loop that had
+zero direct channel-order coverage) plus 3 new `StockImageLibrary` EXIF-orientation tests mirroring
+the existing `ImageFileLoaderTests.cs` pattern. 100/100 `Core.Imaging.Tests` pass (was 95, +5 new),
+clean solution-wide build.
+
+**Round 2** (fresh agent, full re-scan) -- **GO.** Confirmed the `AutoOrient` fix is correct and
+complete across all three methods with the right ordering, confirmed the `CopyToImageSource` change
+is safe (all 3 call sites updated, no observable behavior change on any reachable path -- the one
+divergence-risk case, `LoadFullAsync` with a `0` dimension, has no production caller at all), and an
+independent fresh sweep of all four files found no new instance of the sweep's tracked
+silently-dropped-value failure class. No blockers.
+
+**Chunk 1 CLOSED (2026-08-22)** -- 2 rounds. Real cross-sibling bug found and fixed round 1, clean
+GO round 2. Committed.
