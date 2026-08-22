@@ -519,6 +519,8 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public string? LastSuggestedImageFileName { get; private set; }
 
+    public Exception? ThrowOnPickSaveImageFile { get; set; }
+
     public Task<string?> PickImageFileAsync() => Task.FromResult(PathToReturn);
 
     public Task<string?> PickClipboardImageAsync() => Task.FromResult(ClipboardPathToReturn);
@@ -533,6 +535,11 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName)
     {
+        if (ThrowOnPickSaveImageFile is not null)
+        {
+            throw ThrowOnPickSaveImageFile;
+        }
+
         LastSuggestedImageFileName = suggestedFileName;
         return Task.FromResult(SaveImagePathToReturn);
     }
@@ -716,10 +723,17 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public event Action<ReceiveHistoryEntry>? Recorded;
 
+    public Exception? ThrowOnQuery { get; set; }
+
     /// <summary>Actually applies the filter (unlike a bare stub) so a test can verify the
     /// Gallery tab's All/Today wiring, not just that some entries render.</summary>
     public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
     {
+        if (ThrowOnQuery is not null)
+        {
+            throw ThrowOnQuery;
+        }
+
         QueryFilters.Add(filter);
         IEnumerable<ReceiveHistoryEntry> results = EntriesToReturn;
         if (filter.ModeId is not null)
