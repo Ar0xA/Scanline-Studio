@@ -7724,3 +7724,79 @@ trap applies to an explicit JSON `null`, not just an absent key); a stale `.tmp`
 a failed/cancelled save; `GetSection` lets one malformed section's `JsonException` escape uncaught,
 asymmetric with the file-level corrupt-load hardening. 5/5 Settings.Tests pass (was 4, +1), clean
 solution-wide build. Committed.
+
+### Group 2: Localization runtime
+
+`src/ScanlineStudio.Core.Localization/JsonLocalizationService.cs` (139) -- the runtime string-
+lookup/culture-switching engine every `{loc:Translate ...}` markup extension and code-behind
+localization call goes through.
+
+**Round 1 verdict: NOT GO** -- 1 blocker, 5 risks, 3 nits. Per Tier C's own escalation rule (a
+found blocker escalates the group to Tier B rigor), this group needed a confirmation round.
+
+**Blocker (fixed): the constructor's three load paths had zero exception handling.** A corrupt/
+malformed locale file or manifest, or a single typo'd culture code, crashed the whole app at DI
+resolution with no log trace -- the identical bug class already found and fixed for
+`JsonSettingsStore.LoadAsync` in Group 1, on a file class MORE exposed to hand-editing (spec/10's
+own "Adding a language" workflow sells locale files as drop-in, no-recompile, community-editable).
+Fixed with the same `JsonException or IOException or UnauthorizedAccessException` catch filter as
+`JsonSettingsStore`, falling back to an empty map / English-only manifest, now logged. Individual
+malformed manifest entries are now skipped-and-logged rather than taking the whole manifest down.
+Also fixed a smaller asymmetry: the sync (ctor-path) locale-file loader now logs a missing file the
+same way its async twin already did.
+
+**Risk (fixed): `SetCultureAsync`'s `ConfigureAwait(false)` could resume its continuation (the
+`_loadedCultures` write and the `CultureChanged` event raise) on a thread-pool thread**, violating
+`ILocalizationService.CultureChanged`'s own documented "fires synchronously, on the calling thread"
+contract, and inconsistently with the already-loaded fast path that never awaited at all. Combined
+with an unsynchronized plain `Dictionary` (`_loadedCultures`) written by `SetCultureAsync` and read
+by `GetString` on every UI binding evaluation -- a genuine cross-thread data race, not just a stale
+read. Fixed together (the round-1 auditor's own explicit instruction: fixing either alone leaves
+the other's race): removed `ConfigureAwait(false)`, added a lock around both the dictionary's reads
+and writes.
+
+**Risk (fixed): an empty-string translation VALUE was returned as-is**, silently rendering a blank
+UI label with no diagnostic trail -- breaking `ILocalizationService`'s own documented "a UI never
+shows a blank string" guarantee (the key-absent case was already handled correctly; only key-
+present-but-empty was wrong). Fixed: an empty value now falls through the same missing-key chain
+(current culture -> English fallback -> raw key).
+
+Deferred (real, explicitly judged legitimately deferrable by round 1's own auditor, not required to
+close): `SetCultureAsync` accepts any culture unvalidated and caches an empty map for it forever,
+log-flooding every subsequent lookup; culture keyed by `TwoLetterISOLanguageName` while the
+manifest carries full culture codes, breaking regional/script variants (`pt-BR`, `zh-Hans`);
+`Format` has no guard against a bad translator placeholder; `GetString(null!, ...)` throws instead
+of degrading.
+
+Seven new regression tests added (corrupt locale file, corrupt manifest, invalid manifest entry,
+empty-value-in-current-culture, empty-value-even-in-fallback, non-ASCII+UTF-8-BOM locale file,
+missing-locale-file-on-SetCultureAsync) plus two pre-existing weak log assertions strengthened
+(`e.Message.Contains(<key>)` couldn't distinguish "fell back to English" from "missing everywhere,"
+since both templates embed the key -- now assert the distinguishing wording). 14/14
+Core.Localization.Tests pass (was 6, +8), clean solution-wide build.
+
+**Round 2 (confirmation) verdict: NOT quite GO -- one residual gap in the blocker fix, everything
+else confirmed correct.** The per-entry manifest guard caught only `CultureNotFoundException`, but
+`LocaleManifestEntry` is a positional record and System.Text.Json supplies `default(T)` (null, for
+a string) for any ctor param with no matching JSON property -- nullable reference types are NOT
+enforced at runtime. A wrong field name (e.g. `"language"` instead of `"code"`) or a literal `null`
+array element reached `CultureInfo.GetCultureInfo(null)`, throwing `ArgumentNullException`/
+`NullReferenceException` uncaught by that filter -- the SAME failure class the blocker was filed
+for, still reachable. Independently verified as correct: the locking scheme (no deadlock, the two
+unlocked reads -- `GetString`'s map lookup and the `_fallbackMap` read -- both provably safe by
+construction); the `ConfigureAwait(false)` removal (traced to the sole production caller,
+`OptionsWindowViewModel.cs`, confirming the Avalonia sync context is genuinely still captured, and
+confirming no `Task.Run`/blocking caller exists anywhere in the codebase that would deadlock);
+every combination of the empty-value fallthrough chain (6 cases traced against the real code); the
+per-entry manifest handling's order-preservation and all-entries-invalid fallback.
+
+Fixed the residual gap: the catch widened to `ArgumentException` (the common base of
+`CultureNotFoundException` and `ArgumentNullException`), plus an explicit null/blank-code guard
+ahead of the `GetCultureInfo` call. One more regression test added (null-`code`, absent-`code`, and
+a literal `null` array element, all in one manifest). 15/15 Core.Localization.Tests pass (was 14,
++1), clean solution-wide build.
+
+**Group 2 CLOSED (2026-08-22)** -- escalated to Tier B rigor per Tier C's own rule (1 round found a
+blocker), 2 rounds total (NOT GO -> residual-gap-fixed). 1 real blocker (with one residual gap
+caught and fixed in confirmation) + 2 real risks fixed. 4 risk-tier/nit findings remain
+intentionally deferred.
