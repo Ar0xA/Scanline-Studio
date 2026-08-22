@@ -5981,3 +5981,47 @@ silently-dropped-value failure class. No blockers.
 
 **Chunk 1 CLOSED (2026-08-22)** -- 2 rounds. Real cross-sibling bug found and fixed round 1, clean
 GO round 2. Committed.
+
+## Core.Imaging chunk 2: ReceivedImageBuffer.cs
+
+Deliberately a LIGHT single round, not the full 2-round Tier B default: this file's
+`SaveAsync`/`Saved`/`NotifySaved`/`Generation` interaction with `ReceiveHistoryRecorder` already got
+3 full rounds of scrutiny in the just-closed Core.Logbook chunk 4 (2 real bugs found and fixed
+there). This round covered the rest of the file -- `OnModeDetected`/`OnLineDecoded`/
+`OnDecodeRestarted`/`ComputeProgress`, which implement `Current`/`Progress`/`Updated`.
+
+**Round 1** -- GO (unconditional). Chased the sweep's tracked failure classes plus a specific
+concern: whether `ComputeProgress`'s step-learning has an analogous bug to a real one
+`ReceiveHistoryRecorder` had (an early version defaulted the unlearned step to the full image
+height, making the first event of every image look complete) -- confirmed absent here; the
+progress-fraction consequence of a similar bug would be less severe anyway (a wrong fraction, not a
+false-complete), and no such bug exists. Also chased whether `AnalogFmSstvDecoder`'s replay path
+(re-emitting `LineDecoded` for already-decoded rows, confirmed real via that class's own ≥16-line
+replay latch) could corrupt step-learning -- confirmed it can't, since the step is only ever learned
+once and the replay latch requires the step to already be learned by the time any replay can occur.
+
+Found no blocker. Two risk-tier findings, both latent-only today and explicitly not worth another
+round per the auditor's own call: `Updated` is fired with no exception isolation (unlike `Saved`'s
+`RaiseSaved`), safe only because there is exactly one production subscriber that never throws; and
+`OnModeDetected` doesn't reset `_current` (only `_progress`), so `Current` briefly shows the
+*previous* completed image stamped with the *new* generation during the window before the next
+image's first line -- a narrow overlap with already-closed Core.Logbook chunk-4 ground (affects
+`SaveAsync` supersession detection specifically), not re-litigated here. Logged as deferred backlog,
+not fixed: locking/threading has no dedicated test, no test pins `DecodeRestarted` not resetting
+`_previousLine`/`_observedStep` (verified safe today only because of an external ordering guarantee
+in `AnalogFmSstvDecoder`, not enforced by this file itself).
+
+One nit fixed in the same pass (per the auditor's own explicit recommendation, "fold it into
+whatever touches this file next" rather than dispatch a round for it alone): the snap-to-1.0 branch
+in `ComputeProgress` was provably dead code with an actively wrong comment -- `Math.Clamp`'s own
+upper bound already produces exactly `1.0` on the true completing event for both step-1 and
+step-2 families, so the dedicated `if (Line + step >= Height) return 1.0;` branch never changed the
+result. Removed the redundant branch and corrected the comment; corrected the now-inaccurate test
+comment that claimed to pin a "snap" behavior that was never load-bearing. Added the two cheap
+missing tests the auditor flagged: `Updated` firing on `ModeDetected` (folded into the existing
+`Updated_Fires...` test, which previously covered only `LineDecoded`/`DecodeRestarted`), and a
+replay-goes-backwards regression test proving a replayed `Line=0` after the step is already learned
+doesn't re-derive/corrupt it. 101/101 `Core.Imaging.Tests` pass, clean solution-wide build.
+
+**Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes applied per standing practice.
+Committed.

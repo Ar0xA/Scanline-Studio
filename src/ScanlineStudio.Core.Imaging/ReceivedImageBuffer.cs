@@ -207,15 +207,11 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
             return Math.Clamp((double)update.Line / imageHeight, 0.0, 1.0);
         }
 
-        // Snap to exactly 1.0 on the completing event -- Line + step alone asymptotes to
-        // (Height - step) / Height and would never actually reach 1.0 for multi-row-per-event
-        // families (PD/MP/RM8/RM12), which would leave a live progress readout stuck just under
-        // 100% for the rest of the image's on-screen lifetime.
-        if (update.Line + step >= imageHeight)
-        {
-            return 1.0;
-        }
-
+        // Reaches exactly 1.0 on the completing event for both step-1 and step-2 (PD/MP/RM8/RM12)
+        // families without a separate snap: the completing event always has Line + step == Height
+        // exactly (never overshoots it), so Clamp's own upper bound produces 1.0 naturally --
+        // Tier B audit finding, correcting an earlier comment here that wrongly described this as
+        // needing a special case.
         return Math.Clamp((double)(update.Line + step) / imageHeight, 0.0, 1.0);
     }
 
