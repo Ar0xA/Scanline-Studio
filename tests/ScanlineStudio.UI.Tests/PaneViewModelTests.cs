@@ -3230,6 +3230,63 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_TrailingRefreshFails_StillShowsTheLogOutcome()
+    {
+        // Tier B audit finding: this used to set StatusMessage to the Log outcome BEFORE the
+        // trailing RefreshInternalAsync() call, so a refresh failure's own Error.SearchFailed
+        // message silently clobbered it -- the QSO had already genuinely been logged by this point,
+        // and the user never saw the real outcome, only a misleading "search failed."
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "N0CALL";
+        logbook.ThrowOnSearch = new InvalidOperationException("simulated refresh failure");
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        // FakeLocalizationService.GetString returns the raw key -- the log outcome's own key
+        // ("Panes.Logbook.Status.LoggedFormat"), not the trailing refresh failure's
+        // ("Panes.Logbook.Error.SearchFailed"), must be what's showing.
+        Assert.Equal("Panes.Logbook.Status.LoggedFormat", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_UserSelectsADifferentRowWhileInFlight_DoesNotWipeIt()
+    {
+        // Tier B audit finding: LogQsoAsync can make a real, multi-second QRZ HTTPS upload. With no
+        // guard, a user selecting a DIFFERENT row while the original LogAsync call was still
+        // awaiting that upload would have its own eventual ResetForm() wipe out the newly-selected
+        // row's form data once it completed -- silently discarding whatever the user had since
+        // started reading/editing.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("existing"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "W1AW";
+        var gate = new TaskCompletionSource<LogQsoResult>();
+        logbook.LogGate = gate;
+        var logTask = vm.LogCommand.ExecuteAsync(null);
+
+        // Simulates the user navigating to a different row WHILE the log call above is still
+        // suspended on the gate.
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.Equal("N0CALL", vm.FormCallsign);
+        Assert.True(vm.IsEditing);
+
+        gate.SetResult(new LogQsoResult(logbook.Records[0], 0, 0, false, null));
+        await logTask;
+        Dispatcher.UIThread.RunJobs();
+
+        // The row the user navigated to must still be showing -- not wiped by the now-stale
+        // LogAsync call's own ResetForm().
+        Assert.Equal("N0CALL", vm.FormCallsign);
+        Assert.True(vm.IsEditing);
+    }
+
+    [AvaloniaFact]
     public void LogbookPaneViewModel_SelectingAnEntry_LoadsFormForEditAndEnablesUpdate()
     {
         var logbook = new FakeLogbookSessionService();
@@ -3263,6 +3320,29 @@ public sealed class PaneViewModelTests
         Assert.Equal("edited", logbook.Records[0].Notes);
         // Regression: same ResetForm()-vs-New() bug as the Log path above.
         Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_UpdateAsync_PreservesTheExistingReceivedImageIdLink()
+    {
+        // Round-2 Tier B audit finding: LoadIntoForm used to not carry ReceivedImageId over at all,
+        // so BuildRecordFromForm always passed a hardcoded null for it -- editing and saving a QSO
+        // that had been linked to an RX-history frame (via QsoLinkWindowViewModel) silently
+        // destroyed that reverse FK on every Update, even though nothing on this form lets the user
+        // see or change it.
+        var linkedRecord = new QsoRecord(
+            "1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, "rx-entry-42");
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(linkedRecord);
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        vm.FormNotes = "edited";
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("rx-entry-42", logbook.Records[0].ReceivedImageId);
     }
 
     [AvaloniaFact]
@@ -3343,6 +3423,46 @@ public sealed class PaneViewModelTests
         Assert.NotNull(from);
         Assert.Equal(TimeSpan.Zero, from!.Value.Offset);
         Assert.Equal(new DateTime(2026, 8, 1), from.Value.Date);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_RefreshAsync_SucceedingAfterAFailure_ClearsTheStaleErrorBanner()
+    {
+        // Tier B audit finding: RefreshInternalAsync itself never cleared StatusMessage on success
+        // (deliberately -- its OTHER callers set their own status right after refreshing and must
+        // not have that clobbered), but the standalone RefreshCommand needs to, or a search
+        // failure's error banner would persist forever, even after a later search succeeded.
+        var logbook = new FakeLogbookSessionService { ThrowOnSearch = new InvalidOperationException("simulated search failure") };
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.StatusMessage);
+
+        logbook.ThrowOnSearch = null;
+        vm.RefreshCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_ExportAdifAsync_PreExportRefreshFails_DoesNotExportOrReportAWrongCount()
+    {
+        // Tier B audit finding: this used to ignore the pre-export refresh's own success/failure --
+        // if it failed, Entries stayed stale, but the export still proceeded and then reported
+        // "Exported N" using that stale Entries.Count: a provably wrong number, with the real error
+        // explaining it silently discarded. Must bail out instead.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var filePicker = new FakeFilePickerService { SaveAdifPathToReturn = "/tmp/export.adi" };
+        var vm = CreateLogbookPaneViewModel(logbook, filePicker);
+        Dispatcher.UIThread.RunJobs();
+
+        logbook.ThrowOnSearch = new InvalidOperationException("simulated refresh failure");
+        await vm.ExportAdifCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(logbook.LastExportPath);
+        Assert.Equal("Panes.Logbook.Error.SearchFailed", vm.StatusMessage);
     }
 
     [AvaloniaFact]
