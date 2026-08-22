@@ -19,11 +19,20 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
     /// round-10 pattern.</summary>
     public Task? Gate { get; set; }
 
+    /// <summary>When set, <see cref="LoadAsync"/> throws this instead of returning
+    /// <see cref="Settings"/> -- lets a test simulate a corrupt/unreadable settings file.</summary>
+    public Exception? LoadAsyncException { get; set; }
+
     public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
     {
         if (Gate is not null)
         {
             await Gate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        if (LoadAsyncException is { } ex)
+        {
+            throw ex;
         }
 
         return Settings;
