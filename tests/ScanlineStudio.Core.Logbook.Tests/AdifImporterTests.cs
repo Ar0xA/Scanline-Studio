@@ -25,7 +25,7 @@ public sealed class AdifImporterTests
         Assert.Equal(original.StartUtc, imported.StartUtc);
         Assert.Equal(original.EndUtc, imported.EndUtc);
         Assert.Equal(original.FrequencyHz, imported.FrequencyHz);
-        Assert.Null(imported.Mode); // MODE=SSTV carries no RF-sideband info
+        Assert.Equal(original.Mode, imported.Mode); // recovered via APP_SCANLINESTUDIO_RADIOMODE, not MODE
         Assert.Equal(original.SstvModeId, imported.SstvModeId);
         Assert.Equal(original.RstSent, imported.RstSent);
         Assert.Equal(original.RstReceived, imported.RstReceived);
@@ -71,7 +71,7 @@ public sealed class AdifImporterTests
         var first = records[0];
         Assert.Equal("W1AW", first.Callsign);
         Assert.Equal(new DateTimeOffset(2025, 1, 15, 12, 30, 0, TimeSpan.Zero), first.StartUtc);
-        Assert.Equal(RadioMode.Unknown, first.Mode); // "SSB" has no direct RadioMode token
+        Assert.Equal(RadioMode.Usb, first.Mode); // bare MODE=SSB with no SUBMODE defaults to Usb
         Assert.Equal("FN31pr", first.GridSquare);
         Assert.NotNull(first.Notes);
         Assert.Contains("STX=5", first.Notes);
@@ -81,6 +81,121 @@ public sealed class AdifImporterTests
         Assert.Equal("DL2QSK", second.Callsign);
         Assert.Equal("scottie1", second.SstvModeId);
         Assert.Equal("Good copy", second.Notes);
+    }
+
+    [Theory]
+    [InlineData("SSB", "LSB", RadioMode.Lsb)]
+    [InlineData("SSB", "USB", RadioMode.Usb)]
+    [InlineData("SSB", null, RadioMode.Usb)] // no submode defaults to Usb, the far more common sideband
+    [InlineData("PKT", null, RadioMode.Pkt)]
+    [InlineData("PKTUSB", null, RadioMode.Pkt)] // Hamlib's non-standard token, accepted for backward compat
+    [InlineData("CW", null, RadioMode.Cw)]
+    [InlineData("RTTY", null, RadioMode.Rtty)]
+    public void Import_ModeAndSubmode_MapsToExpectedRadioMode(string adifMode, string? adifSubmode, RadioMode expected)
+    {
+        var submodeTag = adifSubmode is null ? "" : $"<SUBMODE:{adifSubmode.Length}>{adifSubmode}";
+        var adif = $"<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<MODE:{adifMode.Length}>{adifMode}{submodeTag}<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal(expected, record.Mode);
+    }
+
+    [Fact]
+    public void Import_SsbWithUnrecognizedSubmode_DefaultsToUsbButPreservesSubmodeInNotes()
+    {
+        const string adif = "<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<MODE:3>SSB<SUBMODE:5>DIGIU<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal(RadioMode.Usb, record.Mode); // unrecognized submode falls back to the documented default
+        Assert.NotNull(record.Notes);
+        Assert.Contains("SUBMODE=DIGIU", record.Notes); // but the unrecognized submode itself is not lost
+    }
+
+    [Fact]
+    public void Export_ThenImport_SstvRecordWithRadioMode_RoundTripsBothModeAndSstvModeId()
+    {
+        var exporter = new AdifExporter();
+        var importer = new AdifImporter();
+        var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Lsb, "scottie2", null, null, null, null, null, null, null, null);
+
+        var writer = new StringWriter();
+        exporter.Export([original], writer);
+        var imported = Assert.Single(importer.Import(new StringReader(writer.ToString())));
+
+        Assert.Equal(RadioMode.Lsb, imported.Mode);
+        Assert.Equal("scottie2", imported.SstvModeId);
+    }
+
+    [Fact]
+    public void Import_SstvModeWithNoRadioModeAppField_LeavesModeNull()
+    {
+        const string adif = "<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<MODE:4>SSTV<SUBMODE:7>MARTIN1<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Null(record.Mode);
+        Assert.Equal("martin1", record.SstvModeId);
+    }
+
+    [Fact]
+    public void Import_UnrecognizedModeToken_PreservedInNotesNotSilentlyDropped()
+    {
+        const string adif = "<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<MODE:5>DSTAR<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal(RadioMode.Unknown, record.Mode);
+        Assert.NotNull(record.Notes);
+        Assert.Contains("MODE=DSTAR", record.Notes);
+    }
+
+    [Fact]
+    public void Import_SstvModeWithNoSubmodeOrAppField_PreservesRawModeInNotes()
+    {
+        const string adif = "<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<MODE:4>SSTV<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Null(record.SstvModeId);
+        Assert.NotNull(record.Notes);
+        Assert.Contains("MODE=SSTV", record.Notes);
+    }
+
+    [Fact]
+    public void Export_ThenImport_UsbLsbAndPktModes_RoundTrip()
+    {
+        var exporter = new AdifExporter();
+        var importer = new AdifImporter();
+
+        foreach (var mode in new[] { RadioMode.Usb, RadioMode.Lsb, RadioMode.Pkt })
+        {
+            var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null);
+            var writer = new StringWriter();
+            exporter.Export([original], writer);
+            var imported = Assert.Single(importer.Import(new StringReader(writer.ToString())));
+
+            Assert.Equal(mode, imported.Mode);
+        }
+    }
+
+    [Fact]
+    public void Import_NegativeFieldLength_SkipsTagInsteadOfThrowing()
+    {
+        // NumberStyles.Integer accepts a leading '-'; a malformed <CALL:-5> must be skipped per this
+        // class's own "malformed tag is skipped, not aborting" contract, not throw on the negative slice.
+        const string adif = "<EOH><CALL:-5>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<CALL:6>N0CALL<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal("N0CALL", record.Callsign);
     }
 
     [Fact]

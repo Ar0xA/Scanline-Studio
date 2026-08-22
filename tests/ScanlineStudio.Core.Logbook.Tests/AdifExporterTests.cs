@@ -32,6 +32,7 @@ public sealed class AdifExporterTests
         Assert.Contains("<MODE:4>SSTV", adif);
         Assert.Contains("<SUBMODE:7>MARTIN1", adif);
         Assert.Contains("<APP_SCANLINESTUDIO_SSTVMODE:7>martin1", adif);
+        Assert.Contains("<APP_SCANLINESTUDIO_RADIOMODE:3>Usb", adif);
         Assert.Contains("<RST_SENT:2>59", adif);
         Assert.Contains("<RST_RCVD:2>58", adif);
         Assert.Contains("<GRIDSQUARE:4>JO31", adif);
@@ -49,6 +50,59 @@ public sealed class AdifExporterTests
         exporter.Export([record], writer);
 
         Assert.Contains("<MODE:2>CW", writer.ToString());
+    }
+
+    [Theory]
+    [InlineData(RadioMode.Usb, "<MODE:3>SSB", "<SUBMODE:3>USB")]
+    [InlineData(RadioMode.Lsb, "<MODE:3>SSB", "<SUBMODE:3>LSB")]
+    [InlineData(RadioMode.Cw, "<MODE:2>CW", null)]
+    [InlineData(RadioMode.CwR, "<MODE:2>CW", null)] // reverse-sideband CW collapses onto CW, ADIF has no CW-R
+    [InlineData(RadioMode.Rtty, "<MODE:4>RTTY", null)]
+    [InlineData(RadioMode.RttyR, "<MODE:4>RTTY", null)] // same collapse as CwR
+    [InlineData(RadioMode.Data, "<MODE:3>SSB", null)] // generic rig DATA mode has no ADIF equivalent
+    [InlineData(RadioMode.DataR, "<MODE:3>SSB", null)]
+    [InlineData(RadioMode.Pkt, "<MODE:3>PKT", null)] // ADIF's token, NOT Hamlib's PKTUSB
+    [InlineData(RadioMode.Unknown, null, null)]
+    public void Export_RadioModeMapping_WritesValidAdifModeTokens(RadioMode mode, string? expectedMode, string? expectedSubmode)
+    {
+        var exporter = new AdifExporter();
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null);
+
+        var writer = new StringWriter();
+        exporter.Export([record], writer);
+        var adif = writer.ToString();
+
+        if (expectedMode is null)
+        {
+            Assert.DoesNotContain("MODE", adif);
+        }
+        else
+        {
+            Assert.Contains(expectedMode, adif);
+        }
+
+        if (expectedSubmode is null)
+        {
+            Assert.DoesNotContain("SUBMODE", adif);
+        }
+        else
+        {
+            Assert.Contains(expectedSubmode, adif);
+        }
+    }
+
+    [Fact]
+    public void Export_NonAsciiFieldValue_UsesUtf8ByteCountNotCharLength()
+    {
+        var exporter = new AdifExporter();
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, "Jörg", null, null, null, null, null);
+
+        var writer = new StringWriter();
+        exporter.Export([record], writer);
+        var adif = writer.ToString();
+
+        // "Jörg" is 4 chars but 5 UTF-8 bytes (ö is 2 bytes) -- a char-length bug would write <NAME:4>.
+        Assert.Contains("<NAME:5>Jörg", adif);
     }
 
     [Fact]

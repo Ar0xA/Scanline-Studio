@@ -5716,3 +5716,65 @@ exception-contract violations (Batch 10), LogbookSessionService's post-persist e
 logging gap from Batch 1. The large majority of individually-audited files came back clean --
 zero functional bugs, only doc-comment/citation-drift corrections and mutation-verified coverage-gap
 closures.
+
+---
+
+## Tier B -- IN PROGRESS, started 2026-08-22
+
+Scope per this doc's own Tier table: remaining `Application`, `UI/ViewModels`, `Core.Logbook`,
+`Core.Imaging` -- real state, no DSP/native code. Rigor: one round + one confirmation round per
+file/group, cap 3. Step 0 triage done so far for `Core.Logbook` only (18 files: 11 real-logic, 7
+trivial). Grouped-round plan and live status tracked in `PROJECT_BRIEF.md`.
+
+## Chunk 1 (Core.Logbook): AdifExporter.cs, AdifImporter.cs, AdifRadioModeMapping.cs
+
+**Round 1** -- NOT GO. Two blockers in the shared ADIF MODE-token mapping:
+1. Export emitted four ADIF `MODE` tokens (`USB`, `LSB`, `DATA`, `PKTUSB`) that are not real ADIF
+   3.x Mode-enumeration values -- the same text is POSTed to QRZ and broadcast over UDP to
+   Log4OM/GridTracker, so those tools reject or mis-file the QSO.
+2. Import mapped any unrecognized `MODE` token to `RadioMode.Unknown` AND unconditionally excluded
+   `"MODE"` from the unmapped-fields notes bag, so the original token was unrecoverable -- a plain
+   `MODE=SSB` from a third-party logbook (the single most common mode) lost its mode irrecoverably
+   on import-then-re-export, contradicting spec/08-logging.md's "preserved, not dropped" requirement.
+
+Fixed: `AdifRadioModeMapping.ToAdif` now returns `(Mode, Submode)` -- `Usb`/`Lsb` -> `SSB`+`SUBMODE`,
+`Data`/`DataR` -> bare `SSB` (documented one-way-lossy default, no ADIF equivalent exists), `Pkt` ->
+`PKT` (was `PKTUSB`). `AdifImporter.MapFields` now tracks a per-record `consumedModeFields` set and
+only excludes MODE-family fields from the notes bag when a value was actually recovered from them.
+Also fixed in the same round: a negative `<TAG:length>` crash (`ParseRecord` now guards
+`byteLength < 0`), and `MODE=SSTV` with neither `SUBMODE` nor the APP field now also preserves the
+raw token in notes instead of vanishing. Added Theory-based coverage for the full
+`RadioMode`<->ADIF mapping table (all 12 values) and a non-ASCII UTF-8-byte-count regression test.
+Two bugs in this session's own first-pass fix were caught by the new tests before round 2: a
+companion `SUBMODE` field leaking into notes alongside `APP_SCANLINESTUDIO_SSTVMODE`, and a wrong
+byte-length in one test's own ADIF fixture (self-inflicted, not a production bug).
+107/107 `Core.Logbook.Tests` pass, clean build.
+
+**Round 2** (fresh agent, full re-scan) -- NOT GO. One new blocker of the same failure class, this
+time on export: `AdifExporter.WriteRecord`'s `if (SstvModeId is {}) / else if (Mode is {})` chain
+was mutually exclusive, so `QsoRecord.Mode` was silently dropped whenever `SstvModeId` was also
+set (the app's primary/most common record shape) -- and the existing round-trip test enshrined the
+loss as correct (`Assert.Null(imported.Mode)`). Also flagged: `MODE=SSB` with an unrecognized
+`SUBMODE` was silently marked "consumed" (hiding the stray token from notes) even though the `Usb`
+fallback never actually used it.
+
+Fixed: added a non-standard `APP_SCANLINESTUDIO_RADIOMODE` field (mirrors the existing
+`APP_SCANLINESTUDIO_SSTVMODE` escape-hatch pattern) so `Mode` round-trips even when `SstvModeId` is
+also set. `AdifRadioModeMapping.FromAdif` now returns `(RadioMode, bool SubmodeRecognized)` so only
+an actually-used submode gets marked consumed. Added 3 new tests; flipped the round-trip test's
+`Mode` assertion. 110/110 tests pass, clean build, no new bugs caught applying this round's fix.
+
+**Round 3** (fresh agent, full re-scan) -- **GO.** Re-derived the full MODE/SUBMODE/APP_SSTVMODE/
+APP_RADIOMODE consumption matrix from scratch; both round-1/round-2 fixes confirmed correct and
+complete, no remaining silent-drop or double-count on any path this app's own exporter can produce.
+Found 3 further instances of round 2's "value present, branch didn't take it, notes bag never sees
+it" shape, all outside the MODE family and all third-party/hand-edited-input-only (not reachable
+from this app's own export->import path, not a regression from this chunk's fixes): unparsable
+`FREQ` silently dropped, `STATION_CALLSIGN` always discarded on import (pre-existing, not introduced
+by this chunk), and imported `SstvModeId` values not matching `SstvModeRegistry`'s real hyphenated
+ids for third-party (non-`APP_SCANLINESTUDIO_SSTVMODE`) SUBMODE values. Logged as a deferred backlog
+item, not fixed in this chunk -- narrower and non-corrupting compared to round 2's finding, which hit
+100% of this app's own real user data.
+
+**Chunk 1 CLOSED (2026-08-22)** -- 3 rounds, real bugs found and fixed each of the first two, clean
+GO on the third. Committed.

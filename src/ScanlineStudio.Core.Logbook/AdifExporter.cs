@@ -55,10 +55,24 @@ public sealed class AdifExporter : IAdifExporter
             WriteField(writer, "MODE", "SSTV");
             WriteField(writer, "SUBMODE", sstvModeId.ToUpperInvariant());
             WriteField(writer, "APP_SCANLINESTUDIO_SSTVMODE", sstvModeId);
+
+            // record.Mode and record.SstvModeId are independent, both-optional fields (see
+            // spec/08-logging.md's "auto-fill" section) -- ADIF's own MODE can only hold one value, so
+            // an RF sideband set alongside an SSTV mode needs this app-specific escape hatch or it's
+            // unrecoverable on re-import (see AdifImporter.MapFields's SSTV branch).
+            if (record.Mode is { } sstvRadioMode)
+            {
+                WriteField(writer, "APP_SCANLINESTUDIO_RADIOMODE", sstvRadioMode.ToString());
+            }
         }
-        else if (record.Mode is { } mode && AdifRadioModeMapping.ToAdif(mode) is { } adifMode)
+        else if (record.Mode is { } mode)
         {
-            WriteField(writer, "MODE", adifMode);
+            var (adifMode, adifSubmode) = AdifRadioModeMapping.ToAdif(mode);
+            if (adifMode is not null)
+            {
+                WriteField(writer, "MODE", adifMode);
+                WriteField(writer, "SUBMODE", adifSubmode);
+            }
         }
 
         WriteField(writer, "RST_SENT", record.RstSent);
