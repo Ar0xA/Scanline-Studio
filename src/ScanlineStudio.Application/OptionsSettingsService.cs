@@ -155,6 +155,18 @@ public sealed partial class OptionsSettingsService
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
     {
+        // Tier B audit finding: these four (Localization/AppPerformance/Operator/QrzLookup) used to
+        // build a fresh `new X { ... }` instead of `previous with { ... }` like every OTHER section
+        // here -- harmless today only because none of these four records currently has a field the
+        // dialog doesn't own (confirmed field-by-field), but it's the exact sibling-inconsistency
+        // shape this whole sweep keeps finding: the day a non-dialog field is added to any of these
+        // four (a QRZ session-cache token, an operator default-power field, ...), every Options Save
+        // would silently reset it, with no existing test able to catch it. Read previous* up front
+        // and preserve via `with` uniformly, matching AfcEnabled/ClientId's own established pattern.
+        var previousLocalization = _loadedSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
+        var previousAppPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
+        var previousOperator = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
+        var previousQrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
         var previousAudio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
         var sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
             ? snapshot.SampleRate
@@ -170,7 +182,7 @@ public sealed partial class OptionsSettingsService
         var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(_loadedSettings);
 
         var settings = _loadedSettings
-            .WithSection(LocalizationSettings.SectionKey, new LocalizationSettings { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
+            .WithSection(LocalizationSettings.SectionKey, previousLocalization with { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
             .WithSection(
                 AudioDeviceSettings.SectionKey,
                 previousAudio with
@@ -191,7 +203,7 @@ public sealed partial class OptionsSettingsService
                 // AppPerformanceSettings.ProcessPriority's own "unset = don't touch the OS default"
                 // contract (see that record's own doc comment); Program.cs's read site already
                 // treats null as a no-op, functionally equivalent for a freshly-launched process.
-                new AppPerformanceSettings { ProcessPriority = snapshot.AppPriorityIsHigh ? System.Diagnostics.ProcessPriorityClass.High : null },
+                previousAppPerformance with { ProcessPriority = snapshot.AppPriorityIsHigh ? System.Diagnostics.ProcessPriorityClass.High : null },
                 AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings)
             .WithSection(
                 RadioConnectionSettings.SectionKey,
@@ -208,7 +220,7 @@ public sealed partial class OptionsSettingsService
                 RadioSettingsJsonContext.Default.RadioConnectionSettings)
             .WithSection(
                 OperatorSettings.SectionKey,
-                new OperatorSettings { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid },
+                previousOperator with { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid },
                 OperatorSettingsJsonContext.Default.OperatorSettings)
             .WithSection(
                 SstvDecoderSettings.SectionKey,
@@ -240,7 +252,7 @@ public sealed partial class OptionsSettingsService
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
                 QrzLookupSettings.SectionKey,
-                new QrzLookupSettings { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername, Password = snapshot.QrzLookupPassword },
+                previousQrzLookup with { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername, Password = snapshot.QrzLookupPassword },
                 QrzLookupSettingsJsonContext.Default.QrzLookupSettings)
             .WithSection(
                 StationIdSettings.SectionKey,

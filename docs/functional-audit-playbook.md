@@ -7157,3 +7157,69 @@ auditor itself, not a gap in this round's own coverage.
 **Chunk 2 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier bug fixed
 (contract-violating unguarded settings read) plus a coverage gap closed with 2 new tests; 1 finding
 explicitly deferred to backlog per the auditor's own recommendation.
+
+## Chunk 3: OptionsSettingsService.cs
+
+The Options-dialog UI wrapper around this exact service (`OptionsWindowViewModel.cs`) already had
+its own sibling-inconsistency fixes applied earlier in this sweep (UI/ViewModels chunk 8) -- this
+chunk audits the SERVICE layer underneath it independently, not a re-litigation of that already-
+closed VM-layer work.
+
+**Round 1** -- unconditional GO, no blockers, 2 risk-tier findings (auditor explicitly said not to
+dispatch another round):
+
+- **[risk, deferred to backlog]** `SaveAsync` never re-reads `settings.json` -- it always builds its
+  save from `_loadedSettings`, captured once at dialog-open time. Chunk 2's own off-scope note
+  flagged this as "any SWR/preset write made while the Options dialog is open is discarded on
+  Save"; round 1 confirmed the CODE but corrected the REACHABILITY -- the Options dialog is modal,
+  so no OTHER UI-driven save can interleave while it's open (checked all 5 other `ISettingsStore
+  .SaveAsync` call sites; all are UI-driven, all blocked by the modal). One real, narrower race
+  survives: dragging the TX volume slider (400ms debounce, `RadioStatusViewModel
+  .PersistVolumeDebouncedAsync`) then opening Options and hitting Save inside that 400ms window
+  reverts the volume write. A local fix (re-read fresh before Save) was considered and rejected --
+  `JsonSettingsStore.LoadAsync` silently falls back to `new AppSettings()` on a corrupt/unreadable
+  file, so a transient IO blip at the wrong instant would trade one narrow field-loss window for a
+  much worse whole-file-defaults window. Same reasoning chunk 2 already used to defer its own
+  read-modify-write finding: the correct fix is a serializing `ISettingsStore.MutateAsync` at the
+  store layer (already backlogged there), not a per-caller patch here.
+- **[risk, fixed]** Four sections (`LocalizationSettings`/`AppPerformanceSettings`/
+  `OperatorSettings`/`QrzLookupSettings`) built their saved value via a fresh `new X { ... }`
+  instead of `previous with { ... }` like every OTHER section in this method (`AudioDeviceSettings`/
+  `RadioConnectionSettings`/`SstvDecoderSettings`/`StationIdSettings`/`AdifUdpStreamingSettings` all
+  already preserve non-dialog fields this way -- `AfcEnabled`/`ClientId` specifically). Harmless
+  TODAY only because none of these four records currently has a field the dialog doesn't own
+  (verified field-by-field) -- but it's the exact sibling-inconsistency shape this whole sweep keeps
+  finding in latent form: the day a non-dialog field is added to any of these four (a QRZ
+  session-cache token, an operator default-power field, a locale date-format toggle), every Options
+  Save would silently reset it, with no existing test able to catch it.
+
+Also verified clean (not findings): full bidirectional census of all 36 `OptionsSnapshot` fields
+across both `LoadAsync`/`SaveAsync` -- no orphan field either direction; `Defaults` matches
+`LoadAsync`'s own absent-section fallbacks value-for-value on all 36 fields, including the 3
+deliberately-different ones; the `SampleRate` load-vs-save fallback asymmetry (normalize-to-11025 on
+Load, preserve-previous-valid on Save) is deliberate and correctly cites its own legacy source line;
+`CwText`'s `?? string.Empty` vs `NrRstText`'s raw passthrough is NOT a sibling inconsistency once
+each field's own resurrection-on-reload semantics are checked (genuinely different, not an
+oversight); ADIF migration symmetric on both Load and Save; save-then-commit ordering correct (store
+write succeeds before `_loadedSettings` is updated, so a failed save can't leave a phantom-committed
+base); a malformed section can throw `JsonException` out of `LoadAsync` but `_loadedSettings` is
+assigned before any section read, so it's never left transiently empty.
+
+Fixed: all four sections now read their own `previousX` from `_loadedSettings` up front and build
+via `previousX with { ... }`, matching the other five sections' already-established pattern. No
+dedicated regression test added -- the fix only has an observable effect once a non-dialog field is
+added to one of these four record types, which doesn't exist today; there is nothing to assert
+against yet (same "correct by inspection, defensive fix, nothing to observe" judgment call used
+elsewhere in this sweep for preventative sibling-consistency fixes). 240/240 `Application.Tests`
+pass (no change, confirming no regression), 68/68 `OptionsWindowViewModelTests` (the VM-layer
+consumer) still pass unchanged, clean solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with no blockers, and the
+auditor's own closing line was explicit: "Don't dispatch another review round on this file." The one
+deferred finding (stale-settings-base race) was independently re-derived and re-confirmed narrower
+than chunk 2's own version of the same class, with the SAME reasoning for why a local fix would be a
+net-negative trade -- not a gap in this round's own coverage.
+
+**Chunk 3 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier sibling-
+inconsistency bug fixed preventatively; 1 finding re-confirmed and re-deferred to the same
+`ISettingsStore`-level backlog item chunk 2 already opened.
