@@ -6439,3 +6439,63 @@ even if a prior `SetModeAsync` call actually failed (single-property scope, pre-
 **Chunk 6 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed a real blocker (duplicate,
 undeletable presets on retry-after-failure) plus 4 precedented risk-tier fixes; round 2 clean GO
 with one more trivial fix (a stale doc comment) applied per standing practice.
+
+## Chunk 7: RxHistoryPaneViewModel.cs
+
+**Round 1** -- NOT GO. 2 blockers plus 2 risk-tier findings:
+
+- **[blocker]** `RefreshAsync`'s catch block logged and returned with no `ErrorMessage` set --
+  since this method auto-fires on every incoming frame during an active session (`OnRecorded`), a
+  persistent failure (a locked/corrupt SQLite file) left the Gallery frozen on stale contents
+  forever with zero user-visible indication anything was wrong. Same set-on-failure/clear-on-success
+  gap `LogbookPaneViewModel.RefreshAsync` already had fixed (chunk 4 of this sweep) -- the tracked
+  sibling-inconsistency failure class recurring again.
+- **[blocker]** `ExportFrameAsync`'s `_filePicker.PickSaveImageFileAsync` call sat OUTSIDE the
+  method's try block -- an exception from the platform storage provider escaped uncaught, with no
+  log line and no `ErrorMessage`; the Export button just appeared to silently do nothing. Sibling
+  `RxImagePaneViewModel.SaveFrameAsync` already puts its own identical picker call inside its try.
+- **[risk]** `_suppressSelectedEntryEdits` was set/reset bare (no `try/finally`) at 2 sites -- a
+  throwing `PropertyChanged` subscriber could leave it stuck `true` for the VM's lifetime,
+  permanently and silently breaking every future note/flag edit. Same failure shape
+  `_isRepopulating`'s own guarded sites already avoid.
+- **[risk]** `LoadFramesTodayCountAsync` had no ordering guard against overlapping calls, unlike its
+  co-dispatched sibling `RefreshAsync` (both fire un-awaited from the same `OnRecorded` callback) --
+  a burst of `Recorded` events (e.g. a bulk-decoded WAV import) could race N overlapping queries,
+  with the LAST completer winning even if it started FIRST and is now describing a stale count.
+
+Also fixed in the same pass: a misleading `[LoggerMessage]` text ("history list stays empty" --
+false, the method returns before `Entries.Clear()`; corrected to "stays at its last-loaded
+contents"). New locale key `Panes.RxHistory.Error.RefreshFailed` added to `assets/locale/en.json`
+(only locale file in the tree, so no parity gap). `LoadFramesTodayCountAsync` gained its own
+`_framesTodayGeneration` field, same bump-before-await/compare-after pattern as `_refreshGeneration`.
+Three regression tests added (`RxHistoryPaneViewModel_RefreshAsync_QueryThrows_...`,
+`..._SucceedsAfterAPriorFailure_ClearsErrorMessage`, `..._ExportFrameAsync_PickerThrows_...`), backed
+by two new `Fakes.cs` throw-hooks (`FakeReceiveHistoryStore.ThrowOnQuery`,
+`FakeFilePickerService.ThrowOnPickSaveImageFile`). No dedicated regression test added for the two
+risk-tier fixes (try/finally, generation guard) -- both are small, established-pattern, correct-by-
+inspection defensive fixes; round 2 explicitly judged this gap acceptable. 686/686 `UI.Tests` pass
+(was 683, +3), clean solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Verified all 4 fixes correct and complete at
+their exact line numbers, confirmed the `ExportFrameAsync` cancellation path (`picked is not { }
+result`) still exits cleanly as a plain `return` inside the try with no `finally` to interact with,
+confirmed both `_suppressSelectedEntryEdits` sites reset unconditionally to `false` in `finally`,
+confirmed the new tests are genuine discriminators (both `Fakes.cs` throw-hooks throw synchronously
+from non-async methods -- exactly the case the old out-of-try picker call let escape). One new
+narrow finding: the success-path `ErrorMessage = null` sat BEFORE the `_refreshGeneration`
+stale-discard check, so an already-superseded refresh could null out an error a NEWER, still-in-
+flight refresh had just set (reachable only under overlapping refreshes from an `OnRecorded` burst;
+self-healing on the next failing refresh, no data corruption) -- judged risk-tier, not blocking, but
+cheap enough to fix in the same pass: moved the `ErrorMessage = null` line to after the
+stale-discard check. Rebuilt and reran the full `UI.Tests` suite clean (686/686) after the move.
+Explicit "close the chunk, don't spend another round on it" call.
+
+Deferred backlog, not fixed: no regression test for the `_suppressSelectedEntryEdits` try/finally
+(needs a deliberately-throwing `PropertyChanged` subscriber to exercise) or the
+`_framesTodayGeneration` guard (needs a TCS-gated fake query) -- both explicitly judged not worth
+the added test-infrastructure for a defensive, correct-by-inspection fix.
+
+**Chunk 7 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 2 real blockers (silent
+refresh-failure, escaped picker exception) plus 2 precedented risk-tier fixes; round 2 clean GO with
+one more trivial ordering fix (error-clear vs. stale-discard sequencing) applied per standing
+practice.

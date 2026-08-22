@@ -101,6 +101,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // as _refreshGeneration above.
     private int _previewGeneration;
 
+    // Tier B audit finding: same "discard a superseded async result" pattern as _refreshGeneration,
+    // for LoadFramesTodayCountAsync -- see that method's own comment.
+    private int _framesTodayGeneration;
+
     /// <summary>Guards <see cref="OnSelectedEntryNoteChanged"/>/<see cref="OnSelectedEntryIsFlaggedChanged"/>
     /// while <see cref="OnSelectedEntryChanged"/> is itself assigning <see cref="SelectedEntryNote"/>/
     /// <see cref="SelectedEntryIsFlagged"/> from the newly-selected entry -- same "suppress the
@@ -254,9 +258,22 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     private async Task LoadFramesTodayCountAsync()
     {
+        // Tier B audit finding: this used to have no ordering guard against overlapping calls,
+        // unlike its co-dispatched sibling RefreshAsync (both are fired un-awaited from the same
+        // OnRecorded callback, see that method's own doc comment) -- a burst of Recorded events
+        // (e.g. a bulk-decoded WAV import) could race N overlapping QueryAsync calls here, and
+        // whichever completed LAST would win even if it started FIRST and is now describing a
+        // stale, lower count -- the exact same "last-completer-wins on a stale result" class
+        // _refreshGeneration already guards RefreshAsync against. Same fix, own field.
+        var generation = ++_framesTodayGeneration;
         try
         {
             var todayEntries = await _historyStore.QueryAsync(new ReceiveHistoryFilter(From: new DateTimeOffset(DateTime.Today)));
+            if (generation != _framesTodayGeneration)
+            {
+                return;
+            }
+
             FramesTodayCount = todayEntries.Count;
         }
         catch (Exception ex)
@@ -342,7 +359,14 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
+            // Tier B audit finding: this used to log and return with no ErrorMessage set -- since
+            // RefreshAsync is auto-fired on every incoming frame during an active session (OnRecorded),
+            // a persistent failure (a locked/corrupt SQLite file) left the Gallery frozen on stale
+            // contents forever with zero user-visible indication anything was wrong. Same
+            // set-on-failure/clear-on-success pattern LogbookPaneViewModel.RefreshAsync already
+            // established for the identical sibling gap (chunk 4 of this sweep).
             Log.QueryFailed(_logger, ex);
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.RefreshFailed");
             return;
         }
 
@@ -373,6 +397,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             Log.RefreshDiscardedAsStale(_logger);
             return;
         }
+
+        // Tier B audit finding (round 2): nulled here -- success path only, and only once this
+        // call is confirmed to be the newest one (past the stale-discard check above) -- rather
+        // than right after the try/catch. Clearing it earlier let an already-superseded refresh
+        // wipe an error a NEWER, still-in-flight refresh had just set (overlapping refreshes from
+        // a burst of OnRecorded events could race: B starts, B's query throws and sets
+        // ErrorMessage, A's earlier query then returns and unconditionally nulled it before
+        // discarding itself as stale). A stale error from an unrelated failure (export, note/flag
+        // persist) still must not flash away and back just because a query happened to start --
+        // that's still true, just checked after staleness instead of before.
+        ErrorMessage = null;
 
         // Guards the transient SelectedEntry = null that Entries.Clear() below pushes back through
         // the Gallery ListBox's TwoWay SelectedItem binding, before the re-select a few lines down
@@ -423,10 +458,22 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // showing the vanished entry's last-loaded text/state (IsEnabled=false via the
             // SelectedEntry-is-null binding hides the CONTROLS, but the stale VALUES were still
             // sitting in these properties for whenever a NEW entry happens to reuse them transiently).
-            _suppressSelectedEntryEdits = true;
-            SelectedEntryNote = null;
-            SelectedEntryIsFlagged = false;
-            _suppressSelectedEntryEdits = false;
+            //
+            // Tier B audit finding: try/finally, not a bare set-then-reset -- these two property
+            // sets raise PropertyChanged into live Avalonia bindings, which can throw; a throw here
+            // used to leave _suppressSelectedEntryEdits stuck true for the process lifetime, silently
+            // and permanently breaking every future note/flag edit for the rest of this VM's life
+            // (same failure shape _isRepopulating's own two guarded sites already avoid).
+            try
+            {
+                _suppressSelectedEntryEdits = true;
+                SelectedEntryNote = null;
+                SelectedEntryIsFlagged = false;
+            }
+            finally
+            {
+                _suppressSelectedEntryEdits = false;
+            }
         }
 
         Log.RefreshCompleted(_logger, Entries.Count);
@@ -481,14 +528,21 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         Log.ExportFrameInvoked(_logger, entry.Entry.Id);
 
         var suggestedFileName = Path.GetFileName(sourcePath);
-        var picked = await _filePicker.PickSaveImageFileAsync(suggestedFileName);
-        if (picked is not { } result)
-        {
-            return;
-        }
 
         try
         {
+            // Tier B audit finding: the picker call used to sit OUTSIDE this try -- an exception
+            // from the platform storage provider (FilePickerService.PickSaveImageFileAsync has no
+            // internal guard of its own) escaped uncaught, with no log line and no ErrorMessage --
+            // the Export button just appeared to silently do nothing. Sibling
+            // RxImagePaneViewModel.SaveFrameAsync already puts its own identical picker call inside
+            // its try; matched here.
+            var picked = await _filePicker.PickSaveImageFileAsync(suggestedFileName);
+            if (picked is not { } result)
+            {
+                return;
+            }
+
             var appSettings = await _settingsStore.LoadAsync();
             var quality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
 
@@ -546,10 +600,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // isn't updated until PersistNoteDebouncedAsync's/PersistFlaggedAsync's success path
             // runs) -- the pending save still lands correctly regardless, only the interim display
             // is stale.
-            _suppressSelectedEntryEdits = true;
-            SelectedEntryNote = value?.Entry.Note;
-            SelectedEntryIsFlagged = value?.Entry.IsFlagged ?? false;
-            _suppressSelectedEntryEdits = false;
+            // Tier B audit finding: try/finally -- see the reconcile branch's own comment above
+            // (_previewedEntryId's sibling block) on the same fix for this same flag.
+            try
+            {
+                _suppressSelectedEntryEdits = true;
+                SelectedEntryNote = value?.Entry.Note;
+                SelectedEntryIsFlagged = value?.Entry.IsFlagged ?? false;
+            }
+            finally
+            {
+                _suppressSelectedEntryEdits = false;
+            }
+
             ErrorMessage = null;
             // Code-review finding: without this, "Exported to /tmp/a.png." from a PREVIOUS
             // selection kept showing under the Selected-frame panel after switching to a different
@@ -801,7 +864,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: showTodayOnly={ShowTodayOnly}")]
         public static partial void RefreshInvoked(ILogger logger, bool showTodayOnly);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "QueryAsync failed; history list stays empty")]
+        // Tier B audit finding: was "history list stays empty" -- false, since the return happens
+        // BEFORE Entries.Clear() runs, so the list stays at whatever it last successfully loaded,
+        // not empty.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QueryAsync failed; history list stays at its last-loaded contents")]
         public static partial void QueryFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Loading a history thumbnail failed")]
