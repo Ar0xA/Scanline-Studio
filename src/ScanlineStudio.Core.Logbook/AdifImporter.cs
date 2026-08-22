@@ -16,10 +16,18 @@ namespace ScanlineStudio.Core.Logbook;
 /// no continuation byte of a multi-byte sequence ever equals an ASCII byte value.</summary>
 public sealed class AdifImporter : IAdifImporter
 {
+    /// <summary>Fields consumed unconditionally, regardless of value. <c>MODE</c>/<c>SUBMODE</c>/
+    /// <c>APP_SCANLINESTUDIO_SSTVMODE</c>/<c>APP_SCANLINESTUDIO_RADIOMODE</c> are deliberately NOT
+    /// here — they're only excluded from the unmapped-fields bag (<see cref="BuildNotes"/>) when
+    /// <see cref="MapFields"/> actually recovers a value from them, so an unrecognized <c>MODE</c>
+    /// token (e.g. a third-party <c>MODE=SSTV</c> with no submode/app field, an unrecognized
+    /// <c>SUBMODE</c> alongside a recognized <c>MODE</c>, or any token
+    /// <see cref="AdifRadioModeMapping.FromAdif"/> doesn't recognize) survives in <c>COMMENT</c>
+    /// instead of being silently dropped.</summary>
     private static readonly HashSet<string> MappedFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "CALL", "QSO_DATE", "TIME_ON", "QSO_DATE_OFF", "TIME_OFF", "FREQ", "MODE", "SUBMODE",
-        "APP_SCANLINESTUDIO_SSTVMODE", "RST_SENT", "RST_RCVD", "NAME", "QTH", "GRIDSQUARE",
+        "CALL", "QSO_DATE", "TIME_ON", "QSO_DATE_OFF", "TIME_OFF", "FREQ",
+        "RST_SENT", "RST_RCVD", "NAME", "QTH", "GRIDSQUARE",
         "COUNTRY", "COMMENT", "STATION_CALLSIGN",
     };
 
@@ -105,7 +113,7 @@ public sealed class AdifImporter : IAdifImporter
             }
 
             var parts = tagContent.Split(':');
-            if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var byteLength))
+            if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var byteLength) || byteLength < 0)
             {
                 continue;
             }
@@ -156,17 +164,67 @@ public sealed class AdifImporter : IAdifImporter
 
         string? sstvModeId = null;
         RadioMode? mode = null;
+        var consumedModeFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (fields.TryGetValue("MODE", out var modeValue))
         {
             if (modeValue.Equals("SSTV", StringComparison.OrdinalIgnoreCase))
             {
-                sstvModeId = fields.TryGetValue("APP_SCANLINESTUDIO_SSTVMODE", out var appMode)
-                    ? appMode
-                    : fields.TryGetValue("SUBMODE", out var subMode) ? subMode.ToLowerInvariant() : null;
+                var recoveredSomething = false;
+
+                if (fields.TryGetValue("APP_SCANLINESTUDIO_SSTVMODE", out var appMode))
+                {
+                    sstvModeId = appMode;
+                    consumedModeFields.Add("APP_SCANLINESTUDIO_SSTVMODE");
+                    if (fields.ContainsKey("SUBMODE"))
+                    {
+                        // AdifExporter always writes SUBMODE alongside APP_SCANLINESTUDIO_SSTVMODE for
+                        // third-party interop even though this branch doesn't need it to recover
+                        // sstvModeId -- still a recognized, expected companion field, not an unmapped one.
+                        consumedModeFields.Add("SUBMODE");
+                    }
+                    recoveredSomething = true;
+                }
+                else if (fields.TryGetValue("SUBMODE", out var subMode))
+                {
+                    sstvModeId = subMode.ToLowerInvariant();
+                    consumedModeFields.Add("SUBMODE");
+                    recoveredSomething = true;
+                }
+
+                // MODE=SSTV carries no RF-sideband info of its own (ADIF has no MODE+MODE pairing), so
+                // the RadioMode that was ALSO set on export (QsoRecord.Mode and SstvModeId are
+                // independent, both-optional fields -- see spec/08-logging.md's "auto-fill" section)
+                // rides in this app-specific escape-hatch field instead, mirroring how
+                // APP_SCANLINESTUDIO_SSTVMODE already preserves SstvModeId losslessly rather than
+                // relying on SUBMODE's lossy uppercase form.
+                if (fields.TryGetValue("APP_SCANLINESTUDIO_RADIOMODE", out var radioModeValue) &&
+                    Enum.TryParse<RadioMode>(radioModeValue, ignoreCase: true, out var parsedRadioMode))
+                {
+                    mode = parsedRadioMode;
+                    consumedModeFields.Add("APP_SCANLINESTUDIO_RADIOMODE");
+                    recoveredSomething = true;
+                }
+
+                if (recoveredSomething)
+                {
+                    consumedModeFields.Add("MODE");
+                }
+                // else: MODE=SSTV present but nothing recoverable from it -- leave MODE unconsumed so
+                // "MODE=SSTV" itself survives via BuildNotes instead of vanishing.
             }
             else
             {
-                mode = AdifRadioModeMapping.FromAdif(modeValue);
+                fields.TryGetValue("SUBMODE", out var submodeValue);
+                var (resolved, submodeRecognized) = AdifRadioModeMapping.FromAdif(modeValue, submodeValue);
+                mode = resolved;
+                if (resolved != RadioMode.Unknown)
+                {
+                    consumedModeFields.Add("MODE");
+                    if (submodeRecognized)
+                    {
+                        consumedModeFields.Add("SUBMODE");
+                    }
+                }
             }
         }
 
@@ -184,16 +242,19 @@ public sealed class AdifImporter : IAdifImporter
             Qth: fields.GetValueOrDefault("QTH"),
             GridSquare: fields.GetValueOrDefault("GRIDSQUARE"),
             Country: fields.GetValueOrDefault("COUNTRY"),
-            Notes: BuildNotes(fields),
+            Notes: BuildNotes(fields, consumedModeFields),
             ReceivedImageId: null);
     }
 
     /// <summary>Preserves anything not mapped onto a <see cref="QsoRecord"/> property (spec's
-    /// "raw-fields bag" requirement) by appending it to <c>COMMENT</c> rather than dropping it.</summary>
-    private static string? BuildNotes(Dictionary<string, string> fields)
+    /// "raw-fields bag" requirement) by appending it to <c>COMMENT</c> rather than dropping it.
+    /// <paramref name="consumedModeFields"/> is the caller's record-specific set of MODE-related field
+    /// names it actually recovered a value from — see <see cref="MappedFields"/>'s own doc comment for
+    /// why those three fields aren't in the static set.</summary>
+    private static string? BuildNotes(Dictionary<string, string> fields, HashSet<string> consumedModeFields)
     {
         var comment = fields.GetValueOrDefault("COMMENT");
-        var unmapped = fields.Where(kv => !MappedFields.Contains(kv.Key))
+        var unmapped = fields.Where(kv => !MappedFields.Contains(kv.Key) && !consumedModeFields.Contains(kv.Key))
             .Select(kv => $"{kv.Key}={kv.Value}")
             .ToList();
 
