@@ -1,4 +1,5 @@
 using System.Globalization;
+using Avalonia;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
@@ -21,7 +22,11 @@ public sealed class Rgb24ToBrushConverter : IValueConverter
     {
         Rgb24 color => new SolidColorBrush(Color.FromRgb(color.R, color.G, color.B)),
         null => null,
-        _ => throw new NotSupportedException($"Expected {nameof(Rgb24)}, got {value.GetType()}."),
+        // Tier C audit finding (risk): was `throw new NotSupportedException(...)` -- reachable via
+        // Avalonia's own AvaloniaProperty.UnsetValue on a broken/not-yet-resolved binding path, not
+        // just a genuinely-wrong-typed value. See Rgb24ToColorConverter's own comment for the fuller
+        // reasoning (same fix, same class of finding).
+        _ => AvaloniaProperty.UnsetValue,
     };
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

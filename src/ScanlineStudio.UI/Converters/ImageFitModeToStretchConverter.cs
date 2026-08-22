@@ -1,4 +1,5 @@
 using System.Globalization;
+using Avalonia;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
@@ -24,7 +25,11 @@ public sealed class ImageFitModeToStretchConverter : IValueConverter
         ImageFitMode.Contain => Stretch.Uniform,
         ImageFitMode.Cover => Stretch.UniformToFill,
         null => Stretch.Fill,
-        _ => throw new NotSupportedException($"Unrecognized {nameof(ImageFitMode)}: {value}."),
+        // Tier C audit finding (risk): was `throw new NotSupportedException(...)` -- reachable via
+        // Avalonia's own AvaloniaProperty.UnsetValue on a broken/not-yet-resolved binding path, not
+        // just a genuinely-unrecognized enum value. See Rgb24ToColorConverter's own comment for the
+        // fuller reasoning (same fix, same finding).
+        _ => AvaloniaProperty.UnsetValue,
     };
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
