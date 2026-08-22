@@ -6237,3 +6237,64 @@ theoretically clobber each other's pin-list write (narrow, self-correcting on th
 
 **Chunk 3 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes + one regression test per
 standing practice.
+
+## Chunk 4: LogbookPaneViewModel.cs (+ RadioModeOption)
+
+**Round 1** -- NOT GO. Multiple real bugs, all in the exact recurring class this sweep has already
+found twice in this exact chunk 3: "one code path clears an error/status message on success, a
+sibling path doesn't," plus a genuine missing re-entrancy guard:
+
+1. Plain `RefreshAsync` never cleared `StatusMessage` on success -- a failed Search's error banner
+   persisted forever, even after a later successful search.
+2. `ExportAdifAsync` discarded its own pre-export refresh's success/failure signal and proceeded to
+   export + report a stale `Entries.Count` as "Exported N" even when that refresh had failed --
+   a provably wrong number shown to the user, with the real error silently discarded. (The exported
+   *file* itself was always correct -- `ExportAdifFileAsync` re-queries independently.)
+3. `ImportAdifAsync`'s partial-import-failure recovery refresh (the service persists record-by-
+   record non-transactionally, so a mid-import exception can leave some rows already committed) also
+   discarded its own success/failure -- if that recovery refresh ALSO failed, the resulting "here's
+   what did import" message silently won over the second failure.
+4. `LogAsync`/`UpdateAsync` set their own success status BEFORE their trailing refresh, so a refresh
+   failure's `SearchFailed` message clobbered the real outcome -- the QSO (and any QRZ upload) had
+   already genuinely succeeded or failed, and the user never saw which.
+5. No re-entrancy guard existed at all (unlike chunk 3's `QsoLinkWindowViewModel`) around
+   `LogAsync`'s real, multi-second QRZ HTTPS upload -- a user selecting a DIFFERENT row while the
+   original call was still in flight had that call's own eventual `ResetForm()` silently wipe
+   whatever the user had since navigated to, once the original call finally completed.
+
+Fixed: (1) `RefreshAsync` command wrapper now clears `StatusMessage` on success without touching the
+shared `RefreshInternalAsync` helper's own contract (its other 4 callers need "don't touch
+StatusMessage on success," unchanged). (2) `ExportAdifAsync` now bails out if its pre-export refresh
+fails. (3) `ImportAdifAsync`'s recovery-refresh-failed case now leaves that refresh's own error
+standing instead of overwriting it. (4) `LogAsync`/`UpdateAsync` now set their own status AFTER the
+trailing refresh, so it always wins. (5) A new `_formGeneration` counter, bumped by every action
+that changes what the form represents (row selection, `New()`, `PrefillForNewEntry`) but
+deliberately NOT by `ResetForm()` itself, gates every post-await write in both methods -- captured
+before the first await, compared after, skipping the write if the user has since navigated away.
+Four new regression tests, plus a new `ThrowOnSearch` on `FakeLogbookSessionService` (didn't exist
+before -- the specific gap that made these bugs untestable) and a dedicated `TaskCompletionSource`
+gate for `LogQsoAsync` (this project's own "deterministic gates, not a shared race" convention).
+679/679 `UI.Tests` pass (was 675, +4), clean solution-wide build.
+
+**Round 2** (fresh agent, full re-scan) -- **GO.** Verified the `_formGeneration` guard is complete
+(every identity-dependent write in both methods gated, monotonic counter with no ABA hole,
+UI-thread-confined) and traced a subtle correctness dependency worth documenting: `ResetForm()`
+itself sets `SelectedEntry = null`, which re-enters `OnSelectedEntryChanged(null)` -- that handler's
+own early-return-on-null (BEFORE the bump) is what stops `LogAsync`'s own internal `ResetForm()`
+call from invalidating its own just-captured generation. Confirmed the status-ordering reorder (fix
+4) has no consequential new window (`StatusMessage` has exactly one consumer in the whole codebase,
+a single AXAML binding -- nothing else reads it). Found one more real, pre-existing bug in the same
+failure class: `UpdateAsync` always passed a hardcoded `null` for `ReceivedImageId` (never carried
+over by `LoadIntoForm` in the first place), silently destroying the reverse FK to a linked
+RX-history frame on every edit of an already-linked QSO -- not a blocker (the entry-side link is
+authoritative and survives, per `QsoLinkWindowViewModel`'s own doc comment; nothing currently reads
+the reverse FK), but the auditor's own call was to fold in the 3-line fix now rather than backlog
+it, since the file was already open. Fixed: `LoadIntoForm` now captures the loaded record's
+`ReceivedImageId` into a new `_editingReceivedImageId` field (cleared by `ResetForm`),
+`BuildRecordFromForm` takes it as a parameter instead of a hardcoded `null`. One new regression
+test. 680/680 `UI.Tests` pass, clean build.
+
+**Chunk 4 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 5 real bugs (the exact
+recurring status-message-clobber class this sweep tracks, twice already in chunk 3, plus a genuine
+missing re-entrancy guard); round 2 clean GO with one more real bug found and fixed in the same
+pass per the auditor's own explicit recommendation.
