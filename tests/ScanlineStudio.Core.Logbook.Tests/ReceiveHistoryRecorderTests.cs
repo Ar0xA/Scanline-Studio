@@ -13,7 +13,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -43,7 +44,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 6); // paired: groups at 0, 2, 4
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -60,12 +62,44 @@ public sealed class ReceiveHistoryRecorderTests
     }
 
     [Fact]
+    public async Task CompletedImage_NotifiesReceivedImageBufferOfTheSave()
+    {
+        // Round-2 audit regression: the completed-image path used to go through
+        // IReceivedImageBuffer.SaveAsync, which raises Saved -- the only hook
+        // RxImagePaneViewModel has to correlate its Note/Flag controls and file-size readout to
+        // the just-recorded frame. Switching to a direct snapshot write (see
+        // RecordCompletedImageAsync's own doc comment) silently dropped that notification;
+        // NotifySaved restores it. This test pins that the notification actually fires, with the
+        // saved file's real path and the Generation captured at completion time -- a fake that
+        // only stubs SaveAsync (as this project's fake used to, before this regression) would not
+        // have caught it.
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer { Generation = 7 };
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        for (var line = 0; line < 4; line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        var entry = await historyStore.WaitForRecordAsync();
+
+        var call = Assert.Single(receivedImage.NotifySavedCalls);
+        Assert.Equal(entry.FilePath, call.Path);
+        Assert.Equal(7, call.Generation);
+    }
+
+    [Fact]
     public async Task DecodeRestarted_BeforeCompletion_NeverRecordsTheAbandonedImage()
     {
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -89,7 +123,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 66; line++) // 66/100 >= 65% threshold (66 >= 100*65/100 = 65)
@@ -111,7 +146,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseDecodeRestarted(mode); // no LineDecoded at all yet -- _lastImage/_previousLine still null
@@ -131,7 +167,8 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
         var newMode = MakeMode(imageHeight: 50, modeId: "new-mode");
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(abandonedMode);
         for (var line = 0; line < 66; line++) // >= 65% of 100
@@ -161,7 +198,8 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
         var newMode = MakeMode(imageHeight: 4, modeId: "new-mode"); // small, single-scan-segment
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(abandonedMode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -192,7 +230,8 @@ public sealed class ReceiveHistoryRecorderTests
         var firstAbandoned = MakeMode(imageHeight: 100, modeId: "first-abandoned");
         var secondAbandoned = MakeMode(imageHeight: 100, modeId: "second-abandoned");
         var finalMode = MakeMode(imageHeight: 50, modeId: "final-mode");
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         // First restart: minority ordering, well below threshold.
         decoder.RaiseModeDetected(firstAbandoned);
@@ -228,7 +267,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100, modeId: "avt");
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 66; line++) // >= 65%
@@ -262,23 +302,32 @@ public sealed class ReceiveHistoryRecorderTests
         // DecodeRestarted can fire for an image that already completed and was already queued for a
         // normal save. Legacy doesn't double-save either -- m_ReqSave's own check is gated on m_Sync
         // (sstv.cpp:2134), already cleared by Stop() for a finished image.
+        //
+        // This exact ordering is also what the completed-image save used to get wrong: reading
+        // IReceivedImageBuffer.Current asynchronously (after the settings-directory I/O awaited
+        // inside RecordCompletedImageAsync) raced against this DecodeRestarted wiping Current to a
+        // 1x1 empty placeholder first, silently saving a black 1x1 PNG instead of the real image.
+        // The assertions below check the saved file's actual dimensions/pixels, not just that a
+        // history row exists, so that regression can't come back unnoticed.
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 4; line++)
         {
-            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, ColoredFakeImage));
         }
 
-        _ = await historyStore.WaitForRecordAsync();
+        var recorded = await historyStore.WaitForRecordAsync();
         decoder.RaiseDecodeRestarted(mode); // fires again for the mode that JUST completed
 
         await Task.Delay(200);
         Assert.Single(historyStore.RecordedEntries);
         Assert.DoesNotContain(historyStore.RecordedEntries, e => e.FilePath.Contains("_partial"));
+        AssertSavedFileMatchesColoredFakeImage(recorded.FilePath);
     }
 
     [Fact]
@@ -296,7 +345,8 @@ public sealed class ReceiveHistoryRecorderTests
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4, modeId: "avt");
-        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 4; line++)
@@ -319,9 +369,10 @@ public sealed class ReceiveHistoryRecorderTests
         Assert.DoesNotContain(historyStore.RecordedEntries, e => e.FilePath.Contains("_partial"));
     }
 
-    // The abandoned-image path writes a real PNG (it deliberately bypasses IReceivedImageBuffer.SaveAsync,
-    // which FakeReceivedImageBuffer stubs out -- see RecordAbandonedImageAsync's own doc comment for
-    // why) -- without redirecting ReceiveHistorySettings.ImagesDirectory, every run of the tests above
+    // Both the completed- and abandoned-image paths write a real PNG straight from the captured
+    // pixel snapshot (neither goes through IReceivedImageBuffer.SaveAsync -- see
+    // RecordCompletedImageAsync's and RecordAbandonedImageAsync's own doc comments for why) --
+    // without redirecting ReceiveHistorySettings.ImagesDirectory, every run of the tests above
     // would litter the machine's real Pictures folder via ReceiveHistorySettings.ResolveDirectoryAsync's
     // default.
     private static FakeSettingsStore TempImagesDirectorySettings() => new()
@@ -346,12 +397,38 @@ public sealed class ReceiveHistoryRecorderTests
 
     private static readonly IImageSource FakeImage = new FixedSizeImageSource(4, 4);
 
-    private sealed class FixedSizeImageSource(int width, int height) : IImageSource
+    // Deliberately not all-zero: a saved PNG that is the 1x1 black placeholder
+    // ReceivedImageBuffer.OnDecodeRestarted wipes IReceivedImageBuffer.Current to would (bug this
+    // chunk found) also read as "black," so a plain zero-filled fake could not distinguish the
+    // regression from a correct save. This color could never come from that placeholder.
+    private static readonly Rgb24 KnownColor = new(200, 100, 50);
+    private static readonly IImageSource ColoredFakeImage = new FixedSizeImageSource(4, 4, KnownColor);
+
+    private static void AssertSavedFileMatchesColoredFakeImage(string filePath)
+    {
+        using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(filePath);
+        Assert.Equal(4, image.Width);
+        Assert.Equal(4, image.Height);
+        image.ProcessPixelRows(accessor =>
+        {
+            for (var y = 0; y < accessor.Height; y++)
+            {
+                foreach (var pixel in accessor.GetRowSpan(y))
+                {
+                    Assert.Equal(KnownColor.R, pixel.R);
+                    Assert.Equal(KnownColor.G, pixel.G);
+                    Assert.Equal(KnownColor.B, pixel.B);
+                }
+            }
+        });
+    }
+
+    private sealed class FixedSizeImageSource(int width, int height, Rgb24 fill = default) : IImageSource
     {
         public int Width { get; } = width;
 
         public int Height { get; } = height;
 
-        public ReadOnlySpan<Rgb24> GetScanline(int y) => new Rgb24[Width];
+        public ReadOnlySpan<Rgb24> GetScanline(int y) => Enumerable.Repeat(fill, Width).ToArray();
     }
 }

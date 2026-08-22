@@ -118,6 +118,8 @@ internal sealed class FakeReceivedImageBuffer : IReceivedImageBuffer
         return Task.CompletedTask;
     }
 
+    public void NotifySaved(string path, int generation) => Saved?.Invoke(path, generation);
+
     public void RaiseUpdated() => Updated?.Invoke();
 
     public void RaiseSaved(string path, int generation) => Saved?.Invoke(path, generation);

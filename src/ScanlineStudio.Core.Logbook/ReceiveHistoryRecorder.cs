@@ -29,6 +29,11 @@ namespace ScanlineStudio.Core.Logbook;
 /// review.</summary>
 public sealed partial class ReceiveHistoryRecorder
 {
+    // Notify-only -- this class never calls SaveAsync or reads Current on it (see
+    // RecordCompletedImageAsync's own doc comment for why: an async read of Current races
+    // DecodeRestarted blanking it). Held solely to raise NotifySaved after a completed-image write,
+    // the only hook a live UI pane (RxImagePaneViewModel) has for correlating its Note/Flag controls
+    // and file-size readout to the just-recorded frame.
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ISettingsStore _settingsStore;
@@ -267,6 +272,27 @@ public sealed partial class ReceiveHistoryRecorder
         _recordedForCurrentImage = true;
         var modeId = mode.Id;
 
+        // Hoisted into a local BEFORE the closure, same reasoning as OnDecodeRestarted's own
+        // abandoned-image save: _lastImage may already be reassigned to a different image, or a
+        // DecodeRestarted firing microseconds after this final line may already have wiped
+        // IReceivedImageBuffer.Current to its empty placeholder, by the time the task actually
+        // runs (ReceiveHistoryRecorderTests' own DecodeRestarted-immediately-after-the-final-line
+        // test proves that ordering is real). Reading the live buffer asynchronously here used to
+        // save a 1x1 black PNG in exactly that sequence -- this snapshot, already captured
+        // synchronously in OnLineDecoded above, is the actual received image regardless of what
+        // happens to the live buffer afterward.
+        var snapshot = _lastImage!;
+
+        // Also hoisted synchronously, same reasoning as the snapshot above -- IReceivedImageBuffer's
+        // own Generation only changes on ModeDetected/DecodeRestarted (never on LineDecoded), and
+        // both of those necessarily complete, for every subscriber including this class, before any
+        // LineDecoded for the same image can fire -- so reading it here captures the value that
+        // correctly identifies THIS image regardless of the two classes' relative subscription
+        // order. Threaded through to RecordCompletedImageAsync's NotifySaved call below so
+        // RxImagePaneViewModel can still correlate this save to its currently-displayed frame (see
+        // IReceivedImageBuffer.Saved's own doc comment for what the generation guards against).
+        var generation = _receivedImage.Generation;
+
         // Fire-and-forget, isolated -- must not block the caller (the audio drain thread, same
         // threading contract as SstvSessionService's own _decoderHandler/_waterfallHandler; disk +
         // SQLite I/O here would otherwise stall live decoding).
@@ -274,7 +300,7 @@ public sealed partial class ReceiveHistoryRecorder
         {
             try
             {
-                await RecordCompletedImageAsync(modeId).ConfigureAwait(false);
+                await RecordCompletedImageAsync(modeId, snapshot, generation).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -287,36 +313,56 @@ public sealed partial class ReceiveHistoryRecorder
         });
     }
 
-    private async Task RecordCompletedImageAsync(string modeId)
+    private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
         Directory.CreateDirectory(directory);
 
         var receivedAt = DateTimeOffset.Now;
-        var fileName = $"{receivedAt:yyyyMMdd-HHmmss}_{modeId}.png";
+        // Millisecond precision + an entry-id token, matching RecordAbandonedImageAsync's own
+        // collision reasoning below -- a whole pushed buffer (e.g. bulk WAV decode) can complete
+        // two images inside the same wall-clock second, which second-granularity naming would
+        // silently collide (IOException on save, swallowed by the caller's catch, or one PNG
+        // overwritten with two history rows pointing at it).
+        var entryId = Guid.NewGuid().ToString();
+        var fileName = $"{receivedAt:yyyyMMdd-HHmmssfff}_{modeId}_{entryId[..8]}.png";
         var filePath = Path.Combine(directory, fileName);
 
-        await _receivedImage.SaveAsync(filePath).ConfigureAwait(false);
+        await SaveSnapshotAsync(snapshot, filePath).ConfigureAwait(false);
 
-        var entry = new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed);
+        // Must fire BEFORE RecordAsync below -- RxImagePaneViewModel.OnHistoryRecorded's own doc
+        // comment documents relying on this exact ordering (its correlation key, _lastSavedPath, is
+        // set by the Saved-driven OnSaved handler and must already be set by the time the
+        // IReceiveHistoryStore.Recorded-driven handler runs for the same frame). Isolated in its own
+        // try/catch -- the interface contract for NotifySaved doesn't promise a throwing subscriber
+        // is caught internally the way ReceivedImageBuffer's own implementation happens to (round-3
+        // audit finding); a UI-pane bug here must never cost the file that's already safely on disk
+        // its history row.
+        try
+        {
+            _receivedImage.NotifySaved(filePath, generation);
+        }
+        catch (Exception ex)
+        {
+            Log.NotifySavedFailed(_logger, filePath, ex);
+        }
+
+        var entry = new ReceiveHistoryEntry(entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed);
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
 
         Log.ImageSaved(_logger, filePath);
     }
 
-    // Deliberately does NOT go through IReceivedImageBuffer.SaveAsync (unlike RecordCompletedImageAsync
-    // above) -- ReceivedImageBuffer.OnDecodeRestarted wipes its own Current to an empty image on the
-    // SAME DecodeRestarted event this method is called from, and multicast delegate invocation order
-    // across two independently-DI-constructed subscribers is not a documented/reliable ordering to
-    // depend on. Writes the already-captured snapshot directly instead.
+    // Never goes through IReceivedImageBuffer.SaveAsync (same reasoning now applies to
+    // RecordCompletedImageAsync above) -- ReceivedImageBuffer.OnDecodeRestarted wipes its own
+    // Current to an empty image on the SAME DecodeRestarted event this method is called from, and
+    // multicast delegate invocation order across two independently-DI-constructed subscribers is
+    // not a documented/reliable ordering to depend on. Writes the already-captured snapshot
+    // directly instead.
     //
-    // Millisecond precision + a `_partial` suffix, not RecordCompletedImageAsync's second-granularity
-    // `_{modeId}.png` -- two abandoned-image saves landing in the same wall-clock SECOND are newly
-    // reachable here (TryProcessBuffer processes a whole pushed buffer synchronously, so back-to-back
-    // restarts from e.g. a bulk-decoded WAV file can land microseconds apart) in a way the existing
-    // completed-image path's minutes-apart saves never risked. The suffix also gives the user a
-    // visible marker distinguishing a partial/abandoned save from a genuinely completed one, which
-    // neither legacy nor this port's existing completed-image path provides.
+    // `_partial` suffix, on top of RecordCompletedImageAsync's own millisecond+entry-id
+    // uniqueness scheme -- gives the user a visible marker distinguishing a partial/abandoned save
+    // from a genuinely completed one, which neither legacy nor an unsuffixed filename would.
     private async Task RecordAbandonedImageAsync(string modeId, PixelSnapshot snapshot)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
@@ -405,5 +451,8 @@ public sealed partial class ReceiveHistoryRecorder
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Abandoned RX image saved: {FilePath}")]
         public static partial void AbandonedImageSaved(ILogger logger, string filePath);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A Saved-notification subscriber threw for {FilePath} -- the RX image and its history row were still written")]
+        public static partial void NotifySavedFailed(ILogger logger, string filePath, Exception ex);
     }
 }

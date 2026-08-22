@@ -234,18 +234,22 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private SstvModeDefinition? _detectedMode;
 
     /// <summary>Frame-metadata card's "Size on disk" row -- real, but only for a COMPLETED save: set
-    /// from <see cref="IReceivedImageBuffer.Saved"/> (fired once <see cref="IReceivedImageBuffer.SaveAsync"/>'s
-    /// write finishes), the only hook a live pane has to "what file did this frame end up as" --
-    /// this fires for BOTH real production callers of <see cref="IReceivedImageBuffer.SaveAsync"/>:
+    /// from <see cref="IReceivedImageBuffer.Saved"/>, the only hook a live pane has to "what file did
+    /// this frame end up as" -- this fires for BOTH real production write paths:
     /// <c>ReceiveHistoryRecorder</c>'s silent auto-archival (a wholly separate class in a different
-    /// layer, no reference back to this pane) and this pane's own manual <see cref="SaveFrameAsync"/>
-    /// -- whichever one most recently finished is what this row reflects. Reset to <see langword="null"/> on every fresh
+    /// layer, no reference back to this pane -- it writes its own already-captured pixel snapshot
+    /// directly and raises this event via <see cref="IReceivedImageBuffer.NotifySaved"/>, rather than
+    /// going through <see cref="IReceivedImageBuffer.SaveAsync"/> itself, since an async read of
+    /// <see cref="IReceivedImageBuffer.Current"/> would race a <c>DecodeRestarted</c> that can blank
+    /// it) and this pane's own manual <see cref="SaveFrameAsync"/> (which DOES go through
+    /// <see cref="IReceivedImageBuffer.SaveAsync"/>) -- whichever one most recently finished is what
+    /// this row reflects. Reset to <see langword="null"/> on every fresh
     /// <see cref="OnModeDetected"/> (a new/restarted decode has no saved file yet), same lifetime
     /// rule as <see cref="StartedAt"/>. An abandoned/partial image's own save (which
-    /// <c>ReceiveHistoryRecorder</c> deliberately routes around <see cref="IReceivedImageBuffer.SaveAsync"/>
-    /// for -- see that class's own doc comment) never raises this event, so this stays "—" for a
-    /// frame that gets superseded before completing, matching every other placeholder in this
-    /// pane.</summary>
+    /// <c>ReceiveHistoryRecorder</c> deliberately routes around both <see cref="IReceivedImageBuffer.SaveAsync"/>
+    /// and <see cref="IReceivedImageBuffer.NotifySaved"/> for -- see that class's own doc comment)
+    /// never raises this event, so this stays "—" for a frame that gets superseded before completing,
+    /// matching every other placeholder in this pane.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FileSizeDisplay))]
     private long? _fileSizeBytes;
@@ -780,11 +784,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// doc comment) and handed to this method as
     /// <paramref name="generation"/>, then compared here against the buffer's OWN then-current value
     /// -- not a second, independently-incremented counter on this class that could drift out of
-    /// step. A residual sliver stays open, deliberately accepted rather than fixed (auditor round 3):
-    /// a <c>ModeDetected</c> landing in the recorder's own pre-<c>SaveAsync</c> setup (settings
-    /// resolve + directory creation, no image work) is invisible to this guard -- closing it would
-    /// need threading a generation from the recorder's own completion handler into
-    /// <c>SaveAsync</c>'s caller, more API churn than a cosmetic readout justifies.</summary>
+    /// step. The residual sliver this comment used to describe (a <c>ModeDetected</c> landing in
+    /// the recorder's own pre-save setup, invisible to this guard) no longer exists:
+    /// <c>ReceiveHistoryRecorder</c>'s completed-image path now captures <c>Generation</c>
+    /// synchronously, before that setup runs, and reports it through
+    /// <see cref="IReceivedImageBuffer.NotifySaved"/> rather than <see cref="IReceivedImageBuffer.SaveAsync"/>
+    /// (a Tier B functional-audit fix -- see that method's own doc comment). The only remaining
+    /// <c>SaveAsync</c> caller is this pane's own manual <see cref="SaveFrameAsync"/>, which has no
+    /// comparable pre-save setup to leave a window in.</summary>
     private void OnSaved(string path, int generation)
     {
         // Correlation tracking for OnHistoryRecorded below -- deliberately NOT inside the file-size
@@ -839,7 +846,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// <see cref="_lastSavedPath"/>, set by <see cref="OnSaved"/> just above.
     ///
     /// <b>Ordering reasoning</b>: <c>ReceiveHistoryRecorder.RecordCompletedImageAsync</c> always
-    /// calls <c>IReceivedImageBuffer.SaveAsync</c> (which raises <see cref="IReceivedImageBuffer.Saved"/>,
+    /// calls <c>IReceivedImageBuffer.NotifySaved</c> (which raises <see cref="IReceivedImageBuffer.Saved"/>,
     /// synchronously invoking <see cref="OnSaved"/>) and only THEN, after that call has fully
     /// returned, calls <see cref="IReceiveHistoryStore.RecordAsync"/> (which raises this event) --
     /// so <see cref="OnSaved"/>'s <see cref="Dispatcher.UIThread"/> post is always ENQUEUED before
