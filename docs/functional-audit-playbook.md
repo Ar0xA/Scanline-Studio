@@ -5778,3 +5778,28 @@ item, not fixed in this chunk -- narrower and non-corrupting compared to round 2
 
 **Chunk 1 CLOSED (2026-08-22)** -- 3 rounds, real bugs found and fixed each of the first two, clean
 GO on the third. Committed.
+
+## Chunk 2 (Core.Logbook): AdifUdpStreamer.cs, AdifUdpStreamingSettings.cs
+
+**Round 1** -- GO (unconditional). Explicitly chased chunk 1's failure class ("a value the caller
+set is silently dropped or never round-trips") given it's now a proven recurring pattern in this
+subsystem -- found none. The `MigrateIfNeeded` legacy-GridTracker migration trigger was verified
+structurally correct (keyed on section-key presence, not `Destinations` emptiness; the section key
+can never be removed once written, by exhaustive grep of every `AppSettings.Sections` write site in
+`src/`, so re-migration onto an explicitly-emptied list is impossible by construction, not just
+untested). `ClientId`/all destination fields confirmed to survive the migration and every save path.
+
+Findings were all reachability-limited (auditor's own words: "don't spend a round chasing the
+nits") -- a hand-edited `null` array element could NRE out of the documented "never throws" contract
+(one destination in a list), IPv6-preferred `addresses[0]` has no fallback to a working A record on
+a dual-stacked hostname / v4-only host, and a non-IOException settings-load failure reads
+identically to "nothing configured" in the UI. Per this project's established "accept a direct yes,
+apply only clearly-warranted trivial fixes, don't dispatch a confirmation round to double-confirm
+it" pattern: applied the one-line null-guard (`d?.Enabled == true`) and de-staled a test comment
+that claimed an escaped non-ASCII literal that wasn't actually escaped in the code (now is). The
+dual-stack fallback, load-failure ambiguity, and two missing-test gaps (ClientId default-fallback,
+cancellation-vs-timeout discrimination) are logged as deferred backlog, not fixed this chunk.
+110/110 Core.Logbook.Tests pass, clean build.
+
+**Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, two trivial fixes applied in the same round
+per standing practice. Committed.
