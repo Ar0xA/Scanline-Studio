@@ -7390,3 +7390,91 @@ dispatch another Area-1 round; move to the next area" call.
 
 **Area 1 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier bug fixed plus the
 required whole-file `SafeLog` enumeration completed and recorded for later areas. Areas 2-5 remain.
+
+### Area 2: fields/constructor/PTT-lock/RX-decode plumbing (lines 1-1066)
+
+`SetPttLockAsync` (~470 lines), RX-decode event plumbing (`ModeDetected`/`DecodeRestarted`/
+`StationIdDecoded`), decoder property pass-throughs, maintenance-warning handlers, `ForceMode`/
+`RequestReSync`/`RequestCorrectSlant`. Second area per the plan-review's callee-first ordering --
+Area 1's own contracts (already verified) are trusted here, not re-audited.
+
+**Round 1** -- GO, no blockers, but 2 real risk-tier regressions found in `SetPttLockAsync`'s own
+engage-failure catch, both introduced by the SAME prior widening (the catch's own filter changed
+from `when (rigIsRealAtKeyTime)` to `when (locked)`, which correctly fixed one gap but silently
+broke two OTHER invariants that used to be true "for free" under the narrower filter) -- plus 1
+lower-risk finding, plus nits:
+
+- **[risk]** With `RigId == "none"` (the default, no-radio-configured state), the whole production
+  chain (`RadioSessionService` -> `RadioController` -> `NoneRadioProtocol`) throws SYNCHRONOUSLY,
+  before `pttCommand` is ever assigned -- nothing was dispatched to a real backend, so nothing
+  could have been physically keyed. But the catch's own state-latching write (bumping
+  `_pttKeyEpoch`, setting `_pttLeftKeyedByCall = true`) was unconditional inside the `when
+  (locked)` filter, so this benign no-radio case ALSO latched "possibly keyed" -- permanently
+  violating `_pttLeftKeyedByCall`'s own documented invariant ("never fires for the benign
+  `RigId=='none'` path"), since neither clear site can ever run without a confirmed un-key, which
+  needs a real rig that was never involved. `DisposeAsync`'s backstop then fires a false Critical
+  "PTT MAY STILL BE KEYED" on a machine with no radio at all -- and the erosion compounds: every
+  SUBSEQUENT transmit's own baseline then reads this same stale true, repeating the false Critical
+  for the rest of the process (the same signal-erosion class an earlier audit round's own fix
+  targeted, now reachable with no radio configured at all).
+- **[risk]** The immediate-recovery guard a few lines below (`if (_keyedTransmitCount == 1)`) has
+  its own doc comment's premise -- "`_keyedTransmitCount` was already incremented for THIS call at
+  the publish above (guarded by `rigIsRealAtKeyTime`, same as this catch)" -- which stopped being
+  true the moment the catch's filter widened to `when (locked)`: the publish itself is STILL gated
+  on `rigIsRealAtKeyTime` alone, so this catch can now run on paths where THIS call never
+  published at all. A bare count-equals-1 check can then misfire in both directions: reading a
+  DIFFERENT concurrent call's own registration as "safe to recover" and un-keying THAT call's
+  genuinely in-flight, on-air transmission mid-frame (the exact harm this whole guard exists to
+  prevent), or reading 0 and skipping a recovery this call itself should have run.
+- **[risk, lower]** The emergency-unlock escape hatch's own gate-wait (`_pttLockGate.WaitAsync(ct)`)
+  was still unconditionally `ct`-cancellable, one level above where an earlier audit round already
+  fixed the identical shape at the command-dispatch call site itself (keeping the UNLOCK direction
+  un-cancellable at the backend gate specifically, "it must stay queued and eventually reach the
+  rig, not be cancellable away"). A caller cancelling while queued behind a wedged prior command
+  (up to the cleanup timeout) could abort the emergency unlock before it ever reached the command
+  dispatch that was ALREADY protected.
+- **Test-fidelity caveat, closed as part of this fix**: the shared test fake's `SetPttAsync` is
+  itself `async Task`, so its own `RigId=="none"` throw becomes a FAULTED Task, not a synchronous
+  one -- a test written against the fake as-is could not reproduce the exact production shape
+  (`pttCommand` staying null) the first fix above depends on.
+
+Also verified clean (cross-cutting invariants #1/#2/#3/#5, #4 as they touch Area 2): epoch-pair
+bump/snapshot/consume sites internally consistent and consistent with Area 1's own already-verified
+consume-side behavior; the "believed keyed" triple's Area-2 site is byte-identical to its three
+other copies, no 4th divergent copy introduced; `_keyedTransmitCompletion`/`_keyedTransmitCount`
+publish/clear pairing correct on every exit path, decrement correctly precedes the lock-gate
+release; `_disposed` recheck sites all pair with a full fence, not a bare volatile read;
+`_rxPendingResumeAfterUnlock`'s Area-2 consumer correctly assumes no stronger ordering than the
+deliberately-un-fenced design provides; the three RX-decode events are pure pass-throughs with no
+raise site in this service at all (the actual raise/isolation logic lives in the decoder, already
+correctly isolates a throwing subscriber); maintenance-warning handlers cannot strand a flag across
+rapid restarts (single-threaded relative to each other by construction).
+
+Fixed: the engage-failure catch's state-latching write now gated on `pttCommand is not null` (a
+genuine dispatch to a real backend actually happened) instead of unconditional inside `when
+(locked)`. The immediate-recovery guard now also requires `keyedCompletion is not null` (THIS
+call's own publish genuinely ran) alongside the count check, restoring call-scoping the count alone
+lost. The gate-wait now uses the same `locked ? ct : CancellationToken.None` conditional the
+command-dispatch call site already uses, closing the one-level-up cancellation gap. The shared test
+fake gained an opt-in `ThrowSynchronouslyOnNoneRig` flag (default false, every existing test
+unaffected) that makes the fake's own `RigId=="none"` throw happen before its async state machine
+starts, matching the real production shape precisely enough to test the `pttCommand is not null`
+fix faithfully. One regression test added, mirroring an existing sibling test's own structure
+(same shape, opposite conclusion: the sibling proves a REAL key-command failure DOES latch
+"possibly keyed"; this one proves the benign no-radio case does NOT). No dedicated test added for
+the second fix (the guard's own concurrency scenario needs a hung, genuinely-in-flight transmit
+running concurrently with the no-radio call -- correct by inspection given the guard's logic is
+now provably call-scoped, and disproportionate test-infrastructure cost for a fix on a method with
+zero production callers today). 248/248 `Application.Tests` pass (was 247, +1), clean solution-wide
+build.
+
+**No round 2 dispatched** -- round 1's own verdict was GO with an explicit "do not spawn another
+Area 2 review pass for R3 or the nits" call, and the auditor explicitly recommended folding the two
+higher risk-tier findings into this same round rather than treating them as needing a separate
+round of their own. Both were applied with full tracing of the actual regression mechanism (a
+shared root cause -- the catch filter's own prior widening -- silently invalidating two OTHER
+invariants' premises), not pattern-matched from the auditor's own suggested one-liners.
+
+**Area 2 CLOSED (2026-08-22)** -- 1 round (GO, no blockers), 3 real risk-tier bugs fixed (2 of
+them regressions from the SAME prior widening, both latent behind `SetPttLockAsync` having zero
+production callers today but real and precisely characterized). Areas 3-5 remain.
