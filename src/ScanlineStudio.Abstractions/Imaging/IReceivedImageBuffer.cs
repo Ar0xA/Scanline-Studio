@@ -25,18 +25,29 @@ public interface IReceivedImageBuffer
 
     event Action? Updated;
 
-    /// <summary>Fires with the destination path and the <see cref="Generation"/> value captured at
-    /// the moment <see cref="SaveAsync"/> was invoked (not when the write completes) once that write
-    /// to disk finishes -- the only real hook a live UI pane has for "what file did the just-completed
-    /// image get saved to" (the sole production caller of <see cref="SaveAsync"/>, a history-recorder
-    /// class in a different layer entirely, has no shared reference back to whatever pane is
-    /// displaying <see cref="Current"/>). Raised on whatever thread the save's background work
-    /// completes on -- same "subscriber marshals to the UI thread itself" contract as
-    /// <see cref="Updated"/>. The generation is captured at invocation time specifically so a
-    /// subscriber can detect a newer image having started (bumping <see cref="Generation"/>) at ANY
-    /// point during the save -- encode, disk write, or the subscriber's own later reaction to this
-    /// event -- not just after this event fires.</summary>
+    /// <summary>Fires with a destination path and a <see cref="Generation"/> value captured at the
+    /// moment the corresponding write was invoked (not when the write completes), once that write to
+    /// disk finishes -- via either <see cref="SaveAsync"/> itself, or <see cref="NotifySaved"/> for a
+    /// caller that wrote its own already-captured snapshot. The only real hook a live UI pane has for
+    /// "what file did the just-completed image get saved to" (the production callers -- a manual
+    /// pane save, and a history-recorder class in a different layer entirely -- have no shared
+    /// reference back to whatever pane is displaying <see cref="Current"/>). Raised on whatever
+    /// thread the save's background work completes on -- same "subscriber marshals to the UI thread
+    /// itself" contract as <see cref="Updated"/>. The generation is captured at invocation time
+    /// specifically so a subscriber can detect a newer image having started (bumping
+    /// <see cref="Generation"/>) at ANY point during the save -- encode, disk write, or the
+    /// subscriber's own later reaction to this event -- not just after this event fires.</summary>
     event Action<string, int>? Saved;
 
     Task SaveAsync(string path, CancellationToken ct = default);
+
+    /// <summary>Raises <see cref="Saved"/> directly, for a caller that already wrote its own pixel
+    /// snapshot to disk without going through <see cref="SaveAsync"/> -- <c>ReceiveHistoryRecorder</c>'s
+    /// completed-image path uses this, because reading <see cref="Current"/> asynchronously (as
+    /// <see cref="SaveAsync"/> itself does) races a <c>DecodeRestarted</c> that can blank
+    /// <see cref="Current"/> before the read happens. <paramref name="generation"/> must be
+    /// <see cref="Generation"/>'s value captured at the same synchronous point the caller captured
+    /// the pixel snapshot it saved, not this property's later value -- see <see cref="Saved"/>'s own
+    /// doc comment for what a mismatch means to a subscriber.</summary>
+    void NotifySaved(string path, int generation);
 }
