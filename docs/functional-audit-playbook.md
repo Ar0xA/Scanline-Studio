@@ -7678,3 +7678,49 @@ chunks -- `MaidenheadLocator.cs`+`MacroTextResolver.cs`, `RadioSessionService.cs
 `LogbookSessionService.cs`, `OptionsSettingsService.cs`, `TemplateStore.cs` -- plus
 `SstvSessionService.cs`'s 5-area full-cadence review above). Real bugs were found and fixed in
 essentially every chunk. See each chunk's own writeup above for full detail.
+
+## TIER C FUNCTIONAL-AUDIT SWEEP -- IN PROGRESS, started 2026-08-22
+
+**Scope:** AXAML code-behind, Converters, Settings, Core.Localization, Host, Plugins --
+mechanical/plumbing layer, single-round rigor per group (escalates to Tier B rigor only if a
+group's round finds a real blocker). Step 0 triage sorted the raw ~59-file candidate pool
+(excluding generated `obj/`/`bin/` output) into 6 real-logic groups and a trivial-skip list:
+
+**Trivial (skipped)**: `ISettingsStore.cs` (pure interface), `AppSettings.cs` (pure DTO),
+`LocalizationSettings.cs` + `LocaleManifestEntry.cs` (DTOs), `LocalizationJsonContext.cs` +
+`LocalizationSettingsJsonContext.cs` (generated JsonContext partials), `Host/AssemblyInfo.cs`, and
+`WaterfallPaneView.axaml.cs`/`TxControlsPaneView.axaml.cs`/`RxImagePaneView.axaml.cs`/
+`RadioHeaderView.axaml.cs` (pure `InitializeComponent()`-only code-behind). `ScanlineStudio.Plugins`
+has zero real source files -- an empty project shell (just a `.csproj`), not audited at all.
+
+**Real-logic groups (6):**
+
+### Group 1: Settings persistence
+
+`src/ScanlineStudio.Settings/JsonSettingsStore.cs` (90) + `AppSettingsSectionExtensions.cs` (26) --
+`ISettingsStore`'s implementation and the generic `GetSection<T>`/`WithSection<T>` mechanism every
+settings section in the entire app reads/writes through.
+
+**CLOSED (2026-08-22)** -- 1 round, GO (no blocker). Real risk-tier findings, applied the two the
+auditor recommended fixing in the same pass:
+- `LoadAsync`'s corrupt-file catch filter (`JsonException or IOException`) missed
+  `UnauthorizedAccessException`, which does NOT derive from `IOException` -- a permission-denied
+  `settings.json` (a stray `sudo` run on Linux, an ACL/EFS lock on Windows) bricked startup exactly
+  the way this filter already exists to prevent for a corrupt file. Fixed by adding it to the filter.
+- Test-integrity gap: `SaveThenLoad_RoundTripsSchemaVersion` was tautological (compared the
+  constant default `SchemaVersion` to itself -- would pass even if `SaveAsync` were a no-op, since
+  `LoadAsync`'s own missing-file fallback returns the same constant). Fixed to save a non-default
+  value. Also added `SaveThenLoad_WithSectionPreservesAPreviouslySavedUnrelatedSection`, closing a
+  real gap: `WithSection`'s own "preserve every other section" contract -- the single most
+  systemically important property in this file, since every module in the app depends on it -- had
+  zero coverage through a real save+load cycle.
+
+Deferred (real, precedented-severity, explicitly not required to close this round): no write
+serialization (a fixed `.tmp` path shared by all concurrent savers, ~10 independent read-modify-
+write callers across the app, several fire-and-forget); the `Changes` `Subject<AppSettings>` has no
+stated scheduler/slow-subscriber policy (this file's own §4 concurrency rule, undeclared here); a
+hand-edited `"Sections": null` NREs `GetSection`/throws from `WithSection` (STJ's init-only-default
+trap applies to an explicit JSON `null`, not just an absent key); a stale `.tmp` file left behind on
+a failed/cancelled save; `GetSection` lets one malformed section's `JsonException` escape uncaught,
+asymmetric with the file-level corrupt-load hardening. 5/5 Settings.Tests pass (was 4, +1), clean
+solution-wide build. Committed.
