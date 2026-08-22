@@ -31,13 +31,16 @@ public sealed partial class JsonSettingsStore : ISettingsStore, IDisposable
         // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
         // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
         // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
+        // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
+        // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
+        // NOT derive from IOException, so it slipped past this exact guard.
         try
         {
             await using var stream = File.OpenRead(_settingsFilePath);
             var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct);
             return settings ?? new AppSettings();
         }
-        catch (Exception ex) when (ex is JsonException or IOException)
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
         {
             Log.LoadFailed(_logger, _settingsFilePath, ex);
             return new AppSettings();
