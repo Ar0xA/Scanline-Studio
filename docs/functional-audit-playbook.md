@@ -6499,3 +6499,89 @@ the added test-infrastructure for a defensive, correct-by-inspection fix.
 refresh-failure, escaped picker exception) plus 2 precedented risk-tier fixes; round 2 clean GO with
 one more trivial ordering fix (error-clear vs. stale-discard sequencing) applied per standing
 practice.
+
+## Chunk 8: OptionsWindowViewModel.cs (+ AdifUdpDestinationRowViewModel.cs)
+
+**Round 1** -- NOT GO. 1 real blocker plus 4 risk-tier findings:
+
+- **[blocker]** `LoadSafeAsync`'s single catch-all try could fail partway (a locked/corrupt
+  `settings.json`, or the audio device enumerator's `RefreshAsync` throwing when the audio backend
+  is unavailable) leaving every field at its hardcoded constructor default with no gate anywhere --
+  `SaveAsync` would then persist those defaults over the user's real settings with zero warning. A
+  user who opens Options while their audio backend happens to be down, changes an unrelated field
+  (callsign, JPEG quality), and hits Save silently loses their capture/playback device IDs,
+  RememberWindowPosition, and JpegQuality. Same "state a caller depends on gets silently dropped"
+  class this whole sweep keeps finding, just at dialog-load scope instead of a single field.
+- **[risk]** `ResetGeneralToDefault`'s culture fallback was missing -- `OptionsSettingsService
+  .Defaults.CultureCode` is always `null` (the record default), so a bare `FirstOrDefault` by that
+  code always missed and blanked the Language ComboBox on every Reset. `ApplyFromSnapshot` already
+  has the `?? _localization.CurrentCulture` fallback for the identical reason; Reset didn't.
+- **[risk]** `TestRigctldConnectionAsync`'s two `Dispatcher.UIThread.Post` lambdas ran their
+  `GetString` calls unguarded -- the lambda executes AFTER the method's own outer try/catch has
+  already exited. A locale file with a mismatched format placeholder throwing `FormatException`
+  here escaped uncaught onto the dispatcher loop AND left `IsTestingConnection` stuck `true` forever
+  (Test Connection button permanently disabled for the dialog's life). Sibling
+  `TestQrzLookupAsync` wraps its equivalent call inside its own try/catch/finally; this one didn't.
+- **[risk]** `ApplyFromSnapshot`'s loop over `snapshot.AdifUdpDestinations` dereferenced
+  `destination.Enabled` unconditionally -- a JSON-deserialized `"Destinations": [null]` produces a
+  null list element at runtime (despite the compile-time non-nullable element type) and NREs,
+  caught by `LoadSafeAsync`'s outer try but taking the WHOLE load down with it, not just the
+  destinations. `AdifUdpStreamer.SendAsync` already tolerates the identical data shape via its own
+  `d?.Enabled == true` guard; this read site didn't have the equivalent.
+
+Fixed: a new `_loadSucceeded` flag, set only as the LAST statement in `LoadSafeAsync`'s try block
+(after every step that could silently corrupt persisted data has completed without throwing) now
+gates `SaveCommand` via `[RelayCommand(CanExecute = nameof(CanSave))]`, with
+`SaveCommand.NotifyCanExecuteChanged()` fired in `LoadSafeAsync`'s `finally` on both the success and
+failure paths -- the general-case fix (Save is simply unavailable until a load has actually
+completed), not a per-field patch, since the original failure wasn't specific to any one field.
+`ResetGeneralToDefault` now has the same culture fallback as `ApplyFromSnapshot`.
+`TestRigctldConnectionAsync`'s both posted lambdas now wrap their `GetString` call in
+try/catch/finally -- catch logs via a new `Log.TestRigctldConnectionStatusDisplayFailed`
+`[LoggerMessage]` and falls back to `TestConnectionStatusMessage = null` (deliberately not another
+`GetString` call, since a broken locale key can't be trusted to safely produce anything); finally
+always resets `IsTestingConnection = false`. `ApplyFromSnapshot`'s destination loop now skips a null
+element via `continue` rather than dereferencing it. Also fixed in the same pass (precedented nit):
+`ResetRadioToDefault` now clears `TestConnectionStatusMessage = null`, matching sibling
+`ResetQrzToDefault`'s existing `TestQrzLookupStatus = null` clear (a stale "Connected to IC-7300"
+success line used to stay visible after Reset Radio blanked the host field).
+
+Explicitly NOT fixed, judged a reasonable scope boundary (round 2 agreed): if the audio enumerator
+succeeds but the PERSISTED device ID just isn't in the currently-enumerated list (e.g. a USB sound
+card is temporarily unplugged, no exception thrown), `SelectedCaptureDevice`/`SelectedPlaybackDevice`
+still resolve to null and Save will persist null over the old ID -- indistinguishable at this layer
+from a deliberate `ResetAudioToDefault` call (which also produces null), and the only non-fragile
+fix (retaining the unmatched ID as a "device not currently present" ghost entry) is a design change,
+not a bug fix.
+
+Seven regression tests added (`Constructor_LoadSucceeds_SaveCommandIsEnabled`,
+`Constructor_SettingsStoreLoadThrows_SaveCommandStaysDisabled`,
+`Constructor_AudioEnumeratorRefreshThrows_SaveCommandStaysDisabled`,
+`ResetGeneralToDefaultCommand_LeavesSelectedCultureSetInsteadOfBlankingIt`,
+`TestRigctldConnectionCommand_GetStringThrowsFormattingTheResult_
+StillResetsIsTestingConnectionWithoutCrashingTheDispatcherLoop` (this one genuinely reproduced the
+original unhandled-`FormatException`-from-`Dispatcher.RunJobs` crash before the fix landed -- caught
+via test, not just inspection), `Constructor_NullElementInPersistedAdifUdpDestinations_
+SkipsItInsteadOfThrowing`, `ResetRadioToDefaultCommand_ClearsAStaleTestConnectionStatusMessage`),
+backed by 3 new `Fakes.cs` hooks (`FakeAudioDeviceEnumerator.RefreshAsyncException`,
+`FakeLocalizationService.ThrowOnGetString`/`ThrowOnGetStringForKey`). 693/693 `UI.Tests` pass (was
+686, +7), clean solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Verified `_loadSucceeded` is set at the
+correct point (after every corruptible step), confirmed `SaveCommand` has exactly one invocation
+site app-wide (a `Button` respecting `CanExecute` via `IsEnabled`) so nothing bypasses the gate,
+confirmed the VM is `AddTransient` and resolved fresh per dialog open so a transient load failure
+can't permanently lock Save for the process lifetime, confirmed both `TestRigctldConnectionAsync`
+lambdas are fully guarded with no remaining escape path, confirmed the null-destination skip
+preserves ordering/content of real entries, and explicitly agreed the unplugged-device limitation is
+a reasonable scope boundary rather than re-flagging it. Two residual nits, neither actioned: the
+"Testing..." status `GetString` call (zero args) is still technically outside its try but provably
+unreachable for `FormatException` since `JsonLocalizationService.Format` short-circuits to the
+template on an empty args array; `TestQrzLookupAsync`'s own catch-block `GetString(...,
+ex.Message)` call has the identical one-arg-can-throw shape as the fixed rigctld one but is lower
+severity (escapes into the command's own `Task`, not the dispatcher loop) and was out of round-1
+scope. Explicit "close chunk 8" call.
+
+**Chunk 8 CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 1 real blocker (Save could
+silently persist post-load-failure defaults over real settings, for any field) plus 4 precedented
+risk-tier/nit fixes; round 2 clean GO, no further action.

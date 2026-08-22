@@ -51,7 +51,10 @@ internal sealed class FakeAudioDeviceEnumerator : IAudioDeviceEnumerator
 
     public IReadOnlyList<AudioDeviceInfo> OutputDevices { get; set; } = [];
 
-    public Task RefreshAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public Exception? RefreshAsyncException { get; set; }
+
+    public Task RefreshAsync(CancellationToken ct = default) =>
+        RefreshAsyncException is { } ex ? Task.FromException(ex) : Task.CompletedTask;
 }
 
 internal sealed class FakeLocalizationService : ILocalizationService
@@ -75,8 +78,21 @@ internal sealed class FakeLocalizationService : ILocalizationService
 
     public object[] LastArgs { get; private set; } = [];
 
+    public Exception? ThrowOnGetString { get; set; }
+
+    /// <summary>When set, <see cref="ThrowOnGetString"/> only fires for this specific key -- lets a
+    /// test simulate a single locale entry with a mismatched format placeholder (a real
+    /// FormatException source) without also breaking every OTHER GetString call the method under
+    /// test makes along the way (e.g. an unrelated "now testing..." status key with no args).</summary>
+    public string? ThrowOnGetStringForKey { get; set; }
+
     public string GetString(string key, params object[] args)
     {
+        if (ThrowOnGetString is not null && (ThrowOnGetStringForKey is null || ThrowOnGetStringForKey == key))
+        {
+            throw ThrowOnGetString;
+        }
+
         LastKey = key;
         LastArgs = args;
         return key;
