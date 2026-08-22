@@ -7021,5 +7021,76 @@ tests before closing.
 
 **Chunk 13 (Area C) CLOSED (2026-08-22)** -- 1 round (unconditional GO), 2 real risk-tier fixes
 applied without a confirmation round. This closes ALL 3 areas of `TxImageEditorPaneViewModel.cs`
-(chunks 11-13) and, with it, the ENTIRE `UI/ViewModels` sweep (13/13 chunks). Next: Step 0 triage on
-the remaining `Application` files, not yet started.
+(chunks 11-13) and, with it, the ENTIRE `UI/ViewModels` sweep (13/13 chunks).
+
+## Remaining Application files sweep -- IN PROGRESS, started 2026-08-22
+
+Step 0 triage (19 files in `src/ScanlineStudio.Application/`): trivial (skip, read as context
+only) -- pure interfaces (`ISstvSessionService.cs`, `IRadioSessionService.cs`,
+`ILogbookSessionService.cs`, `ITemplateStore.cs`), pure DTO records (`OptionsSnapshot.cs`,
+`PersistedTemplateElement.cs`, `OperatorSettings.cs`, `ReadyRackSettings.cs`,
+`AppPerformanceSettings.cs`, `LogQsoResult.cs`), generated `JsonSerializerContext` partials
+(`OperatorSettingsJsonContext.cs`, `AppPerformanceSettingsJsonContext.cs`), `AssemblyInfo.cs`. Real
+logic (audit): `MaidenheadLocator.cs` (129), `MacroTextResolver.cs` (186), `RadioSessionService.cs`
+(167), `LogbookSessionService.cs` (174), `OptionsSettingsService.cs` (285), `TemplateStore.cs`
+(275), `SstvSessionService.cs` (3188).
+
+**Cadence decision (user, 2026-08-22):** `SstvSessionService.cs` handles PTT keying/unkeying,
+transmit watchdogs, and cleanup races -- concurrency-sensitive code. Rather than Tier B's default
+"one round + one confirmation, cap 3," the user chose CLAUDE.md's own §7 non-negotiable
+concurrency cadence for this one file specifically: a full 2-round plan-review (likely needing its
+own chunk-split plan first, given its size) plus up-to-3-round code-review per chunk. The other 6
+real-logic files are NOT concurrency-hot in the same way and stay on standard Tier B cadence.
+Sequencing: the 6 smaller files first (keeps momentum, matches this sweep's own established
+rhythm), `SstvSessionService.cs`'s heavier plan-review process last, as its own prepared
+undertaking.
+
+## Chunk 1: MaidenheadLocator.cs + MacroTextResolver.cs
+
+Both confirmed NEW functionality with no legacy YONIQ/MMSSTV precedent (their own doc comments,
+verified via a real grep across the legacy tree) -- pure new-code correctness review, not a
+legacy-parity port audit.
+
+**Round 1** -- unconditional GO, no blockers, 2 risk-tier findings (auditor explicitly did not
+require a second round):
+
+- **[risk]** `MaidenheadLocator.TryToLatLon`'s invalid-subsquare false-return path left
+  `latitude`/`longitude` at the SW-corner values already computed by the field/square math above it,
+  while every OTHER false-return path in the same method correctly leaves them at their pre-zeroed
+  defaults -- a stale, non-zero out-param on a false return from a public static API. Harmless today
+  (the sole caller pre-zeroes its own outs and checks the bool first), but the exact "one path
+  missing a guard its siblings already have" shape this whole sweep keeps finding.
+- **[risk]** 8-character extended Maidenhead locators (a normal, widely-used VHF/microwave-grade
+  precision) were rejected outright by the length check (`4 or 6` only) -- strictly MORE precise
+  than the accepted 6-character form, with no reason to reject it. Repro: an operator types
+  `FN31pr12` into the `his_grid` fill-bar row -- `TryToLatLon` fails, `TryComputeDistanceBearing`
+  fails, `MacroTextResolver` maps that to `string.Empty`, and the DIST/BEAM overlay fields render
+  blank in the transmitted image with no error and no indication anything went wrong -- the sweep's
+  "silently dropped value" class hitting a real user path.
+
+Both math files themselves were independently verified clean and precisely correct, not just
+"probably fine": the haversine/bearing formulas hand-derived against real-world coordinates (not
+assumed from the implementation), the antipodal-NaN clamp and pole-singularity unreachability both
+re-confirmed, `MacroTextResolver`'s token-fallback tiers (known-macro-blank vs.
+unknown-variable-verbatim) confirmed internally consistent and exception-safe end to end, and the
+`{dist}`/`{bearing}` → `his_grid` cross-file wiring (already fixed in earlier UI/ViewModels rounds)
+re-confirmed still correct.
+
+Fixed: the invalid-subsquare branch now re-zeros `latitude`/`longitude` before returning false.
+`TryToLatLon`'s length check now accepts 8 (`4 or 6 or 8`), validating the trailing digit pair and
+then dropping it (same output precision as the 6-character form, no new precision-tier math added)
+rather than hard-rejecting a strictly-more-precise valid input. Four regression tests added
+(`TryToLatLon_EightCharacterLocator_ResolvesToTheSameCellAsItsSixCharacterPrefix`,
+`TryToLatLon_InvalidEightCharacterLocators_ReturnsFalse` (2 theory cases: non-digit trailing pair,
+7-character invalid length), `TryToLatLon_InvalidSubsquare_LeavesOutParamsAtZero_
+NotTheStaleSwCornerValues`). 25/25 `Application.Tests` pass for this file (was 17, +8 test
+executions across the new theory cases), 237/237 full `Application.Tests` suite, clean
+solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with no blockers, same
+precedent as chunk 13's own "no round 2 needed" close. Both fixes were small, fully traced against
+the actual math/control-flow (not just pattern-matched from the auditor's suggestion), and verified
+via genuinely discriminating regression tests before closing.
+
+**Chunk 1 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 2 real risk-tier fixes applied
+without a confirmation round.
