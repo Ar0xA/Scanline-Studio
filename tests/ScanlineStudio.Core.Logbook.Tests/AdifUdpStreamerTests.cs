@@ -48,7 +48,7 @@ public sealed class AdifUdpStreamerTests
         // QByteArray framing), not String.Length, or the receiver reads a truncated/garbled value.
         // Escaped rather than a literal accented character so the assertion doesn't depend on this
         // .cs file being read back as UTF-8.
-        const string nonAscii = "café";
+        const string nonAscii = "caf\u00e9";
         var datagram = AdifUdpStreamer.BuildLoggedAdifDatagram("id", nonAscii);
 
         var idLength = BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(12, 4));
@@ -65,7 +65,7 @@ public sealed class AdifUdpStreamerTests
         // Same property as the adifText case above, but for the Id field specifically -- a
         // separate code path (WriteUtf8Field is called twice, once per field) worth pinning on
         // its own rather than assuming symmetry.
-        const string nonAscii = "café";
+        const string nonAscii = "caf\u00e9";
         var datagram = AdifUdpStreamer.BuildLoggedAdifDatagram(nonAscii, "x");
 
         var idLength = BinaryPrimitives.ReadUInt32BigEndian(datagram.AsSpan(12, 4));

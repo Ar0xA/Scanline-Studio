@@ -102,7 +102,7 @@ public sealed partial class AdifUdpStreamer : IAdifUdpStreamer
         // typo'd destination behind a falsely "complete" N/N count (the user's other, working
         // destination alone would read as "sent to 1/1" instead of the true "1/2, one destination
         // is broken"). SendToDestinationAsync itself now validates and reports per destination.
-        var enabled = destinations.Where(d => d.Enabled == true).ToList();
+        var enabled = destinations.Where(d => d?.Enabled == true).ToList();
         if (enabled.Count == 0)
         {
             return new AdifUdpSendResult(0, 0);
