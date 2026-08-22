@@ -6025,3 +6025,97 @@ doesn't re-derive/corrupt it. 101/101 `Core.Imaging.Tests` pass, clean solution-
 
 **Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes applied per standing practice.
 Committed.
+
+## Core.Imaging chunk 3: TransmitImagePreparer.cs
+
+Last `Core.Imaging` file, and the largest in the whole Tier B sweep so far (1012 lines) --
+TX-side template text/image/box rendering (color, shadow, gradient, rotation, bold/italic on
+template text elements). Full Tier B rigor given the size. Depth split: Area B (template text/
+geometry/glyph rendering) got full re-derivation from scratch each round; Area A (Crop/Resize/
+ApplyAdjustments/Rotate/pixel copy) got a solid but lighter pass.
+
+**Round 1** -- NOT GO. One blocker, one risk, both fixed:
+
+- **[blocker]** `DrawTemplateImage` clamped the resize TARGET SIZE independently on each axis to
+  the destination canvas's own `Width`/`Height`. `DrawImage` has no scale-to-rect overload (it
+  composites at native pixel size), so that clamp silently squashed the element's RENDERED SCALE to
+  1:1 for any oversized element, and independently-per-axis clamping could distort its ASPECT too.
+  A full-frame "set as background" element combined with a tighter-than-working-copy active crop
+  rect routinely projects `Bounds` several times larger than the canvas -- a completely normal,
+  reachable case, not a pathological one -- and the bug could squash it to 1x scale or move it fully
+  off-canvas (nothing rendered, no diagnostic) when `Bounds.X/Y` also went negative. Existing test
+  coverage couldn't catch it: the one oversized-bounds test used a uniform-color source, which looks
+  pixel-identical whether correctly scaled or squashed to 1:1.
+
+  Fixed: `DrawImage` naturally clips to the destination canvas (standard image-compositing
+  behavior), so resizing to the full correct, unclamped size and letting `DrawImage` clip produces
+  exactly correct scale/aspect for any oversized element -- no manual crop/intersect math needed.
+  Only a single, uniform (same factor both axes) safety ceiling remains, to bound worst-case
+  allocation for a genuinely oversized `Bounds` value. New test
+  `ApplyTemplate_ImageWithOversizedBounds_PreservesTheElementsCorrectScaleAndAspect` (four
+  distinct quadrant colors, not uniform) proves correct scale; went through two failed geometry
+  attempts before landing on one that actually discriminates -- ImageSharp's default Bicubic
+  resampler needs real "interior" source pixels away from a color boundary, so a 2x2 checkerboard
+  source blends at every sample point regardless of margin from the destination-space boundary; an
+  8px-per-quadrant block source fixed it.
+
+- **[risk]** `ShrinkFitBoxForEffects` applied `ShrinkFitBoxForRotation` LAST, computing rotation's
+  own `k` factor from an already-stroke/shadow/stack-shrunk box -- but the real pre-rotation ink is
+  that shrunk box PLUS the effect allowances drawn back around it, which the old order didn't
+  account for, so the real ink could exceed what `k` was derived to keep inside `Bounds` when
+  rotated. Not a bleed (the unconditional `Bounds` clip in `DrawTemplateText` prevents that) but a
+  hard-clip of otherwise-valid content -- hand-derived example (100x20px bounds, 90° rotation, a
+  20px shadow offset) could clip roughly half the glyph run.
+
+  Fixed: reordered so rotation runs FIRST, on the raw (unshrunk) bounds, and stroke/shadow/stack are
+  subtracted from THAT afterward -- makes the fit-plus-allowances sum reconstruct exactly
+  `k*(boundsWidth, boundsHeight)`, the size `k` was derived to keep safely inside bounds when
+  rotated. New test `MeasureFittedFontSize_RotationCombinedWithShadowOffset_ShrinksToTheFloor_...`
+  hand-derives and RUNS both orders' fit boxes for the same repro inputs -- old order gives (19,5),
+  new gives (1,4) -- and asserts the new order's floor-forcing result.
+
+103/103 `Core.Imaging.Tests` pass (was 101, +2), clean solution-wide build.
+
+**Round 2** (fresh agent, full re-scan) -- NOT GO. Confirmed both round-1 fixes correct via
+independent re-derivation (including hand-verifying the new tests' geometry end to end, not just
+trusting green). Found ONE new regression round 1's own fix introduced: removing
+`DrawTemplateImage`'s destination-size clamp also removed an ACCIDENTAL memory bound on
+`_imageResizeCache` (a 64-entry cache capped by entry COUNT, not bytes) -- every cached entry used
+to be capped at canvas resolution by the old (buggy) clamp; unclamped, a routine ~5x crop-zoom on an
+ordinary SSTV-mode canvas (not pathological) could fill all 64 slots with tens-of-MB-each images,
+retaining up to ~1.5-2.6GB. Also flagged, not fixed, explicitly pre-existing/off-scope:
+`DrawTemplateText`'s rotation path allocates an `Image<Rgba32>` sized directly from `Bounds` with no
+safety ceiling at all -- same failure class, different method.
+
+Fixed: replaced the flat 4096px ceiling with a destination-RELATIVE one (`8x` the canvas's own
+`Width`/`Height`, still capped at an absolute 4096px), and added a pixel-budget check to
+`GetOrCreateResizedImage` that skips the CACHE WRITE (not the resize itself -- correctness
+unaffected) for any resize over ~4M pixels/~12MB, so a genuinely large element is recomputed each
+frame instead of permanently occupying one of the 64 cache slots. Worst-case retained cache memory
+now bounded to roughly `64 * 12MB ~= 768MB`. 103/103 tests pass (no new tests -- internal
+memory-behavior change with no externally-observable output difference), clean build.
+
+**Round 3** (fresh agent, FINAL round, cap 3) -- **GO.** Verified the destination-relative ceiling
+arithmetic against every real `SstvModeRegistry` canvas size (160-640px wide) and confirmed the
+768MB worst-case bound is real and correct (down from 3.15GB after round 1 alone), confirmed the
+pixel-budget cache-skip has no reference-identity hazard (the cache's only caller reads-copies-
+disposes the returned image, never retains/compares it), and confirmed round 1-2's fixes hold under
+a third independent re-derivation. Found two remaining risks, both explicitly judged NOT
+blocker-severity and NOT worth a 4th round (the auditor's own words: "another round would just
+re-derive the same numbers"): (1) the correctness threshold for the "still draws at 1:1 wrong scale"
+regime regressed slightly on 320-wide modes (12.8x oversize before round 2's fix engaged, 8.0x
+after) -- reachable only at a crop tighter than 12.5% of an already-2x-scaled working copy, a regime
+where the image is already visually mush; (2) the cache goes permanently cold above ~7x zoom on a
+320-wide canvas, meaning non-crop edits (a brightness slider, typing text) at that zoom level no
+longer hit cache and redo a full resize+copy pass every frame -- a real perf regression, not a
+correctness one. Both share one root cause and one real fix (clip `Bounds` against the destination
+FIRST, then resize only the visible sub-region, added to the cache key) that would subsume both
+risks plus the round-2 `DrawTemplateText` off-scope item's sibling concern -- logged as backlog with
+that fix sketch, not attempted in this sweep (implementation work, not audit work).
+
+**Chunk 3 CLOSED (2026-08-22)** -- 3 rounds (cap reached). Round 1 found and fixed a real blocker
+(wrong TX scale/aspect for oversized elements) and a real risk (text hard-clipping under combined
+rotation+shadow); round 2 found and fixed a real memory regression round 1's own fix introduced;
+round 3 clean GO with two risk-tier findings deferred to backlog (redesign-sized, not a review-round
+fix). Committed. **This closes the entire `Core.Imaging` sweep** (chunks 1-3) -- next up per the
+Tier B scope table: `UI/ViewModels`.

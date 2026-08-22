@@ -314,7 +314,7 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
-    public async Task ApplyTemplate_ImageWithOversizedBounds_ClampsResizeToTheDestinationInsteadOfAllocatingUnbounded()
+    public async Task ApplyTemplate_ImageWithOversizedBounds_CompletesWithoutAllocatingUnbounded()
     {
         // Code-review finding (Scanline Studio TX template designer Phase 2): an image element's
         // Bounds is normalized against the CROP rect
@@ -322,8 +322,12 @@ public sealed class ApplyTemplateTests
         // background") combined with a small crop rect -- or simply a manually resized element
         // bigger than the working copy -- can project to a Bounds many times larger than 0..1.
         // Resizing the source to that raw (unclamped) pixel size would try to allocate gigabytes.
-        // This pins that DrawTemplateImage completes without throwing/hanging and clamps the
-        // resize target to the destination's own resolution regardless of how oversized Bounds is.
+        // This pins that DrawTemplateImage completes without throwing/hanging even for a genuinely
+        // pathological Bounds value (a multiplier well beyond MaxElementResizeDimensionPx).
+        // The DESTINATION-size clamp this test originally pinned was itself a Tier B audit blocker
+        // (it silently squashed the element's rendered SCALE/aspect to 1:1, see the sibling test
+        // below for the regression that replaced it) -- this test now covers only the "doesn't
+        // allocate unbounded" half of the original guarantee.
         var basePath = await WriteFixturePngAsync(8, 8, (_, _) => new ImageSharpRgb24(0, 255, 0));
         var elementPath = await WriteFixturePngAsync(2, 2, (_, _) => new ImageSharpRgb24(255, 0, 0));
         try
@@ -331,16 +335,18 @@ public sealed class ApplyTemplateTests
             var source = await new ImageFileLoader().LoadAsync(basePath, 8, 8);
             var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 2, 2);
             var preparer = new TransmitImagePreparer(FontPath);
-            // Width=50/Height=50 on an 8x8 base is a 400x400px resize target unclamped -- clamped,
-            // it must stay at 8x8 (the destination's own size) and complete instantly.
+            // Width=1000/Height=1000 on an 8x8 base is an 8000x8000px resize target unclamped --
+            // must be safety-capped (MaxElementResizeDimensionPx) and complete instantly rather than
+            // try to allocate an 8000x8000 image.
             var document = new TemplateDocument(null, [
-                new TemplateImageElement(new NormalizedRect(0, 0, 50, 50), Z: 0, elementSource, ImageFitMode.Stretch),
+                new TemplateImageElement(new NormalizedRect(0, 0, 1000, 1000), Z: 0, elementSource, ImageFitMode.Stretch),
             ]);
 
             var result = preparer.ApplyTemplate(source, document);
 
-            // The whole 8x8 destination is covered by the (clamped, still oversized-in-intent)
-            // element -- every pixel red, none of the green base showing through.
+            // The whole 8x8 destination is covered by the (safety-capped, still vastly
+            // oversized-in-intent) element -- every pixel red, none of the green base showing
+            // through, regardless of exactly where the safety cap lands.
             for (var y = 0; y < 8; y++)
             {
                 for (var x = 0; x < 8; x++)
@@ -348,6 +354,67 @@ public sealed class ApplyTemplateTests
                     AssertPixel(result, x, y, 255, 0, 0);
                 }
             }
+        }
+        finally
+        {
+            File.Delete(basePath);
+            File.Delete(elementPath);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_ImageWithOversizedBounds_PreservesTheElementsCorrectScaleAndAspect()
+    {
+        // Tier B functional-audit BLOCKER: DrawTemplateImage used to clamp the resize TARGET SIZE
+        // independently on each axis to the destination image's own Width/Height. DrawImage has no
+        // scale-to-rect overload -- it composites at native size -- so that clamp silently squashed
+        // the element's rendered SCALE to 1:1 (and, since each axis clamped independently, could
+        // distort its ASPECT RATIO too) instead of drawing it at the correct scale with the excess
+        // naturally clipped by the canvas. A REALISTIC scenario (not a pathological one): an active
+        // crop rect narrower than the working copy, combined with a "set as background" full-frame
+        // image element, routinely projects Bounds around 2x the destination -- exactly the size
+        // this test uses. A uniform-color source (as the sibling OOM test above uses) can't detect a
+        // wrong scale, since a squashed-to-1x uniform-red image looks pixel-identical to a
+        // correctly-scaled one -- this test uses four distinct quadrant colors instead.
+        var basePath = await WriteFixturePngAsync(16, 16, (_, _) => new ImageSharpRgb24(50, 50, 50)); // distinguishable from all 4 quadrant colors
+        // 16x16 source, 8x8 QUADRANT BLOCKS (not a 2x2 checkerboard) -- ImageSharp's default
+        // (Bicubic) resampler needs real "interior" source pixels away from a color boundary to
+        // avoid blending across it; a 2x2 source has none (an earlier version of this test used one
+        // and got a blended, neither-color result at every sample point, regardless of how far the
+        // DESTINATION sample point was from the resized-image's own quadrant boundary -- the
+        // resampling kernel operates in SOURCE-pixel space, and a 2px-wide source is entirely within
+        // any real kernel's radius from anywhere).
+        var elementPath = await WriteFixturePngAsync(16, 16, (x, y) => (x < 8, y < 8) switch
+        {
+            (true, true) => new ImageSharpRgb24(255, 0, 0), // top-left: red
+            (false, true) => new ImageSharpRgb24(0, 255, 0), // top-right: green
+            (true, false) => new ImageSharpRgb24(0, 0, 255), // bottom-left: blue
+            (false, false) => new ImageSharpRgb24(255, 255, 0), // bottom-right: yellow
+        });
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 16, 16);
+            var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 16, 16);
+            var preparer = new TransmitImagePreparer(FontPath);
+            // NormalizedRect(-0.25, -0.25, 1.5, 1.5) on a 16px base -> PixelBounds(-4, -4, 24, 24): a
+            // 1.5x-oversized element, offset so it straddles the canvas edges on every side. At the
+            // CORRECT scale, Stretch resizes the source to 24x24 (1.5x), moving the quadrant boundary
+            // from source coordinate 8 to resized-image coordinate 12. Sampled at the canvas's own 4
+            // corners (resized-image coordinates 4/19, i.e. source-equivalent ~2.7/12.7) -- each
+            // sample lands solidly inside its own 8px-wide source quadrant, away from the boundary.
+            // Under the old per-axis-clamped (wrong, 1:1-scale) behavior, the resize target would be
+            // 16x16 instead of 24x24, landing the quadrant boundary at a different resized-image
+            // coordinate.
+            var document = new TemplateDocument(null, [
+                new TemplateImageElement(new NormalizedRect(-0.25, -0.25, 1.5, 1.5), Z: 0, elementSource, ImageFitMode.Stretch),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 0, 0, 255, 0, 0); // top-left quadrant
+            AssertPixel(result, 15, 0, 0, 255, 0); // top-right quadrant
+            AssertPixel(result, 0, 15, 0, 0, 255); // bottom-left quadrant
+            AssertPixel(result, 15, 15, 255, 255, 0); // bottom-right quadrant
         }
         finally
         {
@@ -903,6 +970,36 @@ public sealed class ApplyTemplateTests
             "W1AW", font, imageHeightPx: 64, boundsWidthPx: 40, boundsHeightPx: 20, rotationDegrees: 0);
 
         Assert.Equal(withoutRotationParam, withZeroRotation);
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_RotationCombinedWithShadowOffset_ShrinksToTheFloor_NotTheLargerPreReorderBox()
+    {
+        // Tier B functional-audit finding: ShrinkFitBoxForEffects used to run rotation LAST,
+        // deriving its own k-factor from an already-shadow-shrunk box -- but the real pre-rotation
+        // ink is the fit box PLUS the shadow allowance drawn back around it, which that order didn't
+        // account for. Rotation must run FIRST, from the raw bounds, so effects subtracted
+        // afterward leave a fit box that reconstructs exactly the k-scaled size rotation actually
+        // needs -- otherwise the chosen font size can be too large for what rotation safely allows,
+        // silently hard-clipping ink at render time (DrawTemplateText's clip is unconditional).
+        //
+        // This case (100x20px bounds, 90-degree rotation, a 15px shadow offset) hand-derives to a
+        // fit box of (1,4) under the CORRECTED (rotation-first) order -- collapsed, since the
+        // 90-degree rotation on this elongated aspect ratio already shrinks the rotated allowance to
+        // 20px wide before the shadow allowance is even subtracted, and 15px's shadow doubling
+        // (30px) exceeds that. Under the OLD (shadow-first) order the identical inputs hand-derive
+        // to a materially larger (19,5) box -- large enough to fit a real character above the floor,
+        // which is exactly the size that would have hard-clipped under the actual rotated+shadowed
+        // render. Asserting the floor here pins the reordering, not just "some shrink happened."
+        const double minFontSizePx = 6.0; // TransmitImagePreparer's own private MinFontSizePx
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", 1.0);
+
+        var fittedSize = preparer.MeasureFittedFontSize(
+            "I", font, imageHeightPx: 20, boundsWidthPx: 100, boundsHeightPx: 20,
+            shadowOffsetXRelative: 0.75, rotationDegrees: 90);
+
+        Assert.Equal(minFontSizePx, fittedSize);
     }
 
     [Fact]

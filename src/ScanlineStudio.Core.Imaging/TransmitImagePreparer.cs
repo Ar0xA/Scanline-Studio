@@ -320,32 +320,38 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// rotation are the SECOND and THIRD occurrences of the identical "an effect pushes ink past
     /// what a plain-text fit search measures" problem stroke already solved (see this method's own
     /// callers' doc comments), so all three shrinks are applied here, in sequence, rather than as
-    /// three independently-maintained copies of the same shape of correction. Each shrink only ever
-    /// makes the box smaller, so the RESULT is always a valid (safe, no-bleed-past-clip) bound
-    /// regardless of order. [Code-review correction] An earlier version of this comment claimed order
-    /// "doesn't matter mathematically" — that's true for SAFETY but not for TIGHTNESS: rotation's own
-    /// <c>k</c> factor (<see cref="ShrinkFitBoxForRotation"/>) is computed from whatever box stroke/
-    /// shadow already shrank, so a DIFFERENT order would generally produce a DIFFERENT (still safe,
-    /// but not identically-sized) final box — the three shrinks don't commute in the "produces the
-    /// same answer" sense, only in the "still correct" sense. In the specific combination of rotation
-    /// PLUS an asymmetric (non-both-axes-equal) shadow offset, this can leave a few pixels of
-    /// theoretical over-shrink slack on one axis relative to the other — cosmetic only (the
-    /// unconditional <c>Bounds</c> clip in <see cref="DrawTemplateText"/> means any residual
-    /// imprecision here shows as slightly-smaller-than-necessary text, never as bleed), not tracked as
-    /// a bug to fix, just documented accurately rather than claimed away. Stroke-then-shadow-then-
-    /// rotation is the order effects are actually drawn in (see <see cref="DrawGlyphs"/>'s own doc
-    /// comment), kept parallel for readability.</summary>
+    /// three independently-maintained copies of the same shape of correction.
+    ///
+    /// <b>Rotation MUST run first, on the raw (unshrunk) bounds</b> (Tier B functional-audit
+    /// finding, correcting an earlier version of this method that ran rotation LAST, after
+    /// stroke/shadow/stack): rotation's own <c>k</c> factor (<see cref="ShrinkFitBoxForRotation"/>)
+    /// gives the largest SAME-ASPECT-RATIO box whose rotated AABB fits the original bounds -- but
+    /// the actual pre-rotation ink is the fit box PLUS the effect allowances drawn around it
+    /// (stroke/shadow/stack are translated/thickened copies of the fit-sized glyph run, not
+    /// additional shrink of it). Computing <c>k</c> from an ALREADY-effect-shrunk box and then
+    /// adding the effects back on top can make the real pre-rotation ink bigger than <c>k</c> was
+    /// derived for, under-shrinking the final fit box relative to what rotation actually needs --
+    /// reachable and real: a wide, short box with a large shadow offset and a 90° rotation could
+    /// hard-clip roughly half the glyph run under the old order. Running rotation first makes this
+    /// exact rather than approximate: with <c>(rotW, rotH) = k*(boundsWidth, boundsHeight)</c>
+    /// computed from the RAW bounds, then stroke/shadow/stack subtracted from THAT, the resulting
+    /// fit box plus every effect allowance sums back to exactly <c>k*(boundsWidth, boundsHeight)</c>
+    /// -- precisely the size <c>k</c> was derived to keep inside the original bounds when rotated.
+    /// Each shrink still only ever makes the box smaller, so the result stays safe (no bleed past
+    /// the clip) regardless of order -- this reordering is about TIGHTNESS (not hard-clipping valid
+    /// content), not safety. Stroke-then-shadow-then-stack (post-rotation) mirrors the order effects
+    /// are actually drawn in (see <see cref="DrawGlyphs"/>'s own doc comment).</summary>
     private static (int Width, int Height) ShrinkFitBoxForEffects(
         int boundsWidthPx, int boundsHeightPx, float strokeThicknessPx, float shadowOffsetXPx, float shadowOffsetYPx, double rotationDegrees,
         float stackStepXPx = 0, float stackStepYPx = 0)
     {
-        var (strokeW, strokeH) = ShrinkFitBoxForStroke(boundsWidthPx, boundsHeightPx, strokeThicknessPx);
+        var (rotatedW, rotatedH) = ShrinkFitBoxForRotation(boundsWidthPx, boundsHeightPx, rotationDegrees);
+        var (strokeW, strokeH) = ShrinkFitBoxForStroke(rotatedW, rotatedH, strokeThicknessPx);
         var (shadowW, shadowH) = ShrinkFitBoxForShadow(strokeW, strokeH, shadowOffsetXPx, shadowOffsetYPx);
         // Stack's farthest copy sits at the full (stackStepXPx, stackStepYPx) offset from center --
         // same translated-copy shape of growth as the shadow offset above, so it reuses the identical
         // "double the offset" shrink math (ShrinkFitBoxForShadow's own doc comment).
-        var (stackW, stackH) = ShrinkFitBoxForShadow(shadowW, shadowH, stackStepXPx, stackStepYPx);
-        return ShrinkFitBoxForRotation(stackW, stackH, rotationDegrees);
+        return ShrinkFitBoxForShadow(shadowW, shadowH, stackStepXPx, stackStepYPx);
     }
 
     /// <summary>[Code-review fix] A shadow offset by (dx,dy) pushes the SHADOW copy's own ink that
@@ -552,21 +558,50 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     private static Rgba32 ToRgba32(Abstractions.Imaging.Rgb24 color) => new(color.R, color.G, color.B, 255);
 
+    // Safety ceiling for DrawTemplateImage's element resize -- see that method's own comment.
+    // Destination-RELATIVE (round-2 audit finding correcting an earlier flat-4096px version of
+    // this comment's own claim of "only pathological Bounds ever hits this"): a flat constant ties
+    // worst-case memory to a fixed pixel count regardless of how small the actual destination is,
+    // so a routine ~5-8x oversized element on a typical SSTV-mode-sized canvas (320-640px) was
+    // already reaching a meaningful fraction of a flat 4096px ceiling -- tying the ceiling to the
+    // destination's own size instead means "how oversized is genuinely reasonable" scales with what
+    // this specific canvas actually needs, while MaxElementResizeDimensionPxCeiling still bounds
+    // the absolute worst case (a tiny destination with an astronomically oversized element).
+    private const float MaxElementResizeDestinationMultiplier = 8f;
+    private const float MaxElementResizeDimensionPxCeiling = 4096f;
+
     private void DrawTemplateImage(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds)
     {
         // Defensive floor at 1px -- element.Bounds.Width/Height > 0 is already guaranteed by the
         // caller's skip check, but rounding a very thin bounds rect to pixels can still floor to 0.
-        // Also capped at the DESTINATION image's own dimensions (code-review finding, Scanline
-        // Studio TX template designer Phase 2): an image element's Bounds is normalized against the
-        // CROP rect (TxImageEditorPaneViewModel.ProjectRectToCropRelative), so a full-frame element
-        // ("set as background") combined with a small crop rect -- or simply a manually resized
-        // element bigger than the working copy -- can project to a Bounds many times larger than
-        // 0..1. Resizing the source to that raw pixel size would allocate gigabytes for content
-        // that's almost entirely off-canvas; nothing needs to be resolved above the destination's
-        // own resolution, since none of it is visible beyond that. A no-op in the normal case (a
-        // legitimately-sized element's Bounds is already <= the destination).
-        var targetWidth = Math.Clamp((int)MathF.Round(bounds.Width), 1, image.Width);
-        var targetHeight = Math.Clamp((int)MathF.Round(bounds.Height), 1, image.Height);
+        //
+        // Tier B functional-audit blocker, fixed here: this used to clamp targetWidth/targetHeight
+        // INDEPENDENTLY to the destination image's own Width/Height. DrawImage below has no
+        // scale-to-rect overload -- it composites at native size -- so clamping the resize TARGET
+        // size silently clamped the element's RENDERED SCALE too, and clamping each axis separately
+        // also silently distorted its ASPECT RATIO whenever only one axis overflowed. A full-frame
+        // element ("set as background") combined with a smaller active crop rect
+        // (TxImageEditorPaneViewModel.ProjectRectToCropRelative) routinely projects Bounds several
+        // times larger than the destination -- a completely normal, reachable case, not a
+        // pathological one -- and the old clamp squashed it down to 1x scale (or, with independent
+        // per-axis clamping, a squashed/stretched wrong aspect), sometimes moving it fully off-canvas
+        // (nothing rendered, no diagnostic) when Bounds.X/Y also went negative.
+        //
+        // DrawImage naturally clips to the destination canvas (standard image-compositing behavior,
+        // same as every other element type in this file relies on for a partially-off-canvas Bounds)
+        // -- so resizing to the FULL correct, unclamped size and letting DrawImage clip produces
+        // exactly correct scale and aspect for any oversized element, with no manual crop/intersect
+        // math needed. Only a SINGLE, UNIFORM (same factor on both axes, so aspect is always
+        // preserved even here) safety ceiling remains, to bound worst-case allocation for a truly
+        // oversized Bounds value -- see GetOrCreateResizedImage's own pixel-budget cache-skip for
+        // the other half of this: even a resize under this ceiling must not permanently occupy a
+        // slot in the 64-entry cache if it's large enough to matter for total retained memory.
+        var rawWidthPx = MathF.Max(1f, MathF.Round(bounds.Width));
+        var rawHeightPx = MathF.Max(1f, MathF.Round(bounds.Height));
+        var ceiling = MathF.Min(MaxElementResizeDimensionPxCeiling, MaxElementResizeDestinationMultiplier * MathF.Max(image.Width, image.Height));
+        var safetyScale = MathF.Min(1f, ceiling / MathF.Max(rawWidthPx, rawHeightPx));
+        var targetWidth = Math.Max(1, (int)MathF.Round(rawWidthPx * safetyScale));
+        var targetHeight = Math.Max(1, (int)MathF.Round(rawHeightPx * safetyScale));
         var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
 
         using var resizedImage = ToImageSharp(resized);
@@ -915,6 +950,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     private const int MaxCachedResizedImages = 64;
 
+    // Round-2 Tier B audit finding: entry-COUNT alone doesn't bound entry SIZE. Before
+    // DrawTemplateImage's own destination-clamp was removed (a real scale/aspect bug, see that
+    // method's own doc comment), every cached entry was accidentally capped at the destination
+    // canvas's own resolution -- removing that clamp meant a single oversized element (a routine
+    // ~5x crop-zoom on an ordinary SSTV-mode canvas, not a pathological one) could fill all 64 slots
+    // with tens-of-megabytes-each images, retaining up to ~gigabytes. Skipping the cache write
+    // (still returning the computed image -- correctness is unaffected, only reuse-across-frames
+    // is) above this pixel budget keeps typical/small elements cheaply cached while a genuinely
+    // large one is recomputed each frame instead of permanently occupying a slot.
+    private const long MaxCachedResizedImagePixels = 4_000_000; // ~12MB per Abstractions.Imaging.Rgb24 entry
+
     private IImageSource GetOrCreateResizedImage(IImageSource source, int width, int height, ImageFitMode fit)
     {
         var key = new ImageResizeCacheKey(source, width, height, fit);
@@ -930,6 +976,11 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             ImageFitMode.Cover => ResizeCover(source, width, height),
             _ => throw new ArgumentOutOfRangeException(nameof(fit), fit, message: null),
         };
+
+        if ((long)width * height > MaxCachedResizedImagePixels)
+        {
+            return resized;
+        }
 
         if (_imageResizeCache.Count >= MaxCachedResizedImages)
         {
