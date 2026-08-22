@@ -177,6 +177,79 @@ public sealed class TemplateStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_ManifestWithNullElementsProperty_ReturnsEmptyDocumentInsteadOfThrowing()
+    {
+        // Tier B audit finding: a missing or explicitly-null "Elements" property in a hand-edited
+        // template.json deserializes with no JsonException (this format explicitly supports
+        // hand-copying/editing template folders, per this class's own doc comment) -- LoadAsync used
+        // to NRE downstream (a caller reading .Count) instead of degrading gracefully.
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Hand-edited");
+        var directory = Path.Combine(_root, templateId);
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "template.json"), $$"""{"Id":"{{templateId}}","Name":"Hand-edited","SavedAt":"2026-08-22T00:00:00+00:00"}""");
+
+        var document = await store.LoadAsync(templateId);
+
+        Assert.Empty(document.Elements);
+    }
+
+    [Fact]
+    public async Task LoadAsync_ManifestWithANullElementInTheList_SkipsItInsteadOfThrowing()
+    {
+        // Tier B audit finding: a hand-edited "Elements":[null, {...}] used to NRE downstream -- this
+        // file's own RenderThumbnailAsync/ToTemplateElementAsync dereferences each element directly
+        // on a re-save (the switch's own `default:` arm calls element.GetType()). Derives the JSON
+        // from a real save (not a hand-typed literal) so this test doesn't need to know Rgb24's own
+        // exact JSON shape, then hand-injects the one malformed "null" element a real save could
+        // never produce on its own.
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Hand-edited");
+        await store.SaveAsync(templateId, "Hand-edited", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var manifestPath = Path.Combine(_root, templateId, "template.json");
+        var json = await File.ReadAllTextAsync(manifestPath);
+        var corrupted = json.Replace("\"Elements\":[", "\"Elements\":[null,");
+        Assert.NotEqual(json, corrupted); // sanity: the replace actually matched something
+        await File.WriteAllTextAsync(manifestPath, corrupted);
+
+        var document = await store.LoadAsync(templateId);
+
+        Assert.Single(document.Elements);
+        Assert.IsType<PersistedBoxElement>(document.Elements[0]);
+    }
+
+    [Theory]
+    [InlineData("../escaped.png")]
+    [InlineData("sub/escaped.png")]
+    [InlineData("/etc/passwd")]
+    public void GetAssetPath_AssetFileNameEscapesTheAssetsFolder_Throws(string maliciousAssetFileName)
+    {
+        // Tier B audit finding: assetFileName comes straight from a persisted (and, per this
+        // format's own "share by copying the folder" design, possibly hand-edited or downloaded)
+        // template.json -- Path.Combine neither rejects "../" traversal nor a rooted path, so a
+        // malicious/malformed shared template could point this app at an arbitrary file elsewhere on
+        // disk. The write path is never at risk (BuildPersistedElementAsync always mints a fresh
+        // Guid.NewGuid():N name), but the read path needed a guard.
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Contest");
+
+        Assert.Throws<InvalidOperationException>(() => store.GetAssetPath(templateId, maliciousAssetFileName));
+    }
+
+    [Fact]
+    public void GetAssetPath_OrdinaryAssetFileName_StillWorks()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Contest");
+
+        var path = store.GetAssetPath(templateId, "3f9c2b1a.png");
+
+        Assert.EndsWith(Path.Combine("assets", "3f9c2b1a.png"), path);
+    }
+
+    [Fact]
     public async Task DeleteAsync_RemovesTheTemplateDirectory_SubsequentListDoesNotIncludeIt()
     {
         var store = CreateStore();
