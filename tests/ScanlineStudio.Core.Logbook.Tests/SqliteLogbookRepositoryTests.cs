@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
@@ -148,6 +149,40 @@ public sealed class SqliteLogbookRepositoryTests
             var results = await repository.SearchAsync(new LogbookQuery());
 
             Assert.Equal(["second", "first"], results.Select(r => r.Id));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SearchAsync_UnrecognizedModeValue_FallsBackToUnknown_InsteadOfThrowing()
+    {
+        // Round-1 Tier B finding: a plain Enum.Parse<RadioMode> on the stored Mode column would
+        // throw ArgumentException for one unrecognized row (a future/older app version, or a
+        // hand-edited/restored-from-backup DB) and take down the ENTIRE logbook list, not just that
+        // row -- unlike SqliteReceiveHistoryStore.ParseDecodeState's own defensive fallback for the
+        // same class of problem. Writes the bad value directly via raw SQL, bypassing AddAsync's own
+        // enum serialization (which can never itself produce an unrecognized value).
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await connection.OpenAsync();
+                var command = connection.CreateCommand();
+                command.CommandText = "UPDATE Qso SET Mode = 'SomeFutureMode' WHERE Id = '1'";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var results = await repository.SearchAsync(new LogbookQuery());
+
+            var loaded = Assert.Single(results);
+            Assert.Equal(RadioMode.Unknown, loaded.Mode);
         }
         finally
         {
