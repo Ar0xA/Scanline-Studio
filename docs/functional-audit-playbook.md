@@ -5839,3 +5839,72 @@ wrong data. 115/115 tests pass, clean build.
 
 **Chunk 3 CLOSED (2026-08-22)** -- 2 rounds, real bug found and fixed round 1, clean GO round 2 with
 one additional trivial fix applied per standing practice. Committed.
+
+## Chunk 4 (Core.Logbook): ReceiveHistoryRecorder.cs, ReceiveHistorySettings.cs
+
+**Round 1** -- NOT GO. Blocker: `RecordCompletedImageAsync` awaited `ResolveImagesDirectoryAsync()`
+(real settings-file I/O) BEFORE calling `IReceivedImageBuffer.SaveAsync(filePath)`, which read the
+LIVE `Current` buffer at that later point. A `DecodeRestarted` firing for the just-completed image in
+that gap -- a real, test-proven-reachable ordering (`AnalogFmSstvDecoder`'s restart check has no
+guard against having just decoded the final line) -- had already reset `Current` to a 1x1 black
+placeholder, so the completed image saved as a 1x1 black PNG with a `Completed` history row pointing
+at it, and the real picture was lost with no second chance (the abandoned-save path correctly
+declines to double-save).
+
+Fixed: `OnLineDecoded` hoists the already-captured `_lastImage` snapshot into a local BEFORE the
+`Task.Run` closure and passes it directly into `RecordCompletedImageAsync`, which now writes it via
+the existing `SaveSnapshotAsync` helper (same one the abandoned-image path already used) instead of
+reading the live buffer. Also fixed the same round: a filename-collision risk on the completed path
+(no uniqueness token, second-granularity), matched to the abandoned path's existing millisecond +
+GUID-token scheme. Since `IReceivedImageBuffer` appeared to be fully unused by the class after this
+change, its constructor parameter was removed (later found to be premature -- see round 2). Test
+`DecodeRestarted_ImmediatelyAfterTheFinalLine_...` strengthened with a distinguishable-color fake
+image source and a real-PNG pixel/dimension assertion, closing the gap that let the original bug
+ship unnoticed (the old fake stubbed `SaveAsync` to a no-op, so pixel content was never checked).
+115/115 (net +0, new test replaces coverage in the same slot) `Core.Logbook.Tests` pass, clean build.
+
+**Round 2** (fresh agent, full re-scan) -- NOT GO. Round 1's pixel fix was correct, but removing the
+`IReceivedImageBuffer` dependency also removed the only production trigger of
+`IReceivedImageBuffer.Saved` for the completed-image path (previously raised inside `SaveAsync`,
+which round 1 stopped calling). Two live UI features in `RxImagePaneViewModel.cs` depend on that
+event exclusively and silently broke: the "Size on disk" readout, and the ability to edit Note/Flag
+on a received frame (gated on a correlation key only `Saved`'s handler sets). Neither was covered by
+any test -- every existing `Saved` assertion raised the event by hand via a fake, none exercised the
+real recorder-to-buffer-to-pane path.
+
+Fixed: added `IReceivedImageBuffer.NotifySaved(path, generation)` -- raises `Saved` directly for a
+caller that already wrote its own snapshot without going through `SaveAsync`. `ReceiveHistoryRecorder`
+re-added `IReceivedImageBuffer` as a constructor dependency, used ONLY for reading `.Generation` and
+calling `.NotifySaved(...)` (never `.SaveAsync`/`.Current` again -- that part of round 1's fix stays).
+`Generation` is now hoisted synchronously in `OnLineDecoded` alongside the pixel snapshot (safe
+because `Generation` only changes on `ModeDetected`/`DecodeRestarted`, never `LineDecoded`, so
+subscription order between the two classes can't matter) and threaded through to a
+`NotifySaved` call placed BEFORE `RecordAsync`, preserving the pre-existing Saved-before-Recorded
+ordering `RxImagePaneViewModel.OnHistoryRecorded` depends on. Updated all 4 `IReceivedImageBuffer`
+implementers (the real class plus 3 test fakes) and fixed 4 now-stale doc comments across
+`Abstractions`, `Core.Imaging`, and `UI` that claimed `SaveAsync` was the sole path. Added
+`CompletedImage_NotifiesReceivedImageBufferOfTheSave`, asserting the notification actually fires
+with the real saved path and the captured generation. 116/116 `Core.Logbook.Tests`, 233/233
+`Application.Tests`, 673/673 `UI.Tests` pass, clean solution-wide build.
+
+**Round 3** (fresh agent, final round, cap 3) -- **GO.** Verified the `NotifySaved` fix end-to-end
+against real code, not inference: confirmed via DI that `ReceiveHistoryRecorder` and
+`RxImagePaneViewModel` observe the exact same singleton `IReceivedImageBuffer` instance, confirmed
+the Saved-before-Recorded dispatcher-FIFO ordering genuinely holds, and confirmed the `Generation`
+hoist point is correct for every event ordering (not just the tested one) by tracing the decoder's
+synchronous event dispatch. No blocker found. Flagged one risk applied as a trivial fix in the same
+pass: `NotifySaved` was uncaught at its call site, so a throwing `Saved` subscriber (safe only by
+accident, because the sole production implementer happens to swallow everything internally) would
+skip the history-row write for an already-safely-saved file -- wrapped in its own try/catch/log,
+matching this class's existing isolation pattern for every other fan-out call. Also fixed one stale
+doc comment in `RxImagePaneViewModel.cs` describing a residual ordering gap round 2's fix had already
+closed. Two remaining nits logged as deferred backlog, not fixed: the new ordering test doesn't
+deterministically pin Saved-before-Recorded (races rather than fails on a hypothetical reorder), and
+a pre-existing `MaxEntries: 0` hand-edited-settings edge case wipes untouched history (not
+UI-writable today). 116/116 `Core.Logbook.Tests` pass, clean solution-wide build.
+
+**Chunk 4 CLOSED (2026-08-22)** -- 3 rounds (cap reached). Round 1 found and fixed a real pixel-loss
+bug; round 2 found and fixed a real regression round 1's own fix introduced; round 3 clean GO with
+one trivial hardening fix applied. Scope necessarily expanded beyond the original two files to
+`Core.Imaging` and `UI` to fix the round-2 regression -- not scope creep, a direct consequence of
+this chunk's own fix. Committed.

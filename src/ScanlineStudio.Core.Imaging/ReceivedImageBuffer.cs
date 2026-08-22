@@ -131,23 +131,34 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
                 });
                 image.Save(path);
 
-                // Isolated deliberately: this Task is the one RecordCompletedImageAsync (the sole
-                // production caller of SaveAsync) awaits before writing the RX history row -- an
+                // Isolated deliberately: this Task is the one this class's own callers await -- an
                 // uncaught exception from a Saved subscriber (e.g. a live UI pane reacting to the
-                // path) would fault THIS task, so the file lands on disk with no history entry ever
-                // recorded for it, even though the save itself fully succeeded. Same reasoning as
-                // ReceiveHistoryRecorder's own fan-out handlers: a subscriber's own failure must
-                // never surface into/interrupt the operation it's just reacting to.
-                try
-                {
-                    Saved?.Invoke(path, generation);
-                }
-                catch (Exception ex)
-                {
-                    Log.SavedSubscriberFailed(_logger, path, ex);
-                }
+                // path) would fault THIS task, incorrectly reporting the save itself as failed even
+                // though it fully succeeded. Same reasoning as ReceiveHistoryRecorder's own fan-out
+                // handlers: a subscriber's own failure must never surface into/interrupt the
+                // operation it's just reacting to.
+                RaiseSaved(path, generation);
             },
             ct);
+    }
+
+    // Shared by SaveAsync above and NotifySaved below -- ReceiveHistoryRecorder's completed-image
+    // path calls NotifySaved directly (it writes its own already-captured pixel snapshot rather
+    // than going through SaveAsync, see IReceivedImageBuffer.NotifySaved's own doc comment for
+    // why), but both call sites need the identical isolation-and-log contract for a throwing
+    // subscriber.
+    public void NotifySaved(string path, int generation) => RaiseSaved(path, generation);
+
+    private void RaiseSaved(string path, int generation)
+    {
+        try
+        {
+            Saved?.Invoke(path, generation);
+        }
+        catch (Exception ex)
+        {
+            Log.SavedSubscriberFailed(_logger, path, ex);
+        }
     }
 
     private void OnModeDetected(SstvModeDefinition mode)
