@@ -3000,13 +3000,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // (spec/18-path-to-1.0.md Critical item 1 / item 8) -- this is now the rarer
                 // "genuinely no audio device available at all" case, not "user never opened
                 // Options."
-                Log.NoDeviceConfigured(_logger, kind);
+                //
+                // Tier B audit finding: SafeLog-wrapped, same as every other logging call in this
+                // file's cleanup/device-resolution paths (see SafeLog's own doc comment) -- a
+                // throwing logging provider here must not substitute a generic logging exception
+                // for the actionable InvalidOperationException message this method is about to
+                // throw anyway.
+                SafeLog(() => Log.NoDeviceConfigured(_logger, kind));
                 throw new InvalidOperationException($"No {kind} audio device configured, and no default {kind} device is available -- set one in Options before starting a session.");
             }
 
             await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
             var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
-            Log.ConfiguredDeviceNotFound(_logger, kind, deviceId, devices.Count);
+            SafeLog(() => Log.ConfiguredDeviceNotFound(_logger, kind, deviceId, devices.Count));
             throw new InvalidOperationException($"Configured {kind} device '{deviceId}' was not found among currently available devices.");
         }
 
@@ -3043,7 +3049,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
         var fallback = devices.FirstOrDefault(d => d.IsDefault);
         if (fallback is not null)
         {
-            Log.UsingDefaultDevice(_logger, forCapture ? "capture" : "playback", fallback.Name);
+            // Tier B audit finding: this sat unwrapped on the SUCCESS path -- a throwing logging
+            // provider here (this file's own stated threat model, see SafeLog's own doc comment)
+            // would throw out of TryResolveDeviceAsync AFTER a device was already successfully
+            // resolved into `fallback`, taking down every caller: StartReceivingAsync (RX dead),
+            // TransmitAsync/TuneAsync (TX dead), and both GetConfigured*DeviceNameAsync readouts.
+            // Same shape round 22 already fixed for Log.RxStarted/Log.RxStopped ("a throwing
+            // provider still propagated out of this method after capture had genuinely started",
+            // see that round's own comment near RxStarted's call site) -- the identical
+            // "one method has the guard, a near-identical sibling doesn't" pattern, just on the
+            // device-resolution path instead of the RX-start path.
+            SafeLog(() => Log.UsingDefaultDevice(_logger, forCapture ? "capture" : "playback", fallback.Name));
         }
 
         return fallback;
