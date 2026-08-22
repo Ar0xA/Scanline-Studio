@@ -443,6 +443,25 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(vm.IsCancelArmed);
     }
 
+    [AvaloniaFact]
+    public void Cancel_ArmedThenUndoHappens_DisarmsTheConfirm()
+    {
+        // Tier B audit finding: Undo/Redo (both funnel through ApplyState) never disarmed
+        // IsCancelArmed/_pendingRecallTemplateId, unlike every other real-edit path
+        // (PushUndoSnapshot/PushUndoSnapshotCoalesced both do) -- an Undo is a real state change
+        // too, same reasoning Cancel_ArmedThenARealEditHappens_DisarmsTheConfirm above already pins
+        // for a normal edit. Without the fix, a stale arm from long before an unrelated LATER
+        // Cancel click would silently skip its own warning.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.CancelCommand.Execute(null);
+        Assert.True(vm.IsCancelArmed);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.IsCancelArmed);
+    }
+
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
     // within SmallMode's 8x8 working-copy budget (so _workingCopy IS _originalSource, the common
     // small-image case) unless a test specifically needs the two to be distinct instances.
@@ -834,6 +853,53 @@ public sealed class TxImageEditorPaneViewModelTests
 
         vm.UndoCommand.Execute(null);
         AssertClose(20, vm.Brightness);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        AssertClose(0, vm.Brightness);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SwitchingSelection_DoesNotTriggerAPipelineRecompute()
+    {
+        // Tier B audit finding: IsSelected/IsEditingText are pure interaction state, the same tier
+        // as Locked/IsBackground/BlocksHitTesting (already filtered out of
+        // OnOverlayElementPropertyChanged's recompute trigger), but weren't filtered -- clicking a
+        // different element on the canvas flips IsSelected false on the old element and true on the
+        // new (OnSelectedOverlayElementChanged's own loop), firing TWO extra full
+        // Crop->Resize->ApplyAdjustments->ApplyTemplate passes for a change that can never affect
+        // pipeline output.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        var elementA = vm.OverlayElements[0];
+        var elementB = vm.OverlayElements[1];
+        vm.SelectedOverlayElement = elementA;
+        var callCountBefore = preparer.ApplyTemplateCallCount;
+
+        vm.SelectedOverlayElement = elementB;
+
+        Assert.Equal(callCountBefore, preparer.ApplyTemplateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void Undo_LandingInsideAnOpenCoalescingWindow_TheNextEditToTheSamePropertyStillPushesAFreshStep()
+    {
+        // Tier B audit finding: Undo (and Redo, via the same ApplyState path) never reset
+        // _pendingCoalesceProperty, unlike PushUndoSnapshot/PushUndoSnapshotCoalesced, which both
+        // do. An Undo landing inside an open coalescing window (no Dispatcher-idle continuation has
+        // run yet to naturally close it) left the marker pointing at the just-reverted property, so
+        // the VERY NEXT edit to that SAME property hit PushUndoSnapshotCoalesced's own
+        // "_pendingCoalesceProperty == propertyName -> return" early-out and silently pushed NOTHING
+        // -- the edit was applied (Brightness really did change) but became invisibly non-undoable,
+        // with UndoCommand.CanExecute reading false even though the document was actually dirty.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Brightness = 20; // opens a coalescing window for Brightness -- no RunJobs, window still open
+        vm.UndoCommand.Execute(null); // Brightness -> 0; ApplyState must reset the coalescing marker
+        vm.Brightness = 30; // must push a FRESH step, not silently no-op against the gone snapshot
+
         Assert.True(vm.UndoCommand.CanExecute(null));
         vm.UndoCommand.Execute(null);
         AssertClose(0, vm.Brightness);

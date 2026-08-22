@@ -6950,3 +6950,76 @@ a fill-bar single-field-edit path with the identical bug its own bulk-clear sibl
 fixed to avoid, a stale-reference undo-stack pollution gap), deliberately deferred 1 finding
 (fill-bar edits not undo-tracked) as a genuine but non-corrupting UX design question rather than a
 clear-cut fix; round 2 clean GO, no further action. Area C remains -- chunk 13.
+
+## Chunk 13: TxImageEditorPaneViewModel.cs, Area C (rotate/crop math/undo-redo/state snapshot)
+
+Third and last of 3 area-based sub-chunks for this 3911-line file (the largest in the whole Tier B
+sweep) -- and the last chunk of the entire `UI/ViewModels` sweep. Area C: `Rotate`/`RotateImageOnly`,
+crop-rect manipulation (`ApplyCropMove`/`ApplyCropResize`/`ApplyCropResizeAspectLocked`),
+`RecomputePreview`, `Undo`/`Redo`/`Revert`/`PushUndoSnapshot`/`PushUndoSnapshotCoalesced`,
+`ApplyState`, `OnOverlayElementPropertyChanged`, the `Log` class -- roughly lines 2888-3911, to the
+end of the file.
+
+**Round 1** -- unconditional GO, no blockers, 3 risk-tier findings (auditor explicitly stated
+neither of the two worth-fixing findings needs a second round to land):
+
+- **[risk]** `Undo`/`Redo` (both funnel through `ApplyState`) never reset `_pendingCoalesceProperty`,
+  unlike `PushUndoSnapshot`/`PushUndoSnapshotCoalesced`, which both do. An Undo landing inside an
+  open coalescing window (e.g. right after a slider edit, before that edit's own coalesce window
+  naturally closes) left the marker pointing at the just-reverted property -- the VERY NEXT edit to
+  that SAME property then hit `PushUndoSnapshotCoalesced`'s own `_pendingCoalesceProperty ==
+  propertyName -> return` early-out and silently pushed NOTHING. The edit was still applied (the
+  value really did change) but became invisibly non-undoable, with `HasUnsavedEdits` reading false
+  while the document was actually dirty.
+- **[risk]** `OnOverlayElementPropertyChanged`'s recompute-trigger filter was missing `IsSelected`/
+  `IsEditingText` -- both are pure interaction state, the same tier as `Locked`/`IsBackground`/
+  `BlocksHitTesting` (already filtered), but weren't filtered themselves. Clicking a different
+  element on the canvas flips `IsSelected` false-then-true across two elements
+  (`OnSelectedOverlayElementChanged`'s own loop), firing TWO extra full `Crop->Resize->
+  ApplyAdjustments->ApplyTemplate` passes, two extra `RescanTemplateVariables` sweeps, and two extra
+  `PreviewImage` bitmap allocations for a change that can never affect pipeline output. Output stays
+  correct -- this is a perf-only fix, the exact class the filter's own doc comment exists to
+  prevent.
+- **[risk, folded into the same fix]** `Undo`/`Redo` also never disarmed `IsCancelArmed`/
+  `_pendingRecallTemplateId`, unlike every real-edit path (`PushUndoSnapshot`/
+  `PushUndoSnapshotCoalesced` both do) -- `IsCancelArmed`'s own doc comment already states the
+  invariant ("a stale arm from long before would silently skip the warning on a LATER, unrelated
+  Cancel click"); an Undo is a real state change and wasn't treated as one.
+
+No blocker: round 1 could not construct a scenario in Area C that produces wrong pipeline output, a
+crash, or lost document state. `Undo`/`Redo` stack symmetry, `ApplyState`'s field-by-field restore
+completeness (including deliberately NOT re-sorting elements by Z on re-add, which is correct here
+unlike the constructor/template-load paths -- an undo must restore the exact prior collection order,
+including a legitimately Z-tied order), the rotate/crop-transform math (re-derived by hand against
+this codebase's own top-left-origin/Y-down convention, not assumed from comments), and every
+`_suspendPreview` site's try/finally correctness were all independently verified clean.
+
+Fixed: `ApplyState` now resets `IsCancelArmed = false; _pendingRecallTemplateId = null;
+_pendingCoalesceProperty = null;` as its first three statements, before `_suspendPreview = true` --
+covers `Undo`, `Redo`, and `Revert` (which just calls `Undo` repeatedly) in one place, matching
+`PushUndoSnapshot`'s own established reset list. `OnOverlayElementPropertyChanged`'s filter gained
+`ITemplateElementViewModel.IsSelected`/`OverlayElementViewModel.IsEditingText` alongside the existing
+`Locked`/`IsBackground`/`BlocksHitTesting` pure-interaction-state group.
+
+Three regression tests added: `Undo_LandingInsideAnOpenCoalescingWindow_
+TheNextEditToTheSamePropertyStillPushesAFreshStep` -- a direct, non-timing-dependent discriminator
+(`Brightness = 20` opens a coalescing window with no `RunJobs()`, Undo reverts to 0, `Brightness =
+30` must push a fresh step; pre-fix this silently pushed nothing, so `UndoCommand.CanExecute`
+read false where the fix makes it true); `SwitchingSelection_DoesNotTriggerAPipelineRecompute`,
+asserting `FakeTransmitImagePreparer.ApplyTemplateCallCount` is unchanged across a selection swap;
+`Cancel_ArmedThenUndoHappens_DisarmsTheConfirm`, mirroring the existing `Cancel_
+ArmedThenARealEditHappens_DisarmsTheConfirm` test's own pattern with Undo as the real-edit trigger.
+323/323 `UI.Tests` pass for this file (was 320, +3), 710/710 full suite (was 707, +3), clean
+solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with no blockers, and the
+auditor explicitly stated neither of the two findings worth fixing needed a second round to land
+(precedented by Tier A's own "unconditional go, no round 2 needed" chunks, e.g. 7a/7b/7c). The two
+fixes were applied with full end-to-end tracing of their own suppression/reset mechanisms (not just
+pattern-matched from the auditor's suggestion) and verified via genuinely discriminating regression
+tests before closing.
+
+**Chunk 13 (Area C) CLOSED (2026-08-22)** -- 1 round (unconditional GO), 2 real risk-tier fixes
+applied without a confirmation round. This closes ALL 3 areas of `TxImageEditorPaneViewModel.cs`
+(chunks 11-13) and, with it, the ENTIRE `UI/ViewModels` sweep (13/13 chunks). Next: Step 0 triage on
+the remaining `Application` files, not yet started.
