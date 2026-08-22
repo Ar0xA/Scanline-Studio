@@ -327,7 +327,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// genuinely running inside a native capture-start call that does not respect `ct` mid-flight) can
     /// hold this gate indefinitely, and every later Start needed its own bound to avoid hanging behind
     /// it forever -- unlike Stop's timeout, Start's THROWS <see cref="TimeoutException"/> rather than
-    /// silently no-op'ing, since a caller of Start needs to know capture did not actually start.</summary>
+    /// silently no-op'ing, since a caller of Start needs to know capture did not actually start.
+    /// Tier B audit finding (Area 5, nit): same non-disposal contract as <see cref="_pttLockGate"/>
+    /// above, for the same reason (deliberately never disposed by <see cref="DisposeAsync"/> -- see
+    /// that field's own round-14 note) -- <see cref="StopReceivingAsync"/> must stay callable post-
+    /// dispose on a still-usable primitive.</summary>
     private readonly SemaphoreSlim _rxTransitionGate = new(1, 1);
 
     /// <summary>Manual-keying diagnostic aid (e.g. a "PTT lock" button) -- keys PTT immediately and
@@ -1113,6 +1117,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // that class evolves on its own schedule. Not re-verified as part of this chunk (out of
             // scope -- MiniAudioEngine is a different project); flagging the overstated claim, not
             // fixing or re-confirming the underlying question.
+            //
+            // Tier B Area 5 finding (risk, not fixed -- documented): this synchronous call now
+            // contends for _rxTransitionGate (Tier B Area 3's own addition) exactly like every other
+            // StopReceivingAsync caller. If DisposeAsync is concurrently inside ITS OWN
+            // StopReceivingAsync call (holding the gate, itself blocked on StopCaptureAsync's own
+            // drain-thread join) at the exact moment this event fires FROM that same drain thread,
+            // this call now blocks on the gate for up to _cleanupTimeout (5s) instead of returning in
+            // microseconds the way it did before that gate existed -- the "handlers are already
+            // detached" reasoning below covers a handler that already RETURNED, not one still
+            // in-flight and now blocked on this exact gate. Not a deadlock: DisposeCaptureSessionAsync
+            // dispatches the drain-thread join via Task.Run for a non-drain-thread caller (verified),
+            // so DisposeAsync's own wait is genuinely bounded, and this call's own gate wait is
+            // likewise bounded -- but a 5s shutdown stall is a real, new cost this event's handler
+            // did not pay before Area 3's gate existed.
             StopReceivingAsync().GetAwaiter().GetResult();
             _maintenanceWarningActive = false;
             // Round-22 finding (nit): a throwing log call here used to skip Invoke() below entirely
@@ -1641,12 +1659,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // host-teardown bound as this (3s) + the backstop un-key's own CleanupTimeout (5s) = 8s worst
     // case.
     //
-    // Round-22 finding (nit): that arithmetic is now stale -- round 16 added a 5s StopCapture
-    // watchdog inside StopReceivingAsync, which DisposeAsync also calls, bringing the real worst case
-    // to roughly 13s, plus Waterfall.Dispose()/Decoder.Dispose() (both unbounded, out of this chunk's
-    // scope). No PTT consequence today -- the backstop un-key is deliberately ordered first and
-    // completes well inside its own budget regardless of what runs after it -- but a future round
-    // sizing a NEW budget against this comment's original "8s worst case" claim would be misled.
+    // Round-22 finding (nit), Tier B Area 5 update: that arithmetic is now stale AGAIN, and by more
+    // than round 22's own correction accounted for -- round 16 added a 5s StopCapture watchdog inside
+    // StopReceivingAsync (bringing the total to ~13s, round 22's own figure), and Tier B Area 3 then
+    // added a SEPARATE 5s bounded wait of its own to StopReceivingAsync's own gate acquisition (see
+    // _rxTransitionGate's doc comment) -- both sit in the SAME call, back to back, not overlapping.
+    // Current real worst case: this wait (3s) + backstop un-key (5s) + StopReceivingAsync's own gate
+    // wait (5s) + its StopCapture watchdog (5s) = ~18s, plus Waterfall.Dispose()/Decoder.Dispose()
+    // (both unbounded, out of this chunk's scope), against Program.cs's own ~10s total host-teardown
+    // bound -- and that 10s is itself shared with every OTHER singleton disposed before this one, not
+    // reserved for this class alone. Still no PTT consequence: the safety-critical prefix (this wait +
+    // the backstop un-key) is ordered first and totals 8s, still inside the 10s bound, and a timed-out
+    // host teardown (Program.cs's own catch) logs and exits rather than killing mid-step -- so an
+    // overrun only costs the LATER, non-safety-critical steps (RX stop, waterfall/decoder disposal),
+    // not PTT-off. A future round sizing a NEW budget against either this comment's or round 22's own
+    // superseded figures would still be misled -- ~18s, not ~13s, is the number to size against now.
     private static readonly TimeSpan InFlightKeyedTransmitWait = TimeSpan.FromSeconds(3);
 
     // Round-13 finding: EnqueueAllAsync's own "buffer full, wait 10ms, retry" loop (see its own

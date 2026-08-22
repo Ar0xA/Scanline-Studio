@@ -7604,3 +7604,77 @@ bugs latent in Area 4 alone) -- exactly the kind of cross-area interaction this 
 callee-first, cross-cutting-invariant review structure exists to catch. 1 risk-tier finding
 (timeout-budget arithmetic staleness, `docs`/comment-only) and 2 remaining nits stay deferred/
 batched. Area 5 (`DisposeAsync` + `AwaitInFlightKeyedTransmitAsync`) remains -- the last area.
+
+### Area 5: `DisposeAsync` + `AwaitInFlightKeyedTransmitAsync` (the final area)
+
+**Round 1 verdict: GO** -- no blockers. Everything Area 5 uniquely owns or consumes verified clean:
+it neither bumps nor duplicates the epoch pair (delegates entirely to `UnkeyForCleanupAsync`,
+already verified); its own read of the "believed keyed" triple is correct against every publisher
+across all four other areas; `AwaitInFlightKeyedTransmitAsync`'s handling of
+`_keyedTransmitCompletion`/`_keyedTransmitCount` is correct for the zero/in-flight/overlapping-TCS
+cases (the overlap case degrades exactly as documented -- the wait misses the older call, but the
+count-based backstop still catches it); `_disposed`'s publish-then-fence is still the literal first
+two statements, still correctly ordered before every subsequent teardown step; its own
+`StopReceivingAsync()` call correctly benefits from Area 3's bounded-gate fix (cannot hang here);
+`SafeLog` coverage complete (7/7 sites).
+
+**Resolved the sweep's one standing open question (timeout-budget arithmetic, deferred since Area
+3's own round):** recomputed from the REAL current code, not the stale in-code comment. Production
+worst case is now **~18s** (`AwaitInFlightKeyedTransmitAsync`'s 3s + backstop un-key's 5s +
+`StopReceivingAsync`'s own gate wait, Area 3's addition, 5s + its `StopCapture` watchdog 5s), plus
+unbounded `Waterfall.Dispose()`/`Decoder.Dispose()`, against `Program.cs`'s own ~10s total
+host-teardown bound -- which is itself shared with every OTHER singleton disposed before this one,
+not reserved for this class alone. **This does not fit inside the bound.** Not a blocker, though:
+the safety-critical prefix (the 3s wait + the 5s backstop un-key, both ordered first) totals 8s,
+still inside the 10s bound, and a timed-out host teardown logs and exits rather than killing
+mid-step -- so an overrun only costs the later, non-safety-critical steps (RX stop, waterfall/decoder
+disposal), never PTT-off. Fixed: corrected the stale in-code comment (previously said "~13s",
+missing Area 3's own 5s gate-wait addition) to the real ~18s figure, with the safety-prefix reasoning
+spelled out so a future round sizing a new budget isn't misled again.
+
+**One new risk surfaced by Area 3's gate, also fixed via comment (not code):** `DisposeAsync`'s own
+`StopReceivingAsync()` call can now contend for `_rxTransitionGate` against
+`OnDecoderRestartCriticallyOverdue`'s synchronous `StopReceivingAsync().GetAwaiter().GetResult()`
+call from the audio drain thread -- pre-Area-3 this returned in microseconds; it can now block the
+drain thread for up to `_cleanupTimeout` (5s) if that event fires while `DisposeAsync` holds the
+gate. Verified deadlock-free (not just assumed): `MiniAudioEngine`'s own `DisposeCaptureSessionAsync`
+dispatches the drain-thread join via `Task.Run` for a non-drain-thread caller, so `DisposeAsync`'s own
+wait is genuinely bounded, and the drain thread's own gate wait is likewise bounded -- both bounds
+existing simultaneously is what keeps this a stall, not a deadlock. Documented at the call site and
+on `_rxTransitionGate`'s own field doc; not a code fix, since removing the stall would mean either
+un-bounding a wait (unsafe) or accepting a bounded native-engine-level rewrite outside this chunk's
+scope.
+
+3 nits noted, all deferred as genuinely low-value: no unsubscribe of maintenance events in
+`DisposeAsync` (harmless -- both objects are disposed together, all three handlers are fully
+try/caught); `_rxTransitionGate`'s non-disposal contract was undocumented (fixed via comment, same
+round-14 precedent `_pttLockGate` already established); no dedicated test exercises `DisposeAsync`
+racing a held gate (the existing gate-timeout tests all drive `Start`/`StopReceivingAsync` directly,
+not through `DisposeAsync` -- the scenario is now documented in comments in lieu of a new test,
+consistent with this sweep's practice of skipping tests for defensive/documentation-tier findings
+where the mechanism is already covered by other tests). Re-verified 253/253 `Application.Tests` pass,
+clean solution-wide build after the comment fixes.
+
+**Area 5 CLOSED (2026-08-22)** -- 1 round (GO, no blockers) -- the only area of all five that closed
+without a NOT GO round. Resolved the sweep's one standing cross-area open question (timeout-budget
+arithmetic) with a concrete recomputed number instead of leaving it open indefinitely.
+
+## SstvSessionService.cs (chunk 5) -- ALL 5 AREAS CLOSED (2026-08-22)
+
+Full CLAUDE.md §7 concurrency cadence (plan-review + per-area code-review, up to 3 rounds each) as
+the user explicitly chose for this file. 8 real bugs found and fixed across the file's ~3300 lines:
+3 in Area 2 (`SetPttLockAsync`'s catch-filter regressions), 2 in Area 3 (RX Start/Stop race + CW-ID
+settings bounds), 2 in Area 4 (abandoned-RX-resume hazards newly introduced by Area 3's own fix), 0
+new bugs in Area 1 or Area 5 beyond a `SafeLog` gap and documentation fixes respectively. Every
+area's fix was verified in a separate confirmation round before closing (except Areas 1 and 5, which
+closed clean on round 1 with the auditor's own explicit "no round 2 needed"). This is the LAST file
+in the Tier B functional-audit sweep.
+
+## TIER B FUNCTIONAL-AUDIT SWEEP -- FULLY CLOSED (2026-08-22)
+
+Every chunk across the whole codebase is now closed: `Core.Logbook` (5 chunks), `Core.Imaging` (3
+chunks), `UI/ViewModels` (13 chunks), and all "remaining `Application` files" (4 standard-cadence
+chunks -- `MaidenheadLocator.cs`+`MacroTextResolver.cs`, `RadioSessionService.cs`+
+`LogbookSessionService.cs`, `OptionsSettingsService.cs`, `TemplateStore.cs` -- plus
+`SstvSessionService.cs`'s 5-area full-cadence review above). Real bugs were found and fixed in
+essentially every chunk. See each chunk's own writeup above for full detail.
