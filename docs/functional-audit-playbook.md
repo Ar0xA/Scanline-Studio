@@ -7223,3 +7223,86 @@ net-negative trade -- not a gap in this round's own coverage.
 **Chunk 3 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier sibling-
 inconsistency bug fixed preventatively; 1 finding re-confirmed and re-deferred to the same
 `ISettingsStore`-level backlog item chunk 2 already opened.
+
+## Chunk 4: TemplateStore.cs
+
+This file was already extensively read and traced during UI/ViewModels chunk 11
+(`TxImageEditorPaneViewModel.cs` Area A), which found and fixed a real blocker in the CALLER's own
+overwrite-save logic (`SaveTemplateAsync` used to delete a pre-existing template up front, then
+delete it again unconditionally on failure). This chunk audits `TemplateStore.cs` itself -- the
+actual persistence-layer implementation -- independently, not a re-audit of that already-closed
+caller-side fix.
+
+**Round 1** -- unconditional GO, no blockers, 3 risk-tier findings (auditor explicitly said none
+justified dispatching another round, though recommended fixing 2 as "highest value"):
+
+- **[risk]** `ListAsync`'s per-template corrupt-manifest guard caught only `JsonException` -- but
+  `IOException` (a file locked mid-sync by OneDrive/Dropbox, or a concurrent writer),
+  `UnauthorizedAccessException`, and a TOCTOU race against the `File.Exists` check just above (a
+  fire-and-forget `RefreshAsync` running concurrently with a `DeleteAsync` on that exact template)
+  all hit the IDENTICAL "one bad template must not blank the WHOLE rack" scenario the
+  `JsonException` catch was already added to fix (Tier A Batch 10 chunk 10b) -- just via a
+  different exception type the guard never covered.
+- **[risk]** `LoadAsync` returned `manifest.Elements` directly with no null guard -- a missing or
+  explicitly-null `"Elements"` property in a hand-edited `template.json` deserializes with NO
+  `JsonException` (this format explicitly supports hand-copying/editing template folders, per its
+  own doc comment), so the caller's `.Count` read NREs instead of degrading gracefully. Same root
+  cause, same fix needed for an individual `null` entry WITHIN the list (`"Elements":[null, {...}]`)
+  -- this file's OWN `RenderThumbnailAsync`/`ToTemplateElementAsync` (used on every re-save)
+  dereferences each element directly, NREing on the switch's own `default:` arm.
+- **[risk, security hardening]** `GetAssetPath` builds `Path.Combine(templateDir, "assets",
+  assetFileName)` with no validation that `assetFileName` is a bare file name -- `Path.Combine`
+  rejects neither `../` traversal nor a rooted path. The WRITE side is never at risk (asset
+  filenames are always freshly minted GUIDs, never persisted/attacker-influenced), but the READ
+  side (loading a shared/downloaded template folder -- this format's own documented distribution
+  mechanism) could point the app at an arbitrary file elsewhere on disk via a malicious/malformed
+  manifest. Auditor's own characterization: "hardening, not exploitation" (a non-image target just
+  fails to decode; the wrong image loading into the visible editor canvas is not silent).
+
+Also verified clean (not findings): `SaveAsync`'s write order (thumbnail then manifest) is the SAFE
+order -- a thumbnail failure aborts before `template.json` exists, so `ListAsync`'s own gate never
+shows a manifest-less template; `DeleteAsync` is a correct no-op on a non-existent id (a caller's
+own cleanup path explicitly depends on this) and removes `assets/` too via `recursive: true`;
+`CreateTemplateId`'s slug-sanitization whitelists `[a-z0-9-]`, making path traversal via a
+user-typed NAME impossible (as opposed to a persisted asset filename, the actual finding above);
+`LoadAsync` never touches asset files itself, so a missing/deleted asset can't take down a template
+load from this layer.
+
+Fixed: `ListAsync`'s catch broadened to `catch (Exception ex) when (ex is JsonException or
+IOException or UnauthorizedAccessException)` (still lets `OperationCanceledException` propagate --
+a real cancellation must still abort the whole call, not be treated as "one bad template").
+`LoadAsync` now filters `manifest.Elements ?? []` through an explicit loop that skips any null
+entry, so every downstream consumer -- this file's own `RenderThumbnailAsync` and the caller's own
+snapshot mapping -- always sees a clean, non-null list. `GetAssetPath` now throws
+`InvalidOperationException` when `Path.GetFileName(assetFileName) != assetFileName` (rejects both
+traversal and rooted paths) -- kept as a throw (not a per-element skip) since this file's own
+`SaveAsync`/`RenderThumbnailAsync` path already treats a thumbnail-render failure as "abort the
+whole save cleanly" by design, and a throw from the UI-layer load path (a different, already-closed
+chunk) surfaces as a clear, loud load-failure error rather than a silent partial-degrade -- a
+reasonable, conservative outcome for a deliberately-malicious-manifest scenario specifically, not
+weakened by attempting a more invasive per-element skip across a file this chunk doesn't own.
+
+Six regression tests added: `LoadAsync_ManifestWithNullElementsProperty_
+ReturnsEmptyDocumentInsteadOfThrowing`, `LoadAsync_ManifestWithANullElementInTheList_
+SkipsItInsteadOfThrowing` (derives its JSON from a REAL save, then hand-injects the one malformed
+`null` entry a real save could never produce, rather than hand-typing a JSON literal that would
+need to guess `Rgb24`'s own exact JSON shape), `GetAssetPath_AssetFileNameEscapesTheAssetsFolder_
+Throws` (3 theory cases: `../`, a nested traversal, a rooted path) + `GetAssetPath_
+OrdinaryAssetFileName_StillWorks` (a legitimate GUID-shaped name must still pass). No dedicated
+test added for the broadened `ListAsync` catch -- reliably triggering a real `IOException`/
+`UnauthorizedAccessException` (as opposed to `JsonException`, already tested) from a portable xunit
+test without a platform-dependent trick (file locking behaves differently between Windows and Linux)
+was judged not worth the added fragility for a fix that's correct by inspection and mirrors an
+already-tested sibling catch exactly. 20/20 `Application.Tests` pass for this file (was 14, +6),
+246/246 full suite (was 240, +6), clean solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with no blockers, and the
+auditor explicitly said none of the findings justified dispatching another round. All 3 fixes were
+applied with full reasoning about blast radius (specifically: whether to throw vs. skip-per-element
+for the security-hardening fix, deliberately choosing the more conservative throw given the
+attacker-crafted-manifest scenario it protects against) rather than pattern-matched from the
+auditor's own suggested one-liner.
+
+**Chunk 4 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 3 real risk-tier fixes applied
+(broadened exception handling matching an already-established sibling guard, null-safety on a
+hand-editable manifest format, and a path-traversal hardening fix) without a confirmation round.
