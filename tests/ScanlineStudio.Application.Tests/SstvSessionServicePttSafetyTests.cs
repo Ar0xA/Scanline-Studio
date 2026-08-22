@@ -1480,6 +1480,37 @@ public sealed class SstvSessionServicePttSafetyTests
     }
 
     [Fact]
+    public async Task TierBAuditFinding_TryResolveDeviceAsync_UsingDefaultDeviceLogThrows_DoesNotMaskTheAlreadyResolvedDevice()
+    {
+        // Tier B audit finding (Area 1 of the SstvSessionService.cs concurrency-cadence sweep):
+        // Log.UsingDefaultDevice used to sit unwrapped on the SUCCESS path -- a throwing logging
+        // provider there would throw out of TryResolveDeviceAsync AFTER a device was already
+        // successfully resolved, taking down every caller (StartReceivingAsync, TransmitAsync/
+        // TuneAsync, both GetConfigured*DeviceNameAsync readouts). Same shape an earlier round
+        // already fixed for Log.RxStarted/Log.RxStopped (the test right above this one) -- SafeLog
+        // now guards it, so a logging fault must not mask an otherwise-successful device
+        // resolution.
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025], IsDefault: true)],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = null, SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var (service, engine, _, logger) = CreateService(deviceEnumerator: deviceEnumerator, settingsStore: settingsStore);
+        logger.ThrowOnMessageContaining = "using backend-reported default";
+
+        await service.TransmitAsync(TestMode, TestImage).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.NotEmpty(((FakeAudioEngine)engine).PlaybackSamples);
+    }
+
+    [Fact]
     public async Task Round19_SetPttLockAsync_UnlockCommand_CallerCancellationDoesNotReachTheCommandItself()
     {
         // Round-19 finding 2: the identical gap round 18 closed in TryUnkeyPttAsync survived here --

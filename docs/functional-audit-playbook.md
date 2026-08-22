@@ -7306,3 +7306,87 @@ auditor's own suggested one-liner.
 **Chunk 4 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 3 real risk-tier fixes applied
 (broadened exception handling matching an already-established sibling guard, null-safety on a
 hand-editable manifest format, and a path-traversal hardening fix) without a confirmation round.
+
+## Chunk 5: SstvSessionService.cs -- full §7 concurrency cadence
+
+The last file in the Tier B "remaining Application files" scope, and the largest file in the whole
+Tier B sweep (3188 lines, larger than `TxImageEditorPaneViewModel.cs`, which needed a 3-way split).
+PTT keying/unkeying, transmit playback watchdogs, RX start/stop, cleanup races -- real concurrency,
+per CLAUDE.md §7 this is non-negotiable for a full plan-review + up-to-3-round code-review per area,
+not this sweep's usual lighter "1 round + 1 confirmation" default. User confirmed this cadence
+explicitly (2026-08-22), as an alternative to Tier B's default or skipping the file entirely.
+
+**Plan-review (2026-08-22)** -- proposed a 5-area split by concurrency-risk concentration in
+naive top-to-bottom order (fields/PTT-lock → RX/TX entry → `PlayWithPttAsync` → cleanup/watchdog →
+disposal). Plan-review found this order backwards: `SetPttLockAsync` (the fields/PTT-lock area) and
+`PlayWithPttAsync` both call into the cleanup helpers repeatedly, and this file's OWN documented
+history (round 20: "`TryUnkeyPttAsync`'s own 'never throws' contract turned out to be false") is
+exactly what happens when a caller is reviewed against an unverified callee contract. Reshaped to
+callee-first: helpers audited before their two caller areas. Two area-boundary doc-comment offsets
+also corrected (a boundary landing between a field/method and its own explanatory comment).
+Plan-review also produced 8 cross-cutting invariants (epoch-pair protocol, "believed keyed" belief
+triple, `_keyedTransmitCompletion` publish-clear pairing, an un-fenced-by-design handoff flag,
+`_disposed` fencing, timeout-budget arithmetic, `SafeLog` coverage, `_isReceiving` check-then-act)
+that this file has gotten wrong multiple times before (6, 3, and other repeat-finding counts cited
+per-invariant) precisely because a per-area reviewer only sees their own slice -- these are now
+carried into every area's own audit prompt explicitly, not left implicit. Full plan (5 areas, line
+ranges, all 8 invariants with site line numbers) recorded durably in `PROJECT_BRIEF.md` for
+cold-start resume, since this is a multi-session undertaking.
+
+### Area 1: shared cleanup/pump/device helpers (lines 2336-2709 + 2888-3070)
+
+`UnkeyForCleanupAsync`, `StopPlaybackWithWatchdogAsync`, `TryUnkeyPttAsync`, `SafeLog`,
+`TryCleanupAsync`, `ResumeReceivingBoundedAsync`, `GenerateTone`, `PumpToPlaybackAsync`,
+`ReportTransmitProgress`, `EnqueueAllAsync`, `ResolveDeviceAsync`, `TryResolveDeviceAsync`,
+`Get*DeviceNameAsync`, `LoadAudioSettingsAsync`. Audited first per the plan-review's callee-first
+ordering.
+
+**Round 1** -- unconditional GO, no blockers, 1 risk-tier finding plus a required whole-file
+`SafeLog` coverage enumeration (cross-cutting invariant #7):
+
+- **[risk]** `Log.UsingDefaultDevice` sat unwrapped on the SUCCESS path in `TryResolveDeviceAsync`
+  -- a throwing logging provider (this file's own stated threat model) would throw AFTER a device
+  was already successfully resolved into `fallback`, taking down every caller:
+  `StartReceivingAsync` (RX dead), `TransmitAsync`/`TuneAsync` (TX dead), and both
+  `GetConfigured*DeviceNameAsync` readouts. Textbook "one method has the guard, a near-identical
+  sibling doesn't" -- `Log.RxStarted`/`Log.RxStopped` were `SafeLog`-wrapped for VERBATIM this
+  shape in an earlier audit round ("a throwing provider still propagated out of this method after
+  capture had genuinely started"), but the device-resolution success-path log call never got the
+  same treatment.
+- **Whole-file `SafeLog` coverage enumeration** (required this round, since `SafeLog` itself lives
+  in Area 1, and 2 PRIOR rounds each separately claimed "applied everywhere" and were each wrong
+  per the file's own doc comment): 71 `Log.*` call sites total, 62 already `SafeLog`-wrapped, 9
+  unwrapped -- 6 of the 9 are on command-preamble/UI-command paths before any PTT state is latched
+  (correctly unwrapped, not findings), the 3 device-resolution ones are the finding above plus 2
+  nits (both immediately precede a `throw`, so a logging fault there only substitutes the
+  exception identity, no state is skipped). **Zero** unwrapped calls remain inside any
+  `catch`/`finally`/cleanup step/fault-observer/disposal path anywhere in the whole file -- this
+  result is recorded here for later areas' reviewers to rely on, not re-derive.
+
+Also verified clean (not findings, cross-cutting invariants #1/#2/#3/#5 as they touch Area 1):
+epoch-pair snapshot/recheck/bump ordering in `UnkeyForCleanupAsync` matches the documented rule and
+its sibling in Area 2 exactly, with no `_pttKeyEpoch` bump site in Area 1 (correct -- Area 1 never
+issues a keying command, so nothing here can key-and-fail-to-record); the "believed keyed" triple's
+only Area-1 site is the three-flag clear, done together under the epoch guard; Area 1 touches
+neither `_keyedTransmitCompletion` nor `_keyedTransmitCount` at all (verified via whole-file grep);
+`_disposed` fencing not applicable to Area 1 (no recheck sites here); cancellation mid-cleanup
+cannot abandon a partial unkey/stop on any Area-1 path; capture/playback device-resolution branches
+symmetrically on `forCapture` with identical fallback rules both directions.
+
+Fixed: `Log.UsingDefaultDevice`'s call site now wrapped in `SafeLog(() => ...)`, matching the
+`RxStarted`/`RxStopped` precedent exactly. The two nit-tier unwrapped device-resolution log calls
+(`NoDeviceConfigured`/`ConfiguredDeviceNotFound`, both immediately preceding a `throw`) also wrapped
+in the same pass for consistency, per the auditor's own "wrap for consistency when touching this"
+recommendation. One regression test added (a throwing-logger scenario using the existing
+`RecordingLogger.ThrowOnMessageContaining` hook, configured with a default-device enumerator +
+`PlaybackDeviceId: null` settings so `TryResolveDeviceAsync`'s success path is actually exercised,
+asserting `TransmitAsync` still completes and enqueues real playback samples despite the logging
+fault). 247/247 `Application.Tests` pass (was 246, +1; one unrelated, non-reproducing timing flake
+in an already-known-flaky PTT-safety test on the first run, confirmed pre-existing on a clean
+re-run), clean solution-wide build.
+
+**No round 2 dispatched** -- round 1's own verdict was an unconditional GO with an explicit "do not
+dispatch another Area-1 round; move to the next area" call.
+
+**Area 1 CLOSED (2026-08-22)** -- 1 round (unconditional GO), 1 real risk-tier bug fixed plus the
+required whole-file `SafeLog` enumeration completed and recorded for later areas. Areas 2-5 remain.
