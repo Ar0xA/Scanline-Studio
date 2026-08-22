@@ -10,6 +10,24 @@
     <ApplicationIcon>..\ScanlineStudio.UI\Assets\app-icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- Opt-in, gated on RuntimeIdentifier being set (only true for a targeted publish, e.g.
+       `dotnet publish -r win-x64`, see build_windows.md's "Standalone build" section), so an
+       ordinary `dotnet build`/`dotnet run`/`dotnet test` and every CI leg (none of which set
+       RuntimeIdentifier) are completely unaffected. SelfContained bundles the .NET runtime itself
+       into the publish output, so the target machine needs no .NET install at all; PublishSingleFile
+       collapses the managed assemblies into one executable. The native audio shim
+       (yoniqaudio.dll/libyoniqaudio.so/libyoniqaudio.dylib, see PublishNativeShim* below) and a
+       handful of Avalonia's own native (Skia/ANGLE) libraries still ship as loose files alongside
+       that executable, not embedded into it: IncludeNativeLibrariesForSelfExtract would fold those
+       in too, but that self-extract-to-temp-on-every-launch path is unverified for this app on any
+       platform, so it's deliberately not turned on here. The loose-native-DLLs mechanism is the one
+       actually confirmed end-to-end: a real self-contained linux-x64 publish, run, and its
+       IAudioEngine resolving a real device, see PublishNativeShimLinux's own doc comment. -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
   <!--
     spec/18-path-to-1.0.md High item 5: no custom git-SHA-stamping target needed here. Confirmed
     empirically (not assumed) by building once WITH a hand-rolled short-git-SHA-stamping target
