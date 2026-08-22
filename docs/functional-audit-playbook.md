@@ -6755,3 +6755,94 @@ while a blank editor sat over a previously-applied edit skipped the mode/image-s
 a mismatched image straight to the encoder) plus 5 precedented risk-tier fixes, explicitly declined
 1 risk-tier finding as inconsistent with an established one-chunk-old precedent; round 2 clean GO
 with one more trivial fix (a misplaced doc comment) applied per standing practice.
+
+## Chunk 11: TxImageEditorPaneViewModel.cs, Area A (sources/elements/templates/presets)
+
+`TxImageEditorPaneViewModel.cs` (3911 lines, the largest file in the whole Tier B sweep) split into
+3 area-based sub-chunks, matching `TransmitImagePreparer.cs`'s own earlier Area A/B split precedent.
+Area A: constructor/properties/zoom, adding content to the canvas (file/clipboard/RX-history/stock
+sources), template save/load, text/field insertion presets -- roughly lines 1-2227. Areas B/C (element
+manipulation/reordering/Apply-Cancel; rotate/crop math/undo-redo/state) are chunks 12/13, not yet
+started.
+
+**Round 1** -- NOT GO. 1 real blocker plus 3 risk-tier findings, all in the tracked failure class:
+
+- **[blocker]** `SaveTemplateAsync`'s overwrite path (saving under an already-used name) deleted
+  the PRE-EXISTING template's whole folder up front, before writing anything new -- `SaveAsync`
+  itself does a thumbnail render + 2 file writes, any of which can throw (disk full, a network-
+  backed MyPictures, an AV lock, a permissions change), and the catch block's own cleanup-delete
+  then fired AGAIN on the SAME id unconditionally, permanently destroying the operator's real,
+  pre-existing template with no recovery path -- `StatusMessage` just read "Save template failed."
+  Real, unrecoverable user-data loss on a branch the code already anticipated enough to have written
+  a cleanup handler for (the handler was just scoped to the wrong case).
+- **[risk]** `existingId` (used to decide overwrite-vs-create) was resolved from
+  `ReadyRack.AllTemplates`, a SEPARATE VM's own in-memory projection populated by a fire-and-forget
+  `RefreshAsync()` call at editor-open time -- saving before that refresh completed (or after it
+  silently swallowed a transient failure) read a stale, possibly-EMPTY list, so an overwrite of a
+  real existing template could silently degrade into creating a duplicate instead -- exactly the bug
+  the overwrite-in-place feature exists to fix.
+- **[risk]** `ReadyRackViewModel`'s Load/RecallSlot commands are plain synchronous `[RelayCommand]`s
+  that just raise `TemplateSelected` into `OnReadyRackTemplateSelected` (an `async void`) --
+  CommunityToolkit's default no-concurrent-execution gate never applies here, so nothing serializes
+  two overlapping template loads. Clicking template A (slow asset load) then quickly clicking
+  template B (fast) let B populate the canvas first, then A's slower continuation overwrite it right
+  back with A -- the operator ends up looking at the template they did NOT just ask for.
+- **[risk]** `RefreshRxHistoryPickerAsync` was the one sibling among the image-source add/refresh
+  paths with no `StatusMessage` on failure -- log-only, so a failure (e.g. an unreadable RX history
+  SQLite file) left the "From RX history" flyout silently empty with no explanation.
+
+Fixed: removed the up-front delete entirely (`SaveAsync` already overwrites `template.json`/
+`thumbnail.png` in place -- confirmed against the real `TemplateStore.cs`, not just its doc
+comment); the catch's cleanup-delete now only fires `if (existingId is null && templateId is {
+} freshlyMintedId)` -- never deletes a folder that pre-existed this save attempt. Accepted
+trade-off, round 2 explicitly agreed it's reasonable: repeated overwrite-saves of the SAME template
+will now slowly accumulate orphaned GUID-named asset PNGs in that template's own `assets/` folder
+(image-element asset filenames are always freshly minted, by design, never reused in place) --
+disk-space-only, not data loss, and a proper fix would need `ITemplateStore` to expose per-asset
+deletion, which doesn't exist today. Also fixed in the same pass: `IsSavingTemplate` moved fully
+inside try/finally (was outside the try, risking getting stuck true on a throw during id
+resolution). `existingId` now resolved from `_templateStore.ListAsync()` directly -- the actual
+persistence-layer source of truth, independent of `ReadyRack`'s own refresh timing. A new
+`_templateLoadGeneration` counter, bumped per-selection (after the arm/confirm gate, so a mere
+arming click doesn't invalidate an in-flight load) and checked immediately before the synchronous
+canvas-mutating call, discards a stale load rather than clobbering a newer one.
+`RefreshRxHistoryPickerAsync` now clears `StatusMessage` on entry and sets it on failure, matching
+its 3 siblings -- `RxHistoryPickerEntries` deliberately left untouched on failure (round 2 confirmed
+this matches `ReadyRackViewModel.RefreshAsync`'s own established "best-effort, never destroy good
+state on a transient failure" doctrine, not a gap).
+
+Four regression tests added (`SaveTemplateAsync_OverwriteFailsPartway_
+LeavesThePreExistingTemplateIntact` for the blocker -- genuinely mutation-detecting, the fake's
+`SaveAsync` throws before mutating its own store so the old up-front-delete code would have emptied
+it; `SaveTemplateAsync_ResolvesExistingIdFromTheTemplateStore_NotTheReadyRacksOwnPossiblyStaleList`;
+`LoadTemplate_OlderSlowerLoadCompletesAfterANewerFasterOne_DoesNotClobberTheNewerResult`, using a
+new `FakeTemplateStore.LoadGates` per-templateId `TaskCompletionSource` dictionary to hold one load
+open while another completes first; `RefreshRxHistoryPickerAsync_QueryThrows_SetsStatusMessage`),
+backed by new `FakeTemplateStore.SaveExceptionToThrow`/`LoadGates`/`Templates` (read-only peek)
+members. 316/316 `UI.Tests` pass for this file (was 312, +4), 703/703 full suite (was 699, +4),
+clean solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Verified the up-front delete is genuinely
+gone (grepped every remaining `_templateStore.*` call site in the file), traced the real
+`TemplateStore.SaveAsync`/`ImageSourceWriter` implementations to confirm an in-place overwrite
+genuinely needs no delete, confirmed the catch guard can't fire on the overwrite path under any
+throw location (including a throw during `existingId`/`templateId` resolution itself, since both
+are declared nullable outside the try), confirmed `IsSavingTemplate` can no longer get stuck under
+any throw location, confirmed the generation guard's bump/check placement is correct relative to
+the pre-existing arm/confirm gate (bump happens AFTER arming, so an arm-only click doesn't
+invalidate an in-flight load) and that the check sits immediately before the synchronous
+canvas-mutating call with no await in between (check-then-mutate is atomic w.r.t. the UI thread),
+and explicitly agreed both the orphaned-asset trade-off and the "leave RxHistoryPickerEntries
+untouched on failure" precedent match are the right calls, not gaps. Two nits noted, not actioned:
+`RefreshRxHistoryPickerAsync`'s new `StatusMessage = null` on entry can erase an unrelated armed
+"press again to confirm" recall message if the flyout opens mid-arm (pre-existing class shared by
+all 3 sibling methods, not new blast radius); the generation-guard test asserts an unchanged value
+on both sides of the gate completion, which would also pass vacuously if the continuation simply
+never resumed (test-hardening suggestion, not a production-code gap). Explicit "close chunk 11 Area
+A" call.
+
+**Chunk 11 (Area A) CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 1 real blocker
+(overwrite-save-then-failure permanently destroyed a real, pre-existing template with no recovery)
+plus 3 precedented risk-tier fixes (stale-list overwrite-detection race, unserialized overlapping
+template loads, missing error surface); round 2 clean GO, no further action. Areas B/C remain --
+chunks 12/13.
