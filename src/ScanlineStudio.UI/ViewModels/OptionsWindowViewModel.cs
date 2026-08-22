@@ -368,10 +368,31 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port)).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                TestConnectionStatusMessage = result.Success
-                    ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
-                    : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
-                IsTestingConnection = false;
+                // Tier B audit finding: this posted lambda runs after the outer try/catch has already
+                // exited, so its GetString calls were previously unguarded. A locale file with a
+                // mismatched format placeholder throws FormatException out of GetString, which used to
+                // both escape uncaught onto the dispatcher loop AND leave IsTestingConnection stuck
+                // true (Test Connection permanently disabled for the life of the dialog). Caught (not
+                // just finally'd) because the exception is real and reachable -- confirmed via a
+                // dedicated regression test that failed with an unhandled FormatException from
+                // Dispatcher.RunJobs before this catch was added. TestConnectionStatusMessage falls
+                // back to null rather than another GetString call, since a broken locale key can't be
+                // trusted to safely produce ANY string here.
+                try
+                {
+                    TestConnectionStatusMessage = result.Success
+                        ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
+                        : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Log.TestRigctldConnectionStatusDisplayFailed(_logger, ex);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
             });
         }
         catch (Exception ex)
@@ -383,8 +404,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             Log.TestRigctldConnectionFailed(_logger, host, port, ex);
             Dispatcher.UIThread.Post(() =>
             {
-                TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
-                IsTestingConnection = false;
+                try
+                {
+                    TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
+                }
+                catch (Exception formatEx)
+                {
+                    Log.TestRigctldConnectionStatusDisplayFailed(_logger, formatEx);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
             });
         }
     }
@@ -685,9 +717,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
 
+    /// <summary>Gates <see cref="SaveCommand"/> -- see <see cref="CanSave"/>.</summary>
+    private bool _loadSucceeded;
+
+    private bool CanSave() => _loadSucceeded;
+
     /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- the
     /// audio enumerator's <c>RefreshAsync</c> call can throw, which used to mean the Options dialog
-    /// could open completely blank with no explanation anywhere.</summary>
+    /// could open completely blank with no explanation anywhere. Tier B audit finding: on ANY
+    /// exception here (not just the audio enumerator's -- LoadAsync/settingsStore.LoadAsync can also
+    /// throw), the fields left at their hardcoded constructor defaults used to be exactly what
+    /// SaveAsync would persist if the user touched anything else and hit Save, silently overwriting
+    /// real settings (callsign, JPEG quality, capture/playback device IDs, ...) with defaults with
+    /// zero warning. _loadSucceeded now gates SaveCommand's CanExecute so Save is simply unavailable
+    /// until a load has actually completed -- the general-case fix, not a per-field patch, since the
+    /// failure isn't specific to any one field.</summary>
     private async Task LoadSafeAsync()
     {
         try
@@ -714,10 +758,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
             SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == snapshot.CaptureDeviceId);
             SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == snapshot.PlaybackDeviceId);
+
+            _loadSucceeded = true;
         }
         catch (Exception ex)
         {
             Log.LoadFailed(_logger, ex);
+        }
+        finally
+        {
+            SaveCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -778,6 +828,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         AdifUdpDestinations.Clear();
         foreach (var destination in snapshot.AdifUdpDestinations)
         {
+            // Tier B audit finding: a null element (a hand-edited/partially-written settings.json can
+            // produce "Destinations": [null] via System.Text.Json) used to NRE here and take down the
+            // whole load -- matches AdifUdpStreamer.SendAsync's own `d?.Enabled == true` guard on the
+            // same data, but skips the row entirely rather than showing a disabled placeholder for
+            // data that was never really there.
+            if (destination is null)
+            {
+                continue;
+            }
+
             AdifUdpDestinations.Add(new AdifUdpDestinationRowViewModel
             {
                 Enabled = destination.Enabled == true,
@@ -789,7 +849,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task SaveAsync()
     {
         // The single most useful Debug line in the app for "why didn't my settings take effect"
@@ -886,7 +946,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private void ResetGeneralToDefault()
     {
         Log.ResetSectionInvoked(_logger, "General");
-        SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode);
+        // Tier B audit finding: OptionsSettingsService.Defaults.CultureCode is always null (the
+        // record default), so a bare FirstOrDefault here always misses and used to blank the
+        // Language ComboBox on every Reset -- ApplyFromSnapshot already has this exact fallback for
+        // the same reason (see its own line), applied here too.
+        SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode) ?? _localization.CurrentCulture;
         RememberWindowPosition = false;
         JpegQuality = 85;
     }
@@ -916,6 +980,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         HamlibSerialPort = defaults.HamlibSerialPort;
         HamlibBaudRate = defaults.HamlibBaudRate;
         HamlibPttType = defaults.HamlibPttType;
+        // Tier B audit finding: sibling ResetQrzToDefault already clears its own test-result status
+        // (TestQrzLookupStatus) -- this one didn't, so a prior "Connected to IC-7300" success line
+        // stayed visible under the now-blank host field after a reset.
+        TestConnectionStatusMessage = null;
     }
 
     [RelayCommand]
@@ -1122,6 +1190,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestRigctldConnection({Host}:{Port}) threw unexpectedly")]
         public static partial void TestRigctldConnectionFailed(ILogger logger, string host, int port, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the connection-test result status message failed; status left blank")]
+        public static partial void TestRigctldConnectionStatusDisplayFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
