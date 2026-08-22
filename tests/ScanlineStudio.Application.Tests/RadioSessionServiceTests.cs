@@ -176,4 +176,33 @@ public sealed class RadioSessionServiceTests
         Assert.False(result.Success);
         Assert.Contains("ambiguous", result.ErrorMessage);
     }
+
+    [Fact]
+    public async Task GetSafetySettingsAsync_NoSectionConfigured_ReturnsDefaults()
+    {
+        // Tier B audit finding: zero test coverage existed for the safety-settings round-trip
+        // (GetSafetySettingsAsync/SaveSafetySettingsAsync) before this -- correct by inspection, but
+        // nothing guarded a future regression (e.g. adding a third field, wired only one direction).
+        var controller = new FakeRadioController();
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [], NullLogger<RadioSessionService>.Instance);
+
+        var spec = await service.GetSafetySettingsAsync();
+
+        Assert.False(spec.SwrCutoffEnabled);
+        Assert.Equal(3.0, spec.SwrCutoffThreshold);
+    }
+
+    [Fact]
+    public async Task SaveSafetySettingsAsync_ThenGet_RoundTripsBothFields()
+    {
+        var controller = new FakeRadioController();
+        var settingsStore = new FakeSettingsStore();
+        var service = new RadioSessionService(controller, settingsStore, [], NullLogger<RadioSessionService>.Instance);
+
+        await service.SaveSafetySettingsAsync(new RadioSafetySpec(true, 2.5));
+        var spec = await service.GetSafetySettingsAsync();
+
+        Assert.True(spec.SwrCutoffEnabled);
+        Assert.Equal(2.5, spec.SwrCutoffThreshold);
+    }
 }

@@ -356,6 +356,24 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
+    public async Task LookupCallsignAsync_SettingsLoadThrows_ReturnsFailureInsteadOfThrowing()
+    {
+        // Tier B audit finding: this method's own interface doc comment claims the same "never
+        // throws, always returns a result" contract as LogQsoAsync, but the settings read used to run
+        // unguarded -- a hand-edited settings.json (malformed QrzLookup section, or an unreadable
+        // file) would throw straight out of this method instead of returning a result.
+        var qrzLookup = new FakeQrzCallsignLookup();
+        var settingsStore = new FakeSettingsStore { LoadAsyncException = new UnauthorizedAccessException("access denied") };
+        var service = CreateService(qrzLookup: qrzLookup, settingsStore: settingsStore);
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.False(result.Success);
+        Assert.Equal("access denied", result.ErrorReason);
+        Assert.Equal(0, qrzLookup.LookupCallCount);
+    }
+
+    [Fact]
     public async Task TestQrzLookupCredentialsAsync_UngatedByEnabledSetting_AlwaysDelegatesToTheLookupClient()
     {
         // Deliberately ungated -- this IS the settings-configuration flow itself, testing values
