@@ -573,6 +573,7 @@
   "Panes.TxImageEditor.AddImageFailed": "Couldn't add that image. Check the log for details.",
   "Panes.TxImageEditor.DeleteTemplateFailed": "Couldn't delete that template. Check the log for details.",
   "Panes.TxImageEditor.RackRefreshFailed": "Couldn't refresh the template rack. Check the log for details.",
+  "Panes.TxImageEditor.RxHistoryPickerRefreshFailed": "Couldn't refresh the RX history picker. Check the log for details.",
   "MainWindow.OptionsMenuItem": "Options...",
   "MainWindow.Menu.Help.About": "About Scanline Studio...",
   "About.Title": "About Scanline Studio",

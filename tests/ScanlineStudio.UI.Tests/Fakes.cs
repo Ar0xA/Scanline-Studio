@@ -459,18 +459,36 @@ internal sealed class FakeTemplateStore : ITemplateStore
 
     public Exception? DeleteExceptionToThrow { get; set; }
 
+    public Exception? SaveExceptionToThrow { get; set; }
+
+    /// <summary>Read-only peek at what a test's <c>templateId</c> currently maps to, without going
+    /// through <see cref="LoadAsync"/> (which would need the document reconstructed into raw
+    /// snapshots) -- lets a test assert a PRE-EXISTING template's document/name survived a failed
+    /// overwrite-save untouched.</summary>
+    public IReadOnlyDictionary<string, (string Name, DateTimeOffset SavedAt, PersistedTemplateDocument Document)> Templates => _templates;
+
     public string CreateTemplateId(string name) => $"{name}_{Guid.NewGuid():N}";
 
     public string GetAssetPath(string templateId, string assetFileName) => $"/fake/templates/{templateId}/assets/{assetFileName}";
 
     public Task SaveAsync(string templateId, string name, PersistedTemplateDocument document, CancellationToken ct = default)
     {
+        if (SaveExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
         _templates[templateId] = (name, DateTimeOffset.Now, document);
         return Task.CompletedTask;
     }
 
-    public Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default)
-        => Task.FromResult(_templates[templateId].Document);
+    /// <summary>When a gate exists for a given templateId, <see cref="LoadAsync"/> awaits it instead
+    /// of resolving immediately -- lets a test hold one template's load open while another completes
+    /// first, to reproduce an overlapping-load race deterministically.</summary>
+    public Dictionary<string, TaskCompletionSource<PersistedTemplateDocument>> LoadGates { get; } = [];
+
+    public Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default) =>
+        LoadGates.TryGetValue(templateId, out var gate) ? gate.Task : Task.FromResult(_templates[templateId].Document);
 
     public Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<TemplateMetadata>>(
