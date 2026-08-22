@@ -1,4 +1,5 @@
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Metadata.Profiles.Exif;
 using SixLabors.ImageSharp.PixelFormats;
 using ScanlineStudio.Settings;
 
@@ -6,6 +7,90 @@ namespace ScanlineStudio.Core.Imaging.Tests;
 
 public sealed class StockImageLibraryTests
 {
+    // Round-1 Tier B finding: this class used to skip AutoOrient entirely, unlike its sibling
+    // ImageFileLoader (see ImageFileLoaderTests' own comment on the original spec/18-path-to-1.0.md
+    // bug this pattern guards against) -- the two are interchangeable branches of one caller switch
+    // (TxControlsPaneViewModel), so a phone photo from the stock folder transmitted sideways while
+    // the identical file loaded via Browse did not. Orientation=6 on a 4-wide x 2-tall stored
+    // source should come out 2-wide x 4-tall once AutoOrient runs.
+
+    [Fact]
+    public async Task LoadOriginalAsync_ExifOrientation_AutoOrientsSwappingWidthAndHeight()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "pic.jpg");
+            await WriteFixtureJpegWithOrientationAsync(path, width: 4, height: 2, orientation: 6);
+            var library = new StockImageLibrary(SettingsStoreWithDirectory(directory));
+            var entry = (await library.ListAsync()).Single();
+
+            var image = await library.LoadOriginalAsync(entry);
+
+            Assert.Equal(2, image.Width);
+            Assert.Equal(4, image.Height);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadThumbnailAsync_ExifOrientation_FitsUsingPostOrientDimensions()
+    {
+        // The fit must be computed from the POST-orient dimensions, not the raw on-disk ones -- a
+        // 4x2 source rotated to 2x4 is now TALL, so fitting within maxDimension=4 should produce a
+        // 2-wide x 4-tall thumbnail, not the pre-orient 4-wide x 2-tall shape.
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "pic.jpg");
+            await WriteFixtureJpegWithOrientationAsync(path, width: 4, height: 2, orientation: 6);
+            var library = new StockImageLibrary(SettingsStoreWithDirectory(directory));
+            var entry = (await library.ListAsync()).Single();
+
+            var thumbnail = await library.LoadThumbnailAsync(entry, maxDimension: 4);
+
+            Assert.Equal(2, thumbnail.Width);
+            Assert.Equal(4, thumbnail.Height);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task LoadFullAsync_ExifOrientation_StillResizesToTheRequestedTargetDimensions()
+    {
+        var directory = CreateTempDirectory();
+        try
+        {
+            var path = Path.Combine(directory, "pic.jpg");
+            await WriteFixtureJpegWithOrientationAsync(path, width: 4, height: 2, orientation: 6);
+            var library = new StockImageLibrary(SettingsStoreWithDirectory(directory));
+            var entry = (await library.ListAsync()).Single();
+
+            var image = await library.LoadFullAsync(entry, targetWidth: 5, targetHeight: 7);
+
+            Assert.Equal(5, image.Width);
+            Assert.Equal(7, image.Height);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static async Task WriteFixtureJpegWithOrientationAsync(string path, int width, int height, ushort orientation)
+    {
+        using var image = new Image<Rgb24>(width, height);
+        image.Metadata.ExifProfile = new ExifProfile();
+        image.Metadata.ExifProfile.SetValue(ExifTag.Orientation, orientation);
+        await image.SaveAsJpegAsync(path);
+    }
+
     [Fact]
     public async Task ListAsync_ReturnsOnlySupportedImageFilesInTheConfiguredDirectory()
     {
