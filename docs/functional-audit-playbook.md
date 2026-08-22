@@ -6165,3 +6165,34 @@ reachable via current MSBuild defaults.
 
 **Chunk 1 CLOSED (2026-08-22)** -- 1 round, clean GO, trivial fixes + one coverage gap closed per
 standing practice. Committed.
+
+## Chunk 2: ImageElementViewModel.cs, BoxElementViewModel.cs, TemplateVariableRowViewModel.cs
+
+**Round 1** -- GO (unconditional), no fixes needed. Chased the three strongest bug hypotheses
+against these files' own claims and found each verifiably correct: (1) property-notification
+completeness between `ImageElementViewModel`/`BoxElementViewModel` -- built the full derived-pixel-
+property dependency closure by hand for both classes (plus cross-checked the third sibling,
+`OverlayElementViewModel`) and found no gap; the `OnImageHeightChanged`-fires-4 vs
+`OnImageWidthChanged`-fires-2 asymmetry in `BoxElementViewModel` is correct by design
+(`CanvasBorderThicknessPixels`/`CanvasCornerRadiusPixels` are genuinely height-only). (2)
+`ImageElementViewModel.CanvasBitmap` staleness -- traced every real construction/assignment site;
+`Source` is set exactly twice in the whole solution (constructor, then never again for any real
+element), and the one mutable `IImageSource` implementation in the tree (`AnalogFmSstvDecoder`'s
+private `MutableImageSource`) cannot reach this class. (3)
+`TemplateVariableRowViewModel.ResetDisplayValueWithoutNotifying`'s try/finally under a hypothetical
+reentrant call -- traced both nesting orders and the throws-inside-try case, all restore correctly.
+Also verified `BlocksHitTesting` has no bypass (every real caller reads it, not `Locked`/
+`IsBackground` separately) and `HasBorder`/`BorderColorForPicker`'s color-loss-on-toggle-off is
+deliberate and byte-for-byte sibling-identical to `OverlayElementViewModel`'s already-established
+pattern, backed by an existing test.
+
+No blocker, no risk-tier finding. All findings nit-tier: derived-pixel-property PropertyChanged
+RAISES are untested in both element VMs (values are tested, the cascade firing isn't -- a real gap
+class, but on code already proven correct here, not a live bug); `CanvasBitmap`/other
+`ImageSourceBitmapConverter.ToBitmap` results are never disposed anywhere in the codebase (traced
+9 call sites across 5 files -- systemic, not chunk-2's to fix); a couple of other pre-existing,
+sibling-identical patterns. Auditor's own explicit call: "do not spend another review round on this
+chunk" -- the raise-assertion test gap is optional hardening, not a gate, logged as deferred
+backlog rather than added now to keep pace through the remaining large `UI/ViewModels` scope.
+
+**Chunk 2 CLOSED (2026-08-22)** -- 1 round, clean GO, no fixes needed.
