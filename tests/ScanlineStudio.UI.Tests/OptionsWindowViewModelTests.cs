@@ -71,6 +71,45 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(SstvSampleRate.Default, vm.SampleRate);
     }
 
+    [AvaloniaFact]
+    public void Constructor_LoadSucceeds_SaveCommandIsEnabled()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SaveCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Constructor_SettingsStoreLoadThrows_SaveCommandStaysDisabled()
+    {
+        // Tier B audit finding (blocker): LoadSafeAsync's catch used to leave every field at its
+        // constructor default with no gate on Save -- a user who then changed something unrelated
+        // (e.g. Callsign, unreachable in this exact repro since the dialog never even opens usably,
+        // but demonstrated via RememberWindowPosition/JpegQuality below) and clicked Save would
+        // silently persist those defaults over their real settings. SaveCommand is now unusable until
+        // a load has actually completed once.
+        var settingsStore = new FakeSettingsStore { LoadAsyncException = new IOException("disk error") };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.SaveCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Constructor_AudioEnumeratorRefreshThrows_SaveCommandStaysDisabled()
+    {
+        // Tier B audit finding (blocker): same as the settings-store-throws repro above, but for the
+        // failure LoadSafeAsync's own doc comment specifically calls out -- the audio backend being
+        // unavailable when the dialog opens.
+        var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { RefreshAsyncException = new InvalidOperationException("audio backend unavailable") };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.SaveCommand.CanExecute(null));
+    }
+
     // Auditor usability review follow-up (2026-08-18): Radio/CAT tab's "Test Connection" button.
     // Deliberately tests whatever is CURRENTLY TYPED into RigctldHost/Port (not necessarily saved),
     // via a fresh, disposable IRadioSessionService.TestConnectionAsync call -- never the app's own
@@ -119,6 +158,38 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal("Options.Radio.TestConnection.Failed", vm.TestConnectionStatusMessage);
         Assert.False(vm.IsTestingConnection);
+    }
+
+    [AvaloniaFact]
+    public async Task TestRigctldConnectionCommand_GetStringThrowsFormattingTheResult_StillResetsIsTestingConnectionWithoutCrashingTheDispatcherLoop()
+    {
+        // Tier B audit finding: the Dispatcher.UIThread.Post lambda runs AFTER the outer try/catch
+        // has already exited, so its own GetString calls used to be unguarded -- a locale file with a
+        // mismatched format placeholder throwing FormatException here used to escape uncaught onto
+        // the dispatcher loop (confirmed: this exact test failed with an unhandled FormatException
+        // from Dispatcher.RunJobs before the inner try/catch was added) AND leave IsTestingConnection
+        // stuck true (Test Connection permanently disabled for the life of the dialog).
+        var radioSession = new FakeRadioSessionService
+        {
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var localization = new FakeLocalizationService
+        {
+            ThrowOnGetString = new FormatException("Input string was not in a correct format."),
+            ThrowOnGetStringForKey = "Options.Radio.TestConnection.Success",
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), localization,
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsTestingConnection);
+        Assert.Null(vm.TestConnectionStatusMessage);
     }
 
     [AvaloniaFact]
@@ -349,6 +420,21 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsRigctldSelected);
         Assert.Null(vm.RigctldHost);
         Assert.Null(vm.RigctldPort);
+    }
+
+    [AvaloniaFact]
+    public void ResetRadioToDefaultCommand_ClearsAStaleTestConnectionStatusMessage()
+    {
+        // Tier B audit finding: sibling ResetQrzToDefault already clears its own test-result status
+        // (TestQrzLookupStatus) -- this one didn't, so a prior "Connected to IC-7300" success line
+        // stayed visible under the now-blank host field after a reset.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.TestConnectionStatusMessage = "Options.Radio.TestConnection.Success";
+
+        vm.ResetRadioToDefaultCommand.Execute(null);
+
+        Assert.Null(vm.TestConnectionStatusMessage);
     }
 
     [AvaloniaFact]
@@ -995,6 +1081,21 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void ResetGeneralToDefaultCommand_LeavesSelectedCultureSetInsteadOfBlankingIt()
+    {
+        // Tier B audit finding: OptionsSettingsService.Defaults.CultureCode is always null (the
+        // record default), so a bare FirstOrDefault-by-that-code always misses and used to blank the
+        // Language ComboBox on every Reset -- ApplyFromSnapshot already falls back to CurrentCulture
+        // for the identical reason; Reset now does too.
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.ResetGeneralToDefaultCommand.Execute(null);
+
+        Assert.NotNull(vm.SelectedCulture);
+    }
+
+    [AvaloniaFact]
     public void Constructor_LoadsJpegQualityFromPersistedSettings()
     {
         var settingsStore = new FakeSettingsStore
@@ -1266,6 +1367,36 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(2237, vm.AdifUdpDestinations[0].Port);
         Assert.False(vm.AdifUdpDestinations[1].Enabled);
         Assert.Equal("N1MM", vm.AdifUdpDestinations[1].Name);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_NullElementInPersistedAdifUdpDestinations_SkipsItInsteadOfThrowing()
+    {
+        // Tier B audit finding: System.Text.Json will happily deserialize "Destinations": [null] into
+        // a list containing a null element -- ApplyFromSnapshot used to dereference it unconditionally
+        // and NRE, taking the whole load down (caught by LoadSafeAsync's outer try, but then nothing
+        // in the dialog loads at all). AdifUdpStreamer.SendAsync's own `d?.Enabled == true` read of
+        // the same data already tolerates this; matched here by skipping the null row entirely.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AdifUdpStreamingSettings.SectionKey,
+                new AdifUdpStreamingSettings
+                {
+                    Destinations =
+                    [
+                        null!,
+                        new AdifUdpDestination { Enabled = true, Name = "GridTracker", Host = "127.0.0.1", Port = 2237 },
+                    ],
+                },
+                AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        var destination = Assert.Single(vm.AdifUdpDestinations);
+        Assert.Equal("GridTracker", destination.Name);
+        Assert.True(vm.SaveCommand.CanExecute(null));
     }
 
     /// <summary>The dialog must show exactly what <c>AdifUdpStreamer</c> will actually send --
