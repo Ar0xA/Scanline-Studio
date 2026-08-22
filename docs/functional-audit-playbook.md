@@ -6846,3 +6846,107 @@ A" call.
 plus 3 precedented risk-tier fixes (stale-list overwrite-detection race, unserialized overlapping
 template loads, missing error surface); round 2 clean GO, no further action. Areas B/C remain --
 chunks 12/13.
+
+## Chunk 12: TxImageEditorPaneViewModel.cs, Area B (element manipulation/reordering/Apply-Cancel)
+
+Second of 3 area-based sub-chunks for this 3911-line file. Area B: tab selection, element
+alignment, plate-behind-text, duplicate/copy/cut/paste, template variables (fill-bar values, not
+save/load -- that was Area A), element list reordering/removal, Apply/Cancel -- roughly lines
+2228-2887. Area C (rotate/crop math/undo-redo/state snapshot) is chunk 13, not yet started.
+
+**Round 1** -- NOT GO. 5 risk-tier findings, all in the tracked failure class ("sibling has the
+fix/guard, near-identical sibling doesn't"):
+
+- **[risk]** `AlignSelectedElementToCrop` pushed TWO undo steps per click -- its own explicit
+  `PushUndoSnapshot()` plus a second, near-identical one from the unguarded X/Y assignment's own
+  `OnXChanging`/`OnYChanging` → `PushUndoSnapshotForGeometryChange` hook. The first Undo appeared to
+  do nothing (it popped the redundant duplicate); only the second Undo actually moved the element
+  back. The method's OWN doc comment justified the single-push claim on a false premise ("assigns
+  exactly one property per call, never both X and Y at once") -- that reasoning is about property
+  *count*, not the per-property hook, so it never held. Worse: the existing regression test
+  (`AlignSelectedElementToCrop_PushesExactlyOneUndoStep`) only compared `UndoCommand.CanExecute` (a
+  bool) before/after one Undo, which stays `true` regardless of push count once a prior action has
+  already made Undo available -- it passed against the actual bug.
+- **[risk]** `SendToBack` was missing the already-at-the-back no-op guard its siblings
+  (`BringToFront`/`MoveElementUp`/`MoveElementDown`) already have, in TWO sub-cases: an element
+  already at collection index 0 with no background present (fell through to the unconditional
+  branch, decrementing its own Z and pushing a bogus undo step on every click forever -- Z drift,
+  cosmetically invisible since `Move(0,0)` is a no-op, but real undo-stack/`HasUnsavedEdits`
+  pollution); an element already sitting immediately after the background (`target == index`,
+  `Move(index, index)` is a no-op but the undo step and a full `RecomputePreview()` pass weren't).
+- **[risk]** Blanking a SINGLE fill-bar field (typing, not the bulk "Clear fields" command) stored
+  an empty string in `_templateVariables` unconditionally -- `MacroTextResolver`'s unfilled-token-
+  resolves-verbatim branch only fires when the key is ABSENT, so a present-but-empty value made
+  e.g. `{his_call}` silently resolve to `""` instead of showing the placeholder token again. This is
+  the EXACT `"DE "` state `ClearTemplateVariablesCommand`'s own doc comment already classifies as a
+  code-review blocker for the BULK-clear path ("easy to transmit by mistake") -- the single-field-
+  edit path had the identical bug the bulk-clear path was specifically fixed to avoid, just never
+  patched on this sibling.
+- **[risk]** `RemoveOverlayElement` only null-checked its `element` parameter, not whether it's a
+  stale reference no longer in `OverlayElements` (e.g. a queued click racing an Undo, which replaces
+  every element wholesale via `ApplyState`) -- `ObservableCollection.Remove` already no-ops silently
+  on an absent element, so the only visible effect of a stale click was a bogus undo step.
+  `SetAsBackground`/`MoveElementUp`/`MoveElementDown`/`BringToFront`/`SendToBack` all already check
+  "is this element still really here" BEFORE `PushUndoSnapshot()`; `RemoveOverlayElement` didn't.
+- **[risk, deferred to backlog]** Fill-bar value edits don't push an undo step at all, but
+  `ClearTemplateVariables` does -- an unrelated Undo (e.g. undoing an element move) can silently
+  revert a fill-bar value the operator just typed, recoverable only via Redo (and only until the
+  next new edit clears the redo stack). Judged genuine but non-corrupting (recoverable, not data
+  loss), and "should template-variable edits become undo-tracked at all" is a UX design call, not a
+  clear-cut bug fix -- a per-keystroke coalesced push would also interleave typing with element-
+  geometry undo history in a way that needs a decision, not a patch. Round 2 explicitly agreed this
+  is a reasonable scope boundary for this round.
+
+Fixed: `AlignSelectedElementToCrop`'s X/Y switch wrapped in `_suspendPreview = true; try { ... }
+finally { _suspendPreview = false; }` (matching `SetAsBackground`'s established pattern),
+`RecomputePreview()` still runs exactly once, after the wrap; the method's doc comment corrected to
+name the real suppression mechanism instead of the false premise. `SendToBack` gained
+`if (backgroundIndex < 0 ? index == 0 : backgroundIndex + 1 == index) { return; }` right after the
+backward background scan, before `PushUndoSnapshot()` -- verified round 2: since the scan only
+searches indices below `index`, `backgroundIndex + 1 <= index` always holds, so equality is exactly
+the "already immediately after the background" case, with no legitimate send-to-back rejected.
+`OnTemplateVariableValueChanged` now does `if (value.Length == 0) { _templateVariables.Remove(key);
+}` instead of an unconditional dictionary write -- the row's own displayed `Value` (an independent
+property on `TemplateVariableRowViewModel`, not read from the dictionary) stays visually blank
+either way, only the resolution behavior changes. `RemoveOverlayElement` gained
+`!OverlayElements.Contains(element)` to its existing null guard, checked before the push, matching
+the established sibling convention.
+
+Four regression tests added/rewritten (`AlignSelectedElementToCrop_PushesExactlyOneUndoStep`
+REWRITTEN to use the same "count total undo depth, Undo exactly twice, assert nothing left" pattern
+`SetAsBackground_PushesExactlyOneUndoStep` already established -- a bare `CanExecute` bool comparison
+can't distinguish "1 push" from "2 identical pushes" either, same reasoning that test's own comment
+already documents; `SendToBack_OnAnAlreadyBottommostElement_WithNoBackgroundPresent_IsATrueNoOp` +
+`SendToBack_OnAnElementAlreadyImmediatelyAfterTheBackground_IsATrueNoOp`; `OnTemplateVariableValueChanged_
+BlankedToEmpty_RemovesTheKeyInsteadOfStoringAnEmptyValue`, asserting `element.ResolvedText` -- the
+only observable that actually distinguishes "empty value" from "absent key", same technique the
+existing bulk-clear test already uses; `RemoveOverlayElement_StaleReferenceNoLongerInTheCollection_
+IsATrueNoOp`). 320/320 `UI.Tests` pass for this file (was 316, +4), 707/707 full suite (was 703, +4),
+clean solution-wide build.
+
+**Round 2** (fresh agent, confirmation-only) -- **GO.** Traced the full suppression path for the
+Align fix end-to-end across all three element types (`OverlayElementViewModel`/
+`BoxElementViewModel`/`ImageElementViewModel`'s own `OnXChanging`/`OnYChanging` → 
+`PushUndoSnapshotForGeometryChange` → `PushUndoSnapshotCoalesced` → early-returns on
+`_suspendPreview`), confirmed the wrap covers all six switch arms and doesn't suppress the
+(ungated) `SelectionReadoutText` live-update raise. Confirmed the `SendToBack` guard's logic holds
+for every reachable case (no false rejection of a legitimate send-to-back at any other index) and
+doesn't interfere with the separate, pre-existing background-itself guard. Confirmed the fill-bar
+key-removal doesn't corrupt `CanClearTemplateVariables`'s re-notification or the undo-snapshot
+round-trip (`ApplyState` clears-and-reseeds from the captured dictionary, so a removed key correctly
+round-trips as "absent," not silently re-introduced by `RescanTemplateVariables`, which never seeds
+keys). Confirmed `RemoveOverlayElement`'s guard placement and that reference-equality `Contains` is
+correct for these `sealed partial class` element VMs (not records). Explicitly agreed the R5
+deferral is a defensible design-decision boundary, not a hidden defect. Two nits noted, not
+actioned: the old `SendToBack` fall-through incidentally repaired a Z-inversion in a pathological,
+already-documented-out-of-scope background/Z-ordering edge case (undocumented, accidental, not worth
+chasing); `AlignSelectedElementToCrop`'s bare `finally` would clear an outer suspension if ever
+nested, unreachable today and identical to the accepted `SetAsBackground`/`AddPlateBehindText`
+convention. Explicit "close chunk 12 (Area B)" call.
+
+**Chunk 12 (Area B) CLOSED (2026-08-22)** -- 2 rounds. Round 1 found and fixed 4 real risk-tier bugs
+(duplicate undo push with a self-defeating test, missing already-at-back no-op guard in 2 sub-cases,
+a fill-bar single-field-edit path with the identical bug its own bulk-clear sibling was already
+fixed to avoid, a stale-reference undo-stack pollution gap), deliberately deferred 1 finding
+(fill-bar edits not undo-tracked) as a genuine but non-corrupting UX design question rather than a
+clear-cut fix; round 2 clean GO, no further action. Area C remains -- chunk 13.
