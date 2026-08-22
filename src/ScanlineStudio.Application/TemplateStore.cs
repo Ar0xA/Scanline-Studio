@@ -61,7 +61,22 @@ public sealed partial class TemplateStore : ITemplateStore
     }
 
     public string GetAssetPath(string templateId, string assetFileName)
-        => Path.Combine(GetTemplateDirectory(templateId), "assets", assetFileName);
+    {
+        // Tier B audit finding: assetFileName comes straight from a persisted (and, per this
+        // format's own "share by copying the folder" design, possibly hand-edited or downloaded-
+        // from-elsewhere) template.json -- Path.Combine neither rejects "../" traversal nor a
+        // rooted path (a rooted AssetFileName like "/etc/hosts" would silently discard the template
+        // directory entirely). The WRITE path is never at risk (BuildPersistedElementAsync always
+        // mints a fresh Guid.NewGuid():N name, never a persisted/attacker-influenced one) -- this
+        // guard is specifically for the READ path, where a malicious/malformed shared template
+        // could otherwise point this app at an arbitrary file elsewhere on disk.
+        if (Path.GetFileName(assetFileName) != assetFileName)
+        {
+            throw new InvalidOperationException($"Asset file name '{assetFileName}' is not a bare file name.");
+        }
+
+        return Path.Combine(GetTemplateDirectory(templateId), "assets", assetFileName);
+    }
 
     public async Task SaveAsync(string templateId, string name, PersistedTemplateDocument document, CancellationToken ct = default)
     {
@@ -87,7 +102,27 @@ public sealed partial class TemplateStore : ITemplateStore
     public async Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default)
     {
         var manifest = await ReadManifestAsync(GetTemplateDirectory(templateId), ct).ConfigureAwait(false);
-        return new PersistedTemplateDocument(manifest.Elements);
+
+        // Tier B audit finding: manifest.Elements can be null (a missing or explicitly-null
+        // "Elements" property in a hand-edited template.json deserializes with no JsonException --
+        // this format explicitly supports hand-copying/editing template folders, per this class's
+        // own doc comment), and any individual entry in the list can itself be null (a hand-edited
+        // "Elements":[null]). Both used to NRE downstream -- a caller reading .Count, or this file's
+        // own RenderThumbnailAsync/ToTemplateElementAsync dereferencing a null element on a re-save
+        // (the switch's own `default:` arm calls element.GetType()). Filtered here, once, at the
+        // read boundary, so every downstream consumer -- this file's and the caller's -- always
+        // sees a clean, non-null list, matching the "one bad element must not blank the whole
+        // template" convention already established at the UI layer.
+        var elements = new List<PersistedTemplateElement>();
+        foreach (var element in manifest.Elements ?? [])
+        {
+            if (element is not null)
+            {
+                elements.Add(element);
+            }
+        }
+
+        return new PersistedTemplateDocument(elements);
     }
 
     public async Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default)
@@ -114,13 +149,23 @@ public sealed partial class TemplateStore : ITemplateStore
             // manifest too), not just this one, for a store whose whole design explicitly supports
             // hand-copying/moving folders around (real-world corruption risk, not theoretical). Skip
             // just the one bad template and log it, matching the existing null-manifest skip below.
+            //
+            // Tier B audit finding: the catch used to cover JsonException only -- IOException (the
+            // file locked mid-sync by OneDrive/Dropbox, or a concurrent writer) and
+            // UnauthorizedAccessException/FileNotFoundException (a TOCTOU race against the
+            // File.Exists check above -- e.g. a fire-and-forget RefreshAsync running concurrently
+            // with a DeleteAsync call on this exact template) hit the identical "one bad template
+            // must not blank the WHOLE rack" scenario the JsonException catch was already added to
+            // fix, just via a different exception type. OperationCanceledException still propagates
+            // (a real cancellation must still abort the whole ListAsync call, not be swallowed as
+            // "one bad template").
             TemplateManifest? manifest;
             try
             {
                 var json = await File.ReadAllTextAsync(manifestPath, ct).ConfigureAwait(false);
                 manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
             }
-            catch (JsonException ex)
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
                 Log.CorruptManifestSkipped(_logger, manifestPath, ex);
                 continue;
