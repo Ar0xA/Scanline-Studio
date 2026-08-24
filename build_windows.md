@@ -38,10 +38,13 @@ for the same reason (see `.github/workflows/ci.yml`).
 
 The native audio shim is built automatically as part of this — `BuildNativeShimWindows` runs before
 the managed build and produces `yoniqaudio.dll` alongside the managed output (via `cl.exe /LD`,
-linked against `Ole32.lib Uuid.lib` — added 2026-08-24 for a real OS device-mute-state query the
-shim now makes via direct WASAPI `IAudioEndpointVolume` COM calls). Both libraries ship with the
-MSVC Build Tools' "Desktop development with C++" workload already required above — no extra install
-needed. You do not need to build the shim separately.
+linked against `Ole32.lib` — added 2026-08-24 for a real OS device-mute-state query the shim now
+makes via direct WASAPI `IAudioEndpointVolume` COM calls). Ole32.lib ships with the MSVC Build
+Tools' "Desktop development with C++" workload already required above — no extra install needed.
+The three GUID symbols that query needs (`CLSID_MMDeviceEnumerator`/`IID_IMMDeviceEnumerator`/
+`IID_IAudioEndpointVolume`) are defined directly in `yoniq_audio.c` itself via `DEFINE_GUID` — an
+earlier revision tried linking `Uuid.lib` for these instead, which a real `dotnet publish` showed
+does not actually provide their storage (LNK2019). You do not need to build the shim separately.
 
 ## Run
 
