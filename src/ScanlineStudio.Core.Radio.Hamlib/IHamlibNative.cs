@@ -64,6 +64,17 @@ internal interface IHamlibNative
     /// <see langword="null"/> if the native call returned a null pointer.</summary>
     string? RigVersion();
 
+    /// <summary><c>void rig_set_debug(enum rig_debug_level_e)</c> -- user-reported gap: this was
+    /// never called, so Hamlib ran at whatever its own compiled-in default is (TRACE in the build
+    /// this was reported against), flooding stderr with per-call entry/exit traces and CAT frame hex
+    /// dumps on every poll. <paramref name="level"/> is one of <see cref="HamlibDebugLevel"/>'s
+    /// values, verified against the real <c>rig_debug_level_e</c> (rig.h) -- passed as a plain
+    /// <see langword="int"/> here to match this interface's existing convention for other native
+    /// enums (e.g. <see cref="RigSetPtt"/>'s <c>ptt</c> parameter). A no-op if the loaded library is
+    /// missing this export (see <see cref="HamlibNative"/>'s own doc comment for why that's tolerated
+    /// rather than treated as a load failure) -- never throws.</summary>
+    void RigSetDebug(int level);
+
     /// <summary><c>int rig_load_all_backends(void)</c>. Populates Hamlib's internal backend registry
     /// so <see cref="RigListModelIds"/>/<see cref="RigGetCapsMfgName"/>/<see cref="RigGetCapsModelName"/>
     /// can enumerate every compiled-in rig. Not needed for <see cref="RigInit"/> against a single
