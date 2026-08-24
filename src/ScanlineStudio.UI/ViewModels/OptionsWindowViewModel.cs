@@ -524,8 +524,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private async Task RunHamlibProbeAsync(string? overridePath, bool applyResolvedPathOnSuccess = false)
     {
         Log.HamlibProbeInvoked(_logger, overridePath ?? "(auto-detect)");
-        IsProbingHamlib = true;
-        HamlibDiscoveryStatusMessage = _localization.GetString("Options.Radio.Hamlib.Probing");
+
+        // User-caught crash: BrowseHamlibLibraryAsync reaches this method AFTER an off-thread
+        // await (PickHamlibLibraryFileAsync().ConfigureAwait(false)), so these two entry writes
+        // used to run on a threadpool thread, not the UI thread -- IsProbingHamlib's generated
+        // OnIsProbingHamlibChanged calls NotifyCanExecuteChanged() on the three Hamlib commands,
+        // which touches Button.Command and trips Avalonia's VerifyAccess(), an unhandled
+        // InvalidOperationException that terminated the process. AutoDetectHamlibAsync/
+        // ProbeHamlibAsync never hit this (they call in directly from command invocation, still on
+        // the UI thread), which is exactly why only Browse crashed. Matches the exit path below,
+        // which already does this correctly.
+        Dispatcher.UIThread.Post(() =>
+        {
+            IsProbingHamlib = true;
+            HamlibDiscoveryStatusMessage = _localization.GetString("Options.Radio.Hamlib.Probing");
+        });
         try
         {
             var result = await _hamlibDiscovery.ProbeAsync(overridePath).ConfigureAwait(false);

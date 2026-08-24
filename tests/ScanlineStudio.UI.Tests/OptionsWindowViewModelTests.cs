@@ -350,6 +350,49 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsProbingHamlib);
     }
 
+    // Regression test for a real reported crash: a genuine file-picker dialog resumes its
+    // continuation on a threadpool thread (unlike every other fake picker call in this suite,
+    // which completes synchronously via Task.FromResult and so never actually leaves the calling
+    // thread) -- RunHamlibProbeAsync's entry writes to IsProbingHamlib/HamlibDiscoveryStatusMessage
+    // used to run un-marshaled on that thread, and IsProbingHamlib's generated
+    // OnIsProbingHamlibChanged calls NotifyCanExecuteChanged() on the three Hamlib commands, which
+    // touches Button.Command and trips Avalonia's VerifyAccess() -- an unhandled
+    // InvalidOperationException that terminated the real process. Only Browse hit this (Auto-detect/
+    // Test path call RunHamlibProbeAsync directly from command invocation, still on the UI thread).
+    [AvaloniaFact]
+    public async Task BrowseHamlibLibraryCommand_PickerResumesOnBackgroundThread_DoesNotCrash()
+    {
+        var filePicker = new FakeFilePickerService
+        {
+            HamlibLibraryPathToReturn = "/usr/lib/libhamlib.so.4",
+            CompletePickHamlibLibraryFileOnBackgroundThread = true,
+        };
+        var hamlibDiscovery = new FakeHamlibDiscoveryService
+        {
+            ResultToReturn = new HamlibProbeResult(true, "/usr/lib/libhamlib.so.4", "Hamlib 4.5.5", [], [new HamlibRigModelInfo(1035, "Yaesu", "FT-991")]),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), hamlibDiscovery, filePicker, new FakeSstvSessionService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        // Headless mode with no real Button bound to this command has nobody subscribed to
+        // CanExecuteChanged, so NotifyCanExecuteChanged() alone is a no-op regardless of which
+        // thread raises it -- the crash only happens because a real bound Button's own internal
+        // command-binding handler calls Dispatcher.UIThread.VerifyAccess() when that event fires.
+        // This subscription reproduces exactly that handler, deterministically, without needing a
+        // full visual tree.
+        vm.BrowseHamlibLibraryCommand.CanExecuteChanged += (_, _) => Dispatcher.UIThread.VerifyAccess();
+
+        var exception = await Record.ExceptionAsync(() => vm.BrowseHamlibLibraryCommand.ExecuteAsync(null));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(exception);
+        Assert.Equal("/usr/lib/libhamlib.so.4", vm.HamlibLibraryPath);
+        Assert.Single(vm.HamlibRigModels);
+        Assert.False(vm.IsProbingHamlib);
+    }
+
     [AvaloniaFact]
     public async Task BrowseHamlibLibraryCommand_UserCancelled_DoesNotProbe()
     {

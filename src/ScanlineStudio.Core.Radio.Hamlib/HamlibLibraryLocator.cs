@@ -69,37 +69,49 @@ internal sealed class HamlibLibraryLocator
 
     private static IEnumerable<string> BuildTier2And3Candidates()
     {
+        string[] platformCandidates;
+        string[] extraDirs = [];
+
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            foreach (var candidate in WindowsCandidates)
-            {
-                yield return candidate;
-            }
-
-            yield break;
+            platformCandidates = WindowsCandidates;
         }
-
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        else if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            foreach (var candidate in MacCandidates)
-            {
-                yield return candidate;
-            }
-
-            foreach (var dir in MacExtraDirs)
-            {
-                foreach (var candidate in MacCandidates)
-                {
-                    yield return Path.Combine(dir, candidate);
-                }
-            }
-
-            yield break;
+            platformCandidates = MacCandidates;
+            extraDirs = MacExtraDirs;
+        }
+        else
+        {
+            platformCandidates = LinuxCandidates;
         }
 
-        foreach (var candidate in LinuxCandidates)
+        foreach (var candidate in platformCandidates)
         {
             yield return candidate;
+        }
+
+        // User-reported gap: dropping the library right next to the running app didn't get
+        // auto-detected even under the standalone-publish exe (the case with the least reason to
+        // fail). Bare NativeLibrary.TryLoad relies entirely on the OS loader's own default search
+        // order, which does NOT reliably cover this: dlopen on Linux never searches argv[0]'s own
+        // directory (only LD_LIBRARY_PATH/rpath/ldconfig's cache), and on Windows a self-contained
+        // single-file publish is a real, documented case where AppContext.BaseDirectory can diverge
+        // from the directory the .exe physically sits in once its bundled content gets extracted to
+        // a temp directory at startup. Explicitly trying each candidate name joined against
+        // AppContext.BaseDirectory makes "drop the library next to the app" a real, tested
+        // placement instead of leaning on OS-implicit behavior this project doesn't control.
+        foreach (var candidate in platformCandidates)
+        {
+            yield return Path.Combine(AppContext.BaseDirectory, candidate);
+        }
+
+        foreach (var dir in extraDirs)
+        {
+            foreach (var candidate in platformCandidates)
+            {
+                yield return Path.Combine(dir, candidate);
+            }
         }
     }
 }
