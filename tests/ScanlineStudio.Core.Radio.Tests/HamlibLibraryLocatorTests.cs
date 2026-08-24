@@ -87,6 +87,25 @@ public class HamlibLibraryLocatorTests
         Assert.Equal(baseDirCandidate, resolvedPath);
     }
 
+    // User-reported gap: a real "not found" message for a user-override path that genuinely EXISTS
+    // (picked via a real file dialog) gave zero indication of why the OS loader actually rejected
+    // it -- e.g. a missing dependency DLL vs. a 32/64-bit image mismatch look identical from a bare
+    // "not found". The real NativeLibraryLoader now also reports Marshal.GetLastPInvokeError()'s
+    // message; this test only checks that the locator actually INCLUDES whatever detail the loader
+    // reports in its own thrown message, not the real Win32-specific error text (that's the real
+    // loader's own concern, unverifiable on this Linux sandbox).
+    [Fact]
+    public void Locate_OverrideSetButFails_IncludesTheLoaderReportedErrorDetail()
+    {
+        var loader = new FakeNativeLibraryLoader();
+        loader.FailWithDetail("/opt/missing-hamlib.so", "The specified module could not be found.");
+        var sut = new HamlibLibraryLocator(loader, overridePath: "/opt/missing-hamlib.so");
+
+        var ex = Assert.Throws<HamlibUnavailableException>(() => sut.Locate());
+
+        Assert.Contains("The specified module could not be found.", ex.Attempts[0], StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Locate_OverrideSetButFails_ThrowsWithoutFallingBackToAutoDetection()
     {
