@@ -44,24 +44,24 @@ internal sealed class HamlibLibraryLocator
         // wiring pass would introduce without necessarily re-reading this method.
         if (!string.IsNullOrWhiteSpace(_overridePath))
         {
-            if (_loader.TryLoad(_overridePath, out var overrideHandle))
+            if (_loader.TryLoad(_overridePath, out var overrideHandle, out var overrideError))
             {
                 return (overrideHandle, _overridePath);
             }
 
-            throw new HamlibUnavailableException([$"{_overridePath} (user override): not found"]);
+            throw new HamlibUnavailableException([$"{_overridePath} (user override): not found ({overrideError})"]);
         }
 
         var attempts = new List<string>();
 
         foreach (var candidate in BuildTier2And3Candidates())
         {
-            if (_loader.TryLoad(candidate, out var handle))
+            if (_loader.TryLoad(candidate, out var handle, out var candidateError))
             {
                 return (handle, candidate);
             }
 
-            attempts.Add($"{candidate}: not found");
+            attempts.Add($"{candidate}: not found ({candidateError})");
         }
 
         throw new HamlibUnavailableException(attempts);
