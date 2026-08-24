@@ -107,12 +107,29 @@ Many SSTV operators route audio through a virtual audio cable (VB-Cable, BlackHo
 
 ## Level metering
 
-**Corrected — this section described a design that was never built this way.** RX level metering
-is not a separate subscriber to `SamplesCaptured`; it's computed *inside* the decoder from the
-ported `LevelAgc`, measured post-bandpass-filter (not on the raw captured stream), and exposed as
-`ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven` (see [[06-sstv-dsp]]). TX level metering
-(VU-meter style, visible in the legacy `Scope`/level bar UI) **does not exist at all** — no
-peak/RMS calculator subscribes to `EnqueuePlaybackSamples`'s stream anywhere in this codebase.
+Two independent RX level concepts now exist, reading different points in the pipeline for different
+consumers — this section previously described only one of them, and (before a 2026-08-22 correction)
+had that one's own mechanism wrong:
+
+- **Decoder-internal AGC level**, computed *inside* the decoder from the ported `LevelAgc`, measured
+  post-bandpass-filter (not on the raw captured stream), exposed as
+  `ISstvDecoder.SignalPeakLevel`/`IsLevelOverdriven` (see [[06-sstv-dsp]]) — feeds the decoder's own
+  gain-control math, not a UI meter directly.
+- **Raw input peak level** (added 2026-08-24, backs `RadioHeaderView`'s WSJT-X-style RX level meter
+  — a plain incoming-audio-level bar, green/red by threshold band, replacing what used to be a
+  rig-signal-strength readout there): a genuinely separate, THIRD subscriber to `SamplesCaptured`
+  (`SstvSessionService`'s own `_levelMeterHandler`, alongside the existing `_decoderHandler`/
+  `_waterfallHandler`), reading the RAW captured buffer's own peak amplitude directly — before any
+  bandpass filtering or decode-specific processing — exposed as `ISstvSessionService.RawInputPeakLevel`
+  (a `[0.0, 1.0]`-range `volatile float` field, `0.0` whenever capture isn't running so it never shows
+  a stale reading), polled by `RadioStatusViewModel` on a 250 ms `DispatcherTimer`, same pattern
+  `RxImagePaneViewModel`'s own telemetry timer already used.
+
+TX level metering (VU-meter style, visible in the legacy `Scope`/level bar UI) still **does not
+exist at all** — no peak/RMS calculator subscribes to `EnqueuePlaybackSamples`'s stream anywhere in
+this codebase. What DOES exist on the TX side is unrelated to level metering: `TxVolumePercent`
+("Pwr") is a user-set app-internal GAIN multiplier applied before playback, not a readout of the
+signal actually going out.
 
 ## Testing
 

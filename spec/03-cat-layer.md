@@ -78,15 +78,24 @@ struct-free.
 Three tiers, each falling through to the next; the whole probe (see "Version gate" below) runs once at
 startup and its result is cached for the process lifetime, not re-run per connect attempt:
 
-1. **User-provided override** — a path the user supplies in Settings ([[12-settings]]). **The
-   mechanism is plumbed but not yet exposed**: `HamlibLibraryLocator` accepts an override path
-   parameter and honors it correctly, but no caller passes one yet — `Program.cs`'s own
-   `HamlibProtocolFactory.Create` call doesn't wire a Settings-sourced value through, so this tier is
-   currently unreachable in practice. When set, this is tried *exclusively* — it bypasses tiers 2/3
-   entirely rather than being a last-resort fallback, since a user who explicitly configured a path
-   wants exactly that library used, not silently substituted with whatever auto-detection happens to
-   find first. This is the cheap hook that keeps a later "swap in your own compiled libhamlib" story
-   alive without any packaging work now.
+1. **User-provided override** — a path the user supplies in Settings ([[12-settings]]), now real and
+   reachable end to end (Options → Radio/CAT tab's Hamlib library-path field). `HamlibLibraryLocator`
+   accepts an override path parameter and honors it; `Program.cs`'s own `HamlibProtocolFactory.Create`
+   call passes `radioSettings.HamlibLibraryPath` (`Program.cs:477`) straight through, so a value the
+   user types/browses to and saves takes effect on the next connect. When set, this is tried
+   *exclusively* — it bypasses tiers 2/3 entirely rather than being a last-resort fallback, since a
+   user who explicitly configured a path wants exactly that library used, not silently substituted
+   with whatever auto-detection happens to find first.
+
+   A separate, new `IHamlibDiscoveryService`/`HamlibDiscoveryService`
+   (`src/ScanlineStudio.Core.Radio.Hamlib/HamlibDiscoveryService.cs`) backs that same tab's
+   Browse/Auto-detect/Test-path buttons: `ProbeAsync` runs the SAME `HamlibLibraryLocator`/
+   `HamlibRuntime` resolution off-thread (`Task.Run`) against a candidate path (or `null` for
+   auto-detect) purely to REPORT what would be found — version string, resolved path, and the real
+   list of supported rig models (`rig_list_foreach`) — without touching the app's own live radio
+   session. Auto-detect success optionally writes the resolved path back into the same
+   `HamlibLibraryPath` field this tier reads at connect time. This is the cheap hook that keeps a
+   later "swap in your own compiled libhamlib" story alive without any packaging work now.
 2. **Bare soname load** — only attempted when no override is configured. `NativeLibrary.TryLoad` against
    the platform's default candidate name, letting the OS's own dynamic linker search its normal paths:
    `libhamlib.so.4` (Linux, via the ldconfig cache), `libhamlib.4.dylib` (macOS), `hamlib-4.dll` then

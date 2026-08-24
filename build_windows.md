@@ -37,8 +37,11 @@ your very first build. This is exactly what this project's own CI does on `windo
 for the same reason (see `.github/workflows/ci.yml`).
 
 The native audio shim is built automatically as part of this — `BuildNativeShimWindows` runs before
-the managed build and produces `yoniqaudio.dll` alongside the managed output (via `cl.exe /LD`). You
-do not need to build it separately.
+the managed build and produces `yoniqaudio.dll` alongside the managed output (via `cl.exe /LD`,
+linked against `Ole32.lib Uuid.lib` — added 2026-08-24 for a real OS device-mute-state query the
+shim now makes via direct WASAPI `IAudioEndpointVolume` COM calls). Both libraries ship with the
+MSVC Build Tools' "Desktop development with C++" workload already required above — no extra install
+needed. You do not need to build the shim separately.
 
 ## Run
 
