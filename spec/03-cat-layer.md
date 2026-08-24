@@ -83,7 +83,7 @@ startup and its result is cached for the process lifetime, not re-run per connec
    accepts an override path parameter and honors it; `Program.cs`'s own `HamlibProtocolFactory.Create`
    call passes `radioSettings.HamlibLibraryPath` (`Program.cs:477`) straight through, so a value the
    user types/browses to and saves takes effect on the next connect. When set, this is tried
-   *exclusively* — it bypasses tiers 2/3 entirely rather than being a last-resort fallback, since a
+   *exclusively* — it bypasses tiers 2-4 entirely rather than being a last-resort fallback, since a
    user who explicitly configured a path wants exactly that library used, not silently substituted
    with whatever auto-detection happens to find first.
 
@@ -99,9 +99,17 @@ startup and its result is cached for the process lifetime, not re-run per connec
 2. **Bare soname load** — only attempted when no override is configured. `NativeLibrary.TryLoad` against
    the platform's default candidate name, letting the OS's own dynamic linker search its normal paths:
    `libhamlib.so.4` (Linux, via the ldconfig cache), `libhamlib.4.dylib` (macOS), `hamlib-4.dll` then
-   `libhamlib-4.dll` (Windows, via PATH/next-to-exe). Covers anyone who installed Hamlib through their
-   platform's normal channel.
-3. **Known extra install directories** — a short, hand-maintained per-OS fallback list (e.g.
+   `libhamlib-4.dll` (Windows, via PATH). Covers anyone who installed Hamlib through their platform's
+   normal channel.
+3. **Next to the running app** — user-reported gap, fixed 2026-08-24: the same per-OS candidate names
+   from tier 2, but explicitly joined against `AppContext.BaseDirectory` this time, since the bare
+   OS-loader search tier 2 relies on does NOT reliably cover "drop the library next to the app" —
+   `dlopen` on Linux never searches `argv[0]`'s own directory (only `LD_LIBRARY_PATH`/rpath/ldconfig's
+   cache), and a self-contained single-file Windows publish is a real, documented case where
+   `AppContext.BaseDirectory` can diverge from where the `.exe` physically sits once its bundled
+   content extracts to a temp directory at startup. Covers anyone who drops the shared library
+   straight into the app's own install/publish folder, no PATH/install-location changes needed.
+4. **Known extra install directories** — a short, hand-maintained per-OS fallback list (e.g.
    `/opt/homebrew/lib` on Apple Silicon, which Homebrew doesn't always put on the default linker path).
    No CI cost, just a wider search before giving up.
 
