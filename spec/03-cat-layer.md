@@ -40,12 +40,13 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
    a project-maintained protocol implementation, so it doesn't reopen the "no hand-written CAT code"
    decision above.
 
-**Maybe later, not committed** (see [[14-roadmap]]'s Phase 4 entry — revisit once Hamlib/rigctld
-coverage lands and there's real user demand, not a guess made now):
+4. **flrig client** (`ScanlineStudio.Core.Radio.Flrig`) — XML-RPC client against a running flrig
+   instance. flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld
+   users. Implemented — see "Definition of done" below.
 
-4. **flrig client** (`ScanlineStudio.Radio.Flrig`) — XML-RPC client against a running flrig instance. flrig has
-   a real, still-actively-used user base distinct from plain Hamlib/rigctld users. Wire protocol not
-   yet designed.
+**Maybe later, not committed** (see [[14-roadmap]]'s Phase 4 entry — revisit once there's real user
+demand, not a guess made now):
+
 5. **OmniRig client** (`ScanlineStudio.Radio.OmniRig`, Windows-only optional module, COM) — talks to an
    already-running OmniRig instance as a client, the same relationship as (2)/flrig above. This is
    distinct from legacy's own OmniRig integration (bundling OmniRig's OCX/TLB into the app itself,
@@ -194,12 +195,15 @@ is bundled; `LICENSES.md` gets a runtime-dependency disclosure row, not a bundle
 
 ## Transport implications
 
-`IRadioTransport` (bytes in, bytes out — [[02-radio-layer]]) cleanly fits the TCP-based backends
-(`rigctld`, flrig). Linked Hamlib and OmniRig are call-based (P/Invoke / COM), not byte-stream-based —
-they manage their own transport (including, for Hamlib, the serial port itself) internally. Their
-`IRadioProtocol` implementations do not use `IRadioTransport` at all; `PollAsync`/`Set*Async` call
-straight into the native/COM API. This is a real asymmetry in the interface's usage, not an oversight —
-noted here so a future implementer doesn't try to force a transport abstraction where none applies.
+`IRadioTransport` (bytes in, bytes out — [[02-radio-layer]]) cleanly fits `rigctld`'s persistent-socket,
+line-based protocol. Linked Hamlib and OmniRig are call-based (P/Invoke / COM), not byte-stream-based —
+they manage their own transport (including, for Hamlib, the serial port itself) internally. flrig is
+TCP-based too, but doesn't use `IRadioTransport` either: its XML-RPC-over-HTTP wire shape is
+request/response via `HttpClient`, not a persistent socket with `IRadioTransport`'s own
+buffer-survival contract. None of these three implementations' `IRadioProtocol` uses `IRadioTransport`
+at all — Hamlib/OmniRig call straight into the native/COM API, flrig calls straight into `HttpClient`.
+This is a real asymmetry in the interface's usage, not an oversight — noted here so a future
+implementer doesn't try to force a transport abstraction where none applies.
 
 ## Rig identification
 
@@ -211,12 +215,12 @@ backend(s) actually ship first.
 
 ## Testing
 
-Each backend client is tested against fixture responses for its own wire format (line-based text for
-`rigctld`/flrig's XML-RPC, a fake P/Invoke/COM shim for linked Hamlib/OmniRig) — same
-`FakeRadioTransport`-style pattern [[04-rigctld]] uses, extended with a fake native-call shim for the
-two call-based backends. No legacy byte-fixture/golden-vector parity work applies here (that requirement
-belonged to the hand-written-protocol plan this document replaces) — correctness of the underlying CAT
-command set is the external backend's own responsibility, not this port's.
+Each backend client is tested against fixture responses for its own wire format: line-based text for
+`rigctld` (`FakeRadioTransport`, [[04-rigctld]]), literal XML-RPC response bodies over a fake
+`HttpMessageHandler` for flrig, and a fake P/Invoke/COM shim for linked Hamlib/OmniRig. No legacy
+byte-fixture/golden-vector parity work applies here (that requirement belonged to the
+hand-written-protocol plan this document replaces) — correctness of the underlying CAT command set is
+the external backend's own responsibility, not this port's.
 
 ## Definition of done
 
@@ -234,4 +238,12 @@ command set is the external backend's own responsibility, not this port's.
       fakes. `TemplateCatProtocol` fallback and Application-layer cross-backend demotion still open
       (see "Explicitly out of scope" in the implementation plan).
 - [ ] `TemplateCatProtocol` implemented for the fallback case.
-- [ ] flrig and OmniRig client backends: design deferred, tracked in [[14-roadmap]].
+- [x] flrig client implemented (`ScanlineStudio.Core.Radio.Flrig`) — `FlrigClientProtocol`/
+      `FlrigProtocolFactory`/`XmlRpcCodec`/`FlrigModeTokens`, hand-rolled minimal XML-RPC codec over
+      `HttpClient` (not `IRadioTransport` — see "Transport implications" above), 2 rounds of `auditor`
+      plan-review before any code, fixture-tested against literal XML-RPC response bodies pinned to
+      flrig's real, source-verified wire shapes (a local flrig source clone, gitignored, mirrors the
+      `hamlib/` clone convention). Meter RPCs (`rig.get_smeter`/`rig.get_pwrmeter`/`rig.get_swrmeter`)
+      out of scope — `RadioState` has no bandwidth field and this project's meter capabilities are
+      already covered by Hamlib/rigctld for users who need them.
+- [ ] OmniRig client backend: design deferred, tracked in [[14-roadmap]].

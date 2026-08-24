@@ -62,7 +62,11 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     // Disconnected event was published, and LastKnownState kept its last stale snapshot -- forever,
     // since every later DisconnectAsync sees _protocol == null too. Same failure class as the _rigId
     // caching fix above, just its mirror image.
-    private bool _sessionActive;
+    //
+    // volatile: read cross-thread by the poll loop's own straggler-vs-DisconnectAsync guard on the
+    // IsGenuinelyConnected publish path below (RunPollLoopAsync historically only ever wrote this,
+    // never read it -- that read is new, added alongside _connectionConfirmed below).
+    private volatile bool _sessionActive;
 
     // Cached separately from _protocol -- see RigId's own doc comment. Set whenever a protocol is
     // freshly resolved (ConnectAsync, and the poll loop's own reconnect-after-backoff path); reset to
@@ -81,6 +85,19 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     // a short interval) -- see docs/logging-guidelines.md's hot-path rule.
     private RadioConnectionState? _lastLoggedFailureState;
 
+    // Distinct from _rigId: _rigId goes non-"none" the instant ConnectAsync resolves a protocol
+    // OBJECT (before any real I/O -- both real factories connect lazily), so it answers "is there a
+    // session to disconnect," not "have we actually verified this rig is reachable." This latch
+    // answers the second question. False on a fresh ConnectAsync and on every transport-level
+    // failure (Reconnecting/Failed) -- a backoff episode must not let a stale "yes" survive. Set true,
+    // and IsGenuinelyConnected's own additional Connected event published, ONLY when the poll loop's
+    // PollAsync call genuinely returns a RadioState -- deliberately NOT on a CommandFailed poll (a
+    // command-level failure only proves the session is intact, not that a radio is actually there --
+    // e.g. FlrigClientProtocol.PollAsync's own "no transceiver attached" case is a CommandFailed that
+    // must never read as "genuinely connected"). volatile: read from arbitrary threads via
+    // IsGenuinelyConnected (e.g. a ViewModel at construction), written from the poll-loop thread.
+    private volatile bool _connectionConfirmed;
+
     public RadioController(IEnumerable<IRadioProtocolFactory> factories, ILogger<RadioController> logger)
     {
         _factories = factories.ToList();
@@ -92,6 +109,8 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     public RadioCapabilities Capabilities => _protocol?.Capabilities ?? RadioCapabilities.None;
 
     public string RigId => _rigId;
+
+    public bool IsGenuinelyConnected => _connectionConfirmed;
 
     /// <summary>Filters out the internal <c>BehaviorSubject&lt;RadioState?&gt;</c>'s null sentinel
     /// (used to represent "never polled yet"/"disconnected" for <see cref="LastKnownState"/>) --
@@ -145,6 +164,11 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             throw;
         }
 
+        // Code-review nit: reset BEFORE the publish below, matching this file's own write-then-publish
+        // discipline at every other _connectionConfirmed site (benign either order here -- a fresh
+        // session's latch is already false whenever this line is reached -- but consistency removes
+        // the need to reason about why THIS site is the one exception).
+        _connectionConfirmed = false;
         PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
         // Logs the local just resolved, not _protocol: a ConnectionEvents subscriber that reacts to
         // Connected by synchronously calling DisconnectAsync (nothing prevents that -- Subject<T>.OnNext
@@ -207,6 +231,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             var protocol = _protocol;
             _protocol = null;
             _rigId = "none";
+            _connectionConfirmed = false;
             _sessionActive = false;
 
             if (protocol is not null)
@@ -331,6 +356,9 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 // from the factory (never just retry the same dead transport forever).
                 attempt = Math.Min(attempt + 1, MaxBackoffAttempt);
                 var delay = ComputeBackoffDelay(attempt, spec.PollInterval);
+                // Must not survive a backoff episode -- a stale "confirmed" would let
+                // IsGenuinelyConnected keep reporting true for a link that just genuinely broke.
+                _connectionConfirmed = false;
                 PublishConnectionEvent(RadioConnectionState.Reconnecting, ex.Message, ex);
                 // Log the first failure in full, then only a periodic summary -- a dead rig would
                 // otherwise log every retry indefinitely once backed off to a short interval.
@@ -430,6 +458,27 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
             {
                 Log.ReconnectSucceeded(_logger, attempt);
                 _lastLoggedFailureState = null;
+            }
+
+            // Publishes an ADDITIONAL Connected event, on top of ConnectAsync's own (unconditional,
+            // fires immediately on resolve -- left untouched, IsRadioConnected depends on it) -- this
+            // one only on the false->true transition, so consumers that need to distinguish "resolved"
+            // from "genuinely verified" (RadioStatusViewModel.CatLinked) have something to react to,
+            // including after a real recovery from Reconnecting/Failed, which otherwise publishes
+            // nothing at all once the poll starts succeeding again. Re-checks _sessionActive and
+            // ct.IsCancellationRequested immediately before publishing -- an abandoned straggler
+            // iteration (PollLoopShutdownTimeout expired) must not publish a false Connected after
+            // DisconnectAsync's own teardown already published Disconnected; same window
+            // PublishState below already accepts, not a new or wider one.
+            // Code-review nit: the latch write sits INSIDE the guard, not before it -- an abandoned
+            // straggler that fails the guard must not leave _connectionConfirmed true with no
+            // published event to justify it (structurally unreachable today given DisconnectAsync's
+            // own teardown order, but keeping the write and the publish it justifies atomic costs
+            // nothing and removes the need to reason about why it was safe).
+            if (!_connectionConfirmed && _sessionActive && !ct.IsCancellationRequested)
+            {
+                _connectionConfirmed = true;
+                PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
             }
 
             attempt = 0;

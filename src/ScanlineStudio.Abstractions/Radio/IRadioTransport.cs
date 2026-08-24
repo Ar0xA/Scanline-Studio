@@ -1,8 +1,11 @@
 namespace ScanlineStudio.Abstractions.Radio;
 
-/// <summary>See spec/02-radio-layer.md. Bytes in, bytes out — no framing/parsing knowledge. Only the
-/// TCP-based backends (rigctld, flrig — spec/03-cat-layer.md) use this; call-based backends (linked
-/// Hamlib, OmniRig) are call-based, not byte-stream-based, and don't implement it.
+/// <summary>See spec/02-radio-layer.md. Bytes in, bytes out — no framing/parsing knowledge. Only
+/// persistent-socket, line-protocol backends (rigctld — spec/03-cat-layer.md) use this; call-based
+/// backends (linked Hamlib, OmniRig) are call-based, not byte-stream-based, and don't implement it.
+/// flrig doesn't implement it either, despite also being TCP-based — its XML-RPC-over-HTTP wire
+/// shape is request/response via <see cref="System.Net.Http.HttpClient"/>, not a persistent socket
+/// with this interface's own buffer-survival contract (below).
 ///
 /// <b>Buffer-survival contract</b> (the one subtle correctness requirement here, added after an
 /// auditor design-review pass — see spec/14-roadmap.md's "rigctld client" entry): <see cref="ReadAsync"/>

@@ -510,6 +510,102 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsRadioConnected);
     }
 
+    [AvaloniaFact]
+    public async Task IsRadioConnected_ConnectThatNeverConfirms_StaysTrueAndDisconnectStillReachable()
+    {
+        // Round-2 plan-review regression guard: a connect that resolves but never actually confirms
+        // (IsGenuinelyConnected stays false, e.g. the rig is powered off) must NOT dead-end the
+        // button -- IsRadioConnected/CanToggleRadioConnection/ToggleRadioConnectionAsync are all
+        // still driven purely by RigId's own Connected/Disconnected event pair, unaffected by
+        // whether the session was ever genuinely confirmed. See RadioLinkStatusMessage for the
+        // presentation-only signal that DOES track confirmation, added below.
+        var radioSession = new FakeRadioSessionService { RigId = "none", IsGenuinelyConnected = false };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.RigId = "rigctld-client"; // mirrors what a real ConnectAsync sets synchronously
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsRadioConnected);
+        Assert.True(vm.CanToggleRadioConnection);
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.DisconnectCallCount);
+        Assert.Equal(0, radioSession.ConnectUsingSettingsCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RadioLinkStatusMessage_NonNullOnlyWhileConnectedButNotYetConfirmed()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "none", IsGenuinelyConnected = false };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.RadioLinkStatusMessage); // not connected at all yet
+
+        // Code-review finding: a plain getter re-read alone can't prove the notification actually
+        // fires, or in what order relative to IsRadioConnected -- this is the real regression guard
+        // for the round-3 blocker (OnConnectionEvent must notify RadioLinkStatusMessage on EVERY
+        // event, not just Connected/Disconnected, and IsRadioConnected must already be settled by
+        // the time it does).
+        vm.IsRigctldBackendSelected = true; // also re-notifies RadioLinkStatusMessage -- settle first
+        radioSession.RigId = "rigctld-client";
+
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.RadioLinkStatusMessage); // connected, but not yet genuinely confirmed
+        Assert.Contains(nameof(OptionsWindowViewModel.RadioLinkStatusMessage), raisedProperties);
+        Assert.True(
+            raisedProperties.IndexOf(nameof(OptionsWindowViewModel.IsRadioConnected)) <
+            raisedProperties.IndexOf(nameof(OptionsWindowViewModel.RadioLinkStatusMessage)),
+            "IsRadioConnected must settle before RadioLinkStatusMessage is re-read.");
+
+        // Updates even though IsRadioConnected itself doesn't change for this event -- the whole
+        // point of notifying on every event, not just Connected/Disconnected.
+        raisedProperties.Clear();
+        radioSession.IsGenuinelyConnected = false; // still false, but simulate a Reconnecting tick
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Reconnecting, "simulated", null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsRadioConnected); // unaffected, as established above
+        Assert.DoesNotContain(nameof(OptionsWindowViewModel.IsRadioConnected), raisedProperties); // genuinely unaffected, not just coincidentally equal
+        Assert.Contains(nameof(OptionsWindowViewModel.RadioLinkStatusMessage), raisedProperties); // but still re-notified
+        Assert.NotNull(vm.RadioLinkStatusMessage); // still not confirmed
+
+        radioSession.IsGenuinelyConnected = true;
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.RadioLinkStatusMessage); // genuinely confirmed now
+    }
+
+    [AvaloniaFact]
+    public void RadioLinkStatusMessage_NeverShownForNoneBackend()
+    {
+        // Defense-in-depth (round-3 nit): the "None" backend's own poll never returns, so
+        // IsGenuinelyConnected can never become true for it -- this guards against a stray
+        // Connected event ever showing "not yet confirmed reachable" for a config with nothing to
+        // reach, even though that shouldn't be reachable through the real ConnectAsync path either.
+        var radioSession = new FakeRadioSessionService { RigId = "none", IsGenuinelyConnected = false };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsNoneBackendSelected);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.RadioLinkStatusMessage);
+    }
+
     // User-reported gap: Connect was enabled unconditionally, including for "None" (nothing to
     // connect to) and for rigctld/Hamlib configs never actually verified to work.
 
@@ -660,6 +756,83 @@ public sealed class OptionsWindowViewModelTests
         vm.HamlibModel = 2037; // different, untested model
 
         Assert.False(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Flrig_RequiresBothTestConnectionAndTestPttToSucceed()
+    {
+        // Unlike Hamlib, flrig has exactly one PTT mechanism (rig.set_ptt) -- no VOX-style exemption.
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "flrig-client", RadioCapabilities.PttControl, null),
+            TestPttResultToReturn = new RadioConnectionTestResult(true, "flrig-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsFlrigBackendSelected = true;
+        vm.FlrigHost = "127.0.0.1";
+        vm.FlrigPort = 12345;
+
+        Assert.False(vm.CanConnectRadio);
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestConnection", vm.ConnectRadioTooltip);
+
+        await vm.TestFlrigConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CanConnectRadio); // connection test alone isn't enough
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestPtt", vm.ConnectRadioTooltip);
+
+        await vm.TestFlrigPttCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Flrig_HostChangeInvalidatesBothPriorSuccesses()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "flrig-client", RadioCapabilities.PttControl, null),
+            TestPttResultToReturn = new RadioConnectionTestResult(true, "flrig-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsFlrigBackendSelected = true;
+        vm.FlrigHost = "127.0.0.1";
+        vm.FlrigPort = 12345;
+        await vm.TestFlrigConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        await vm.TestFlrigPttCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanConnectRadio);
+
+        vm.FlrigHost = "192.168.1.50"; // different, untested host
+
+        Assert.False(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task TestFlrigConnectionCommand_AlreadyConnected_RefusesAndShowsMessage()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "flrig-client" }; // a real session is already connected
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsFlrigBackendSelected = true;
+        vm.FlrigHost = "127.0.0.1";
+        vm.FlrigPort = 12345;
+
+        await vm.TestFlrigConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(radioSession.TestConnectionCalls);
+        Assert.Equal("Options.Radio.Flrig.AlreadyConnected", vm.TestConnectionStatusMessage);
     }
 
     [AvaloniaFact]
@@ -1439,6 +1612,67 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveCommand_PersistsFlrigFieldsWhenBackendIsFlrig()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsFlrigBackendSelected = true;
+        vm.FlrigHost = "192.168.1.20";
+        vm.FlrigPort = 12345;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var radio = settingsStore.Settings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings);
+        Assert.Equal("flrig", radio?.BackendId);
+        Assert.Equal("192.168.1.20", radio?.FlrigHost);
+        Assert.Equal(12345, radio?.FlrigPort);
+    }
+
+    [AvaloniaFact]
+    public void ApplyFromSnapshot_RestoresFlrigFields()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "flrig", FlrigHost = "10.0.0.5", FlrigPort = 12346 },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsFlrigBackendSelected);
+        Assert.Equal("10.0.0.5", vm.FlrigHost);
+        Assert.Equal(12346, vm.FlrigPort);
+    }
+
+    [AvaloniaFact]
+    public void ResetRadioToDefaultCommand_AlsoClearsFlrigFields()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "flrig", FlrigHost = "10.0.0.5", FlrigPort = 12346 },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsFlrigBackendSelected = true;
+        vm.FlrigHost = "1.2.3.4";
+
+        vm.ResetRadioToDefaultCommand.Execute(null);
+
+        Assert.Equal("none", vm.RadioBackendId);
+        Assert.Equal("127.0.0.1", vm.FlrigHost);
+        Assert.Equal(12345, vm.FlrigPort);
+        Assert.False(vm.FlrigTestSucceeded);
+        Assert.False(vm.FlrigPttTestSucceeded);
+    }
+
+    [AvaloniaFact]
     public void ResetRadioToDefaultCommand_AlsoClearsHamlibFields()
     {
         var settingsStore = new FakeSettingsStore
@@ -1964,12 +2198,12 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public void Constructor_DefaultsRememberWindowPositionToFalseWhenSectionMissing()
+    public void Constructor_DefaultsRememberWindowPositionToTrueWhenSectionMissing()
     {
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(vm.RememberWindowPosition);
+        Assert.True(vm.RememberWindowPosition);
     }
 
     [AvaloniaFact]
@@ -1999,22 +2233,22 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public void ResetGeneralToDefaultCommand_ClearsRememberWindowPosition()
+    public void ResetGeneralToDefaultCommand_RestoresRememberWindowPositionToTrue()
     {
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 WindowGeometrySettings.SectionKey,
-                new WindowGeometrySettings { RememberWindowPosition = true },
+                new WindowGeometrySettings { RememberWindowPosition = false },
                 WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
-        Assert.True(vm.RememberWindowPosition);
+        Assert.False(vm.RememberWindowPosition);
 
         vm.ResetGeneralToDefaultCommand.Execute(null);
 
-        Assert.False(vm.RememberWindowPosition);
+        Assert.True(vm.RememberWindowPosition);
     }
 
     [AvaloniaFact]

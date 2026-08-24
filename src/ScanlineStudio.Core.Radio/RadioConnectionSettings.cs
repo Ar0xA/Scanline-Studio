@@ -5,8 +5,11 @@ namespace ScanlineStudio.Core.Radio;
 /// <summary>The persisted, flat settings-section counterpart to <see cref="RadioConnectionSpec"/> —
 /// see that type's own doc comment for why persistence needs a separate DTO (the polymorphic
 /// <c>RadioConnectionSpec</c> hierarchy isn't JSON-source-gen-friendly across optional backend
-/// assemblies). <c>"none"</c>/<c>"rigctld"</c>/<c>"hamlib"</c> are meaningful — the Hamlib fields
-/// mirror <see cref="HamlibConnectionSpec"/>'s own shape exactly.</summary>
+/// assemblies). <c>"none"</c>/<c>"rigctld"</c>/<c>"hamlib"</c>/<c>"flrig"</c> are meaningful — the
+/// Hamlib fields mirror <see cref="HamlibConnectionSpec"/>'s own shape exactly. flrig gets its own
+/// <see cref="FlrigHost"/>/<see cref="FlrigPort"/> fields rather than reusing <see cref="Host"/>/
+/// <see cref="Port"/> — different service, different default port, and sharing would let editing one
+/// backend's panel spuriously invalidate the other's test state.</summary>
 public sealed record RadioConnectionSettings
 {
     public const string SectionKey = "Radio";
@@ -16,6 +19,14 @@ public sealed record RadioConnectionSettings
     public string? Host { get; init; }
 
     public int? Port { get; init; }
+
+    /// <summary>Defaults to the loopback address -- flrig conventionally runs on the same machine as
+    /// its XML-RPC client in a typical single-computer shack setup.</summary>
+    public string? FlrigHost { get; init; } = "127.0.0.1";
+
+    /// <summary>flrig's own default XML-RPC port, 12345 (verified against a local flrig source clone,
+    /// <c>src/support/status.cxx</c>).</summary>
+    public int? FlrigPort { get; init; } = 12345;
 
     /// <summary>Hamlib's own <c>rig_model_t</c> — see <see cref="HamlibConnectionSpec"/>'s doc
     /// comment for why there is no ScanlineStudio-side rig registry to resolve this from a friendly
@@ -55,6 +66,8 @@ public static class RadioConnectionSettingsExtensions
                     PttType = settings.PttType,
                     PttPort = settings.PttPort,
                 },
+            "flrig" when settings.FlrigHost is { Length: > 0 } flrigHost && settings.FlrigPort is int flrigPort
+                => new FlrigConnectionSpec(flrigHost, flrigPort),
             _ => new NoneConnectionSpec(),
         };
 }

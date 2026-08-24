@@ -9,6 +9,11 @@ QSSTV-main/
 # and implementation verify rigctld's real wire grammar against source instead of prose (spec/04-
 # rigctld.md); reference only, never vendored/compiled into Scanline Studio, gitignored, never committed.
 hamlib/
+# flrig reference source — https://github.com/w1hkj/flrig — a local clone at flrig/ lets the flrig
+# XML-RPC client backend verify its wire protocol (src/server/xml_server.cxx) against source instead
+# of prose/docs (which disagree with source on some formatting); reference only, never vendored/
+# compiled into Scanline Studio, gitignored, never committed.
+flrig/
 # Local Claude Code settings — machine/session-specific, not shared project config.
 .claude/settings.local.json
 

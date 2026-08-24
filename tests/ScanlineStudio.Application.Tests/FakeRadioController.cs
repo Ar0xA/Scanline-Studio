@@ -18,6 +18,8 @@ internal sealed class FakeRadioController : IRadioController, IDisposable
 
     public string RigId { get; set; } = "fake-rig";
 
+    public bool IsGenuinelyConnected { get; set; }
+
     public IObservable<RadioState> StateChanges => _stateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;

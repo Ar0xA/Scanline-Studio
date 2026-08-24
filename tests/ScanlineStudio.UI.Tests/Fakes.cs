@@ -355,6 +355,8 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     // every OTHER existing test's sake.
     public string RigId { get; set; } = "fake-radio";
 
+    public bool IsGenuinelyConnected { get; set; }
+
     public IObservable<RadioState> StateChanges => _stateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;
