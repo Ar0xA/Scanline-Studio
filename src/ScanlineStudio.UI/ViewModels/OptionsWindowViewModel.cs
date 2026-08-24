@@ -133,6 +133,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private bool _appPriorityIsHigh;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
     private string _radioBackendId = "none";
 
     [ObservableProperty]
@@ -173,6 +176,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(IsPttMethodDtrSelected))]
     [NotifyPropertyChangedFor(nameof(IsPttPortEnabled))]
     [NotifyPropertyChangedFor(nameof(CanTestPtt))]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
     private string? _hamlibPttType;
 
     /// <summary>Hamlib's own <c>ptt_pathname</c> -- a PTT-only serial device, separate from
@@ -452,9 +458,65 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// implementation, and it was a real, live-reproduced bug.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ConnectRadioButtonLabel))]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
     private bool _isRadioConnected;
 
     public string ConnectRadioButtonLabel => _localization.GetString(IsRadioConnected ? "Options.Radio.Disconnect" : "Options.Radio.Connect");
+
+    /// <summary>User-reported gap: Connect used to be enabled unconditionally -- including for
+    /// "None" (nothing to connect to at all) and for rigctld/Hamlib configs that were never
+    /// actually verified to work. Set true (via <see cref="TestRigctldConnectionAsync"/>/
+    /// <see cref="TestHamlibConnectionAsync"/>) only by a test that just succeeded for the
+    /// CURRENTLY on-screen fields; every partial <c>OnXxxChanged</c> method below that touches a
+    /// field the corresponding test spec is built from resets it back to
+    /// <see langword="false"/>, so a stale "it worked" from different settings can never authorize
+    /// connecting under new, untested ones.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _rigctldTestSucceeded;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _hamlibCatTestSucceeded;
+
+    /// <summary>Deliberately NOT required when <see cref="IsPttMethodVoxSelected"/> -- Hamlib sends
+    /// no PTT command at all for VOX (see that property's own doc comment), so there is nothing to
+    /// test; requiring it would make Hamlib+VOX permanently unconnectable. See
+    /// <see cref="CanConnectRadio"/>.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _hamlibPttTestSucceeded;
+
+    public bool CanConnectRadio =>
+        IsRigctldBackendSelected ? RigctldTestSucceeded :
+        IsHamlibBackendSelected ? HamlibCatTestSucceeded && (HamlibPttTestSucceeded || IsPttMethodVoxSelected) :
+        false; // None (nothing to connect to) or no backend selected.
+
+    /// <summary>Bound to the Connect/Disconnect button's own <c>IsEnabled</c> -- Connect is gated by
+    /// <see cref="CanConnectRadio"/>, but Disconnect never is: you must always be able to
+    /// disconnect regardless of test state.</summary>
+    public bool CanToggleRadioConnection => IsRadioConnected || CanConnectRadio;
+
+    /// <summary>Shown via <c>ToolTip.ShowOnDisabled</c> (Avalonia doesn't show tooltips on a
+    /// disabled control by default) so a disabled Connect button actually explains why, instead of
+    /// just sitting there greyed out with no explanation.</summary>
+    public string ConnectRadioTooltip => _localization.GetString(IsRadioConnected switch
+    {
+        true => "Options.Radio.Disconnect.Help",
+        false when IsNoneBackendSelected => "Options.Radio.Connect.Help.None",
+        false when IsRigctldBackendSelected && !RigctldTestSucceeded => "Options.Radio.Connect.Help.NeedsTestConnection",
+        false when IsHamlibBackendSelected && !HamlibCatTestSucceeded => "Options.Radio.Connect.Help.NeedsTestCat",
+        false when IsHamlibBackendSelected && !HamlibPttTestSucceeded && !IsPttMethodVoxSelected => "Options.Radio.Connect.Help.NeedsTestPtt",
+        false => "Options.Radio.Connect.Help",
+    });
 
     [ObservableProperty]
     private string? _connectRadioErrorMessage;
@@ -462,7 +524,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Toggle, same shape as <see cref="TuneCommand"/>/<see cref="TestPttCommand"/> above --
     /// connects using PERSISTED settings (<see cref="IRadioSessionService.ConnectUsingSettingsAsync"/>'s
     /// own contract, same as app startup), not whatever is currently typed into this dialog
-    /// (unsaved), so the tooltip tells the operator to Save first.</summary>
+    /// (unsaved), so the tooltip tells the operator to Save first. The <see cref="CanConnectRadio"/>
+    /// check below is a defensive no-op mirroring the button's own <c>IsEnabled</c> binding
+    /// (<see cref="CanToggleRadioConnection"/> in XAML) -- same "internal guard alongside an
+    /// IsEnabled binding, not a formal CanExecute" idiom <see cref="TestPttAsync"/> already uses,
+    /// so a direct <c>ExecuteAsync</c> call (e.g. from a test) can't bypass it either.</summary>
     [RelayCommand]
     private async Task ToggleRadioConnectionAsync()
     {
@@ -478,6 +544,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 TestPttErrorMessage = null;
                 ConnectRadioErrorMessage = null;
             });
+            return;
+        }
+
+        if (!CanConnectRadio)
+        {
             return;
         }
 
@@ -634,12 +705,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         Log.TestRigctldConnectionInvoked(_logger, host, port);
         IsTestingConnection = true;
+        // Reset for the duration of this fresh attempt -- Connect must not stay authorized on a
+        // stale PREVIOUS success while a new verification is genuinely in flight and could fail.
+        RigctldTestSucceeded = false;
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
         try
         {
             var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port)).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
+                RigctldTestSucceeded = result.Success;
                 // Tier B audit finding: this posted lambda runs after the outer try/catch has already
                 // exited, so its GetString calls were previously unguarded. A locale file with a
                 // mismatched format placeholder throws FormatException out of GetString, which used to
@@ -699,11 +774,51 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TestHamlibConnectionCommand.NotifyCanExecuteChanged();
     }
 
-    partial void OnRigctldHostChanged(string? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+    partial void OnRigctldHostChanged(string? value)
+    {
+        TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+        RigctldTestSucceeded = false;
+    }
 
-    partial void OnRigctldPortChanged(int? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+    partial void OnRigctldPortChanged(int? value)
+    {
+        TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+        RigctldTestSucceeded = false;
+    }
 
-    partial void OnHamlibModelChanged(uint? value) => TestHamlibConnectionCommand.NotifyCanExecuteChanged();
+    partial void OnHamlibModelChanged(uint? value)
+    {
+        TestHamlibConnectionCommand.NotifyCanExecuteChanged();
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+    }
+
+    // User-reported gap: Connect's own success gate (CanConnectRadio) must go stale the instant any
+    // field the Test CAT/Test PTT spec is built from changes -- otherwise a success from BEFORE the
+    // edit could wrongly authorize connecting under fields that were never actually tested.
+    partial void OnHamlibSerialPortChanged(string? value)
+    {
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+    }
+
+    partial void OnHamlibBaudRateChanged(int? value)
+    {
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+    }
+
+    partial void OnHamlibPttTypeChanged(string? value)
+    {
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+    }
+
+    partial void OnHamlibPttPortChanged(string? value)
+    {
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+    }
 
     /// <summary>Radio/CAT tab's "Test CAT" button -- same throwaway-protocol contract as
     /// <see cref="TestRigctldConnectionAsync"/> above (tests whatever is CURRENTLY TYPED into the
@@ -729,6 +844,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         Log.TestHamlibConnectionInvoked(_logger, model);
         IsTestingConnection = true;
+        // Reset for the duration of this fresh attempt -- same reasoning as
+        // TestRigctldConnectionAsync's own RigctldTestSucceeded reset above.
+        HamlibCatTestSucceeded = false;
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
         var spec = new HamlibConnectionSpec(model)
         {
@@ -742,6 +860,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var result = await _radioSession.TestConnectionAsync(spec).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
+                HamlibCatTestSucceeded = result.Success;
                 try
                 {
                     TestConnectionStatusMessage = result.Success
@@ -820,6 +939,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         Log.TestPttInvoked(_logger, model, MaxTestPttDuration.TotalSeconds);
         TestPttErrorMessage = null;
         IsTestingPtt = true;
+        // Reset for the duration of this fresh attempt -- same reasoning as
+        // TestRigctldConnectionAsync's own RigctldTestSucceeded reset.
+        HamlibPttTestSucceeded = false;
         var cts = new CancellationTokenSource();
         _testPttCts = cts;
         var spec = new HamlibConnectionSpec(model)
@@ -838,6 +960,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // un-key-failed-after-every-retry case, which must reach the operator, not be silently
             // dropped.
             var result = await _radioSession.TestPttAsync(spec, MaxTestPttDuration, cts.Token).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => HamlibPttTestSucceeded = result.Success);
             if (!result.Success)
             {
                 Dispatcher.UIThread.Post(() => TestPttErrorMessage = result.ErrorMessage);
@@ -1769,6 +1892,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         HamlibDiscoveryStatusMessage = null;
         HamlibRigModels.Clear();
         SelectedHamlibRigModel = null;
+        // Explicit, not relying on the OnXxxChanged resets above firing as a side effect --
+        // [ObservableProperty]'s generated setter skips the changed-callback entirely when the new
+        // value equals the old one (e.g. resetting an already-default field), which would otherwise
+        // leave a stale "tested" flag from BEFORE the reset still authorizing Connect afterward.
+        RigctldTestSucceeded = false;
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
     }
 
     [RelayCommand]

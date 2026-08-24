@@ -510,15 +510,198 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsRadioConnected);
     }
 
+    // User-reported gap: Connect was enabled unconditionally, including for "None" (nothing to
+    // connect to) and for rigctld/Hamlib configs never actually verified to work.
+
     [AvaloniaFact]
-    public async Task ToggleRadioConnectionCommand_WhenDisconnected_CallsConnectUsingSettings()
+    public void CanConnectRadio_FalseForNoneBackend_EvenWithATestSucceeded()
     {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsNoneBackendSelected);
+
+        Assert.False(vm.CanConnectRadio);
+        Assert.False(vm.CanToggleRadioConnection);
+        Assert.Equal("Options.Radio.Connect.Help.None", vm.ConnectRadioTooltip);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Rigctld_FalseUntilTestConnectionSucceeds_ThenTrue()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+
+        Assert.False(vm.CanConnectRadio);
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestConnection", vm.ConnectRadioTooltip);
+
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public void CanConnectRadio_Rigctld_HostChangeInvalidatesAPriorSuccess()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        vm.TestRigctldConnectionCommand.ExecuteAsync(null).GetAwaiter().GetResult();
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanConnectRadio);
+
+        vm.RigctldHost = "192.168.1.50"; // different, untested host
+
+        Assert.False(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Hamlib_RequiresBothTestCatAndTestPttToSucceed()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "hamlib-native", RadioCapabilities.PttControl, null),
+            TestPttResultToReturn = new RadioConnectionTestResult(true, "hamlib-native", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsHamlibBackendSelected = true;
+        vm.HamlibModel = 1035;
+        vm.IsPttMethodCatSelected = true;
+
+        Assert.False(vm.CanConnectRadio);
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestCat", vm.ConnectRadioTooltip);
+
+        await vm.TestHamlibConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CanConnectRadio); // CAT alone isn't enough
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestPtt", vm.ConnectRadioTooltip);
+
+        await vm.TestPttCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Hamlib_Vox_OnlyNeedsTestCat_PttTestExempt()
+    {
+        // VOX: Hamlib sends no PTT command at all, so there is nothing for Test PTT to verify --
+        // requiring it would make Hamlib+VOX permanently unconnectable.
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "hamlib-native", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsHamlibBackendSelected = true;
+        vm.HamlibModel = 1035;
+        vm.IsPttMethodVoxSelected = true;
+
+        await vm.TestHamlibConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_Hamlib_ModelChangeInvalidatesBothPriorSuccesses()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "hamlib-native", RadioCapabilities.PttControl, null),
+            TestPttResultToReturn = new RadioConnectionTestResult(true, "hamlib-native", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsHamlibBackendSelected = true;
+        vm.HamlibModel = 1035;
+        vm.IsPttMethodCatSelected = true;
+        await vm.TestHamlibConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        await vm.TestPttCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanConnectRadio);
+
+        vm.HamlibModel = 2037; // different, untested model
+
+        Assert.False(vm.CanConnectRadio);
+    }
+
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_CanConnectRadioFalse_DirectCallDoesNothing()
+    {
+        // Defensive-guard test: a direct ExecuteAsync call (bypassing the button's own IsEnabled
+        // binding entirely) must still be refused, not just visually disabled.
         var radioSession = new FakeRadioSessionService { RigId = "none" };
         var vm = new OptionsWindowViewModel(
             new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
             new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CanConnectRadio);
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, radioSession.ConnectUsingSettingsCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_WhenDisconnected_CallsConnectUsingSettings()
+    {
+        // User-reported gap: Connect must require a successful test for the CURRENT on-screen
+        // fields first -- this test's own setup (select rigctld, run Test connection successfully)
+        // is exactly that prerequisite, not incidental.
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
         Assert.Equal("Options.Radio.Connect", vm.ConnectRadioButtonLabel);
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanToggleRadioConnection);
 
         await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
@@ -557,11 +740,17 @@ public sealed class OptionsWindowViewModelTests
         var radioSession = new FakeRadioSessionService
         {
             RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
             ConnectUsingSettingsExceptionToThrow = new InvalidOperationException("2 backends all claim RigctldConnectionSpec"),
         };
         var vm = new OptionsWindowViewModel(
             new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
             new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
