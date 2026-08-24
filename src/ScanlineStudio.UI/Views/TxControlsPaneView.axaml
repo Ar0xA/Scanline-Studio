@@ -166,10 +166,15 @@
             </StackPanel>
         </HeaderedContentControl>
 
-        <!-- Output: merged Drive slider (moved from the header's standalone card in
+        <!-- Output: merged Pwr slider (moved from the header's standalone card in
              MainWindow.axaml; same underlying RadioStatus.TxVolumePercent value via the
              RadioStatus reference MainViewModel assigns onto this VM directly, not a second
-             independent value - see TxControlsPaneViewModel.RadioStatus's own doc comment) +
+             independent value - see TxControlsPaneViewModel.RadioStatus's own doc comment).
+             TxVolumePercent is app-internal TX playback gain, same shape WSJT-X's/fldigi's own
+             Pwr controls use — Panes.TxControls.DriveLabel's own string was renamed off "Drive"
+             to "Pwr" to match (a real OS-mixer-volume design briefly replaced this same-session,
+             then was reverted; TxVolumeDisplay/TxIsMuted still show a real OS mute readout for
+             the TX device independent of this gain, see RadioStatusViewModel.TxIsMuted) +
              a literal Device row, plus the real per-capability meters and
              SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
              negotiated that capability; never a placeholder for an unsupported rig
@@ -185,7 +190,7 @@
                             Value="{Binding RadioStatus.TxVolumePercent}"
                             Minimum="0" Maximum="100" VerticalAlignment="Center" />
                     <TextBlock Grid.Column="2" Classes="IndustryRowValue"
-                               Text="{Binding RadioStatus.TxVolumePercent}"
+                               Text="{Binding RadioStatus.TxVolumeDisplay}"
                                VerticalAlignment="Center" />
                 </Grid></Border>
                 <StackPanel Classes="Industry IndustryRows">
@@ -373,63 +378,6 @@
             <ProgressBar Classes="Industry" Minimum="0" Maximum="1" Value="{Binding TransmitProgress, TargetNullValue=0}" />
             <TextBlock Classes="IndustryRowValue" HorizontalAlignment="Center" Text="{Binding TransmitProgressText}" />
         </StackPanel>
-
-        <!-- Outgoing metadata: visual scaffolding only; blocked on the same missing operator-
-             profile setting as Identification, plus a "to station"/report/QSO-context concept
-             that doesn't exist yet (spec/14-roadmap.md backlog). All value rows show a neutral
-             "—" placeholder rather than fake-live literals (0.9 beta bar: no fake-live items).
-             Do NOT confuse this card with the separate real Identification card above
-             (FskIdDisplay/CwIdDisplay/TailDisplay); that one is wired to the CW-ID/FSK
-             subsystem and is left untouched. -->
-        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
-            <HeaderedContentControl.Header>
-                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxOutgoing.CardHeader}" />
-            </HeaderedContentControl.Header>
-            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.TxOutgoing.InSignalCaption}" />
-                <StackPanel Classes="Industry IndustryRows">
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.VisCode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.VisCodeValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.FskId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FskIdValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxId.CwId}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CwIdValue}" />
-                    </Grid></Border>
-                </StackPanel>
-                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxOutgoing.BurnedCaption}" />
-                <StackPanel Classes="Industry IndustryRows">
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Callsign}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.CallsignValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.ToStation}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ToStationValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.GridBeam}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.GridBeamValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.Report}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.ReportValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.FreqMode}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.FreqModeValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxOutgoing.DateUtc}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxOutgoing.DateUtcValue}" />
-                    </Grid></Border>
-                </StackPanel>
-            </StackPanel>
-        </HeaderedContentControl>
 
     </StackPanel>
 

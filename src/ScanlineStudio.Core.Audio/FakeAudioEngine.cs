@@ -120,6 +120,19 @@ public sealed class FakeAudioEngine : IAudioEngine
         return Task.CompletedTask;
     }
 
+    /// <summary>Test-only deterministic gate (not a race/timing hook -- see this project's own
+    /// "deterministic gates, not a shared race" rule): awaited synchronously, on the caller's own
+    /// thread, right after each chunk lands in <see cref="_playbackSamples"/> and before
+    /// <see cref="EnqueuePlaybackSamples"/> returns. Lets a test act at the exact moment a real
+    /// mid-transmission event (e.g. a Pwr-slider change while <c>SstvSessionService.PumpToPlaybackAsync</c>
+    /// is mid-flight) would matter, with no polling and no wall-clock wait. <c>Func&lt;Task&gt;</c>,
+    /// not a plain <c>Action</c>, so a test can drive an async call (e.g.
+    /// <c>SstvSessionService.SetTxVolumePercentAsync</c>) -- the blocking `.GetAwaiter().GetResult()`
+    /// this needs belongs here, in fake test-INFRASTRUCTURE code (this class ships in
+    /// <c>ScanlineStudio.Core.Audio</c>, not a test project, so xunit's own "no blocking task ops in a
+    /// test method" analyzer doesn't apply), not inside an actual `[Fact]`.</summary>
+    public Func<Task>? OnPlaybackChunkEnqueued { get; set; }
+
     /// <summary>Unbounded in-memory buffer -- always accepts everything, matching a real backend's
     /// contract of returning the accepted count (see <see cref="IAudioEngine.EnqueuePlaybackSamples"/>)
     /// even though this fake never actually applies back-pressure.</summary>
@@ -132,6 +145,7 @@ public sealed class FakeAudioEngine : IAudioEngine
         }
 
         _playbackSamples.AddRange(samples.Span);
+        OnPlaybackChunkEnqueued?.Invoke().GetAwaiter().GetResult();
         return samples.Length;
     }
 

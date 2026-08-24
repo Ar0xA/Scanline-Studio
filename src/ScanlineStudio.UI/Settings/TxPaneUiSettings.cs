@@ -15,10 +15,4 @@ public sealed record TxPaneUiSettings
 
     /// <summary>When true, a detected RX mode automatically becomes the selected TX mode.</summary>
     public bool AutoFollowRxMode { get; init; }
-
-    // TxVolumePercent deliberately does NOT live here: it needs to be read inside
-    // ScanlineStudio.Application's own playback pipeline (SstvSessionService), which cannot
-    // reference a ScanlineStudio.UI-owned type without inverting the dependency direction -- see
-    // AudioDeviceSettings.TxVolumePercent (ScanlineStudio.Core.Audio) instead. Caught before this
-    // field was ever consumed anywhere, not a breaking change to shipped behavior.
 }

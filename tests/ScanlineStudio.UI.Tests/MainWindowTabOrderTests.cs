@@ -27,6 +27,25 @@ public sealed partial class MainWindowTabOrderTests
         Assert.Equal("MainWindow.Tabs.Logbook", headers[ViewModels.MainViewModel.LogbookTabIndex]);
     }
 
+    /// <summary>Same reasoning as <see cref="MainTabControl_LogbookTabIndex_PointsAtTheActualLogbookTab"/>
+    /// above, for the header-row callsign chip's jump target: <see cref="ViewModels.OptionsWindowViewModel.TxTabIndex"/>
+    /// is a hardcoded index into `OptionsWindowView.axaml`'s own `TabControl` -- nothing would catch a
+    /// future tab reorder silently sending the chip to the wrong tab.</summary>
+    [Fact]
+    public void OptionsTabControl_TxTabIndex_PointsAtTheActualTxTab()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var optionsWindowPath = Path.Combine(uiSourceDirectory, "Views", "OptionsWindowView.axaml");
+        var text = File.ReadAllText(optionsWindowPath);
+
+        var headers = TabItemHeaderRegex().Matches(text).Select(m => m.Groups[1].Value).ToList();
+
+        Assert.True(
+            ViewModels.OptionsWindowViewModel.TxTabIndex < headers.Count,
+            $"OptionsWindowViewModel.TxTabIndex ({ViewModels.OptionsWindowViewModel.TxTabIndex}) is out of range for the {headers.Count} top-level TabItems found in OptionsWindowView.axaml.");
+        Assert.Equal("Options.Tx.Tab", headers[ViewModels.OptionsWindowViewModel.TxTabIndex]);
+    }
+
     private static string FindUiSourceDirectory()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

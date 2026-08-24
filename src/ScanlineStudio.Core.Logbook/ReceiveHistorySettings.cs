@@ -28,7 +28,7 @@ public sealed record ReceiveHistorySettings
     /// <summary>Nullable, not <c>= DefaultMaxEntries</c> — System.Text.Json does not honor a C#
     /// property-initializer default for a property absent from an already-persisted JSON payload
     /// (silently deserializes to the CLR default <c>0</c> instead); this is the same trap
-    /// documented and fixed on <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>.
+    /// documented and fixed on <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.CaptureThreadPriority</c>.
     /// The <c>?? DefaultMaxEntries</c> fallback lives at the one read site
     /// (<see cref="ResolveMaxEntriesAsync"/>), never here.</summary>
     public int? MaxEntries { get; init; }

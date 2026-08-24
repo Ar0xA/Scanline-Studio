@@ -21,6 +21,12 @@ internal sealed partial class HamlibRuntime : IHamlibRuntime
     private readonly IReadOnlyList<string>? _unavailableAttempts;
     private readonly ILogger _logger;
 
+    public string? ResolvedPath { get; private set; }
+
+    public string? Version { get; private set; }
+
+    public IReadOnlyList<string> Attempts => _unavailableAttempts ?? [];
+
     /// <param name="nativeFactory">Defaults to the real <see cref="HamlibNativeFactory"/>; tests
     /// substitute a fake that ignores the (meaningless, in a test) handle value and returns a scripted
     /// <see cref="IHamlibNative"/> instead -- see <see cref="IHamlibNativeFactory"/>'s own doc
@@ -36,8 +42,14 @@ internal sealed partial class HamlibRuntime : IHamlibRuntime
         {
             var locator = new HamlibLibraryLocator(loader, overridePath);
             var (handle, resolvedPath) = locator.Locate();
+            // Captured immediately -- HamlibNative's constructor (factory.Create below) can still
+            // throw HamlibUnavailableException if the loaded file is missing an expected export (e.g.
+            // it loaded fine but isn't actually Hamlib), which would otherwise leave ResolvedPath
+            // unset even though a real file WAS found and loaded.
+            ResolvedPath = resolvedPath;
             var native = factory.Create(loader, handle);
             var version = native.RigVersion();
+            Version = version;
 
             if (!HamlibVersionGate.IsSupported(version))
             {

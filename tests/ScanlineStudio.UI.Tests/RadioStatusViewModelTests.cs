@@ -12,7 +12,7 @@ public sealed class RadioStatusViewModelTests
         => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), NullLogger<RadioStatusViewModel>.Instance);
 
     [AvaloniaFact]
-    public void Constructor_LoadsPersistedPresetsAndTxVolume()
+    public void Constructor_LoadsPersistedPresetsAndTxState()
     {
         var radioSession = new FakeRadioSessionService
         {
@@ -26,6 +26,20 @@ public sealed class RadioStatusViewModelTests
         var preset = Assert.Single(vm.Presets);
         // Uppercased for display only (mock2's label line is CSS text-transform:uppercase).
         Assert.Equal("40M SSTV", preset.Label);
+        Assert.Equal(42, vm.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public void TxVolumeDisplay_ShowsMutedGlyphInsteadOfPercent_WhenDeviceIsMuted()
+    {
+        var sstvSession = new FakeSstvSessionService { TxVolumePercent = 42, TxIsMuted = true };
+
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.TxIsMuted);
+        Assert.Equal("\U0001F507", vm.TxVolumeDisplay);
+        // Muting doesn't reset the underlying percent -- the slider's own Value stays real.
         Assert.Equal(42, vm.TxVolumePercent);
     }
 
@@ -182,6 +196,32 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(55, sstvSession.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public void RxLevelDisplay_ReflectsRawInputPeakLevel_AsPlainNumber()
+    {
+        var sstvSession = new FakeSstvSessionService { RawInputPeakLevel = 0.5 };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("50", vm.RxLevelDisplay);
+        Assert.Equal(50.0, vm.RxLevelFillPercent);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0.0, false)]  // too quiet -- red
+    [InlineData(0.05, false)] // too quiet -- red
+    [InlineData(0.5, true)]   // good -- green
+    [InlineData(0.95, false)] // too hot -- red
+    [InlineData(1.0, false)]  // too hot -- red
+    public void RxLevelInGoodRange_ReflectsWhetherLevelIsWithinTheGoodDecodingBand(double rawInputPeakLevel, bool expectedInGoodRange)
+    {
+        var sstvSession = new FakeSstvSessionService { RawInputPeakLevel = rawInputPeakLevel };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(expectedInGoodRange, vm.RxLevelInGoodRange);
     }
 
     [AvaloniaFact]
@@ -522,95 +562,6 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal("SWR 1.5 · PWR 100%", vm.RigMetersDisplay);
     }
 
-    // Tier 2/3 follow-up (2026-08-18): the Transceiver card's RX level meter was a literal fixed
-    // 63%/78% stub with no real gain parameter behind it -- RadioState.SignalStrengthDb is now real
-    // (l STRENGTH / RIG_LEVEL_STRENGTH), RX-time-gated (opposite of the TX-only meters above).
-
-    [AvaloniaFact]
-    public void RxLevelDisplay_ValuePresent_FormatsSignedDbWithUnicodeMinus()
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: -14, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal("−14 dB", vm.RxLevelDisplay); // U+2212 MINUS SIGN, matching the source mockup's own glyph
-    }
-
-    [AvaloniaFact]
-    public void RxLevelDisplay_PositiveValue_ShowsExplicitPlusSign()
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: 14, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal("+14 dB", vm.RxLevelDisplay);
-    }
-
-    [AvaloniaFact]
-    public void RxLevelDisplay_ExactlyS9_ShowsZero()
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: 0, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal("0 dB", vm.RxLevelDisplay);
-    }
-
-    [AvaloniaFact]
-    public void RxLevelDisplay_NoReadingThisPoll_ShowsPlaceholder()
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal("—", vm.RxLevelDisplay);
-    }
-
-    [AvaloniaTheory]
-    [InlineData(-54, 0.0)]   // S0 floor -- clamped to the empty end of the bar
-    [InlineData(60, 100.0)]  // S9+60 ceiling -- clamped to the full end of the bar
-    [InlineData(0, 47.368421052631575)] // exactly S9 -- (0-(-54))/(60-(-54))*100
-    [InlineData(-100, 0.0)]  // below floor -- still clamps to 0, not a negative fill
-    [InlineData(200, 100.0)] // above ceiling -- still clamps to 100, not an overflowing fill
-    public void RxLevelFillPercent_ClampsToTheS0ToS9Plus60Range(int signalStrengthDb, double expectedPercent)
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: signalStrengthDb, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(expectedPercent, vm.RxLevelFillPercent, precision: 10);
-    }
-
-    [AvaloniaFact]
-    public void RxLevelFillPercent_NoReadingThisPoll_IsZero_NotAMissingDataIndicatorOfItsOwn()
-    {
-        // RxLevelDisplay's own "—" text carries the actual missing-data signal -- the fill bar just
-        // reads as an empty bar, same as a genuinely weak signal at the S0 floor.
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(0.0, vm.RxLevelFillPercent);
-    }
-
     // User-reported gap (2026-08-18): "while TX lights up, receiving should not stay green" -- the
     // header's Receiving toggle stayed visually lit throughout a local transmission. IsCapturePausedForTx
     // is a SEPARATE, purely visual flag; IsReceiving itself must stay untouched by this event.
@@ -685,12 +636,12 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
-    public void RigMetersDisplayAndRxLevel_RevertToPlaceholder_WhenCatLinkDropsMidSession()
+    public void RigMetersDisplay_RevertsToPlaceholder_WhenCatLinkDropsMidSession()
     {
-        // Auditor-caught (2026-08-18, RX signal-strength meter review): same staleness gap as
-        // IsKeyed above -- RigMetersDisplay/RxLevelDb are only ever refreshed by a successful poll,
-        // so without this a rig that read "SWR 1.2 · PWR 75%"/"−14 dB" when the link dropped would
-        // keep showing that live-looking reading indefinitely with nothing behind it.
+        // Auditor-caught (2026-08-18, RX signal-strength meter review): RigMetersDisplay is only
+        // ever refreshed by a successful poll, so without this a rig that read "SWR 1.2 · PWR 75%"
+        // when the link dropped would keep showing that live-looking reading indefinitely with
+        // nothing behind it.
         var radioSession = new FakeRadioSessionService();
         var vm = CreateViewModel(radioSession);
         Dispatcher.UIThread.RunJobs();
@@ -707,8 +658,6 @@ public sealed class RadioStatusViewModelTests
 
         Assert.False(vm.CatLinked);
         Assert.Equal("—", vm.RigMetersDisplay);
-        Assert.Equal("—", vm.RxLevelDisplay);
-        Assert.Equal(0.0, vm.RxLevelFillPercent);
     }
 
     [AvaloniaFact]

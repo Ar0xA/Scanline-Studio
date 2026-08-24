@@ -12,6 +12,21 @@ internal interface IHamlibRuntime
 {
     bool IsAvailable { get; }
 
+    /// <summary>The library path that actually loaded, captured immediately once
+    /// <see cref="HamlibLibraryLocator.Locate"/> succeeds -- even if a later step (the version gate, or
+    /// the native shim failing to resolve an export) still leaves <see cref="IsAvailable"/> false, so a
+    /// caller can distinguish "wrong file" from "no file found" instead of just seeing "not available"
+    /// either way. <see langword="null"/> if no candidate ever loaded.</summary>
+    string? ResolvedPath { get; }
+
+    /// <summary>The raw <c>rig_version()</c> string, if a candidate loaded far enough to call it.
+    /// <see langword="null"/> otherwise (including when the version gate itself rejected it).</summary>
+    string? Version { get; }
+
+    /// <summary>Per-candidate discovery failure reasons, for diagnostics -- empty when
+    /// <see cref="IsAvailable"/> is true.</summary>
+    IReadOnlyList<string> Attempts { get; }
+
     /// <summary>The ready <see cref="IHamlibNative"/>, or throws <see cref="HamlibUnavailableException"/>
     /// (fresh instance each call, not a cached exception object) if discovery/the version gate failed.</summary>
     IHamlibNative Native { get; }

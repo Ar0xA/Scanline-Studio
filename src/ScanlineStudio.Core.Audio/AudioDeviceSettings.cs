@@ -14,11 +14,35 @@ public sealed record AudioDeviceSettings
 
     public string? PlaybackDeviceId { get; init; }
 
+    /// <summary>User-reported fix (2026-08-23): <see cref="AudioDeviceInfo.Id"/> is NOT a stable,
+    /// durable identifier in practice on any backend -- observed live on this dev machine when a
+    /// PipeWire/PulseAudio USB capture node was re-created with a numeric suffix appended to its own
+    /// id after a mute toggle (same physical device, same friendly name, new id) -- WASAPI/CoreAudio
+    /// can churn their own device ids across a reconnect/driver-reset event for the identical reason.
+    /// Persisted purely as a recovery aid: when <see cref="CaptureDeviceId"/> no longer matches any
+    /// currently enumerated device, <c>SstvSessionService.TryResolveDeviceAsync</c> and
+    /// <c>OptionsWindowViewModel</c>'s own device-selection restore fall back to matching THIS name
+    /// among currently enumerated devices before giving up -- recovering the same device under
+    /// whatever new id the backend assigned, instead of surfacing a spurious "device not found."
+    /// Not itself a primary key (two identical USB mics could share a name) -- only ever a fallback
+    /// after an exact <see cref="CaptureDeviceId"/> match has already failed. <see langword="null"/>
+    /// means "no device explicitly selected yet," same as <see cref="CaptureDeviceId"/>.</summary>
+    public string? CaptureDeviceName { get; init; }
+
+    /// <summary>See <see cref="CaptureDeviceName"/>'s own doc comment -- identical reasoning, for
+    /// <see cref="PlaybackDeviceId"/>.</summary>
+    public string? PlaybackDeviceName { get; init; }
+
     public int SampleRate { get; init; } = 11025;
 
-    /// <summary>TX output gain (0-100), applied as a linear multiplier on encoded PCM samples right
-    /// before playback -- see <c>ScanlineStudio.Application.SstvSessionService</c>'s playback pump
-    /// for the exact hook point. Lives here (not a UI-only settings section) because that service's
+    /// <summary>"Pwr" TX output gain (0-100), applied as a linear multiplier on encoded PCM samples
+    /// right before playback -- see <c>ScanlineStudio.Application.SstvSessionService</c>'s playback
+    /// pump for the exact hook point. Pure app-internal gain, same shape WSJT-X's/fldigi's own
+    /// Pwr-style controls use (never touches the OS mixer) -- a user-directed reversal of an earlier
+    /// same-session design that briefly made this a real OS device volume query instead; see
+    /// <c>IAudioDeviceMuteQuery.IsDeviceMutedAsync</c>/<c>SstvSessionService.GetTxDeviceMutedAsync</c>
+    /// for the one piece of that design that stayed (mute is still a real OS device query,
+    /// independent of this gain). Lives here (not a UI-only settings section) because that service's
     /// own playback pipeline needs to read it directly, and it cannot reference a
     /// <c>ScanlineStudio.UI</c>-owned type.
     ///
@@ -50,7 +74,7 @@ public sealed record AudioDeviceSettings
     /// already use internally -- this tunes the actual device buffer, not this shim's own ring.
     ///
     /// <b>Plain non-nullable <c>int</c>, NOT the nullable pattern</b> -- unlike
-    /// <see cref="TxVolumePercent"/>/<see cref="CaptureThreadPriority"/> above, the desired "unset"
+    /// <see cref="CaptureThreadPriority"/> above, the desired "unset"
     /// default here (<c>0</c>, "don't touch it") IS the CLR default for <c>int</c>, so the
     /// nullable-with-read-site-fallback pattern would be unnecessary ceremony (see
     /// <c>RadioSafetySettings.SwrCutoffEnabled</c> for the established precedent of when a plain

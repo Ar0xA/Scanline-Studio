@@ -1092,3 +1092,440 @@ int yoniq_audio_resample_f32(const float *input, int input_frame_count, int samp
 
     return (int)total_frames_out;
 }
+
+/* ============================================================================================
+ * Piece Audio 9: real OS device mute state. Device-scoped, not session-scoped (no
+ * yoniq_audio_capture_session/yoniq_audio_playback_session parameter) -- see yoniq_audio.h's own
+ * doc comment on yoniq_audio_get_device_mute for the read-only-by-design reasoning.
+ *
+ * User-directed reversal (same session): this piece originally also carried real OS-mixer VOLUME
+ * get/set (WASAPI IAudioEndpointVolume/PulseAudio pa_context_set_sink/source_volume_by_name/
+ * CoreAudio AudioObjectSetPropertyData/ALSA snd_mixer_selem_*_volume_*), removed once TX Pwr went
+ * back to app-internal gain (matching WSJT-X's/fldigi's own Pwr controls, see
+ * ScanlineStudio.Application.SstvSessionService.GetTxVolumePercentAsync) and RX dropped any
+ * volume/mute concept entirely in favor of a plain incoming-level meter. Mute is the one piece
+ * that stayed: it's a real OS device fact independent of whichever gain approach TX uses, so
+ * TX Pwr can still show "muted" instead of a number that would otherwise silently lie about
+ * whether anything is actually reaching the speaker.
+ *
+ * Windows/macOS paths below are written against each platform's documented API but UNVERIFIED in
+ * this Linux-only dev sandbox -- same status as this file's own WASAPI/CoreAudio device-open
+ * paths (spec/14-roadmap.md: "Windows/macOS legs unverified" for those). Real verification is the
+ * windows-latest/macos-latest CI legs, then a manual pass on real hardware before this ships.
+ * ============================================================================================ */
+
+#if defined(_WIN32)
+
+/* Auditor-caught: an earlier revision here defined INITGUID believing it would define (not just
+ * declare) CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/IID_IAudioEndpointVolume in this
+ * translation unit, avoiding a uuid.lib link. Wrong on two counts: (1) INITGUID only changes how
+ * DEFINE_GUID expands, and guiddef.h is already pulled in via windows.h (Windows.h is included a
+ * few hundred lines above this in the pinned miniaudio.h's own WASAPI section) before this point,
+ * so DEFINE_GUID's declaration-only form is already locked in regardless; (2) more decisively,
+ * mmdeviceapi.h/endpointvolume.h are MIDL-generated headers that declare these three GUIDs as
+ * plain `EXTERN_C const IID ...;`, never via DEFINE_GUID at all -- their storage lives in
+ * uuid.lib, full stop. Both ole32.lib (CoCreateInstance/CoInitializeEx/CoUninitialize) AND
+ * uuid.lib (the three GUID symbols themselves) must be added to BuildNativeShimWindows's
+ * `cl.exe ... /link` line in ScanlineStudio.Core.Audio.MiniAudio.csproj -- this file alone cannot
+ * fix its own link inputs. */
+#define COBJMACROS /* C-callable (vtable-macro) COM interface access, not C++ method syntax. */
+#include <mmdeviceapi.h>
+#include <endpointvolume.h>
+
+/* device_id_w is the WASAPI endpoint id (already the same string device_id_to_string produces
+ * for this backend) -- it alone selects a specific render OR capture endpoint, so is_capture is
+ * not needed to resolve it, only to match the other backends' function shape. Each call pairs its
+ * own CoInitializeEx/CoUninitialize since this can run on an arbitrary thread-pool thread with no
+ * guarantee COM is already initialized there; MULTITHREADED (not APARTMENTTHREADED) since this is
+ * a background worker with no message pump. */
+static int yoniq_wasapi_with_endpoint_volume(const wchar_t *device_id_w, int (*fn)(IAudioEndpointVolume *, void *), void *userdata)
+{
+    HRESULT co_hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    /* RPC_E_CHANGED_MODE: this thread already has COM initialized under a different concurrency
+     * model -- proceed without our own CoUninitialize (we didn't add a reference), the existing
+     * apartment still works fine for CoCreateInstance/Activate. Any other FAILED(co_hr) is real. */
+    if (FAILED(co_hr) && co_hr != RPC_E_CHANGED_MODE)
+    {
+        return -1;
+    }
+
+    int result = -1;
+    IMMDeviceEnumerator *enumerator = NULL;
+    IMMDevice *device = NULL;
+    IAudioEndpointVolume *endpoint_volume = NULL;
+
+    HRESULT hr = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, &IID_IMMDeviceEnumerator, (void **)&enumerator);
+    if (SUCCEEDED(hr))
+    {
+        hr = IMMDeviceEnumerator_GetDevice(enumerator, device_id_w, &device);
+    }
+    if (SUCCEEDED(hr))
+    {
+        hr = IMMDevice_Activate(device, &IID_IAudioEndpointVolume, CLSCTX_ALL, NULL, (void **)&endpoint_volume);
+    }
+    if (SUCCEEDED(hr))
+    {
+        result = fn(endpoint_volume, userdata);
+    }
+
+    if (endpoint_volume != NULL) IAudioEndpointVolume_Release(endpoint_volume);
+    if (device != NULL) IMMDevice_Release(device);
+    if (enumerator != NULL) IMMDeviceEnumerator_Release(enumerator);
+
+    if (SUCCEEDED(co_hr))
+    {
+        CoUninitialize();
+    }
+
+    return result;
+}
+
+static int yoniq_wasapi_get_mute_cb(IAudioEndpointVolume *vol, void *userdata)
+{
+    BOOL muted = FALSE;
+    if (FAILED(IAudioEndpointVolume_GetMute(vol, &muted)))
+    {
+        return -1;
+    }
+    *(int *)userdata = muted ? 1 : 0;
+    return 0;
+}
+
+#elif defined(__APPLE__)
+
+#include <CoreAudio/CoreAudio.h>
+#include <CoreFoundation/CoreFoundation.h>
+
+static int yoniq_coreaudio_resolve_device_id(const char *uid_utf8, AudioDeviceID *out_device_id)
+{
+    CFStringRef uid_cfstr = CFStringCreateWithCString(NULL, uid_utf8, kCFStringEncodingUTF8);
+    if (uid_cfstr == NULL)
+    {
+        return -1;
+    }
+
+    AudioValueTranslation translation;
+    translation.mInputData = &uid_cfstr;
+    translation.mInputDataSize = sizeof(CFStringRef);
+    translation.mOutputData = out_device_id;
+    translation.mOutputDataSize = sizeof(AudioDeviceID);
+
+    AudioObjectPropertyAddress address = {
+        kAudioHardwarePropertyDeviceForUID, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster};
+
+    UInt32 size = sizeof(translation);
+    OSStatus status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, NULL, &size, &translation);
+    CFRelease(uid_cfstr);
+
+    if (status != noErr || *out_device_id == kAudioObjectUnknown)
+    {
+        return -1;
+    }
+    return 0;
+}
+
+/* Fills out_address for the given selector/scope/element. Shared by every CoreAudio property
+ * lookup in this file so the scope-from-is_capture mapping lives in exactly one place. */
+static int yoniq_coreaudio_property_address(AudioObjectPropertySelector selector, int is_capture, AudioObjectPropertyElement element, AudioObjectPropertyAddress *out_address)
+{
+    out_address->mSelector = selector;
+    out_address->mScope = is_capture ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput;
+    out_address->mElement = element;
+    return 0;
+}
+
+static int yoniq_coreaudio_get_device_mute(const char *uid_utf8, int is_capture, int *is_muted_out)
+{
+    /* Pre-set, not left uninitialized: yoniq_coreaudio_resolve_device_id's own failure path is
+     * short-circuited before this is ever read today, but some OS versions are documented to
+     * return noErr without writing *out_device_id for an unknown UID -- defense-in-depth against
+     * that, matching the documented CoreAudio idiom. */
+    AudioDeviceID device_id = kAudioObjectUnknown;
+    if (yoniq_coreaudio_resolve_device_id(uid_utf8, &device_id) != 0)
+    {
+        return -1;
+    }
+
+    /* Tries the device's master (element 0) property first, then channel 1 -- a multi-channel
+     * device without a master element is common enough (per-channel-only hardware) that a hard
+     * failure there would make this "unsupported" far more often than necessary. */
+    AudioObjectPropertyAddress address;
+    AudioObjectPropertyElement elements[] = {kAudioObjectPropertyElementMaster, 1};
+    for (size_t i = 0; i < sizeof(elements) / sizeof(elements[0]); i++)
+    {
+        yoniq_coreaudio_property_address(kAudioDevicePropertyMute, is_capture, elements[i], &address);
+        if (!AudioObjectHasProperty(device_id, &address))
+        {
+            continue;
+        }
+
+        UInt32 muted = 0;
+        UInt32 size = sizeof(muted);
+        if (AudioObjectGetPropertyData(device_id, &address, 0, NULL, &size, &muted) == noErr)
+        {
+            *is_muted_out = muted ? 1 : 0;
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+#else /* Linux: PulseAudio (primary) + ALSA (fallback, best-effort) + JACK (unsupported) */
+
+/* PulseAudio's own sink/source info already carries a mute flag (ma_pa_sink_info/ma_pa_source_info
+ * both have a plain `int mute`, confirmed against the vendored miniaudio.h's own compatible
+ * structs) -- reuses the already-open libpulse handle/mainloop/context miniaudio's own PulseAudio
+ * backend opened at yoniq_audio_context_init time (g_context.pulse.*), via
+ * ma_context_get_sink_info__pulse/ma_context_get_source_info__pulse (static helpers a few
+ * thousand lines up in the vendored miniaudio.h, same translation unit --
+ * MINIAUDIO_IMPLEMENTATION -- so directly callable here) that miniaudio's own device-info path
+ * already uses. No second dlopen, no second mainloop, no pactl shell-out, no new production
+ * dependency, no new link flags. Caller must already hold g_context_mutex. */
+static int yoniq_pulse_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
+{
+    if (is_capture)
+    {
+        ma_pa_source_info info;
+        memset(&info, 0, sizeof(info));
+        if (ma_context_get_source_info__pulse(&g_context, device_name, &info) != MA_SUCCESS)
+        {
+            return -1;
+        }
+        *is_muted_out = info.mute ? 1 : 0;
+    }
+    else
+    {
+        ma_pa_sink_info info;
+        memset(&info, 0, sizeof(info));
+        if (ma_context_get_sink_info__pulse(&g_context, device_name, &info) != MA_SUCCESS)
+        {
+            return -1;
+        }
+        *is_muted_out = info.mute ? 1 : 0;
+    }
+
+    return 0;
+}
+
+/* --- ALSA: best-effort fallback (only reached when PulseAudio context-init failed). Not every
+ * device exposes a simple-mixer mute switch -- "Master"/"PCM" (playback) or "Capture" (capture),
+ * first match wins; no suitable element is a documented "unsupported," not an error. Symbols are
+ * dlsym'd off the already-open g_context.alsa.asoundSO handle (no libasound-dev needed, matching
+ * this file's existing dlopen-everything convention) -- the simple-mixer API (snd_mixer_*) lives
+ * in the same libasound.so.2 miniaudio's own ALSA backend already opened, just not pre-loaded by
+ * miniaudio itself since it never needs the mixer API. Opaque handle types declared locally
+ * (never dereferenced, only passed by pointer) -- same convention this file already uses for
+ * PulseAudio's ma_pa_mainloop/ma_pa_context. */
+
+typedef struct snd_mixer_t snd_mixer_t;
+typedef struct snd_mixer_elem_t snd_mixer_elem_t;
+
+typedef int (*yoniq_snd_mixer_open_proc)(snd_mixer_t **mixer, int mode);
+typedef int (*yoniq_snd_mixer_attach_proc)(snd_mixer_t *mixer, const char *name);
+typedef int (*yoniq_snd_mixer_selem_register_proc)(snd_mixer_t *mixer, void *options, void *classp);
+typedef int (*yoniq_snd_mixer_load_proc)(snd_mixer_t *mixer);
+typedef int (*yoniq_snd_mixer_close_proc)(snd_mixer_t *mixer); /* real ALSA prototype returns int */
+typedef snd_mixer_elem_t *(*yoniq_snd_mixer_first_elem_proc)(snd_mixer_t *mixer);
+typedef snd_mixer_elem_t *(*yoniq_snd_mixer_elem_next_proc)(snd_mixer_elem_t *elem);
+typedef const char *(*yoniq_snd_mixer_selem_get_name_proc)(snd_mixer_elem_t *elem);
+/* Auditor-caught: an earlier revision here still filtered candidate elements by
+ * has_playback_volume/has_capture_volume (a leftover from when this shim also read/wrote the
+ * volume itself) -- since this shim now only ever reads the MUTE switch, the direct predicate is
+ * has_playback_switch/has_capture_switch instead. A real element can expose a mute switch with no
+ * volume control at all (or vice versa); filtering on the wrong capability would report
+ * "unsupported" for a device that actually does have a real switch to read. */
+typedef int (*yoniq_snd_mixer_selem_has_playback_switch_proc)(snd_mixer_elem_t *elem);
+typedef int (*yoniq_snd_mixer_selem_has_capture_switch_proc)(snd_mixer_elem_t *elem);
+/* Mute in ALSA's simple-mixer API is a per-channel "switch," not a volume property -- 1 = on
+ * (unmuted), 0 = off (muted). Queried on channel 0 only (snd_mixer_selem_channel_id_t's
+ * SND_MIXER_SCHN_FRONT_LEFT is value 0, always valid to query even on a mono element). */
+typedef int (*yoniq_snd_mixer_selem_get_playback_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
+typedef int (*yoniq_snd_mixer_selem_get_capture_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
+
+typedef struct
+{
+    yoniq_snd_mixer_open_proc open;
+    yoniq_snd_mixer_attach_proc attach;
+    yoniq_snd_mixer_selem_register_proc selem_register;
+    yoniq_snd_mixer_load_proc load;
+    yoniq_snd_mixer_close_proc close;
+    yoniq_snd_mixer_first_elem_proc first_elem;
+    yoniq_snd_mixer_elem_next_proc elem_next;
+    yoniq_snd_mixer_selem_get_name_proc selem_get_name;
+    yoniq_snd_mixer_selem_has_playback_switch_proc selem_has_playback_switch;
+    yoniq_snd_mixer_selem_has_capture_switch_proc selem_has_capture_switch;
+    yoniq_snd_mixer_selem_get_playback_switch_proc selem_get_playback_switch;
+    yoniq_snd_mixer_selem_get_capture_switch_proc selem_get_capture_switch;
+} yoniq_alsa_mixer_api;
+
+/* Returns nonzero if every symbol resolved. */
+static int yoniq_alsa_mixer_api_load(yoniq_alsa_mixer_api *api)
+{
+    ma_log *log = ma_context_get_log(&g_context);
+    ma_handle so = g_context.alsa.asoundSO;
+
+#define YONIQ_DLSYM(field, name) \
+    api->field = (void *)ma_dlsym(log, so, name); \
+    if (api->field == NULL) return 0;
+
+    YONIQ_DLSYM(open, "snd_mixer_open")
+    YONIQ_DLSYM(attach, "snd_mixer_attach")
+    YONIQ_DLSYM(selem_register, "snd_mixer_selem_register")
+    YONIQ_DLSYM(load, "snd_mixer_load")
+    YONIQ_DLSYM(close, "snd_mixer_close")
+    YONIQ_DLSYM(first_elem, "snd_mixer_first_elem")
+    YONIQ_DLSYM(elem_next, "snd_mixer_elem_next")
+    YONIQ_DLSYM(selem_get_name, "snd_mixer_selem_get_name")
+    YONIQ_DLSYM(selem_has_playback_switch, "snd_mixer_selem_has_playback_switch")
+    YONIQ_DLSYM(selem_has_capture_switch, "snd_mixer_selem_has_capture_switch")
+    YONIQ_DLSYM(selem_get_playback_switch, "snd_mixer_selem_get_playback_switch")
+    YONIQ_DLSYM(selem_get_capture_switch, "snd_mixer_selem_get_capture_switch")
+
+#undef YONIQ_DLSYM
+    return 1;
+}
+
+/* Auditor-caught risk: snd_mixer_attach takes an ALSA CTL name ("hw:0", "default"), not a PCM
+ * name -- miniaudio's own ALSA device ids are PCM names in "hw:CARD,DEVICE" form (confirmed
+ * against miniaudio.h's own ALSA device-id formatting), so passing device_name straight through
+ * only ever worked for the literal "default" id. Derives the CTL form by truncating at the first
+ * comma; anything without a comma (including "default" and any id not shaped like "hw:C,D")
+ * passes through unchanged. buf must be at least YONIQ_AUDIO_ID_SIZE bytes. */
+static void yoniq_alsa_ctl_name_from_pcm_name(const char *pcm_name, char *buf, size_t buf_size)
+{
+    size_t len = strlen(pcm_name);
+    const char *comma = strchr(pcm_name, ',');
+    if (comma != NULL)
+    {
+        len = (size_t)(comma - pcm_name);
+    }
+    if (len >= buf_size)
+    {
+        len = buf_size - 1;
+    }
+    memcpy(buf, pcm_name, len);
+    buf[len] = '\0';
+}
+
+/* Opens+attaches+loads a mixer on device_name and finds the first suitable element ("Master" then
+ * "PCM" for playback, "Capture" for capture). Returns NULL if anything along the way fails or no
+ * suitable element exists -- caller must still call api->close(*out_mixer) if *out_mixer != NULL
+ * even on a NULL element return (attach/load can succeed with no matching element). */
+static snd_mixer_elem_t *yoniq_alsa_find_element(const yoniq_alsa_mixer_api *api, const char *device_name, int is_capture, snd_mixer_t **out_mixer)
+{
+    char ctl_name[YONIQ_AUDIO_ID_SIZE];
+    yoniq_alsa_ctl_name_from_pcm_name(device_name, ctl_name, sizeof(ctl_name));
+
+    *out_mixer = NULL;
+    if (api->open(out_mixer, 0) != 0 || *out_mixer == NULL)
+    {
+        return NULL;
+    }
+    if (api->attach(*out_mixer, ctl_name) != 0 || api->selem_register(*out_mixer, NULL, NULL) != 0 || api->load(*out_mixer) != 0)
+    {
+        return NULL;
+    }
+
+    static const char *playback_names[] = {"Master", "PCM"};
+    for (snd_mixer_elem_t *elem = api->first_elem(*out_mixer); elem != NULL; elem = api->elem_next(elem))
+    {
+        const char *name = api->selem_get_name(elem);
+        if (name == NULL)
+        {
+            continue;
+        }
+        if (is_capture)
+        {
+            if (strcmp(name, "Capture") == 0 && api->selem_has_capture_switch(elem))
+            {
+                return elem;
+            }
+        }
+        else
+        {
+            for (size_t i = 0; i < sizeof(playback_names) / sizeof(playback_names[0]); i++)
+            {
+                if (strcmp(name, playback_names[i]) == 0 && api->selem_has_playback_switch(elem))
+                {
+                    return elem;
+                }
+            }
+        }
+    }
+
+    return NULL;
+}
+
+static int yoniq_alsa_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
+{
+    yoniq_alsa_mixer_api api;
+    if (!yoniq_alsa_mixer_api_load(&api))
+    {
+        return -1;
+    }
+
+    snd_mixer_t *mixer;
+    snd_mixer_elem_t *elem = yoniq_alsa_find_element(&api, device_name, is_capture, &mixer);
+    int result = -1;
+    if (elem != NULL)
+    {
+        int on = 1; /* ALSA switch convention: 1 = on/unmuted, 0 = off/muted */
+        int ok = is_capture ? api.selem_get_capture_switch(elem, 0, &on) : api.selem_get_playback_switch(elem, 0, &on);
+        if (ok == 0)
+        {
+            *is_muted_out = on ? 0 : 1;
+            result = 0;
+        }
+    }
+    if (mixer != NULL)
+    {
+        api.close(mixer);
+    }
+    return result;
+}
+
+#endif
+
+int yoniq_audio_get_device_mute(const char *device_id, int is_capture, int *is_muted_out)
+{
+    if (device_id == NULL || is_muted_out == NULL)
+    {
+        return -1;
+    }
+
+#if defined(_WIN32)
+    wchar_t device_id_w[YONIQ_AUDIO_ID_SIZE];
+    if (MultiByteToWideChar(CP_UTF8, 0, device_id, -1, device_id_w, YONIQ_AUDIO_ID_SIZE) <= 0)
+    {
+        return -1;
+    }
+    return yoniq_wasapi_with_endpoint_volume(device_id_w, yoniq_wasapi_get_mute_cb, is_muted_out);
+#elif defined(__APPLE__)
+    return yoniq_coreaudio_get_device_mute(device_id, is_capture, is_muted_out);
+#else
+    yoniq_mutex_lock(&g_context_mutex);
+    if (!g_context_initialized)
+    {
+        yoniq_mutex_unlock(&g_context_mutex);
+        return -1;
+    }
+
+    int result;
+    if (g_context.backend == ma_backend_pulseaudio)
+    {
+        result = yoniq_pulse_get_device_mute(device_id, is_capture, is_muted_out);
+    }
+    else if (g_context.backend == ma_backend_alsa)
+    {
+        result = yoniq_alsa_get_device_mute(device_id, is_capture, is_muted_out);
+    }
+    else
+    {
+        result = -1; /* JACK: no OS mixer concept applies */
+    }
+
+    yoniq_mutex_unlock(&g_context_mutex);
+    return result;
+#endif
+}

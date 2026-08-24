@@ -51,7 +51,7 @@ public sealed class SstvSessionServiceStationIdTests
         var decoder = new FakeSstvDecoder();
 
         var service = new SstvSessionService(
-            audioEngine, deviceEnumerator, settingsStore, decoder, encoder, new MacroTextResolver(),
+            audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
         return (service, encoder, decoder, settingsStore);
     }

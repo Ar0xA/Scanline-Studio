@@ -27,20 +27,34 @@ public sealed class SstvSessionServiceTests
     private static readonly IImageSource TestImage = new ArrayImageSource(1, 1, new Rgb24[1]);
 
     private static (SstvSessionService Service, FakeAudioEngine AudioEngine, FakeSstvDecoder Decoder,
-        FakeWaterfallSource Waterfall, FakeRadioSessionService RadioSession, FakeSettingsStore SettingsStore)
-        CreateService(string? captureDeviceId = "capture-1", string? playbackDeviceId = "playback-1")
+        FakeWaterfallSource Waterfall, FakeRadioSessionService RadioSession, FakeSettingsStore SettingsStore,
+        FakeAudioDeviceMuteQuery DeviceMuteQuery)
+        CreateService(
+            string? captureDeviceId = "capture-1",
+            string? playbackDeviceId = "playback-1",
+            string? captureDeviceName = null,
+            string? playbackDeviceName = null,
+            IReadOnlyList<AudioDeviceInfo>? inputDevices = null)
     {
         var audioEngine = new FakeAudioEngine();
         var deviceEnumerator = new FakeAudioDeviceEnumerator
         {
-            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            InputDevices = inputDevices ?? [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
             OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025])],
         };
+        var deviceMuteQuery = new FakeAudioDeviceMuteQuery();
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 AudioDeviceSettings.SectionKey,
-                new AudioDeviceSettings { CaptureDeviceId = captureDeviceId, PlaybackDeviceId = playbackDeviceId, SampleRate = 8000 },
+                new AudioDeviceSettings
+                {
+                    CaptureDeviceId = captureDeviceId,
+                    PlaybackDeviceId = playbackDeviceId,
+                    CaptureDeviceName = captureDeviceName,
+                    PlaybackDeviceName = playbackDeviceName,
+                    SampleRate = 8000,
+                },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
         var decoder = new FakeSstvDecoder();
@@ -49,8 +63,8 @@ public sealed class SstvSessionServiceTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
-        return (service, audioEngine, decoder, waterfall, radioSession, settingsStore);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        return (service, audioEngine, decoder, waterfall, radioSession, settingsStore, deviceMuteQuery);
     }
 
     // Renamed + re-commented (spec/18-path-to-1.0.md Critical item 1 / item 8, round-1 plan-review
@@ -62,7 +76,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task StartReceivingAsync_NoCaptureDeviceConfigured_AndNoDefaultDeviceAvailable_Throws()
     {
-        var (service, _, _, _, _, _) = CreateService(captureDeviceId: null);
+        var (service, _, _, _, _, _, _) = CreateService(captureDeviceId: null);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartReceivingAsync());
     }
@@ -70,7 +84,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task StartReceivingAsync_ValidDevice_StartsCaptureAndFansSamplesOutToDecoderAndWaterfall()
     {
-        var (service, audioEngine, decoder, waterfall, _, _) = CreateService();
+        var (service, audioEngine, decoder, waterfall, _, _, _) = CreateService();
 
         await service.StartReceivingAsync();
         var samples = new float[] { 1f, 2f, 3f };
@@ -87,7 +101,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task StartReceivingAsync_UsesImmutableDecoderRate_WhenPersistedRateChangesUntilRestart()
     {
-        var (service, audioEngine, decoder, _, _, settingsStore) = CreateService();
+        var (service, audioEngine, decoder, _, _, settingsStore, _) = CreateService();
         decoder.SampleRate = 22050;
         var current = settingsStore.Settings.GetSection(
             AudioDeviceSettings.SectionKey,
@@ -105,7 +119,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task StartReceivingAsync_ConfiguredCaptureThreadPriority_IsPassedToTheAudioEngine()
     {
-        var (service, audioEngine, _, _, _, settingsStore) = CreateService();
+        var (service, audioEngine, _, _, _, settingsStore, _) = CreateService();
         var current = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
         settingsStore.Settings = settingsStore.Settings.WithSection(
             AudioDeviceSettings.SectionKey,
@@ -120,7 +134,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task StartReceivingAsync_NoConfiguredCaptureThreadPriority_PassesNullThroughUnchanged()
     {
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
 
         await service.StartReceivingAsync();
 
@@ -130,7 +144,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task IsReceiving_ReflectsStartAndStop_ForTheHeaderReceivingToggle()
     {
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
 
         Assert.False(service.IsReceiving);
 
@@ -147,7 +161,7 @@ public sealed class SstvSessionServiceTests
         // ultracode audit finding #6: legacy resets AGC (CLVL::Init) at BOTH TX<->RX transition
         // directions (Sound.cpp:398,443) -- RX start (entering RX) and RX stop (entering TX) are
         // this port's equivalent transition points.
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
 
         await service.StartReceivingAsync();
         Assert.Equal(1, decoder.ResetAgcCallCount);
@@ -161,7 +175,7 @@ public sealed class SstvSessionServiceTests
     {
         // Ultracode audit finding #34's warning layer: FakeSstvDecoder implements
         // ISstvDecoderMaintenance, so SstvSessionService's constructor wires this up automatically.
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
         var warningRaised = 0;
         service.MaintenanceWarningRaised += () => warningRaised++;
 
@@ -173,7 +187,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public void DecoderRestarted_AfterAWarningWasRaised_RaisesMaintenanceWarningCleared()
     {
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
         var cleared = 0;
         service.MaintenanceWarningCleared += () => cleared++;
 
@@ -186,7 +200,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public void DecoderRestarted_WithNoActiveWarning_DoesNotRaiseMaintenanceWarningCleared()
     {
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
         var cleared = 0;
         service.MaintenanceWarningCleared += () => cleared++;
 
@@ -199,7 +213,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task DecoderRestartCriticallyOverdue_StopsReceiving_AndRaisesMaintenanceCriticalStopRaised()
     {
-        var (service, audioEngine, decoder, _, _, _) = CreateService();
+        var (service, audioEngine, decoder, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         Assert.True(service.IsReceiving);
 
@@ -227,7 +241,7 @@ public sealed class SstvSessionServiceTests
         // The real decoder can only cross the critical threshold while PushSamples is being called,
         // which only happens while receiving -- but a fake can raise the event at any time, and this
         // must still degrade gracefully (StopReceivingAsync already no-ops when not receiving).
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
         Assert.False(service.IsReceiving);
 
         decoder.RaiseRestartCriticallyOverdue();
@@ -238,7 +252,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task PushSamples_DecoderThrows_WaterfallStillReceivesTheSamples()
     {
-        var (service, audioEngine, decoder, waterfall, _, _) = CreateService();
+        var (service, audioEngine, decoder, waterfall, _, _, _) = CreateService();
         decoder.ThrowOnPush = new InvalidOperationException("simulated decoder failure");
         await service.StartReceivingAsync();
 
@@ -251,7 +265,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task PushSamples_WaterfallThrows_DecoderStillReceivesTheSamples()
     {
-        var (service, audioEngine, decoder, waterfall, _, _) = CreateService();
+        var (service, audioEngine, decoder, waterfall, _, _, _) = CreateService();
         waterfall.ThrowOnPush = new InvalidOperationException("simulated waterfall failure");
         await service.StartReceivingAsync();
 
@@ -261,13 +275,71 @@ public sealed class SstvSessionServiceTests
         Assert.Single(waterfall.PushedSamples);
     }
 
+    // User-reported fix (2026-08-23, round 2): RawInputPeakLevel exists as a THIRD, independent
+    // fan-out target specifically so it reads the raw captured buffer, never anything the decoder's
+    // own SSTV-band bandpass filter has touched -- see that property's own doc comment. These tests
+    // pin that independence directly: FakeSstvDecoder.SignalPeakLevel is a plain settable field, not
+    // derived from pushed samples at all, so if RawInputPeakLevel ever accidentally started reading
+    // through the decoder, these values would never match.
+
+    [Fact]
+    public async Task RawInputPeakLevel_ReflectsPeakAbsoluteValueOfMostRecentCapturedBuffer()
+    {
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        float[] samples = [0.3f, -0.7f, 0.2f];
+        audioEngine.PushCapturedSamples(samples);
+
+        Assert.Equal(0.7, service.RawInputPeakLevel, precision: 6);
+    }
+
+    [Fact]
+    public async Task RawInputPeakLevel_NewerBufferReplaces_DoesNotAccumulateAcrossBuffers()
+    {
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        float[] loud = [0.9f];
+        audioEngine.PushCapturedSamples(loud);
+        Assert.Equal(0.9, service.RawInputPeakLevel, precision: 6);
+
+        float[] quiet = [0.1f];
+        audioEngine.PushCapturedSamples(quiet);
+        Assert.Equal(0.1, service.RawInputPeakLevel, precision: 6);
+    }
+
+    [Fact]
+    public void RawInputPeakLevel_NotReceiving_IsZero()
+    {
+        var (service, _, _, _, _, _, _) = CreateService();
+
+        Assert.Equal(0.0, service.RawInputPeakLevel);
+    }
+
+    [Fact]
+    public async Task RawInputPeakLevel_ResetsToZero_AfterStopReceivingAsync()
+    {
+        // Contract: 0.0 whenever capture isn't running, never a stale reading left over from before
+        // the stop -- no more buffers will arrive to overwrite it once unsubscribed.
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+        float[] samples = [0.8f];
+        audioEngine.PushCapturedSamples(samples);
+        Assert.Equal(0.8, service.RawInputPeakLevel, precision: 6);
+
+        await service.StopReceivingAsync();
+
+        Assert.Equal(0.0, service.RawInputPeakLevel);
+    }
+
     // Renamed + re-commented (spec/18-path-to-1.0.md Critical item 1 / item 8, round-1 plan-review
     // finding 4): now specifically "no default device available either" -- see the fallback-success
     // and no-radio-configured tests near the bottom of this file for the new behavior.
     [Fact]
     public async Task TransmitAsync_NoPlaybackDeviceConfigured_AndNoDefaultDeviceAvailable_Throws()
     {
-        var (service, _, _, _, _, _) = CreateService(playbackDeviceId: null);
+        var (service, _, _, _, _, _, _) = CreateService(playbackDeviceId: null);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
     }
@@ -275,7 +347,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredPlaybackDeviceNameAsync_ValidDevice_ReturnsItsName()
     {
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
 
         var name = await service.GetConfiguredPlaybackDeviceNameAsync();
 
@@ -286,7 +358,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredPlaybackDeviceNameAsync_NoPlaybackDeviceConfigured_AndNoDefaultDeviceAvailable_ReturnsNull_NotThrow()
     {
-        var (service, _, _, _, _, _) = CreateService(playbackDeviceId: null);
+        var (service, _, _, _, _, _, _) = CreateService(playbackDeviceId: null);
 
         var name = await service.GetConfiguredPlaybackDeviceNameAsync();
 
@@ -296,7 +368,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredPlaybackDeviceNameAsync_ConfiguredDeviceNoLongerPresent_ReturnsNull_NotThrow()
     {
-        var (service, _, _, _, _, _) = CreateService(playbackDeviceId: "playback-vanished");
+        var (service, _, _, _, _, _, _) = CreateService(playbackDeviceId: "playback-vanished");
 
         var name = await service.GetConfiguredPlaybackDeviceNameAsync();
 
@@ -306,7 +378,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredCaptureDeviceNameAsync_ValidDevice_ReturnsItsName()
     {
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
 
         var name = await service.GetConfiguredCaptureDeviceNameAsync();
 
@@ -317,7 +389,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredCaptureDeviceNameAsync_NoCaptureDeviceConfigured_AndNoDefaultDeviceAvailable_ReturnsNull_NotThrow()
     {
-        var (service, _, _, _, _, _) = CreateService(captureDeviceId: null);
+        var (service, _, _, _, _, _, _) = CreateService(captureDeviceId: null);
 
         var name = await service.GetConfiguredCaptureDeviceNameAsync();
 
@@ -327,7 +399,69 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task GetConfiguredCaptureDeviceNameAsync_ConfiguredDeviceNoLongerPresent_ReturnsNull_NotThrow()
     {
-        var (service, _, _, _, _, _) = CreateService(captureDeviceId: "capture-vanished");
+        var (service, _, _, _, _, _, _) = CreateService(captureDeviceId: "capture-vanished");
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    // User-reported fix (2026-08-23): a real, OS-agnostic device-id-churn scenario -- observed live
+    // when a PipeWire USB capture node was re-created under a new id after a mute toggle, same
+    // physical device, same friendly name. AudioDeviceSettings.CaptureDeviceName/PlaybackDeviceName
+    // exist specifically to recover this without silently substituting a DIFFERENT device.
+
+    [Fact]
+    public async Task StartReceivingAsync_ConfiguredIdChurnedButNameMatches_RecoversTheSameDeviceByName()
+    {
+        var (service, audioEngine, _, _, _, _, _) = CreateService(
+            captureDeviceId: "capture-1.old",
+            captureDeviceName: "Capture",
+            inputDevices: [new AudioDeviceInfo("capture-1.new", "Capture", 1, 0, [8000])]);
+
+        await service.StartReceivingAsync();
+
+        Assert.True(audioEngine.IsCapturing);
+        Assert.True(service.IsReceiving);
+    }
+
+    [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_IdChurnedButNameMatches_ReturnsTheRecoveredDevicesName()
+    {
+        var (service, _, _, _, _, _, _) = CreateService(
+            captureDeviceId: "capture-1.old",
+            captureDeviceName: "Capture",
+            inputDevices: [new AudioDeviceInfo("capture-1.new", "Capture", 1, 0, [8000])]);
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Equal("Capture", name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_IdChurnedAndNoNameEitherMatches_ReturnsNull_NotThrow()
+    {
+        // The genuinely-missing case must still be surfaced, not silently papered over -- only an
+        // actual name match recovers the device.
+        var (service, _, _, _, _, _, _) = CreateService(
+            captureDeviceId: "capture-1.old",
+            captureDeviceName: "A Completely Different Microphone",
+            inputDevices: [new AudioDeviceInfo("capture-1.new", "Capture", 1, 0, [8000])]);
+
+        var name = await service.GetConfiguredCaptureDeviceNameAsync();
+
+        Assert.Null(name);
+    }
+
+    [Fact]
+    public async Task GetConfiguredCaptureDeviceNameAsync_IdChurnedAndNoNamePersisted_ReturnsNull_NotThrow()
+    {
+        // An old settings.json from before CaptureDeviceName existed has null here -- must not
+        // crash, and correctly has nothing to recover by.
+        var (service, _, _, _, _, _, _) = CreateService(
+            captureDeviceId: "capture-1.old",
+            captureDeviceName: null,
+            inputDevices: [new AudioDeviceInfo("capture-1.new", "Capture", 1, 0, [8000])]);
 
         var name = await service.GetConfiguredCaptureDeviceNameAsync();
 
@@ -357,7 +491,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = null, PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         await service.StartReceivingAsync();
 
@@ -380,7 +514,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = null, SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -388,13 +522,18 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
-    public async Task TransmitAsync_ConfiguredPlaybackDeviceMissing_StillThrows_EvenWhenADefaultDeviceExists()
+    public async Task TransmitAsync_ConfiguredPlaybackDeviceMissing_FallsBackToDefault()
     {
+        // User-reported fix, round 3 (2026-08-23), explicit product decision overriding this test's
+        // own prior "still fails loudly, never silently substituted" name and assertion: "if in the
+        // file there is an RX/TX device that is not currently attached to the computer, just set it
+        // to the OS defaults."
         var audioEngine = new FakeAudioEngine();
+        var defaultPlaybackDevice = new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025], IsDefault: true);
         var deviceEnumerator = new FakeAudioDeviceEnumerator
         {
             InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
-            OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [11025], IsDefault: true)],
+            OutputDevices = [defaultPlaybackDevice],
         };
         var settingsStore = new FakeSettingsStore
         {
@@ -403,12 +542,12 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-vanished", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
-        // A device the user explicitly configured going missing must still fail loudly -- never
-        // silently substituted with the default, even though one exists (round-1 plan-review's own
-        // explicit design confirmation).
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TransmitAsync(TestMode, TestImage));
+        await service.TransmitAsync(TestMode, TestImage);
+
+        var saved = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal("playback-1", saved?.PlaybackDeviceId);
     }
 
     // Capture-side counterpart of the playback test immediately above -- same shared
@@ -416,8 +555,11 @@ public sealed class SstvSessionServiceTests
     // Critical item 1: only the playback direction had a "configured device missing" regression
     // test).
     [Fact]
-    public async Task StartReceivingAsync_ConfiguredCaptureDeviceMissing_StillThrows_EvenWhenADefaultDeviceExists()
+    public async Task StartReceivingAsync_ConfiguredCaptureDeviceMissing_FallsBackToDefault()
     {
+        // User-reported fix, round 3 (2026-08-23), explicit product decision overriding this test's
+        // own prior "still throws" name and assertion: "if in the file there is an RX/TX device that
+        // is not currently attached to the computer, just set it to the OS defaults."
         var audioEngine = new FakeAudioEngine();
         var deviceEnumerator = new FakeAudioDeviceEnumerator
         {
@@ -431,7 +573,21 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-vanished", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        await service.StartReceivingAsync();
+
+        Assert.True(audioEngine.IsCapturing);
+        var saved = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal("capture-1", saved?.CaptureDeviceId);
+    }
+
+    [Fact]
+    public async Task StartReceivingAsync_ConfiguredCaptureDeviceMissing_AndNoDefaultEither_StillThrows()
+    {
+        // The genuinely-nothing-available case (spec/18-path-to-1.0.md Critical item 1 / item 8)
+        // must still fail loudly -- there is nothing to fall back to.
+        var (service, _, _, _, _, _, _) = CreateService(captureDeviceId: "capture-vanished");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.StartReceivingAsync());
     }
@@ -439,7 +595,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_KeysPttOnThenOffAroundPlayback()
     {
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -455,7 +611,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_NoRadioConfigured_StillProducesAudio_AndNeverCallsSetPtt()
     {
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         radioSession.RigId = "none";
 
         await service.TransmitAsync(TestMode, TestImage);
@@ -467,7 +623,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_EncodesAndEnqueuesAllSamplesForPlayback()
     {
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -478,7 +634,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_WhileReceiving_StopsCaptureDuringTxAndRestartsAfterward()
     {
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         Assert.True(audioEngine.IsCapturing);
 
@@ -490,7 +646,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_WhileNotReceiving_DoesNotStartCaptureAfterward()
     {
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -505,7 +661,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_WhileReceiving_RaisesCapturePausedThenResumed()
     {
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         List<bool> raised = [];
         service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
@@ -521,7 +677,7 @@ public sealed class SstvSessionServiceTests
         // Nothing was actually running to pause -- see this event's own doc comment: it's
         // specifically "a running capture was paused for THIS transmission," not a generic
         // TX-in-progress signal.
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
         var raised = false;
         service.CapturePausedForTransmitChanged += _ => raised = true;
 
@@ -536,7 +692,7 @@ public sealed class SstvSessionServiceTests
         // The lock case defers the actual resume to SetPttLockAsync(false) -- see
         // TransmitAsync_WhileReceiving_StopsCaptureDuringTxAndRestartsAfterward's own sibling test
         // and PlayWithPttAsync's own doc comment for the full state machine this exercises.
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         await service.SetPttLockAsync(true);
         List<bool> raised = [];
@@ -556,7 +712,7 @@ public sealed class SstvSessionServiceTests
         // work by cancelling the token, same as TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture
         // below) must still end with `false` raised, not leave the Receiving indicator stuck dimmed
         // just because the transmission itself failed rather than completing normally.
-        var (service, _, _, _, _, _) = CreateService();
+        var (service, _, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         List<bool> raised = [];
         service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
@@ -578,7 +734,7 @@ public sealed class SstvSessionServiceTests
         // latent bug otherwise: RX intentionally stays stopped here (pre-existing, unchanged
         // behavior), but this transmission's own pause window is still over, so the event must not
         // stay stuck `true` forever with no `false` ever coming.
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         List<bool> raised = [];
         service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
@@ -601,7 +757,7 @@ public sealed class SstvSessionServiceTests
         // cleared by the abnormal-termination unkey), so the natural SetPttLockAsync(false) trigger
         // that would otherwise consume the flag may never come, leaving RX stopped and the Receiving
         // indicator dimmed forever.
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         await service.SetPttLockAsync(true);
         List<bool> raised = [];
@@ -624,7 +780,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task SetPttLockAsync_Locked_KeysPttImmediatelyAndReportsLocked()
     {
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         await service.SetPttLockAsync(true);
 
@@ -635,7 +791,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task SetPttLockAsync_LockedThenTransmit_DoesNotDoubleKeyAndLeavesPttKeyedAfterward()
     {
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
 
         await service.SetPttLockAsync(true);
@@ -652,7 +808,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task SetPttLockAsync_LockedThenUnlocked_UnkeysPttExactlyOnce()
     {
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         await service.SetPttLockAsync(true);
         await service.SetPttLockAsync(false);
@@ -669,7 +825,7 @@ public sealed class SstvSessionServiceTests
         // on a still-keyed rig). Every call now always issues the command -- redundant but harmless
         // (confirmed idempotent on every real protocol backend) -- so the OUTCOME (locked state, and
         // that the rig ends up correctly keyed/unkeyed) is what's asserted, not call suppression.
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         await service.SetPttLockAsync(true);
         await service.SetPttLockAsync(true); // already locked -- redundant re-key is fine
@@ -689,7 +845,7 @@ public sealed class SstvSessionServiceTests
         // physically keyed WITHOUT ever setting _pttLocked -- so a caller unlocking afterward, under
         // the old short-circuit, would have silently no-op'd on a still-keyed rig with zero recovery
         // path. Now it always sends the command regardless of the tracked flag's current value.
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
         Assert.False(service.IsPttLocked); // tracked state says "not locked"...
@@ -707,7 +863,7 @@ public sealed class SstvSessionServiceTests
         // an abnormal-termination path (SWR auto-cutoff / manual Stop TX both work by cancelling the
         // token passed into TransmitAsync/TuneAsync). Simulated here the same way the existing
         // TuneAsync_TokenCancelledMidTone_... regression test does -- a token cancelled mid-flight.
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
         await service.SetPttLockAsync(true);
         radioSession.PttCalls.Clear(); // isolate this test's own assertions from the lock-engage call above
@@ -729,7 +885,7 @@ public sealed class SstvSessionServiceTests
         // Audit-fix regression test: PlayWithPttAsync's own `wasReceiving` local is scoped to one
         // call and gets discarded once that call returns (still locked) -- without the
         // _rxPendingResumeAfterUnlock handoff, RX would stay stopped forever after this sequence.
-        var (service, audioEngine, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
 
         await service.SetPttLockAsync(true);
@@ -746,7 +902,7 @@ public sealed class SstvSessionServiceTests
     {
         // Audit-fix regression test: app shutdown must never leave a locked rig keyed indefinitely
         // just because nothing called SetPttLockAsync(false) first.
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
         await service.SetPttLockAsync(true);
         radioSession.PttCalls.Clear();
 
@@ -763,7 +919,7 @@ public sealed class SstvSessionServiceTests
         // already proven for Waterfall), matching the real production RestartableSstvDecoder, which
         // now implements IDisposable to tear down RxBufferMode.Extended's scratch files/background
         // writer task. FakeSstvDecoder implements IDisposable for exactly this test.
-        var (service, _, decoder, _, _, _) = CreateService();
+        var (service, _, decoder, _, _, _, _) = CreateService();
 
         await service.DisposeAsync();
 
@@ -774,7 +930,7 @@ public sealed class SstvSessionServiceTests
     public async Task TransmitAsync_WithNoLockEngaged_BehavesExactlyAsBeforeThisFeature()
     {
         // Regression guard: introducing the lock must not change the un-locked default path.
-        var (service, _, _, _, radioSession, _) = CreateService();
+        var (service, _, _, _, radioSession, _, _) = CreateService();
 
         Assert.False(service.IsPttLocked);
         await service.TransmitAsync(TestMode, TestImage);
@@ -794,7 +950,7 @@ public sealed class SstvSessionServiceTests
         // exact opposite of what a safety cutoff exists to guarantee). FakeRadioSessionService.SetPttAsync
         // was made to actually honor cancellation (see its own doc comment) specifically so this test
         // can tell the fixed behavior (a fresh, non-cancelled cleanup token) apart from the bug.
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
 
         using var cts = new CancellationTokenSource();
@@ -815,7 +971,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TuneAsync_LeaveKeyedAfterTuneFalse_KeysThenUnkeysPtt_UnchangedDefaultBehavior()
     {
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
 
         await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
@@ -827,7 +983,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TuneAsync_LeaveKeyedAfterTuneTrue_KeysPttAndDoesNotUnkeyOrResumeCapture()
     {
-        var (service, audioEngine, _, _, radioSession, _) = CreateService();
+        var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
 
         await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1), leaveKeyedAfterTune: true);
@@ -857,7 +1013,7 @@ public sealed class SstvSessionServiceTests
             OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [8000])],
         };
         var service = new SstvSessionService(
-            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
+            audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         var percent = await service.GetTxVolumePercentAsync();
@@ -868,7 +1024,7 @@ public sealed class SstvSessionServiceTests
     [Fact]
     public async Task TransmitAsync_AppliesTxVolumeAsALinearGainOnEncodedSamples()
     {
-        var (service, audioEngine, _, _, _, settingsStore) = CreateService();
+        var (service, audioEngine, _, _, _, settingsStore, _) = CreateService();
         var current = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
         settingsStore.Settings = settingsStore.Settings.WithSection(
             AudioDeviceSettings.SectionKey, current with { TxVolumePercent = 50 }, AudioSettingsJsonContext.Default.AudioDeviceSettings);
@@ -876,6 +1032,66 @@ public sealed class SstvSessionServiceTests
         await service.TransmitAsync(TestMode, TestImage);
 
         Assert.Equal(ExpectedPlaybackSamples.Select(s => s * 0.5f), audioEngine.PlaybackSamples);
+    }
+
+    // Regression test for the live-gain plumbing added alongside the Options window's Radio/CAT Pwr
+    // slider + Tune button: before this change, PlayWithPttAsync captured Pwr ONCE at call entry and
+    // PumpToPlaybackAsync used that single frozen value for the whole call, so dragging the Pwr
+    // slider while a Tune tone (or a real transmission) was already playing had no audible/measurable
+    // effect until the NEXT call -- exactly backwards for the WSJT-X-style "key Tune, watch the
+    // radio's own power meter, dial Pwr to the wattage you want" workflow that feature exists for.
+    [Fact]
+    public async Task TuneAsync_PwrChangedMidTone_AppliesNewGainToLaterChunksNotEarlierOnes()
+    {
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
+        await service.SetTxVolumePercentAsync(20);
+
+        // Deterministic gate (FakeAudioEngine.OnPlaybackChunkEnqueued), not a race: fires
+        // synchronously on the pump's own thread right after the FIRST 4096-sample chunk lands, so
+        // this reliably simulates "the user moved the Pwr slider mid-tone" landing exactly between
+        // chunk 1 and chunk 2 -- not "at some point during the tone, maybe."
+        var changedAfterFirstChunk = false;
+        audioEngine.OnPlaybackChunkEnqueued = async () =>
+        {
+            if (!changedAfterFirstChunk)
+            {
+                changedAfterFirstChunk = true;
+                await service.SetTxVolumePercentAsync(80);
+            }
+        };
+
+        // TuneAsync's tone runs at a fixed 48kHz (see its own `const int sampleRate = 48_000`) --
+        // 500ms gives 24000 samples, i.e. 5 full 4096-sample chunks plus a partial one, comfortably
+        // exercising the chunk-boundary re-read this test targets.
+        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(500));
+
+        var firstChunk = audioEngine.PlaybackSamples.Take(4096).ToArray();
+        var laterChunk = audioEngine.PlaybackSamples.Skip(4096).Take(4096).ToArray();
+
+        // GenerateTone's samples are an unscaled Math.Sin (peak amplitude exactly 1.0), so the max
+        // absolute sample in each chunk is a direct readout of the gain PumpToPlaybackAsync actually
+        // applied to it -- 4096 samples of a 1750Hz tone at 48kHz covers many full cycles, so both
+        // chunks are guaranteed to come within floating-point precision of their own true peak.
+        Assert.InRange(firstChunk.Max(Math.Abs), 0.199f, 0.201f);
+        Assert.InRange(laterChunk.Max(Math.Abs), 0.799f, 0.801f);
+    }
+
+    [Fact]
+    public async Task GetTxDeviceMutedAsync_ReturnsQueriedOsMuteState()
+    {
+        var (service, _, _, _, _, _, deviceMuteQuery) = CreateService();
+        deviceMuteQuery.SetMuted("playback-1", isCapture: false, muted: true);
+
+        Assert.True(await service.GetTxDeviceMutedAsync());
+    }
+
+    [Fact]
+    public async Task GetTxDeviceMutedAsync_UnsupportedDevice_DefaultsToFalse()
+    {
+        var (service, _, _, _, _, _, deviceMuteQuery) = CreateService();
+        deviceMuteQuery.MarkUnsupported("playback-1", isCapture: false);
+
+        Assert.False(await service.GetTxDeviceMutedAsync());
     }
 
     [Fact]
@@ -893,7 +1109,7 @@ public sealed class SstvSessionServiceTests
         var deviceEnumerator = new FakeAudioDeviceEnumerator();
         var settingsStore = new FakeSettingsStore { Settings = new AppSettings() };
         var service = new SstvSessionService(
-            audioEngine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
+            audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
 
         var result = service.CaptureOverrunCount;

@@ -37,11 +37,14 @@ public sealed partial class OptionsSettingsService
         CultureCode: new LocalizationSettings().CultureCode,
         CaptureDeviceId: new AudioDeviceSettings().CaptureDeviceId,
         PlaybackDeviceId: new AudioDeviceSettings().PlaybackDeviceId,
+        CaptureDeviceName: new AudioDeviceSettings().CaptureDeviceName,
+        PlaybackDeviceName: new AudioDeviceSettings().PlaybackDeviceName,
         SampleRate: new AudioDeviceSettings().SampleRate,
         RadioBackendId: new RadioConnectionSettings().BackendId,
         RigctldHost: new RadioConnectionSettings().Host,
         RigctldPort: new RadioConnectionSettings().Port,
         HamlibModel: new RadioConnectionSettings().HamlibModel,
+        HamlibLibraryPath: new RadioConnectionSettings().HamlibLibraryPath,
         HamlibSerialPort: new RadioConnectionSettings().SerialPort,
         HamlibBaudRate: new RadioConnectionSettings().BaudRate,
         HamlibPttType: new RadioConnectionSettings().PttType,
@@ -117,11 +120,14 @@ public sealed partial class OptionsSettingsService
             CultureCode: localization.CultureCode,
             CaptureDeviceId: audio.CaptureDeviceId,
             PlaybackDeviceId: audio.PlaybackDeviceId,
+            CaptureDeviceName: audio.CaptureDeviceName,
+            PlaybackDeviceName: audio.PlaybackDeviceName,
             SampleRate: SstvSampleRate.NormalizePersisted(audio.SampleRate),
             RadioBackendId: radio.BackendId,
             RigctldHost: radio.Host,
             RigctldPort: radio.Port,
             HamlibModel: radio.HamlibModel,
+            HamlibLibraryPath: radio.HamlibLibraryPath,
             HamlibSerialPort: radio.SerialPort,
             HamlibBaudRate: radio.BaudRate,
             HamlibPttType: radio.PttType,
@@ -155,6 +161,20 @@ public sealed partial class OptionsSettingsService
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
     {
+        // Auditor blocker finding: this used to read every "previous*" value off _loadedSettings --
+        // the snapshot captured once when LoadAsync ran at dialog-open time, not the current file.
+        // Anything written to a section this dialog doesn't fully own (e.g. AudioDeviceSettings.
+        // TxVolumePercent, set live and immediately by the Radio/CAT tab's own Pwr slider + Tune
+        // button WHILE this same dialog is open, via SstvSessionService.SetTxVolumePercentAsync --
+        // completely independent of this dialog's usual load-once/save-on-click flow) would get
+        // silently reverted back to its dialog-open value the moment the user clicked Save in the
+        // SAME session -- exactly the failure that feature exists to prevent (dial power on the
+        // meter, hit Save, transmit at the wrong power with the UI still showing the right number).
+        // Re-reading fresh from disk right here closes the whole class, not just this one field --
+        // the same staleness risk applies to every section below, present or future, written by
+        // anything other than this dialog's own Save.
+        var currentSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+
         // Tier B audit finding: these four (Localization/AppPerformance/Operator/QrzLookup) used to
         // build a fresh `new X { ... }` instead of `previous with { ... }` like every OTHER section
         // here -- harmless today only because none of these four records currently has a field the
@@ -163,25 +183,25 @@ public sealed partial class OptionsSettingsService
         // four (a QRZ session-cache token, an operator default-power field, ...), every Options Save
         // would silently reset it, with no existing test able to catch it. Read previous* up front
         // and preserve via `with` uniformly, matching AfcEnabled/ClientId's own established pattern.
-        var previousLocalization = _loadedSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
-        var previousAppPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
-        var previousOperator = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
-        var previousQrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-        var previousAudio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+        var previousLocalization = currentSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
+        var previousAppPerformance = currentSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
+        var previousOperator = currentSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
+        var previousQrzLookup = currentSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
+        var previousAudio = currentSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
         var sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
             ? snapshot.SampleRate
             : SstvSampleRate.NormalizePersisted(previousAudio.SampleRate);
-        var previousRadio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
-        var previousDecoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
-        var previousStationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
+        var previousRadio = currentSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
+        var previousDecoder = currentSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+        var previousStationId = currentSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
         // MigrateIfNeeded (not a plain GetSection ?? new X()) -- same reasoning as LoadAsync above:
         // a user who opens the dialog and immediately hits Save, with only a legacy GridTracker
         // section on disk, must persist the MIGRATED ClientId/destination, not silently drop it back
         // to an empty AdifUdpStreamingSettings just because the new section was never explicitly
         // read through this exact call before.
-        var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(_loadedSettings);
+        var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(currentSettings);
 
-        var settings = _loadedSettings
+        var settings = currentSettings
             .WithSection(LocalizationSettings.SectionKey, previousLocalization with { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
             .WithSection(
                 AudioDeviceSettings.SectionKey,
@@ -189,6 +209,8 @@ public sealed partial class OptionsSettingsService
                 {
                     CaptureDeviceId = snapshot.CaptureDeviceId,
                     PlaybackDeviceId = snapshot.PlaybackDeviceId,
+                    CaptureDeviceName = snapshot.CaptureDeviceName,
+                    PlaybackDeviceName = snapshot.PlaybackDeviceName,
                     // Legacy Options preserves the previous valid rate when the typed value is
                     // outside 5000..CLOCKMAX (Option.cpp:421-424); startup's invalid-value behavior
                     // is deliberately different and falls back to 11025.
@@ -213,6 +235,7 @@ public sealed partial class OptionsSettingsService
                     Host = snapshot.RigctldHost,
                     Port = snapshot.RigctldPort,
                     HamlibModel = snapshot.HamlibModel,
+                    HamlibLibraryPath = snapshot.HamlibLibraryPath,
                     SerialPort = snapshot.HamlibSerialPort,
                     BaudRate = snapshot.HamlibBaudRate,
                     PttType = snapshot.HamlibPttType,
