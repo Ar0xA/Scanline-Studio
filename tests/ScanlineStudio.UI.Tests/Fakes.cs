@@ -574,6 +574,16 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public string? HamlibLibraryPathToReturn { get; set; } = "/usr/lib/libhamlib.so.4";
 
+    /// <summary>Test-only: makes <see cref="PickHamlibLibraryFileAsync"/> genuinely resume on a
+    /// threadpool thread (via <see cref="Task.Run(Func{string?})"/>) instead of completing
+    /// synchronously like every other fake picker method here. A real file-picker dialog always
+    /// does this (a real OS modal, real async gap); the default `Task.FromResult` shape used
+    /// elsewhere in this fake does NOT, which is exactly why the original crash this flag exists to
+    /// reproduce (<c>OptionsWindowViewModel.BrowseHamlibLibraryAsync</c> touching
+    /// <c>IsProbingHamlib</c> off the UI thread) was invisible to every test written against the
+    /// synchronous default.</summary>
+    public bool CompletePickHamlibLibraryFileOnBackgroundThread { get; set; }
+
     public string? SaveAdifPathToReturn { get; set; } = "/tmp/fake.adi";
 
     public (string Path, ImageExportFormat Format)? SaveImagePathToReturn { get; set; } = ("/tmp/fake-export.png", ImageExportFormat.Png);
@@ -610,7 +620,10 @@ internal sealed class FakeFilePickerService : IFilePickerService
         return Task.FromResult(SaveImagePathToReturn);
     }
 
-    public Task<string?> PickHamlibLibraryFileAsync() => Task.FromResult(HamlibLibraryPathToReturn);
+    public Task<string?> PickHamlibLibraryFileAsync() =>
+        CompletePickHamlibLibraryFileOnBackgroundThread
+            ? Task.Run(() => HamlibLibraryPathToReturn)
+            : Task.FromResult(HamlibLibraryPathToReturn);
 }
 
 internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter

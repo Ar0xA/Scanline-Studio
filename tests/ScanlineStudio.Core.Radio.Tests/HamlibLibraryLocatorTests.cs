@@ -69,6 +69,24 @@ public class HamlibLibraryLocatorTests
         Assert.Equal(LinuxSoname, resolvedPath);
     }
 
+    // User-reported gap: dropping the library next to the running app (including the standalone-
+    // publish exe) wasn't found by auto-detect -- bare soname load alone can't cover this (dlopen
+    // never searches argv[0]'s own directory on Linux). Fixed by also trying each candidate name
+    // joined against AppContext.BaseDirectory as a fallback tier.
+    [Fact]
+    public void Locate_BareSonameFailsButBaseDirectoryCandidateSucceeds_ReturnsThatHandle()
+    {
+        var loader = new FakeNativeLibraryLoader();
+        var baseDirCandidate = Path.Combine(AppContext.BaseDirectory, LinuxSoname);
+        loader.Succeed(baseDirCandidate, 7); // bare LinuxSoname is deliberately NOT registered
+        var sut = new HamlibLibraryLocator(loader, overridePath: null);
+
+        var (handle, resolvedPath) = sut.Locate();
+
+        Assert.Equal(7, handle);
+        Assert.Equal(baseDirCandidate, resolvedPath);
+    }
+
     [Fact]
     public void Locate_OverrideSetButFails_ThrowsWithoutFallingBackToAutoDetection()
     {
