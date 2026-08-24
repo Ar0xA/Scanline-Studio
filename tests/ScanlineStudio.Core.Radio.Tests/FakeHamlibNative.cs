@@ -198,6 +198,10 @@ internal sealed class FakeHamlibNative : IHamlibNative
         return CapsModelNames.GetValueOrDefault(model);
     });
 
+    public List<int> RigSetDebugCalls { get; } = [];
+
+    public void RigSetDebug(int level) => RigSetDebugCalls.Add(level);
+
     private T Enter<T>(Func<T> body)
     {
         if (Interlocked.Increment(ref _callDepth) > 1)
