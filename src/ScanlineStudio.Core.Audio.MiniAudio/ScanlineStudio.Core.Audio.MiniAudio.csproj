@@ -24,11 +24,16 @@
         libraries" (loaded via LoadLibrary at runtime) — but piece Audio 9 (real OS device mute
         state) added DIRECT COM calls (CoInitializeEx/CoCreateInstance/CoUninitialize via
         mmdeviceapi.h/endpointvolume.h, not through miniaudio's own runtime-loaded path), so this
-        target now links Ole32.lib (the COM entry points themselves) AND Uuid.lib (storage for the
-        CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/IID_IAudioEndpointVolume GUIDs
-        mmdeviceapi.h/endpointvolume.h only DECLARE, never DEFINE — see yoniq_audio.c's own
-        doc comment on this, an auditor-caught fix for an earlier revision's wrong INITGUID
-        reasoning). Uses cl.exe (present on windows-latest GitHub Actions runners); redirects
+        target links Ole32.lib for the COM entry points themselves. It does NOT link Uuid.lib: a
+        real Windows publish hit LNK2019 for CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/
+        IID_IAudioEndpointVolume even with Uuid.lib linked (user-caught, verified directly against
+        a real Windows SDK install — those three GUIDs' storage is not actually provided by any
+        shipped import library, on x64 or ARM64, despite mmdeviceapi.h/endpointvolume.h only
+        DECLARING them). yoniq_audio.c now defines the three GUIDs itself via DEFINE_GUID — see
+        that file's own doc comment at the WASAPI section for the full story, including why an
+        EARLIER "auditor-caught" fix here (linking Uuid.lib, on the theory that's where the GUIDs'
+        storage lives) was itself wrong. Uses cl.exe (present on windows-latest GitHub Actions
+        runners); redirects
         intermediate .obj/.exp/.lib into the output dir to avoid littering the source tree. Symbol
         export: unlike ELF/Mach-O, MSVC exports nothing from a DLL by default, so yoniq_audio.h's
         own YONIQ_AUDIO_API macro (opus-review fix) marks every function __declspec(dllexport) on
@@ -85,7 +90,7 @@
     <!-- Opus-review fix: /Fo:/Fe: (colon form) is not the traditional MSVC syntax and couldn't be
          verified from anything in this repo; /Fo"path" and /Fe"path" (no colon) are the
          long-established forms, used here instead. -->
-    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot; Ole32.lib Uuid.lib" />
+    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot; Ole32.lib" />
   </Target>
 
   <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))"

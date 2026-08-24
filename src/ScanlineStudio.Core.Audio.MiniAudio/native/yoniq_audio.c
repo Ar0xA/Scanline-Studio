@@ -1116,21 +1116,33 @@ int yoniq_audio_resample_f32(const float *input, int input_frame_count, int samp
 
 #if defined(_WIN32)
 
-/* Auditor-caught: an earlier revision here defined INITGUID believing it would define (not just
- * declare) CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/IID_IAudioEndpointVolume in this
- * translation unit, avoiding a uuid.lib link. Wrong on two counts: (1) INITGUID only changes how
- * DEFINE_GUID expands, and guiddef.h is already pulled in via windows.h (Windows.h is included a
- * few hundred lines above this in the pinned miniaudio.h's own WASAPI section) before this point,
- * so DEFINE_GUID's declaration-only form is already locked in regardless; (2) more decisively,
- * mmdeviceapi.h/endpointvolume.h are MIDL-generated headers that declare these three GUIDs as
- * plain `EXTERN_C const IID ...;`, never via DEFINE_GUID at all -- their storage lives in
- * uuid.lib, full stop. Both ole32.lib (CoCreateInstance/CoInitializeEx/CoUninitialize) AND
- * uuid.lib (the three GUID symbols themselves) must be added to BuildNativeShimWindows's
- * `cl.exe ... /link` line in ScanlineStudio.Core.Audio.MiniAudio.csproj -- this file alone cannot
- * fix its own link inputs. */
+/* User-caught (real Windows publish, LNK2019): the previous fix here (an "auditor-caught" comment
+ * claiming CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/IID_IAudioEndpointVolume "live in
+ * uuid.lib, full stop") was ITSELF wrong -- verified directly against a real Windows SDK install
+ * (um\arm64, um\x64, and the MSVC toolset libs), with IID_IUnknown as a control (that one really
+ * is in uuid.lib). mmdeviceapi.h/endpointvolume.h do declare these three as plain
+ * `EXTERN_C const IID ...;`, but nothing in the shipped import libraries actually provides their
+ * storage -- linking uuid.lib does not resolve them, on x64 or ARM64, so a real `dotnet publish`
+ * fails LNK2019 regardless of that library being present.
+ *
+ * Fix: define the three GUIDs OURSELVES via DEFINE_GUID, the option neither the original code nor
+ * the previous "fix" considered (that one dismissed INITGUID as ineffective and stopped there,
+ * without reaching for DEFINE_GUID directly). `<initguid.h>` is included AFTER
+ * mmdeviceapi.h/endpointvolume.h specifically -- doing it before would also mass-define every
+ * `PKEY_AudioEndpoint_*` property key those headers declare, which is not needed here and is
+ * needless surface. The vendored `miniaudio.h` independently corroborates the first two GUID
+ * VALUES below (not the DEFINE_GUID method -- it uses private `static const GUID MA_CLSID_.../
+ * MA_IID_...` names instead, ~line 21786-21787). Values below are from the
+ * Windows SDK's own IDL, not typed from memory. ole32.lib alone (CoCreateInstance/CoInitializeEx/
+ * CoUninitialize) is still needed on BuildNativeShimWindows's `cl.exe ... /link` line -- uuid.lib
+ * is no longer needed at all and has been dropped from the csproj. */
 #define COBJMACROS /* C-callable (vtable-macro) COM interface access, not C++ method syntax. */
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
+#include <initguid.h>
+DEFINE_GUID(CLSID_MMDeviceEnumerator, 0xbcde0395, 0xe52f, 0x467c, 0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e);
+DEFINE_GUID(IID_IMMDeviceEnumerator, 0xa95664d2, 0x9614, 0x4f35, 0xa7, 0x46, 0xde, 0x8d, 0xb6, 0x36, 0x17, 0xe6);
+DEFINE_GUID(IID_IAudioEndpointVolume, 0x5cdf2c82, 0x841e, 0x4546, 0x97, 0x22, 0x0c, 0xf7, 0x40, 0x78, 0x22, 0x9a);
 
 /* device_id_w is the WASAPI endpoint id (already the same string device_id_to_string produces
  * for this backend) -- it alone selects a specific render OR capture endpoint, so is_capture is
