@@ -167,6 +167,7 @@ public class HamlibDiscoveryServiceTests
         public int RigSetPtt(nint rig, uint vfo, int ptt) => throw new NotSupportedException();
         public int RigGetPtt(nint rig, uint vfo, out int ptt) => throw new NotSupportedException();
         public string? RigVersion() => "Hamlib 4.5.5 2024-01-01T00:00:00Z 64-bit";
+        public void RigSetDebug(int level) => throw new NotSupportedException();
         public int RigGetLevel(nint rig, uint vfo, ulong level, out float value) => throw new NotSupportedException();
         public int RigGetLevelInt(nint rig, uint vfo, ulong level, out int value) => throw new NotSupportedException();
 

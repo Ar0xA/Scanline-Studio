@@ -3,6 +3,21 @@ using System.Text;
 
 namespace ScanlineStudio.Core.Radio.Hamlib;
 
+/// <summary>Hamlib's own <c>enum rig_debug_level_e</c> -- verified directly against the vendored
+/// Hamlib source clone's <c>hamlib/include/hamlib/rig.h</c> (lines 238-245), not assumed. A plain C
+/// enum starting at 0 with no gaps, so the numeric ordering below is load-bearing, not incidental --
+/// don't reorder these to "look nicer."</summary>
+internal enum HamlibDebugLevel
+{
+    None = 0,
+    Bug = 1,
+    Err = 2,
+    Warn = 3,
+    Verbose = 4,
+    Trace = 5,
+    Cache = 6,
+}
+
 /// <summary>
 /// Real <see cref="IHamlibNative"/>, built from an already-loaded library handle (see
 /// <see cref="HamlibLibraryLocator"/>). Resolves each export once at construction via
@@ -85,6 +100,9 @@ internal sealed class HamlibNative : IHamlibNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate nint RigGetCapsCptrDelegate(uint model, int capsCptr);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void RigSetDebugDelegate(int debugLevel);
+
     // enum rig_caps_cptr_e (rig.h) -- order is VERSION=0, MFG_NAME=1, MODEL_NAME=2, STATUS=3; only
     // the two this project reads are named here.
     private const int RigCapsMfgNameCptr = 1;
@@ -108,6 +126,12 @@ internal sealed class HamlibNative : IHamlibNative
     private readonly RigListForeachModelDelegate _rigListForeachModel;
     private readonly RigGetCapsCptrDelegate _rigGetCapsCptr;
 
+    /// <summary>User-reported gap's own explicit requirement: resolved TOLERANTLY (unlike every
+    /// other delegate above, all mandatory) -- a Hamlib build missing this export must not take out
+    /// Hamlib support entirely over a logging nicety. <see langword="null"/> means "silently do
+    /// nothing" everywhere this is used, never a thrown exception.</summary>
+    private readonly RigSetDebugDelegate? _rigSetDebug;
+
     public HamlibNative(INativeLibraryLoader loader, nint handle)
     {
         _rigInit = Resolve<RigInitDelegate>(loader, handle, "rig_init");
@@ -129,6 +153,21 @@ internal sealed class HamlibNative : IHamlibNative
         _rigLoadAllBackends = Resolve<RigLoadAllBackendsDelegate>(loader, handle, "rig_load_all_backends");
         _rigListForeachModel = Resolve<RigListForeachModelDelegate>(loader, handle, "rig_list_foreach_model");
         _rigGetCapsCptr = Resolve<RigGetCapsCptrDelegate>(loader, handle, "rig_get_caps_cptr");
+        _rigSetDebug = TryResolve<RigSetDebugDelegate>(loader, handle, "rig_set_debug");
+
+        // Must run before any other Hamlib call (rig_init, rig_load_all_backends, rig_version, ...)
+        // -- this constructor is the first thing that ever touches the loaded library, so the end of
+        // it is the natural place. WARN, not the library's own TRACE-level default: TRACE floods
+        // stderr with a hex dump of every CAT frame plus per-call entry/exit traces on every poll
+        // (write_block/read_string_generic/vfo_fixup, RIG_DEBUG_TRACE in the vendored source).
+        // VERBOSE was tried first and measured live: it does NOT meaningfully quiet this down --
+        // Hamlib's own ENTERFUNC/RETURNFUNC macros (misc.h), which fire on every single function
+        // call, are ALSO RIG_DEBUG_VERBOSE, not TRACE, so VERBOSE still logs a full call trace, just
+        // without the raw byte-level I/O dumps (~60% reduction measured against a live Test CAT
+        // attempt, not the silence the reported issue actually asks for). WARN silences both
+        // ENTERFUNC/RETURNFUNC and the byte-level TRACE dumps entirely, surfacing only genuine
+        // Hamlib-detected problems (BUG/ERR/WARN) -- confirmed via the same live measurement.
+        _rigSetDebug?.Invoke((int)HamlibDebugLevel.Warn);
     }
 
     public nint RigInit(uint model) => _rigInit(model);
@@ -198,6 +237,12 @@ internal sealed class HamlibNative : IHamlibNative
 
     public string? RigGetCapsModelName(uint model) => DecodeCapsCptr(model, RigCapsModelNameCptr);
 
+    /// <summary>No-op if <c>rig_set_debug</c> wasn't resolvable at construction -- see
+    /// <see cref="_rigSetDebug"/>'s own doc comment. Also exposed publicly (not just called once
+    /// from the constructor) so a future diagnostics setting can deliberately raise this back to
+    /// <see cref="HamlibDebugLevel.Trace"/> when troubleshooting a rig, without needing new interop.</summary>
+    public void RigSetDebug(int level) => _rigSetDebug?.Invoke(level);
+
     private string? DecodeCapsCptr(uint model, int capsCptr)
     {
         var ptr = _rigGetCapsCptr(model, capsCptr);
@@ -214,6 +259,17 @@ internal sealed class HamlibNative : IHamlibNative
 
         return Marshal.GetDelegateForFunctionPointer<TDelegate>(address);
     }
+
+    /// <summary>Same resolution as <see cref="Resolve{TDelegate}"/>, but for an OPTIONAL export --
+    /// <see langword="null"/> instead of throwing when the loaded library doesn't have it. Only
+    /// <c>rig_set_debug</c> uses this today; every other export this project depends on is mandatory
+    /// (a build missing e.g. <c>rig_open</c> genuinely can't function as a Hamlib backend, but one
+    /// missing <c>rig_set_debug</c> can -- it would just run noisier than intended).</summary>
+    private static TDelegate? TryResolve<TDelegate>(INativeLibraryLoader loader, nint handle, string exportName)
+        where TDelegate : Delegate =>
+        loader.TryGetExport(handle, exportName, out var address)
+            ? Marshal.GetDelegateForFunctionPointer<TDelegate>(address)
+            : null;
 
     private static byte[] ToUtf8NullTerminated(string value)
     {
