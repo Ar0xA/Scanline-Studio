@@ -347,8 +347,12 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     public RadioCapabilities Capabilities { get; set; } = RadioCapabilities.None;
 
     // ScanlineStudio.UI.Tests never constructs a real SstvSessionService (only FakeSstvSessionService),
-    // so unlike the same-named fake in ScanlineStudio.Application.Tests, this value never actually
-    // gates anything -- present only to satisfy IRadioSessionService's interface contract.
+    // so unlike the same-named fake in ScanlineStudio.Application.Tests, this value never gated
+    // anything here -- present only to satisfy IRadioSessionService's interface contract. No longer
+    // fully true: OptionsWindowViewModel.TestHamlibConnectionAsync/TestPttAsync now refuse to run
+    // while RigId != "none" (a live connection is already active) -- tests exercising those two
+    // commands must set this to "none" explicitly, since the default here stays "fake-radio" for
+    // every OTHER existing test's sake.
     public string RigId { get; set; } = "fake-radio";
 
     public IObservable<RadioState> StateChanges => _stateChanges;
@@ -365,6 +369,42 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     {
         TestConnectionCalls.Add(spec);
         return Task.FromResult(TestConnectionResultToReturn);
+    }
+
+    public RadioConnectionTestResult TestPttResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.PttControl, null);
+
+    public List<(RadioConnectionSpec Spec, TimeSpan Duration)> TestPttCalls { get; } = [];
+
+    /// <summary>Test-only hook: when set, <see cref="TestPttAsync"/> awaits this before returning --
+    /// lets a test observe <c>IsTestingPtt</c> while a call is genuinely in flight, mirroring
+    /// <c>FakeAudioDeviceEnumerator.Gate</c>'s shape.</summary>
+    public Task? TestPttGate { get; set; }
+
+    /// <summary>Code-review finding: set true if <paramref name="ct"/> (below) was actually observed
+    /// as cancelled -- without this, a test asserting only "no second call started" can't
+    /// distinguish the real Stop-cancels-the-in-flight-call fix from simply deleting the
+    /// <c>_testPttCts?.Cancel()</c> call, since the re-entrancy guard alone already blocks a second
+    /// call either way. Catches (rather than rethrows) the real
+    /// <see cref="OperationCanceledException"/>, matching the REAL <c>RadioSessionService.TestPttAsync</c>'s
+    /// own contract of never letting cancellation escape as an exception.</summary>
+    public bool WasCancelled { get; private set; }
+
+    public async Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default)
+    {
+        TestPttCalls.Add((spec, duration));
+        if (TestPttGate is not null)
+        {
+            try
+            {
+                await TestPttGate.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                WasCancelled = true;
+            }
+        }
+
+        return TestPttResultToReturn;
     }
 
     public Task DisconnectAsync() => Task.CompletedTask;
@@ -454,6 +494,13 @@ internal sealed class FakeHamlibDiscoveryService : IHamlibDiscoveryService
         ProbedPaths.Add(overridePath);
         return ThrowOnProbe is { } ex ? Task.FromException<HamlibProbeResult>(ex) : Task.FromResult(ResultToReturn);
     }
+}
+
+internal sealed class FakeSerialPortEnumerator : ISerialPortEnumerator
+{
+    public IReadOnlyList<string> PortNames { get; set; } = [];
+
+    public IReadOnlyList<string> GetPortNames() => PortNames;
 }
 
 internal sealed class FakeImageSourceWriter : IImageSourceWriter

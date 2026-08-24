@@ -43,6 +43,21 @@ public interface IRadioSessionService
     /// already-working live connection.</summary>
     Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default);
 
+    /// <summary>Options-dialog "Test PTT" button -- same throwaway-protocol contract as
+    /// <see cref="TestConnectionAsync"/> (never touches the real session), but also keys PTT for up
+    /// to <paramref name="duration"/> (cancellable early via <paramref name="ct"/> -- a Stop click or
+    /// the dialog closing) and un-keys before returning. Un-keying is retried a bounded number of
+    /// times regardless of why the wait ended, on an internal token independent of
+    /// <paramref name="ct"/>, since Hamlib's own <c>rig_close</c> only auto-un-keys RTS/DTR/
+    /// Parallel/CM108/GPIO on dispose -- CAT ("RIG") PTT has no such rescue path, so the explicit
+    /// un-key call is the only one. If every retry still fails, <see cref="RadioConnectionTestResult.Success"/>
+    /// is <see langword="false"/> with a message telling the operator to check the rig manually --
+    /// this is reported, never silently swallowed, since a stuck-keyed rig needs a human to
+    /// intervene. Returns a no-PTT-capability failure (no keying attempted at all) if the resolved
+    /// protocol's <see cref="RadioCapabilities"/> lack <see cref="RadioCapabilities.PttControl"/>.
+    /// At most one call runs at a time -- a concurrent call is rejected, not queued.</summary>
+    Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default);
+
     Task DisconnectAsync();
 
     Task SetFrequencyAsync(long hz, CancellationToken ct = default);

@@ -31,6 +31,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
         ["rig_pathname"] = new CLong(1),
         ["serial_speed"] = new CLong(2),
         ["ptt_type"] = new CLong(3),
+        ["ptt_pathname"] = new CLong(4),
     };
 
     public int RigSetConfCode { get; set; }

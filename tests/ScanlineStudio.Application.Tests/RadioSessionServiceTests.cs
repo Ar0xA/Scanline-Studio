@@ -205,4 +205,190 @@ public sealed class RadioSessionServiceTests
         Assert.True(spec.SwrCutoffEnabled);
         Assert.Equal(2.5, spec.SwrCutoffThreshold);
     }
+
+    // Options-dialog "Test PTT" button. Radio-safety-sensitive: every one of these proves the rig
+    // ends up un-keyed (or the operator is told it might not be), never silently left keyed.
+
+    [Fact]
+    public async Task TestPttAsync_Succeeds_KeysWaitsThenUnkeysAndDisposes()
+    {
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { RigId = "rigctld-client", Capabilities = RadioCapabilities.PttControl };
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.True(result.Success);
+        Assert.Equal("rigctld-client", result.RigId);
+        Assert.Null(result.ErrorMessage);
+        Assert.Equal([true, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+        Assert.Empty(controller.ConnectCalls);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_CancelledDuringWait_StillUnkeysAndReportsSuccess()
+    {
+        // A Stop click (or the dialog closing) cancels the wait early -- normal control flow, same
+        // philosophy as OptionsWindowViewModel.TuneAsync's own Stop handling, not a failure. The
+        // un-key must still run regardless.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromSeconds(30), new CancellationToken(canceled: true));
+
+        Assert.True(result.Success);
+        Assert.Equal([true, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_KeyingThrows_StillAttemptsUnkeyThenDisposes()
+    {
+        // Code-review finding: rig_set_ptt can return a non-OK code AFTER the rig has already
+        // physically keyed (confirmed against hamlib/src/rig.c -- a VFO-revert call after the real
+        // PTT-on command can fail and become the returned error), so a thrown SetPttAsync(true,...)
+        // does NOT mean the rig was never keyed. The un-key attempt must still run -- skipping it
+        // (this test's original, wrong expectation) is exactly the stuck-transmitter hazard this
+        // whole method exists to close.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        protocol.SetPttExceptionsToThrow.Enqueue(new InvalidOperationException("key failed"));
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        // The un-key attempt itself succeeds (nothing scripted to fail it), so the ORIGINAL key
+        // failure is what's reported -- the un-key-failed message only overrides this when the
+        // un-key attempt(s) ALSO fail (see TestPttAsync_UnkeyFailsEveryRetry_... below).
+        Assert.False(result.Success);
+        Assert.Equal("key failed", result.ErrorMessage);
+        Assert.Equal([true, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_UnkeyFailsEveryRetry_ReturnsFailureWithUnkeyMessage()
+    {
+        // rig_close (Hamlib) doesn't rescue CAT PTT on dispose -- if the explicit un-key call itself
+        // fails every retry, this must be reported to the operator, never silently swallowed.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        protocol.SetPttExceptionsToThrow.Enqueue(null); // key succeeds
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 1 failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 2 failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 3 failed"));
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.False(result.Success);
+        Assert.Contains("check your rig", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal([true, false, false, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_KeyingThrowsAndEveryUnkeyRetryAlsoFails_ReturnsUnkeyMessageNotKeyMessage()
+    {
+        // The exact scenario code review flagged: SetPttAsync(true) throws (rig.c confirms this can
+        // happen AFTER the rig is already physically keyed), and the rescue un-key attempt ALSO
+        // fails every retry -- the un-key failure must win over the original key error, since a
+        // possibly-still-transmitting rig is the more urgent fact to surface.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        protocol.SetPttExceptionsToThrow.Enqueue(new InvalidOperationException("key failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 1 failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 2 failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 3 failed"));
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.False(result.Success);
+        Assert.Contains("check your rig", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal([true, false, false, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_UnkeyFailsThenSucceeds_ReturnsSuccess()
+    {
+        // Proves the retry loop genuinely retries, not just attempts once.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        protocol.SetPttExceptionsToThrow.Enqueue(null); // key succeeds
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey 1 failed"));
+        protocol.SetPttExceptionsToThrow.Enqueue(null); // unkey 2 succeeds
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.True(result.Success);
+        Assert.Equal([true, false, false], protocol.SetPttCalls);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_NoPttCapability_ReturnsFailureWithoutKeying()
+    {
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.ReadFrequency };
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.False(result.Success);
+        Assert.Contains("no PTT control", result.ErrorMessage);
+        Assert.Empty(protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_NoFactoryRegisteredForSpec_ReturnsFailure()
+    {
+        var controller = new FakeRadioController();
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        Assert.False(result.Success);
+        Assert.Contains("No backend registered", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_ConcurrentCalls_SecondCallIsRejectedBySingleFlightGuard()
+    {
+        var controller = new FakeRadioController();
+        var gate = new TaskCompletionSource();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl, PollGate = gate.Task };
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var firstCall = service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+
+        var secondResult = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10));
+        Assert.False(secondResult.Success);
+        Assert.Contains("already in progress", secondResult.ErrorMessage);
+
+        gate.SetResult();
+        var firstResult = await firstCall;
+        Assert.True(firstResult.Success);
+    }
 }

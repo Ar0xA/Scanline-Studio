@@ -24,6 +24,8 @@ public partial class OptionsWindowView : Window
                 // close path (Save, Cancel, the window's own X button), not just Cancel, since none
                 // of those routes is more "correct" to leave a transmitter keyed after.
                 Closed += (_, _) => vm.StopTuneIfActive();
+                // Same reasoning as StopTuneIfActive above, for the Radio/CAT tab's own Test PTT.
+                Closed += (_, _) => vm.StopTestPttIfActive();
             }
         };
     }

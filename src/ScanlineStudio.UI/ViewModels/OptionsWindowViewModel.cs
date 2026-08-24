@@ -39,9 +39,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly IHamlibDiscoveryService _hamlibDiscovery;
     private readonly IFilePickerService _filePickerService;
     private readonly ISstvSessionService _sstvSession;
+    private readonly ISerialPortEnumerator _serialPortEnumerator;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     private static readonly TimeSpan TxVolumePersistDebounce = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>Test PTT opens its own throwaway connection, invisible to the app's real SWR
+    /// auto-cutoff (<c>TxControlsPaneViewModel.CheckSwrCutoff</c> only bounds an in-flight
+    /// <c>ISstvSessionService.TransmitAsync</c>) -- deliberately NOT <see cref="MaxTuneDuration"/>.
+    /// Short enough to see an LED/hear a relay click with minimal exposure if something is wrong.</summary>
+    private static readonly TimeSpan MaxTestPttDuration = TimeSpan.FromSeconds(5);
 
     /// <summary>WSJT-X's own Tune button has no fixed duration -- it keys PTT and holds a steady
     /// tone until the operator clicks it again, with an internal safety timeout so a forgotten Tune
@@ -135,6 +142,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private int? _rigctldPort;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanTestPtt))]
     private uint? _hamlibModel;
 
     /// <summary>Discovery-order tier-1 user override path (spec/03-cat-layer.md) -- browsed to,
@@ -159,7 +167,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private int? _hamlibBaudRate;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsPttMethodVoxSelected))]
+    [NotifyPropertyChangedFor(nameof(IsPttMethodCatSelected))]
+    [NotifyPropertyChangedFor(nameof(IsPttMethodRtsSelected))]
+    [NotifyPropertyChangedFor(nameof(IsPttMethodDtrSelected))]
+    [NotifyPropertyChangedFor(nameof(IsPttPortEnabled))]
+    [NotifyPropertyChangedFor(nameof(CanTestPtt))]
     private string? _hamlibPttType;
+
+    /// <summary>Hamlib's own <c>ptt_pathname</c> -- a PTT-only serial device, separate from
+    /// <see cref="HamlibSerialPort"/> (the CAT port). Only meaningful for the RTS/DTR PTT methods --
+    /// see <see cref="IsPttPortEnabled"/>.</summary>
+    [ObservableProperty]
+    private string? _hamlibPttPort;
 
     [ObservableProperty]
     private string? _callsign;
@@ -314,6 +334,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         IHamlibDiscoveryService hamlibDiscovery,
         IFilePickerService filePickerService,
         ISstvSessionService sstvSession,
+        ISerialPortEnumerator serialPortEnumerator,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
@@ -325,6 +346,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         _hamlibDiscovery = hamlibDiscovery;
         _filePickerService = filePickerService;
         _sstvSession = sstvSession;
+        _serialPortEnumerator = serialPortEnumerator;
         _logger = logger;
 
         _ = LoadSafeAsync();
@@ -342,6 +364,29 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     /// re-populated with stale entries from a previous library) whenever the probe fails, so the
     /// existing numeric <see cref="HamlibModel"/> TextBox stays the fallback entry path.</summary>
     public ObservableCollection<HamlibRigModelInfo> HamlibRigModels { get; } = [];
+
+    /// <summary>Populated from <see cref="ISerialPortEnumerator.GetPortNames"/> on load and via
+    /// <see cref="RefreshSerialPortsCommand"/> -- shared by both the CAT serial port field
+    /// (<see cref="HamlibSerialPort"/>) and the PTT port field (<see cref="HamlibPttPort"/>); both
+    /// ComboBoxes are editable, so a port not in this list can still be typed by hand.</summary>
+    public ObservableCollection<string> AvailableSerialPorts { get; } = [];
+
+    /// <summary>Fixed standard serial baud rates, 1200-115200 -- matches the range the user asked
+    /// for.</summary>
+    // Code-review finding: was `static`, bound via a plain {Binding} -- that resolves against the
+    // DataContext INSTANCE, not a static member, the classic case {x:Static} exists for. Instance
+    // property matches AvailableCultures' own established binding shape directly above.
+    public IReadOnlyList<int> AvailableBaudRates { get; } = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200];
+
+    [RelayCommand]
+    private void RefreshSerialPorts()
+    {
+        AvailableSerialPorts.Clear();
+        foreach (var port in _serialPortEnumerator.GetPortNames())
+        {
+            AvailableSerialPorts.Add(port);
+        }
+    }
 
     /// <summary>Forwarding tab's list-editable destination rows -- see
     /// <see cref="AdifUdpDestinationRowViewModel"/>'s own doc comment for the list-editable-row
@@ -393,6 +438,69 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     }
 
     public bool IsHamlibSelected => RadioBackendId == "hamlib";
+
+    /// <summary>Backs the Radio/CAT tab's PTT-method 4-way radio group -- same computed-property
+    /// idiom as <see cref="IsNoneBackendSelected"/>/etc., over the existing <see cref="HamlibPttType"/>
+    /// string field (no new persisted field for the method itself). Mapping verified against the
+    /// real Hamlib source (<c>hamlib/src/conf.c</c>'s <c>ptt_type</c> combo list): CAT sends PTT over
+    /// the CAT link itself (<c>"RIG"</c>); VOX sends no PTT command at all -- the rig's own hardware
+    /// VOX keys on audio presence (<c>"None"</c>).</summary>
+    public bool IsPttMethodVoxSelected
+    {
+        get => HamlibPttType == "None";
+        set
+        {
+            if (value)
+            {
+                HamlibPttType = "None";
+            }
+        }
+    }
+
+    public bool IsPttMethodCatSelected
+    {
+        get => HamlibPttType == "RIG";
+        set
+        {
+            if (value)
+            {
+                HamlibPttType = "RIG";
+            }
+        }
+    }
+
+    public bool IsPttMethodRtsSelected
+    {
+        get => HamlibPttType == "RTS";
+        set
+        {
+            if (value)
+            {
+                HamlibPttType = "RTS";
+            }
+        }
+    }
+
+    public bool IsPttMethodDtrSelected
+    {
+        get => HamlibPttType == "DTR";
+        set
+        {
+            if (value)
+            {
+                HamlibPttType = "DTR";
+            }
+        }
+    }
+
+    /// <summary>Gates the PTT-port field -- only RTS/DTR key over a dedicated serial line
+    /// (<c>ptt_pathname</c>); CAT keys over the CAT link itself, VOX over none at all.</summary>
+    public bool IsPttPortEnabled => IsPttMethodRtsSelected || IsPttMethodDtrSelected;
+
+    /// <summary>Gates the "Test PTT" button -- disabled under VOX (Hamlib sends no PTT command for
+    /// it at all, so a test would report false success with nothing actually keyed -- verified
+    /// against <c>hamlib/src/rig.c</c>'s <c>RIG_PTT_NONE</c> case) and until a rig model is chosen.</summary>
+    public bool CanTestPtt => !IsPttMethodVoxSelected && HamlibModel is > 0;
 
     /// <summary>Auditor usability review follow-up (2026-08-18) -- Radio/CAT tab's "Test Connection"
     /// button. Deliberately tests whatever is CURRENTLY TYPED into <see cref="RigctldHost"/>/
@@ -482,11 +590,179 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         }
     }
 
-    partial void OnIsTestingConnectionChanged(bool value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+    partial void OnIsTestingConnectionChanged(bool value)
+    {
+        TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+        TestHamlibConnectionCommand.NotifyCanExecuteChanged();
+    }
 
     partial void OnRigctldHostChanged(string? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
 
     partial void OnRigctldPortChanged(int? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+
+    partial void OnHamlibModelChanged(uint? value) => TestHamlibConnectionCommand.NotifyCanExecuteChanged();
+
+    /// <summary>Radio/CAT tab's "Test CAT" button -- same throwaway-protocol contract as
+    /// <see cref="TestRigctldConnectionAsync"/> above (tests whatever is CURRENTLY TYPED into the
+    /// Hamlib fields, possibly not yet saved), reusing the same <see cref="TestConnectionStatusMessage"/>/
+    /// <see cref="IsTestingConnection"/> fields -- safe since only one backend section is ever visible
+    /// at a time. Refuses to attempt a second, contending connection while the app's real session is
+    /// already connected (<see cref="IRadioSessionService.RigId"/> != <c>"none"</c>).</summary>
+    private bool CanTestHamlibConnection() => !IsTestingConnection && HamlibModel is > 0;
+
+    [RelayCommand(CanExecute = nameof(CanTestHamlibConnection))]
+    private async Task TestHamlibConnectionAsync()
+    {
+        if (HamlibModel is not { } model)
+        {
+            return;
+        }
+
+        if (_radioSession.RigId != "none")
+        {
+            TestConnectionStatusMessage = _localization.GetString("Options.Radio.Hamlib.AlreadyConnected");
+            return;
+        }
+
+        Log.TestHamlibConnectionInvoked(_logger, model);
+        IsTestingConnection = true;
+        TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
+        var spec = new HamlibConnectionSpec(model)
+        {
+            SerialPort = HamlibSerialPort,
+            BaudRate = HamlibBaudRate,
+            PttType = HamlibPttType,
+            PttPort = HamlibPttPort,
+        };
+        try
+        {
+            var result = await _radioSession.TestConnectionAsync(spec).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestConnectionStatusMessage = result.Success
+                        ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
+                        : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Log.TestHamlibConnectionStatusDisplayFailed(_logger, ex);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.TestHamlibConnectionFailed(_logger, model, ex);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
+                }
+                catch (Exception formatEx)
+                {
+                    Log.TestHamlibConnectionStatusDisplayFailed(_logger, formatEx);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+    }
+
+    /// <summary>Radio/CAT tab's "Test PTT" button -- a real start/stop TOGGLE, same shape as
+    /// <see cref="TuneCommand"/> (see that command's own doc comment), but scoped to Hamlib CAT/PTT
+    /// (not <see cref="ISstvSessionService"/>) and capped at <see cref="MaxTestPttDuration"/>, not
+    /// <see cref="MaxTuneDuration"/> -- this opens its own throwaway connection with no SWR-cutoff
+    /// watchdog of its own, see that constant's own doc comment. Disabled in XAML under VOX
+    /// (<see cref="CanTestPtt"/>) and refuses to run while the app's real session is already
+    /// connected, same reasoning as <see cref="TestHamlibConnectionAsync"/> above.
+    ///
+    /// Code-review finding: <c>AllowConcurrentExecutions = true</c> is required, not decorative --
+    /// CommunityToolkit.Mvvm's generated <c>AsyncRelayCommand</c> defaults to
+    /// <see langword="false"/>, which ANDs into <c>CanExecute</c> for the whole duration a command is
+    /// already running. Without this, the button greys out the instant the tone starts and the
+    /// "Stop test" click (the <see cref="IsTestingPtt"/> branch below) becomes unreachable from the
+    /// real UI -- only reachable from a test calling <c>ExecuteAsync</c> directly, which bypasses
+    /// <c>CanExecute</c> entirely. <see cref="TuneCommand"/> has this same latent shape; left
+    /// untouched here as out of this diff's scope.</summary>
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task TestPttAsync()
+    {
+        if (IsTestingPtt)
+        {
+            _testPttCts?.Cancel();
+            return;
+        }
+
+        if (HamlibModel is not { } model || IsPttMethodVoxSelected)
+        {
+            return;
+        }
+
+        if (_radioSession.RigId != "none")
+        {
+            TestPttErrorMessage = _localization.GetString("Options.Radio.Hamlib.AlreadyConnected");
+            return;
+        }
+
+        Log.TestPttInvoked(_logger, model, MaxTestPttDuration.TotalSeconds);
+        TestPttErrorMessage = null;
+        IsTestingPtt = true;
+        var cts = new CancellationTokenSource();
+        _testPttCts = cts;
+        var spec = new HamlibConnectionSpec(model)
+        {
+            SerialPort = HamlibSerialPort,
+            BaudRate = HamlibBaudRate,
+            PttType = HamlibPttType,
+            PttPort = HamlibPttPort,
+        };
+        try
+        {
+            // RadioSessionService.TestPttAsync's own contract: always returns a result, never
+            // throws -- an early Stop click (cts.Cancel() above) is folded into Success=true there,
+            // same "normal control flow" philosophy as TuneAsync's own OperationCanceledException
+            // handling. A non-null ErrorMessage here means a REAL failure -- including the
+            // un-key-failed-after-every-retry case, which must reach the operator, not be silently
+            // dropped.
+            var result = await _radioSession.TestPttAsync(spec, MaxTestPttDuration, cts.Token).ConfigureAwait(false);
+            if (!result.Success)
+            {
+                Dispatcher.UIThread.Post(() => TestPttErrorMessage = result.ErrorMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.TestPttFailed(_logger, model, ex);
+            Dispatcher.UIThread.Post(() => TestPttErrorMessage = ex.Message);
+        }
+        finally
+        {
+            // Code-review finding: IsTestingPtt goes false LAST, not first -- AllowConcurrentExecutions
+            // means a click can re-enter this method the instant IsTestingPtt observably flips, and
+            // the only thing gating that re-entry is this exact flag. Clearing it before _testPttCts
+            // is nulled/disposed left a narrow window where a click's `_testPttCts?.Cancel()` could
+            // race this finally's own cts.Dispose(), throwing ObjectDisposedException. With this
+            // order, any click that observes IsTestingPtt == true finds _testPttCts still live.
+            _testPttCts = null;
+            cts.Dispose();
+            IsTestingPtt = false;
+        }
+    }
+
+    /// <summary>Called from the window's own Closing/Cancel path so a PTT test left running (rig
+    /// possibly still keyed) can't outlive the dialog that started it -- see
+    /// <see cref="StopTuneIfActive"/>'s own doc comment for the identical reasoning.</summary>
+    public void StopTestPttIfActive() => _testPttCts?.Cancel();
 
     /// <summary>"Browse..." next to the Hamlib library-path field -- lets the user pick the shared
     /// library file directly instead of typing a path by hand. A successful pick both fills
@@ -764,6 +1040,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     /// still keyed) can't outlive the dialog that started it -- see <see cref="TuneAsync"/>'s own
     /// OperationCanceledException handling, which this feeds.</summary>
     public void StopTuneIfActive() => _tuneCts?.Cancel();
+
+    /// <summary>Toggle state for <see cref="TestPttCommand"/> -- see <see cref="IsTuning"/>'s own
+    /// doc comment for the identical pattern.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TestPttButtonLabel))]
+    private bool _isTestingPtt;
+
+    public string TestPttButtonLabel => _localization.GetString(IsTestingPtt ? "Options.Radio.Hamlib.TestPtt.Stop" : "Options.Radio.Hamlib.TestPtt");
+
+    [ObservableProperty]
+    private string? _testPttErrorMessage;
+
+    private CancellationTokenSource? _testPttCts;
 
     partial void OnSelectedHamlibRigModelChanged(HamlibRigModelInfo? value)
     {
@@ -1084,6 +1373,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         {
             var snapshot = await _optionsSettingsService.LoadAsync();
             ApplyFromSnapshot(snapshot);
+            RefreshSerialPorts();
 
             var appSettings = await _settingsStore.LoadAsync();
             RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? false;
@@ -1153,7 +1443,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         HamlibLibraryPath = snapshot.HamlibLibraryPath;
         HamlibSerialPort = snapshot.HamlibSerialPort;
         HamlibBaudRate = snapshot.HamlibBaudRate;
-        HamlibPttType = snapshot.HamlibPttType;
+        // Normalize, not trust -- the old free-text field's own help text used to tell users to
+        // type e.g. "RIG_PTT_SERIAL_DTR", which HamlibRadioProtocol's ctor actually rejects, and a
+        // persisted null (a fresh install) selects nothing among the 4 fixed radio buttons either.
+        // Falls back to "RIG" (CAT) -- the safest common default, needs no separate PTT port.
+        // Code-review finding: a real-but-rarer Hamlib token this UI doesn't offer a button for
+        // (RIGMICDATA/Parallel/CM108/GPIO/GPION) used to pass this check unchanged and render as a
+        // blank radio group -- same symptom this normalization exists to prevent, just narrower.
+        // Only the 4 values this UI can actually represent survive as-is.
+        HamlibPttType = snapshot.HamlibPttType is "RIG" or "DTR" or "RTS" or "None"
+            ? snapshot.HamlibPttType
+            : "RIG";
+        HamlibPttPort = snapshot.HamlibPttPort;
         Callsign = snapshot.Callsign;
         OperatorName = snapshot.OperatorName;
         OperatorGrid = snapshot.OperatorGrid;
@@ -1244,6 +1545,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             HamlibSerialPort: HamlibSerialPort,
             HamlibBaudRate: HamlibBaudRate,
             HamlibPttType: HamlibPttType,
+            HamlibPttPort: HamlibPttPort,
             Callsign: Callsign,
             OperatorName: OperatorName,
             OperatorGrid: OperatorGrid,
@@ -1352,11 +1654,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         HamlibLibraryPath = defaults.HamlibLibraryPath;
         HamlibSerialPort = defaults.HamlibSerialPort;
         HamlibBaudRate = defaults.HamlibBaudRate;
-        HamlibPttType = defaults.HamlibPttType;
+        // "RIG" (CAT), not defaults.HamlibPttType (null) -- see ApplyFromSnapshot's own comment for
+        // why null selects nothing among the 4 fixed radio buttons.
+        HamlibPttType = "RIG";
+        HamlibPttPort = defaults.HamlibPttPort;
         // Tier B audit finding: sibling ResetQrzToDefault already clears its own test-result status
         // (TestQrzLookupStatus) -- this one didn't, so a prior "Connected to IC-7300" success line
         // stayed visible under the now-blank host field after a reset.
         TestConnectionStatusMessage = null;
+        TestPttErrorMessage = null;
         HamlibDiscoveryStatusMessage = null;
         HamlibRigModels.Clear();
         SelectedHamlibRigModel = null;
@@ -1501,6 +1807,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsNoneBackendSelected));
         OnPropertyChanged(nameof(IsRigctldBackendSelected));
         OnPropertyChanged(nameof(IsHamlibBackendSelected));
+
+        // Plan-review finding: without this, a stale rigctld test result stays visible after
+        // switching to the Hamlib panel (they share TestConnectionStatusMessage), and vice versa --
+        // both panels are never shown at once, but the message field is.
+        TestConnectionStatusMessage = null;
+        TestPttErrorMessage = null;
     }
 
     partial void OnSenseLevelChanged(int value)
@@ -1605,5 +1917,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Tune failed")]
         public static partial void TuneFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestHamlibConnection invoked: model={Model}")]
+        public static partial void TestHamlibConnectionInvoked(ILogger logger, uint model);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestHamlibConnection(model={Model}) threw unexpectedly")]
+        public static partial void TestHamlibConnectionFailed(ILogger logger, uint model, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the Hamlib connection-test result status message failed; status left blank")]
+        public static partial void TestHamlibConnectionStatusDisplayFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestPtt invoked: model={Model} for up to {MaxSeconds}s")]
+        public static partial void TestPttInvoked(ILogger logger, uint model, double maxSeconds);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestPtt(model={Model}) threw unexpectedly")]
+        public static partial void TestPttFailed(ILogger logger, uint model, Exception ex);
     }
 }
