@@ -28,7 +28,7 @@ namespace ScanlineStudio.UI.ViewModels;
 ///
 /// Radio/CAT offers None/rigctld/Hamlib -- all three <c>IRadioProtocolFactory</c> backends are
 /// registered in DI (spec/14-roadmap.md's Piece 3).</summary>
-public sealed partial class OptionsWindowViewModel : ViewModelBase
+public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 {
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ILocalizationService _localization;
@@ -349,8 +349,50 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         _serialPortEnumerator = serialPortEnumerator;
         _logger = logger;
 
+        _isRadioConnected = radioSession.RigId != "none";
+        _connectionEventsSubscription = radioSession.ConnectionEvents.Subscribe(OnConnectionEvent);
+
         _ = LoadSafeAsync();
         _ = LoadTxVolumeSafeAsync();
+    }
+
+    private readonly IDisposable _connectionEventsSubscription;
+
+    /// <summary>Code-review finding: this dialog's own view-model is <c>AddTransient</c> (a fresh
+    /// instance per Options open, <c>MainViewModel</c>'s own <c>GetRequiredService</c> call site) --
+    /// without unsubscribing, every dialog open added a permanent subscriber to the singleton
+    /// <see cref="IRadioSessionService.ConnectionEvents"/> stream, rooting the whole dead
+    /// view-model graph for the app's remaining lifetime. Called from <c>OptionsWindowView</c>'s own
+    /// <c>Closed</c> handler, same place <see cref="StopTuneIfActive"/>/<see cref="StopTestPttIfActive"/>
+    /// are already called from.</summary>
+    public void Dispose() => _connectionEventsSubscription.Dispose();
+
+    /// <summary>Deliberately NOT the same idiom as <see cref="RadioStatusViewModel.OnConnectionEvent"/>'s
+    /// own <c>CatLinked</c> -- that property is a "genuinely reachable RIGHT NOW" status light,
+    /// intentionally flapping false during a backoff/reconnect retry. This button instead answers
+    /// "would <see cref="IRadioSessionService.DisconnectAsync"/> actually do something" -- exactly
+    /// <see cref="IRadioSessionService.RigId"/>'s own contract (<c>RadioController</c>'s own doc
+    /// comment: reset to "none" ONLY on an explicit Disconnect, never by a transient
+    /// reconnect-backoff cycle). Live-reproduced bug this fixes: mirroring CatLinked's flapping
+    /// semantics here made the button's own label disagree with what <c>RigId</c> (the actual gate
+    /// Test CAT/Test PTT check) said during a poll retry -- a click landed on the wrong action
+    /// entirely. <see cref="RadioConnectionState.Connecting"/>/<see cref="RadioConnectionState.Reconnecting"/>/
+    /// <see cref="RadioConnectionState.Failed"/>/<see cref="RadioConnectionState.CommandFailed"/> are
+    /// ALL excluded -- none of them change <c>RigId</c>, only <see cref="RadioConnectionState.Connected"/>/
+    /// <see cref="RadioConnectionState.Disconnected"/> do. Code-review finding: this holds because
+    /// every backend's <c>RigId</c> is a fixed compile-time constant per protocol TYPE (e.g.
+    /// <c>"hamlib-native"</c>, <c>"rigctld-client"</c>), so <c>RadioController</c>'s own internal
+    /// reconnect-after-backoff path (which reassigns <c>_rigId</c> with no published event) always
+    /// reassigns the SAME value -- if a future backend ever derives <c>RigId</c> at connect time
+    /// instead, that path could change it silently and this property would go stale.</summary>
+    private void OnConnectionEvent(RadioConnectionEvent evt)
+    {
+        if (evt.State is not (RadioConnectionState.Connected or RadioConnectionState.Disconnected))
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => IsRadioConnected = evt.State == RadioConnectionState.Connected);
     }
 
     public IReadOnlyList<CultureInfo> AvailableCultures => _localization.AvailableCultures;
@@ -394,6 +436,67 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     /// and <see cref="ResetForwardingToDefault"/>, same "Clear() then re-Add" shape as
     /// <see cref="CaptureDevices"/>/<see cref="PlaybackDevices"/> above.</summary>
     public ObservableCollection<AdifUdpDestinationRowViewModel> AdifUdpDestinations { get; } = [];
+
+    /// <summary>User-reported gap: (1) Test CAT/Test PTT's own "disconnect the active radio
+    /// connection first" guard (<see cref="TestHamlibConnectionAsync"/>/<see cref="TestPttAsync"/>
+    /// below) had no way to actually be satisfied -- <see cref="IRadioSessionService.DisconnectAsync"/>
+    /// existed on the interface but no control anywhere in the app called it; (2) the real session
+    /// only ever connected at app startup (<c>ConnectUsingSettingsAsync</c> called once from
+    /// <c>Program.cs</c>) -- a Save in this dialog needed a full app restart before the main window
+    /// would show anything connected at all. Tracks the REAL, persistent session's live connection
+    /// state (not the throwaway TEST protocol's, which is what
+    /// <see cref="IsTestingConnection"/>/<see cref="IsTestingPtt"/> track) -- see
+    /// <see cref="OnConnectionEvent"/>'s own doc comment for why this is deliberately NOT the same
+    /// idiom as <see cref="RadioStatusViewModel.CatLinked"/>, despite the superficial similarity.
+    /// Do not "simplify" this to match CatLinked -- that was this property's actual first
+    /// implementation, and it was a real, live-reproduced bug.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioButtonLabel))]
+    private bool _isRadioConnected;
+
+    public string ConnectRadioButtonLabel => _localization.GetString(IsRadioConnected ? "Options.Radio.Disconnect" : "Options.Radio.Connect");
+
+    [ObservableProperty]
+    private string? _connectRadioErrorMessage;
+
+    /// <summary>Toggle, same shape as <see cref="TuneCommand"/>/<see cref="TestPttCommand"/> above --
+    /// connects using PERSISTED settings (<see cref="IRadioSessionService.ConnectUsingSettingsAsync"/>'s
+    /// own contract, same as app startup), not whatever is currently typed into this dialog
+    /// (unsaved), so the tooltip tells the operator to Save first.</summary>
+    [RelayCommand]
+    private async Task ToggleRadioConnectionAsync()
+    {
+        if (IsRadioConnected)
+        {
+            Log.DisconnectRadioInvoked(_logger);
+            await _radioSession.DisconnectAsync().ConfigureAwait(false);
+            // Stale test-status messages ("already connected") no longer apply once actually
+            // disconnected -- same reasoning as OnRadioBackendIdChanged's own clearing below.
+            Dispatcher.UIThread.Post(() =>
+            {
+                TestConnectionStatusMessage = null;
+                TestPttErrorMessage = null;
+                ConnectRadioErrorMessage = null;
+            });
+            return;
+        }
+
+        Log.ConnectRadioInvoked(_logger);
+        ConnectRadioErrorMessage = null;
+        try
+        {
+            await _radioSession.ConnectUsingSettingsAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // ConnectUsingSettingsAsync's own contract only throws for a genuine factory-resolution
+            // failure (e.g. an ambiguous/unregistered backend) -- a real connection/poll problem
+            // instead surfaces later via ConnectionEvents (Failed/Reconnecting), same as it always
+            // has at app startup, not as an exception here.
+            Log.ConnectRadioFailed(_logger, ex);
+            Dispatcher.UIThread.Post(() => ConnectRadioErrorMessage = ex.Message);
+        }
+    }
 
     public bool IsRigctldSelected => RadioBackendId == "rigctld";
 
@@ -1932,5 +2035,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPtt(model={Model}) threw unexpectedly")]
         public static partial void TestPttFailed(ILogger logger, uint model, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "DisconnectRadio invoked")]
+        public static partial void DisconnectRadioInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "ConnectRadio invoked")]
+        public static partial void ConnectRadioInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ConnectRadio failed")]
+        public static partial void ConnectRadioFailed(ILogger logger, Exception ex);
     }
 }
