@@ -54,4 +54,10 @@ public interface IFilePickerService
     /// Callers must never sniff the returned path's extension independently either way -- the
     /// format value here is the source of truth.</summary>
     Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName);
+
+    /// <summary>Options dialog's Radio/CAT tab, "linked Hamlib" section -- lets the user browse
+    /// directly to a Hamlib shared library file (<c>.dll</c>/<c>.dylib</c>/<c>.so</c>/<c>.so.N</c>),
+    /// rather than typing a path by hand. Returns the picked file's local path, or <c>null</c> if the
+    /// user cancelled.</summary>
+    Task<string?> PickHamlibLibraryFileAsync();
 }

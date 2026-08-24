@@ -20,23 +20,35 @@
     platform's own toolchain, gated so it only runs on the matching OS. Link flags/compiler choice
     per platform follow miniaudio's own documented build requirements (native/miniaudio.h,
     "2.1 Windows" / "2.2 macOS and iOS" / "2.3 Linux" sections) directly, not guessed:
-      - Windows: "should compile cleanly on all popular compilers without the need to configure
-        any include paths nor link to any libraries": WASAPI/WinMM are loaded via LoadLibrary at
-        runtime, not linked at compile time. Uses cl.exe (present on windows-latest GitHub Actions
-        runners); redirects intermediate .obj/.exp/.lib into the output dir to avoid littering the
-        source tree. Symbol export: unlike ELF/Mach-O, MSVC exports nothing from a DLL by default,
-        so yoniq_audio.h's own YONIQ_AUDIO_API macro (opus-review fix) marks every function
-        __declspec(dllexport) on this platform: miniaudio's own docs quoted above are about
-        include paths/link libraries, not DLL symbol visibility, and don't cover this.
-      - macOS: "should compile cleanly without the need to download any dependencies nor link to
-        any libraries or frameworks" (command-line, non-notarized build; CoreAudio/AudioToolbox
-        are loaded at runtime, not link time, since MA_NO_RUNTIME_LINKING is not defined here),
-        but that same section's very next sentence says command-line compiling "requires linking
-        to -lpthread and -lm" (opus-review correction: an earlier revision of this target quoted
-        only the first sentence and omitted the second, then didn't link either). Both are
-        genuinely needed now regardless: the context-level mutex added to guard concurrent
-        PulseAudio-style mainloop access (see yoniq_audio.c's g_context_mutex) uses pthread_mutex_t
-        on non-Windows. Uses clang, producing a .dylib via -dynamiclib.
+      - Windows: miniaudio's own WASAPI/WinMM backend needs "no include paths nor link to any
+        libraries" (loaded via LoadLibrary at runtime) — but piece Audio 9 (real OS device mute
+        state) added DIRECT COM calls (CoInitializeEx/CoCreateInstance/CoUninitialize via
+        mmdeviceapi.h/endpointvolume.h, not through miniaudio's own runtime-loaded path), so this
+        target now links Ole32.lib (the COM entry points themselves) AND Uuid.lib (storage for the
+        CLSID_MMDeviceEnumerator/IID_IMMDeviceEnumerator/IID_IAudioEndpointVolume GUIDs
+        mmdeviceapi.h/endpointvolume.h only DECLARE, never DEFINE — see yoniq_audio.c's own
+        doc comment on this, an auditor-caught fix for an earlier revision's wrong INITGUID
+        reasoning). Uses cl.exe (present on windows-latest GitHub Actions runners); redirects
+        intermediate .obj/.exp/.lib into the output dir to avoid littering the source tree. Symbol
+        export: unlike ELF/Mach-O, MSVC exports nothing from a DLL by default, so yoniq_audio.h's
+        own YONIQ_AUDIO_API macro (opus-review fix) marks every function __declspec(dllexport) on
+        this platform: miniaudio's own docs quoted above are about include paths/link libraries,
+        not DLL symbol visibility, and don't cover this.
+      - macOS: miniaudio's own CoreAudio backend "should compile cleanly without the need to
+        download any dependencies nor link to any libraries or frameworks" (command-line,
+        non-notarized build; CoreAudio/AudioToolbox are loaded at runtime, not link time, since
+        MA_NO_RUNTIME_LINKING is not defined here) — but that same section's very next sentence
+        says command-line compiling "requires linking to -lpthread and -lm" (opus-review
+        correction: an earlier revision of this target quoted only the first sentence and omitted
+        the second, then didn't link either); both are genuinely needed regardless, since the
+        context-level mutex guarding concurrent PulseAudio-style mainloop access (yoniq_audio.c's
+        g_context_mutex) uses pthread_mutex_t on non-Windows. Piece Audio 9 additionally added
+        DIRECT CoreAudio/CoreFoundation calls (AudioObjectGetPropertyData et al., CFStringRef) for
+        real OS device mute state, bypassing miniaudio's own runtime-loaded path the same way the
+        Windows COM calls above do — `-framework CoreAudio -framework CoreFoundation` are linked
+        for that (auditor-caught: an earlier revision left this feature's macOS link inputs
+        unchanged, which would have failed to link under clang's default -undefined error). Uses
+        clang, producing a .dylib via -dynamiclib.
       - Linux: unchanged from piece Audio 1: "only requires linking to -ldl, -lpthread and -lm."
     The Windows and macOS targets are unverified in this project's own dev sandbox (Linux-only);
     real verification is the CI matrix itself once these commits reach it. See [[05-audio-engine]]
@@ -73,7 +85,7 @@
     <!-- Opus-review fix: /Fo:/Fe: (colon form) is not the traditional MSVC syntax and couldn't be
          verified from anything in this repo; /Fo"path" and /Fe"path" (no colon) are the
          long-established forms, used here instead. -->
-    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot;" />
+    <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)yoniq_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot; Ole32.lib Uuid.lib" />
   </Target>
 
   <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
@@ -85,6 +97,6 @@
       <NativeLibPath>$(MSBuildProjectDirectory)/$(OutDir)libyoniqaudio.dylib</NativeLibPath>
     </PropertyGroup>
     <Exec Command="clang -c -O2 -fPIC &quot;$(NativeDir)yoniq_audio.c&quot; -o &quot;$(NativeObjPath)&quot;" />
-    <Exec Command="clang -dynamiclib -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -lpthread -lm" />
+    <Exec Command="clang -dynamiclib -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -lpthread -lm -framework CoreAudio -framework CoreFoundation" />
   </Target>
 </Project>

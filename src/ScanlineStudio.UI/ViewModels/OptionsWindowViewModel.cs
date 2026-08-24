@@ -12,6 +12,7 @@ using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
+using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -35,7 +36,39 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     private readonly ILogbookSessionService _logbookSession;
     private readonly ISettingsStore _settingsStore;
     private readonly IRadioSessionService _radioSession;
+    private readonly IHamlibDiscoveryService _hamlibDiscovery;
+    private readonly IFilePickerService _filePickerService;
+    private readonly ISstvSessionService _sstvSession;
     private readonly ILogger<OptionsWindowViewModel> _logger;
+
+    private static readonly TimeSpan TxVolumePersistDebounce = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>WSJT-X's own Tune button has no fixed duration -- it keys PTT and holds a steady
+    /// tone until the operator clicks it again, with an internal safety timeout so a forgotten Tune
+    /// can't key the rig forever. This is that same shape: <see cref="TuneCommand"/> auto-stops after
+    /// this long if the operator doesn't click Stop first.</summary>
+    private static readonly TimeSpan MaxTuneDuration = TimeSpan.FromSeconds(30);
+
+    /// <summary>Fixed AFC-lock tone, matching <see cref="RadioStatusViewModel"/>'s own
+    /// <c>TuneFrequencyHz</c> default -- this tab's Tune button is scoped to the "key a tone, dial
+    /// Pwr to the wattage I want" workflow only, not a general-purpose configurable test-tone
+    /// generator, so no separate frequency input is exposed here.</summary>
+    private const double TuneFrequencyHz = 1750;
+
+    /// <summary>Index of the TX tab (source order: General=0, Audio=1, Radio=2, Tx=3, ...) in this
+    /// dialog's own `TabControl` -- named so the header-row's callsign chip (which jumps straight
+    /// here, since Callsign/OperatorName/OperatorGrid live on this tab) can request it without a
+    /// magic number, same "named constant + a source-order test" pattern as
+    /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel.LogbookTabIndex"/>.</summary>
+    public const int TxTabIndex = 3;
+
+    /// <summary>Backs this dialog's own `TabControl`'s `SelectedIndex` (`Mode=TwoWay` -- both
+    /// directions matter: the user's own manual tab clicks flow back here, and
+    /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel"/>'s callsign chip needs to jump straight
+    /// to <see cref="TxTabIndex"/> on open). Same pattern as
+    /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel.SelectedTabIndex"/>.</summary>
+    [ObservableProperty]
+    private int _selectedTabIndex;
 
     [ObservableProperty]
     private CultureInfo? _selectedCulture;
@@ -103,6 +136,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private uint? _hamlibModel;
+
+    /// <summary>Discovery-order tier-1 user override path (spec/03-cat-layer.md) -- browsed to,
+    /// auto-detected, or hand-typed. See <see cref="BrowseHamlibLibraryAsync"/>/
+    /// <see cref="AutoDetectHamlibAsync"/>/<see cref="ProbeHamlibAsync"/> below.</summary>
+    [ObservableProperty]
+    private string? _hamlibLibraryPath;
+
+    [ObservableProperty]
+    private string? _hamlibDiscoveryStatusMessage;
+
+    [ObservableProperty]
+    private bool _isProbingHamlib;
+
+    [ObservableProperty]
+    private HamlibRigModelInfo? _selectedHamlibRigModel;
 
     [ObservableProperty]
     private string? _hamlibSerialPort;
@@ -263,6 +311,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         ILogbookSessionService logbookSession,
         ISettingsStore settingsStore,
         IRadioSessionService radioSession,
+        IHamlibDiscoveryService hamlibDiscovery,
+        IFilePickerService filePickerService,
+        ISstvSessionService sstvSession,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
@@ -271,9 +322,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         _logbookSession = logbookSession;
         _settingsStore = settingsStore;
         _radioSession = radioSession;
+        _hamlibDiscovery = hamlibDiscovery;
+        _filePickerService = filePickerService;
+        _sstvSession = sstvSession;
         _logger = logger;
 
         _ = LoadSafeAsync();
+        _ = LoadTxVolumeSafeAsync();
     }
 
     public IReadOnlyList<CultureInfo> AvailableCultures => _localization.AvailableCultures;
@@ -281,6 +336,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     public ObservableCollection<AudioDeviceInfo> CaptureDevices { get; } = [];
 
     public ObservableCollection<AudioDeviceInfo> PlaybackDevices { get; } = [];
+
+    /// <summary>Populated by a successful <see cref="BrowseHamlibLibraryAsync"/>/
+    /// <see cref="AutoDetectHamlibAsync"/>/<see cref="ProbeHamlibAsync"/> probe -- empty (never
+    /// re-populated with stale entries from a previous library) whenever the probe fails, so the
+    /// existing numeric <see cref="HamlibModel"/> TextBox stays the fallback entry path.</summary>
+    public ObservableCollection<HamlibRigModelInfo> HamlibRigModels { get; } = [];
 
     /// <summary>Forwarding tab's list-editable destination rows -- see
     /// <see cref="AdifUdpDestinationRowViewModel"/>'s own doc comment for the list-editable-row
@@ -426,6 +487,278 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
     partial void OnRigctldHostChanged(string? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
 
     partial void OnRigctldPortChanged(int? value) => TestRigctldConnectionCommand.NotifyCanExecuteChanged();
+
+    /// <summary>"Browse..." next to the Hamlib library-path field -- lets the user pick the shared
+    /// library file directly instead of typing a path by hand. A successful pick both fills
+    /// <see cref="HamlibLibraryPath"/> and immediately probes it (<see cref="RunHamlibProbeAsync"/>),
+    /// matching the user-facing "find it, then list the rigs" flow in one action.</summary>
+    private bool CanBrowseOrAutoDetectHamlib() => !IsProbingHamlib;
+
+    [RelayCommand(CanExecute = nameof(CanBrowseOrAutoDetectHamlib))]
+    private async Task BrowseHamlibLibraryAsync()
+    {
+        var path = await _filePickerService.PickHamlibLibraryFileAsync().ConfigureAwait(false);
+        if (path is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => HamlibLibraryPath = path);
+        await RunHamlibProbeAsync(path).ConfigureAwait(false);
+    }
+
+    /// <summary>"Auto-detect" -- runs spec/03-cat-layer.md's discovery tiers 2/3 (no override path)
+    /// instead of tier 1. On success, overwrites <see cref="HamlibLibraryPath"/> with whatever was
+    /// actually found, so Save persists a concrete tier-1 path from then on rather than leaving the
+    /// field blank (which would silently re-run auto-detection every future launch instead of
+    /// pinning down what was just confirmed to work).</summary>
+    [RelayCommand(CanExecute = nameof(CanBrowseOrAutoDetectHamlib))]
+    private Task AutoDetectHamlibAsync() => RunHamlibProbeAsync(overridePath: null, applyResolvedPathOnSuccess: true);
+
+    /// <summary>"Test" next to the hand-typed path field -- re-probes whatever is CURRENTLY TYPED
+    /// into <see cref="HamlibLibraryPath"/> (possibly not yet saved), same "test what's on screen,
+    /// not what's persisted" contract as <see cref="TestRigctldConnectionAsync"/> above.</summary>
+    [RelayCommand(CanExecute = nameof(CanBrowseOrAutoDetectHamlib))]
+    private Task ProbeHamlibAsync() => RunHamlibProbeAsync(HamlibLibraryPath);
+
+    private async Task RunHamlibProbeAsync(string? overridePath, bool applyResolvedPathOnSuccess = false)
+    {
+        Log.HamlibProbeInvoked(_logger, overridePath ?? "(auto-detect)");
+        IsProbingHamlib = true;
+        HamlibDiscoveryStatusMessage = _localization.GetString("Options.Radio.Hamlib.Probing");
+        try
+        {
+            var result = await _hamlibDiscovery.ProbeAsync(overridePath).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    ApplyHamlibProbeResult(result, applyResolvedPathOnSuccess);
+                }
+                catch (Exception ex)
+                {
+                    Log.HamlibProbeStatusDisplayFailed(_logger, ex);
+                    HamlibDiscoveryStatusMessage = null;
+                }
+                finally
+                {
+                    IsProbingHamlib = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            // ProbeAsync's own contract already catches discovery failures into
+            // HamlibProbeResult.IsAvailable=false -- this only guards against something unexpected
+            // escaping that contract, same reasoning as TestRigctldConnectionAsync's outer catch.
+            Log.HamlibProbeFailed(_logger, ex);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    HamlibDiscoveryStatusMessage = _localization.GetString("Options.Radio.Hamlib.Probe.Failed", ex.Message);
+                }
+                catch (Exception formatEx)
+                {
+                    Log.HamlibProbeStatusDisplayFailed(_logger, formatEx);
+                    HamlibDiscoveryStatusMessage = null;
+                }
+                finally
+                {
+                    IsProbingHamlib = false;
+                }
+            });
+        }
+    }
+
+    private void ApplyHamlibProbeResult(HamlibProbeResult result, bool applyResolvedPathOnSuccess)
+    {
+        HamlibRigModels.Clear();
+        SelectedHamlibRigModel = null;
+
+        if (!result.IsAvailable)
+        {
+            HamlibDiscoveryStatusMessage = _localization.GetString(
+                "Options.Radio.Hamlib.Probe.NotFound", string.Join("; ", result.Attempts));
+            return;
+        }
+
+        if (applyResolvedPathOnSuccess && result.ResolvedPath is { } resolvedPath)
+        {
+            HamlibLibraryPath = resolvedPath;
+        }
+
+        foreach (var model in result.RigModels)
+        {
+            HamlibRigModels.Add(model);
+        }
+
+        HamlibDiscoveryStatusMessage = result.RigModels.Count > 0
+            ? _localization.GetString("Options.Radio.Hamlib.Probe.Found", result.Version ?? string.Empty, result.ResolvedPath ?? string.Empty, result.RigModels.Count.ToString(CultureInfo.InvariantCulture))
+            : _localization.GetString("Options.Radio.Hamlib.Probe.FoundNoModels", result.Version ?? string.Empty, result.ResolvedPath ?? string.Empty);
+    }
+
+    partial void OnIsProbingHamlibChanged(bool value)
+    {
+        BrowseHamlibLibraryCommand.NotifyCanExecuteChanged();
+        AutoDetectHamlibCommand.NotifyCanExecuteChanged();
+        ProbeHamlibCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>Radio/CAT tab's own Pwr slider -- deliberately NOT part of this dialog's usual
+    /// edit-buffer-committed-only-on-<see cref="SaveCommand"/> pattern (see this class's own doc
+    /// comment at the top of the file): it reads/writes <see cref="ISstvSessionService.GetTxVolumePercentAsync"/>/
+    /// <see cref="ISstvSessionService.SetTxVolumePercentAsync"/> directly and immediately (debounced,
+    /// same shape as <see cref="RadioStatusViewModel.TxVolumePercent"/>'s own header-strip slider),
+    /// because the whole point of pairing it with <see cref="TuneCommand"/> is dragging it WHILE a
+    /// tone is already playing and watching the radio's own power meter -- gated behind a Save click
+    /// it would be useless for that. Same underlying persisted setting as the header's own Pwr
+    /// slider, just a separate live-loaded copy (this dialog is a fresh DI-resolved instance each
+    /// time it opens, same as every other field here) -- not instantly two-way-bound to the header
+    /// while both happen to be open at once, only synced on each one's own load/save.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TxVolumeDisplay))]
+    private int _txVolumePercent = 100;
+
+    public string TxVolumeDisplay => TxVolumePercent.ToString(CultureInfo.InvariantCulture);
+
+    private bool _suppressTxVolumePersist;
+    private CancellationTokenSource? _txVolumePersistCts;
+
+    private async Task LoadTxVolumeSafeAsync()
+    {
+        try
+        {
+            var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    _suppressTxVolumePersist = true;
+                    TxVolumePercent = percent;
+                }
+                finally
+                {
+                    _suppressTxVolumePersist = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTxVolumeFailed(_logger, ex);
+        }
+    }
+
+    partial void OnTxVolumePercentChanged(int value)
+    {
+        if (_suppressTxVolumePersist)
+        {
+            return;
+        }
+
+        // Debounced, same reasoning as RadioStatusViewModel.OnTxVolumePercentChanged's own comment:
+        // a slider drag can fire dozens of times a second, and overlapping un-awaited settings-store
+        // writes could race each other and let a stale write clobber a fresher one.
+        _txVolumePersistCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _txVolumePersistCts = cts;
+        _ = PersistTxVolumeDebouncedAsync(value, cts.Token);
+    }
+
+    private async Task PersistTxVolumeDebouncedAsync(int value, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(TxVolumePersistDebounce, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException)
+        {
+            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
+            return;
+        }
+
+        try
+        {
+            await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistTxVolumeFailed(_logger, value, ex);
+        }
+    }
+
+    /// <summary>Toggle state for <see cref="TuneCommand"/> -- <see langword="true"/> while a tone is
+    /// keyed, drives the button's own label/affordance between "Tune" and "Stop" (mirrors WSJT-X's
+    /// own Tune button, which is a toggle, not a fire-and-forget action).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TuneButtonLabel))]
+    private bool _isTuning;
+
+    /// <summary>Resolved (not a raw key) -- same "expose the already-localized display string"
+    /// convention as <see cref="TxVolumeDisplay"/>/<c>RadioStatusViewModel.TxVolumeDisplay</c>, since
+    /// <c>loc:Translate</c> takes a static key, not a bound one.</summary>
+    public string TuneButtonLabel => _localization.GetString(IsTuning ? "Options.Radio.Tune.Stop" : "Options.Radio.Tune");
+
+    [ObservableProperty]
+    private string? _tuneErrorMessage;
+
+    private CancellationTokenSource? _tuneCts;
+
+    /// <summary>Keys PTT and transmits a steady <see cref="TuneFrequencyHz"/> tone, same WSJT-X-style
+    /// AFC-lock-aid shape as <see cref="RadioStatusViewModel.TuneCommand"/> -- but unlike that one,
+    /// this is a real start/stop TOGGLE (matching WSJT-X's own Tune button) so the operator can key
+    /// once, drag <see cref="TxVolumePercent"/> while watching the radio's own power meter for as
+    /// long as needed, then stop manually -- capped at <see cref="MaxTuneDuration"/> either way as a
+    /// safety backstop against a forgotten/stuck Tune keying the rig indefinitely.</summary>
+    [RelayCommand]
+    private async Task TuneAsync()
+    {
+        if (IsTuning)
+        {
+            _tuneCts?.Cancel();
+            return;
+        }
+
+        Log.TuneInvoked(_logger, TuneFrequencyHz, MaxTuneDuration.TotalSeconds);
+        TuneErrorMessage = null;
+        IsTuning = true;
+        var cts = new CancellationTokenSource();
+        _tuneCts = cts;
+        try
+        {
+            await _sstvSession.TuneAsync(TuneFrequencyHz, MaxTuneDuration, ct: cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal control flow -- the operator clicked Stop (see the IsTuning branch above), or
+            // this dialog closed mid-tone (CancelCommand/the window's own Closing handler cancels
+            // _tuneCts the same way, see that command's own comment).
+        }
+        catch (Exception ex)
+        {
+            Log.TuneFailed(_logger, ex);
+            Dispatcher.UIThread.Post(() => TuneErrorMessage = _localization.GetString("RadioStatus.Error.TuneFailed"));
+        }
+        finally
+        {
+            IsTuning = false;
+            _tuneCts = null;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>Called from the window's own Closing/Cancel path so a Tune tone left running (PTT
+    /// still keyed) can't outlive the dialog that started it -- see <see cref="TuneAsync"/>'s own
+    /// OperationCanceledException handling, which this feeds.</summary>
+    public void StopTuneIfActive() => _tuneCts?.Cancel();
+
+    partial void OnSelectedHamlibRigModelChanged(HamlibRigModelInfo? value)
+    {
+        if (value is not null)
+        {
+            HamlibModel = value.ModelId;
+        }
+    }
 
     /// <summary>Backs the Decode tab's 4-way Sense level radio group -- same computed-bool-property
     /// idiom as <see cref="IsNoneBackendSelected"/>/etc. above. Index order (0=Very low..3=Very high)
@@ -756,8 +1089,30 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
                 PlaybackDevices.Add(device);
             }
 
-            SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == snapshot.CaptureDeviceId);
-            SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == snapshot.PlaybackDeviceId);
+            // User-reported fix (2026-08-23): an exact Id match can genuinely fail even for the
+            // SAME physical device -- backend device ids can churn across a reconnect/profile
+            // change (observed live: a PipeWire USB capture node re-created under a new id after a
+            // mute toggle). Falls back to the last-known device Name (AudioDeviceSettings.
+            // CaptureDeviceName/PlaybackDeviceName's own doc comment) before giving up.
+            //
+            // Round 3, same day (explicit product decision, overriding this method's own prior
+            // "leave the selection blank" fallback for a genuinely-missing device): "if in the file
+            // there is an RX/TX device that is not currently attached to the computer, just set it
+            // to the OS defaults" -- a configured device matching NEITHER by id nor by name now
+            // falls through to whatever device is currently the backend-reported default, same as
+            // "nothing configured," instead of leaving the dropdown blank. Mirrors
+            // SstvSessionService.TryResolveDeviceAsync's identical three-step fallback (id -> name ->
+            // backend default) for the actual runtime resolution.
+            SelectedCaptureDevice = snapshot.CaptureDeviceId is { } captureId
+                ? CaptureDevices.FirstOrDefault(d => d.Id == captureId)
+                    ?? (snapshot.CaptureDeviceName is { } captureName ? CaptureDevices.FirstOrDefault(d => d.Name == captureName) : null)
+                    ?? CaptureDevices.FirstOrDefault(d => d.IsDefault)
+                : CaptureDevices.FirstOrDefault(d => d.IsDefault);
+            SelectedPlaybackDevice = snapshot.PlaybackDeviceId is { } playbackId
+                ? PlaybackDevices.FirstOrDefault(d => d.Id == playbackId)
+                    ?? (snapshot.PlaybackDeviceName is { } playbackName ? PlaybackDevices.FirstOrDefault(d => d.Name == playbackName) : null)
+                    ?? PlaybackDevices.FirstOrDefault(d => d.IsDefault)
+                : PlaybackDevices.FirstOrDefault(d => d.IsDefault);
 
             _loadSucceeded = true;
         }
@@ -782,6 +1137,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         RigctldHost = snapshot.RigctldHost;
         RigctldPort = snapshot.RigctldPort;
         HamlibModel = snapshot.HamlibModel;
+        HamlibLibraryPath = snapshot.HamlibLibraryPath;
         HamlibSerialPort = snapshot.HamlibSerialPort;
         HamlibBaudRate = snapshot.HamlibBaudRate;
         HamlibPttType = snapshot.HamlibPttType;
@@ -864,11 +1220,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
             CultureCode: SelectedCulture?.Name,
             CaptureDeviceId: SelectedCaptureDevice?.Id,
             PlaybackDeviceId: SelectedPlaybackDevice?.Id,
+            CaptureDeviceName: SelectedCaptureDevice?.Name,
+            PlaybackDeviceName: SelectedPlaybackDevice?.Name,
             SampleRate: SampleRate,
             RadioBackendId: RadioBackendId,
             RigctldHost: RigctldHost,
             RigctldPort: RigctldPort,
             HamlibModel: HamlibModel,
+            HamlibLibraryPath: HamlibLibraryPath,
             HamlibSerialPort: HamlibSerialPort,
             HamlibBaudRate: HamlibBaudRate,
             HamlibPttType: HamlibPttType,
@@ -977,6 +1336,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         RigctldHost = defaults.RigctldHost;
         RigctldPort = defaults.RigctldPort;
         HamlibModel = defaults.HamlibModel;
+        HamlibLibraryPath = defaults.HamlibLibraryPath;
         HamlibSerialPort = defaults.HamlibSerialPort;
         HamlibBaudRate = defaults.HamlibBaudRate;
         HamlibPttType = defaults.HamlibPttType;
@@ -984,6 +1344,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         // (TestQrzLookupStatus) -- this one didn't, so a prior "Connected to IC-7300" success line
         // stayed visible under the now-blank host field after a reset.
         TestConnectionStatusMessage = null;
+        HamlibDiscoveryStatusMessage = null;
+        HamlibRigModels.Clear();
+        SelectedHamlibRigModel = null;
     }
 
     [RelayCommand]
@@ -1194,6 +1557,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the connection-test result status message failed; status left blank")]
         public static partial void TestRigctldConnectionStatusDisplayFailed(ILogger logger, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Hamlib probe invoked: path={Path}")]
+        public static partial void HamlibProbeInvoked(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Hamlib probe threw unexpectedly")]
+        public static partial void HamlibProbeFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the Hamlib probe result status message failed; status left blank")]
+        public static partial void HamlibProbeStatusDisplayFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
 
@@ -1208,5 +1580,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credentials test threw")]
         public static partial void TestQrzLookupFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading Pwr for the Radio/CAT tab failed; left at its default")]
+        public static partial void LoadTxVolumeFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting Pwr={Percent} from the Radio/CAT tab failed")]
+        public static partial void PersistTxVolumeFailed(ILogger logger, int percent, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Tune invoked: {FrequencyHz}Hz for up to {MaxSeconds}s")]
+        public static partial void TuneInvoked(ILogger logger, double frequencyHz, double maxSeconds);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Tune failed")]
+        public static partial void TuneFailed(ILogger logger, Exception ex);
     }
 }

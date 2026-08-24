@@ -153,6 +153,14 @@ public partial class MainWindow : Window
                                 Log.OptionsWindowOpened(logger, window.Position.ToString(), Screens.ScreenFromWindow(window)?.Bounds.ToString() ?? "(none)");
                             }
                         };
+                        // User-reported bug (2026-08-23): the header-row callsign chip only ever
+                        // loaded its callsign once, from MainViewModel's own constructor -- typing a
+                        // new callsign in Options and hitting Save persisted it correctly, but the
+                        // chip kept showing the old value (or "N0CALL") until the next full app
+                        // restart. Re-running LoadCallsignAsync unconditionally on close (Save AND
+                        // Cancel) is safe -- Cancel never touched disk, so this is a no-op reload of
+                        // the same value in that case, same as re-running it costs nothing extra.
+                        window.Closed += (_, _) => _ = vm.LoadCallsignAsync();
                         window.ShowDialog(this);
                         if (logger is not null)
                         {

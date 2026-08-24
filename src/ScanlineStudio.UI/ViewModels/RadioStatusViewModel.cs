@@ -25,13 +25,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// own display resolution (`HH:mm:ss`), no finer granularity would be visible.</summary>
     private static readonly TimeSpan UtcClockTickInterval = TimeSpan.FromSeconds(1);
 
+    /// <summary>Same poll interval <see cref="ScanlineStudio.UI.ViewModels.RxImagePaneViewModel"/>'s
+    /// own telemetry timer already uses -- see <see cref="RxAudioPeakLevel"/>'s own doc comment.</summary>
+    private static readonly TimeSpan RxAudioLevelPollInterval = TimeSpan.FromMilliseconds(250);
+
     private readonly IRadioSessionService _radioSession;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
     private readonly ILogger<RadioStatusViewModel> _logger;
     private readonly DispatcherTimer _utcClockTimer;
+    private readonly DispatcherTimer _rxAudioLevelTimer;
     private bool _suppressVolumePersist;
-    private CancellationTokenSource? _volumePersistCts;
+    private CancellationTokenSource? _txVolumePersistCts;
 
     [ObservableProperty]
     private string _frequencyDisplay;
@@ -68,8 +73,71 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private bool _suppressModeCommand;
 
+    /// <summary>"Pwr" -- app-internal TX playback gain (0-100), same shape WSJT-X's/fldigi's own
+    /// Pwr controls use: a linear multiplier on the audio THIS app generates, applied right before
+    /// playback, never touching the OS mixer (user-directed reversal of an earlier same-session
+    /// design that briefly made this a real OS device volume control instead).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TxVolumeDisplay))]
     private int _txVolumePercent = 100;
+
+    /// <summary>Read-only -- there is no user-facing mute toggle in this app, only a display of the
+    /// OS's own current mute state for the TX playback device (see
+    /// <c>IAudioDeviceMuteQuery.IsDeviceMutedAsync</c>'s own doc comment for why) -- independent of
+    /// <see cref="TxVolumePercent"/>'s own app-internal gain: the OS device can still be muted
+    /// regardless of what Pwr is set to. Loaded once alongside Pwr (<see cref="LoadTxStateSafeAsync"/>),
+    /// not on a live poll -- reflects OS state as of last load, not a continuous watch.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TxVolumeDisplay))]
+    private bool _txIsMuted;
+
+    /// <summary>Muted-speaker glyph (U+1F507) in place of the Pwr percent number when the OS
+    /// reports the TX playback device muted -- the slider's own Value stays bound to the real Pwr
+    /// percent underneath either way (OS mute is independent of this app's own gain), only this
+    /// readout swaps.</summary>
+    public string TxVolumeDisplay => TxIsMuted ? "\U0001F507" : TxVolumePercent.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>User-directed redesign (same session): "RX level" is no longer a volume control at
+    /// all -- it's a plain incoming-audio-level meter, same idea as WSJT-X's own RX meter, not a
+    /// slider. Backed by <see cref="ISstvSessionService.RawInputPeakLevel"/> -- the raw captured
+    /// buffer's own peak amplitude, [0.0, 1.0], before any SSTV-specific filtering -- polled on a
+    /// dedicated timer (<see cref="_rxAudioLevelTimer"/>), same 250ms interval
+    /// <see cref="ScanlineStudio.UI.ViewModels.RxImagePaneViewModel"/>'s own telemetry timer
+    /// already uses.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RxLevelDisplay))]
+    [NotifyPropertyChangedFor(nameof(RxLevelFillPercent))]
+    [NotifyPropertyChangedFor(nameof(RxLevelInGoodRange))]
+    private double _rxAudioPeakLevel;
+
+    /// <summary>0-100 fill fraction for the meter bar -- a direct percentage of
+    /// <see cref="RxAudioPeakLevel"/>'s <c>[0.0, 1.0]</c> range, clamped defensively (that range
+    /// should already be a hard guarantee for <c>RawInputPeakLevel</c>).</summary>
+    public double RxLevelFillPercent => Math.Clamp(RxAudioPeakLevel, 0.0, 1.0) * 100.0;
+
+    /// <summary>"62" -- a linear amplitude fraction, not a dB value, so a plain 0-100 number is this
+    /// meter's display unit. No "%" suffix, per direct user request (it read as redundant next to
+    /// the bar itself).</summary>
+    public string RxLevelDisplay => $"{RxLevelFillPercent:0}";
+
+    /// <summary>Lower bound of the "good for SSTV decoding" band -- below this, the meter reads
+    /// red (signal too quiet: poor SNR, decode more likely to fail or produce noisy lines). A
+    /// judgment call, not a measured/confirmed WSJT-X threshold -- WSJT-X's own exact percentages
+    /// aren't published/available to cite here; picked to keep the green band wide (most real
+    /// audio levels read green) while still catching a genuinely silent/near-silent input.</summary>
+    private const double RxLevelTooLowThreshold = 0.10;
+
+    /// <summary>Upper bound of the "good for SSTV decoding" band -- above this, the meter reads
+    /// red (signal too hot: risk of ADC/soundcard-input clipping, which corrupts the decode in a
+    /// way no amount of downstream gain can undo). Same judgment-call caveat as
+    /// <see cref="RxLevelTooLowThreshold"/>.</summary>
+    private const double RxLevelTooHighThreshold = 0.90;
+
+    /// <summary>True (green) when <see cref="RxAudioPeakLevel"/> is within the good-decoding band;
+    /// false (red) when it's too quiet or too hot -- see <see cref="RxLevelTooLowThreshold"/>/
+    /// <see cref="RxLevelTooHighThreshold"/>'s own doc comments for the exact thresholds and their
+    /// judgment-call caveat.</summary>
+    public bool RxLevelInGoodRange => RxAudioPeakLevel >= RxLevelTooLowThreshold && RxAudioPeakLevel <= RxLevelTooHighThreshold;
 
     [ObservableProperty]
     private double _tuneFrequencyHz = 1750;
@@ -145,44 +213,6 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string _rigMetersDisplay = "—";
 
-    /// <summary>Tier 2/3 follow-up to <see cref="RigMetersDisplay"/> above: the Transceiver card's
-    /// "RX level" meter was a literal fixed-63%/78% stub with no real gain parameter behind it
-    /// (<see cref="RadioState.SignalStrengthDb"/> was hardcoded <see langword="null"/> in both
-    /// protocol implementations). Now real: <c>l STRENGTH</c> (rigctld) / <c>RIG_LEVEL_STRENGTH</c>
-    /// (Hamlib), RX-time-gated (opposite of the TX-only meters above -- see
-    /// <see cref="RadioState.SignalStrengthDb"/>'s own doc comment). Raw dB-relative-to-S9 value;
-    /// see <see cref="RxLevelDisplay"/>/<see cref="RxLevelFillPercent"/> for the derived, bindable
-    /// display forms.</summary>
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(RxLevelDisplay))]
-    [NotifyPropertyChangedFor(nameof(RxLevelFillPercent))]
-    private int? _rxLevelDb;
-
-    /// <summary>"+14 dB"/"−14 dB"/"0 dB" (relative to S9, matching Hamlib's own documented unit --
-    /// see <see cref="RadioState.SignalStrengthDb"/>'s own doc comment), "—" when
-    /// <see cref="RxLevelDb"/> is <see langword="null"/> (RX capability absent, currently
-    /// transmitting, or a failed read this poll -- all indistinguishable here by design, same as
-    /// every other per-poll-optional field on this VM).</summary>
-    public string RxLevelDisplay => RxLevelDb is { } db ? $"{db:+0;−0;0} dB" : "—";
-
-    /// <summary>Standard ham-radio S-meter convention (not a legacy port -- this is new UI, no
-    /// legacy precedent to match): S0..S9 spans roughly 54 dB at ~6 dB/S-unit, and S9+60 is a common
-    /// real bargraph max on modern rigs -- so this meter's track spans S0 (-54 dB relative to S9) to
-    /// S9+60 (+60 dB), clamped at both ends rather than pinning silently past either edge. Design
-    /// decision, not a measured fact -- a specific rig's own S-meter calibration may differ; this is
-    /// a reasonable, commonly-used default for a generic cross-rig display.</summary>
-    private const int SMeterFloorDb = -54;
-    private const int SMeterCeilingDb = 60;
-
-    /// <summary>0-100 fill fraction for the meter <c>Border</c>'s Star-weighted column (see
-    /// <see cref="ScanlineStudio.UI.Converters.DoubleToStarGridLengthConverter"/>) -- <c>0</c> (empty bar, not a
-    /// missing-data indicator of its own) when <see cref="RxLevelDb"/> is <see langword="null"/>,
-    /// same "unknown reads as the low end, not a special state" convention <see cref="RxLevelDisplay"/>'s
-    /// sibling "—" text already carries the actual missing-data signal for.</summary>
-    public double RxLevelFillPercent => RxLevelDb is { } db
-        ? Math.Clamp((db - SMeterFloorDb) / (double)(SMeterCeilingDb - SMeterFloorDb) * 100.0, 0.0, 100.0)
-        : 0.0;
-
     /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
     /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
     /// the last <see cref="RadioState.FrequencyHz"/> to build a <see cref="FrequencyPreset"/> from.</summary>
@@ -212,11 +242,19 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         sstvSession.CapturePausedForTransmitChanged += OnCapturePausedForTransmitChanged;
 
         _ = LoadPresetsSafeAsync();
-        _ = LoadTxVolumeSafeAsync();
+        _ = LoadTxStateSafeAsync();
 
         UpdateUtcClock();
         _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, (_, _) => UpdateUtcClock());
         _utcClockTimer.Start();
+
+        // Always running, not gated on IsReceiving -- same "no Start/Stop pairing, runs for this
+        // ViewModel's whole lifetime" shape as RxImagePaneViewModel's own telemetry timer. Reads 0
+        // while not actually capturing (RawInputPeakLevel's own contract), which is the correct
+        // "meter shows silence" state, not a special case to gate around.
+        RxAudioPeakLevel = _sstvSession.RawInputPeakLevel;
+        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => RxAudioPeakLevel = _sstvSession.RawInputPeakLevel);
+        _rxAudioLevelTimer.Start();
 
         // spec/18-path-to-1.0.md High item 8: Program.cs's own automatic StartReceivingAsync()
         // attempt at app launch (the ONLY place capture starts -- this app has no explicit "Start
@@ -300,7 +338,6 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
             IsKeyed = state.IsTransmitting;
             RigMetersDisplay = FormatRigMeters(state);
-            RxLevelDb = state.SignalStrengthDb;
         });
     }
 
@@ -353,16 +390,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // NOT clear IsKeyed either -- accepted, documented residual gap: polling continues, the
             // next good poll self-heals it; a staleness timer for that narrower case is
             // disproportionate to this item's scope.
-            // Auditor-caught (2026-08-18, RX signal-strength meter review): RigMetersDisplay/
-            // RxLevelDb had the exact same staleness gap as IsKeyed above -- both are only ever
-            // refreshed by OnStateChanged, so without this a rig that read "SWR 1.2 · PWR 75%" or
-            // "−14 dB" when the link dropped would keep showing that live-looking reading
-            // indefinitely with nothing behind it. Same CommandFailed-only exemption as IsKeyed.
+            // Auditor-caught (2026-08-18, RX signal-strength meter review): RigMetersDisplay had the
+            // exact same staleness gap as IsKeyed above -- only ever refreshed by OnStateChanged, so
+            // without this a rig that read "SWR 1.2 · PWR 75%" when the link dropped would keep
+            // showing that live-looking reading indefinitely with nothing behind it. Same
+            // CommandFailed-only exemption as IsKeyed.
             if (!CatLinked)
             {
                 IsKeyed = false;
                 RigMetersDisplay = "—";
-                RxLevelDb = null;
             }
         });
     }
@@ -383,8 +419,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Same reasoning as <see cref="LoadPresetsSafeAsync"/>.</summary>
-    private async Task LoadTxVolumeSafeAsync()
+    /// <summary>Same reasoning as <see cref="LoadPresetsSafeAsync"/>. Loads Pwr's real app-settings
+    /// gain AND the TX device's real OS mute state independently -- one failing (or reading as its
+    /// own default) must not prevent the other from loading. RX has no equivalent load: the level
+    /// meter is driven entirely by <see cref="_rxAudioLevelTimer"/>, not a one-time load.</summary>
+    private async Task LoadTxStateSafeAsync()
     {
         try
         {
@@ -407,6 +446,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.LoadTxVolumeFailed(_logger, ex);
+        }
+
+        // Mute has no persist-on-change handler (read-only, see TxIsMuted's own doc comment) -- no
+        // _suppressVolumePersist dance needed here, a plain Post is enough.
+        try
+        {
+            var muted = await _sstvSession.GetTxDeviceMutedAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => TxIsMuted = muted);
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTxMuteFailed(_logger, ex);
         }
     }
 
@@ -699,12 +750,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
-        // Debounced (not one settings write per slider tick, per the Piece 5 plan) -- also avoids
-        // a real correctness hazard: overlapping un-awaited SaveAsync calls racing each other could
-        // let a stale write clobber a fresher one.
-        _volumePersistCts?.Cancel();
+        // Debounced (not one settings write per slider tick, per the Piece 5 plan) -- a slider drag
+        // can fire dozens of times a second, and overlapping un-awaited settings-store SaveAsync
+        // calls could race each other and let a stale write clobber a fresher one.
+        _txVolumePersistCts?.Cancel();
         var cts = new CancellationTokenSource();
-        _volumePersistCts = cts;
+        _txVolumePersistCts = cts;
         _ = PersistVolumeDebouncedAsync(value, cts.Token);
     }
 
@@ -765,8 +816,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading frequency presets failed")]
         public static partial void LoadPresetsFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX volume percent failed")]
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX Pwr failed")]
         public static partial void LoadTxVolumeFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX device mute state failed")]
+        public static partial void LoadTxMuteFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SetFrequency invoked: {Mhz} MHz")]
         public static partial void SetFrequencyInvoked(ILogger logger, double mhz);
@@ -813,7 +867,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "HaltReceiving failed")]
         public static partial void HaltReceivingFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX volume ({Value}%) failed")]
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX Pwr ({Value}%) failed")]
         public static partial void PersistTxVolumeFailed(ILogger logger, int value, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedRadioMode changed: {Value}")]

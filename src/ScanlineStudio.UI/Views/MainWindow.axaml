@@ -15,21 +15,27 @@
         Icon="/Assets/app-icon.ico"
         Title="{loc:Translate MainWindow.Title}"
         Width="1920" Height="1032"
-        MinWidth="1920" MinHeight="1032"
+        MinWidth="1920" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource IndustryBg}">
 
     <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
          instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
 
-    <!-- Default/minimum size: user requirement, direct quote: "renderable without issue on a
-         fullHD screen... keep in mind the taskbar at the bottom... that helps set the floor for
-         'it should run on a fullHD laptop'." FullHD is 1920x1080; 1032 reserves 48px off the
-         height for a Windows taskbar / GNOME top bar / macOS menu bar + dock, so the window
-         opens fully visible without the user needing to move/resize it. MinWidth/MinHeight are
-         pinned to that same 1920x1032 - the user can only grow the window, never shrink it below
-         the fullHD-safe floor (per-pane alignment at that floor is a follow-up, not yet
-         tuned). -->
+    <!-- Default size: user requirement, direct quote: "renderable without issue on a fullHD
+         screen... keep in mind the taskbar at the bottom... that helps set the floor for 'it
+         should run on a fullHD laptop'." FullHD is 1920x1080; 1032 reserves 48px off the height
+         for a Windows taskbar / GNOME top bar / macOS menu bar + dock, so the window opens fully
+         visible without the user needing to move/resize it.
+
+         MinHeight (2026-08-23 user request, supersedes this comment's own earlier "pinned to
+         1920x1032, can only grow" note): shrinkable down to 640 so the bottom status bar stays
+         reachable on a shorter screen/window arrangement instead of being pushed off-window with
+         no way to shrink around it. The outer Grid below (RowDefinitions="26,102,*,25") already
+         reserves the menu row, header-cards row, and status-bar row as fixed heights — only the
+         "*" row (tab strip + its content) actually shrinks, so the status bar stays visible and
+         anchored at any height down to this floor, it just leaves less room for the tab content
+         above it. MinWidth stays pinned to 1920 — this request was about vertical height only. -->
 
     <!-- UI-redesign Phase 2/3: outer bands per LAYOUT-SPEC §1, no Auto — the 3rd fixed band, the
          tab strip, is produced by the TabControl's own default header-sizing behavior driven by
@@ -53,21 +59,11 @@
              commands; every other item is IsEnabled="False" with a "not yet implemented" tooltip,
              the same convention as the Options window's own disabled-placeholder items. -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
-        <!-- Brand label: mock2 has one, the pre-redesign app didn't (just menus directly) — new,
-             non-databound literal, three Runs so the "/" alone can carry its own distinct color per
-             LAYOUT-SPEC §5 Band 1. 2026-08-14: the "/" was IndustryAccent (blue) — under
-             mockups/colors/SSTV-Color-Scheme.md's four-hue rule blue means selection only, and this
-             is decorative brand chrome, not a selection, same reasoning already applied to group-box
-             titles/kicker text/the callsign badge — so it moves to IndustryLabel (still visually
-             distinct from the flanking IndustryText runs, just not a hue). -->
-        <TextBlock Grid.Column="0" VerticalAlignment="Center" Margin="4,0,12,0"
-                   FontFamily="{StaticResource IndustryHeadingFontFamily}" FontSize="12"
-                   LetterSpacing="0.6">
-            <!-- .05em * 12px = 0.6 device px. -->
-            <Run Text="{loc:Translate MainWindow.Brand.Name}" Foreground="{StaticResource IndustryText}" />
-            <Run Text="{loc:Translate MainWindow.Brand.Slash}" Foreground="{StaticResource IndustryLabel}" />
-            <Run Text="{loc:Translate MainWindow.Brand.Suite}" Foreground="{StaticResource IndustryText}" />
-        </TextBlock>
+        <!-- Brand label ("SSTV / CONSOLE") removed per direct user request — no bound state, purely
+             decorative chrome, so nothing else to preserve when dropping it. Menu stays at its own
+             Grid.Column="1" (the row's "*" star column) unchanged; column 0 (Auto) just collapses to
+             0 width now that nothing occupies it, and the callsign chip stays anchored at
+             Grid.Column="2". -->
         <Menu Grid.Column="1" Classes="Industry">
             <MenuItem Header="{loc:Translate MainWindow.Menu.File}">
                 <!-- spec/18-path-to-1.0.md Medium item 5: same SelectImageCommand as the Transmit
@@ -122,15 +118,23 @@
              product decision, UI-redesign Phase 2 design doc §1). 2026-08-14: dropped the old
              accentOutline (blue) — an identity badge is neither a selection nor a status, so under
              mockups/colors/SSTV-Color-Scheme.md's four-hue rule it owns no hue at all, same
-             reasoning already applied to group-box titles/kicker text going grey. -->
-        <Border Grid.Column="2" Classes="Industry IndustryMini" BorderThickness="1"
-                Padding="8,1,8,1" Margin="0,0,8,0" VerticalAlignment="Center">
+             reasoning already applied to group-box titles/kicker text going grey. A plain Button
+             (not a static Border) since a real click target — opens Options straight to the TX
+             tab, where Callsign/OperatorName/OperatorGrid actually live — was previously entirely
+             missing here (user report: clicking the chip did nothing). IndustryMiniButtonTheme is
+             the same border/transparent-background chip look as the old static Border, just on a
+             clickable Button (already used this way throughout the app, e.g. RadioHeaderView's own
+             mini buttons), with Padding overridden back to this chip's own original dimensions. -->
+        <Button Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                Padding="8,1,8,1" Margin="0,0,8,0" VerticalAlignment="Center"
+                Command="{Binding OpenOptionsToTxTabCommand}"
+                ToolTip.Tip="{loc:Translate MainWindow.CallsignChip.Help}">
             <!-- Overrides IndustryMini's default 10px/mono metrics — this chip's own spec (design
                doc §1) is 12px with .08em letter-spacing = .08*12 = 0.96 device px, not the
                standard chip size, so set directly on the TextBlock rather than relying on the
                atom's own default Style. -->
             <TextBlock Text="{Binding CallsignDisplay}" FontWeight="Medium" FontSize="12" LetterSpacing="0.96" />
-        </Border>
+        </Button>
         </Grid>
 
         <!-- VFO / Favourites / Transceiver header cards: see Views/RadioHeaderView.axaml.
@@ -359,7 +363,38 @@
                          whole card is re-skinned to the compact Industry atoms: Peak hold rendered
                          flush against the card's own bottom border with near-zero clearance, and the
                          segment row below it was clipped out of existence entirely, invisible. -->
-                    <Grid Grid.Column="1" RowDefinitions="182,*,150" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <!-- User-reported fix (2026-08-23): wrapped in a ScrollViewer with the inner
+                         Grid pinned to its own current computed height (834 — Window
+                         Height=1032, minus 26/menu + 102/header-cards + 25/status-bar rows, minus
+                         the tab strip's own 26px, minus this tab's own Margin top/bottom 11+8;
+                         see MainWindow.axaml's own Window-element doc comment for why the window
+                         itself is resizable shorter now) rather than letting Row 1 below ("*")
+                         keep dividing whatever space happens to be left. A window shorter than
+                         its old fixed 1032 floor used to make this Grid's "*" row shrink for
+                         real — most visibly, the Incoming-frame preview's Viewbox scaling the
+                         320x256 image down to near-illegible — instead of the window just
+                         scrolling to reveal the rest, which is what every other "too much
+                         content, not enough window" case in this app already does. Pinning the
+                         Grid's own Height keeps 100% of its internal "182,*,150" math (and every
+                         pixel-tuned value inside it) running exactly as before; only the
+                         ScrollViewer around it is new. -->
+                    <ScrollViewer Grid.Column="1">
+                    <!-- Margin top=6, same fix/reasoning as the left column's own ScrollViewer
+                         content above: a ScrollViewer clips to its own viewport regardless of a
+                         child's own ClipToBounds="False", so the first card's title notch (drawn
+                         above its own border, per IndustryGroupBoxTheme's notch-over-border
+                         recipe) needs literal headroom here or it clips against the viewport's
+                         top edge when scrolled fully up (user-caught, 2026-08-23: "Spectrum &
+                         Waterfall" text chopped off at the top after this ScrollViewer wrap). -->
+                    <!-- Row 0 trimmed 182 to 166 (user-caught, live screenshot measurement): the
+                         plot area (SpectrumTraceControl/WaterfallPaneView, both stretch to fill this
+                         row) was rendering ~16px taller than the settings column beside it actually
+                         needs (Bins/px through the Both/Spec/WF segmented row), leaving a visible
+                         strip of empty IndustryPlot background under the waterfall with nothing on
+                         the right to match it. Height stays 834 total — the freed 16px is absorbed
+                         by row 1's own "*" (Incoming Frame grows slightly), not subtracted from the
+                         whole card. -->
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="166,*,150" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <!-- Spectrum & waterfall (batch 8b): SpectrumTraceControl (new, real FFT
                              line trace + markers + peak-hold) fills what was the literal "Spectrum"
                              placeholder; WaterfallPaneView (ContentControl bound to Waterfall) is
@@ -632,13 +667,14 @@
                                     <DockPanel LastChildFill="True">
                                         <TextBlock DockPanel.Dock="Top" Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
                                         <ScrollViewer>
-                                            <ItemsControl />
+                            <ItemsControl />
                                         </ScrollViewer>
                                     </DockPanel>
                                 </Border>
                             </Grid>
                         </HeaderedContentControl>
                     </Grid>
+                    </ScrollViewer>
 
                     <!-- Right column, ported to Industry atoms (was old Cards.axaml "card"/
                          "cardHeader"/"kv"/"label"/"value"/"caption"/"small"/"readoutSmall"
@@ -663,7 +699,19 @@
                          backing command/feature) — building it is new scope, not a re-skin of an
                          existing old-design card, so it's not added here; would need a real
                          product decision on what F1-F6 actually invoke first. -->
-                    <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <!-- Same ScrollViewer + pinned-Height fix as the middle column above, and same
+                         834 figure — this column is a sibling in the same outer Grid row, so it
+                         gets exactly the same available height. Row 2 here ("*", Session Frames)
+                         is the one that used to shrink with the window; it currently shows only a
+                         one-line empty state, so the shrink was invisible in practice, but pinning
+                         this Grid's Height keeps it consistent with its sibling and correct once
+                         Session Frames gets real content (spec/14-roadmap.md backlog). -->
+                    <ScrollViewer Grid.Column="2">
+                    <!-- Same top-headroom fix as the middle column above (and the pre-existing
+                         left column) — ScrollViewer clips to its own viewport, so the first
+                         card's title notch needs literal headroom or it clips when scrolled fully
+                         up. -->
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
@@ -757,6 +805,7 @@
                             <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.NoSessionYet}" />
                         </HeaderedContentControl>
                     </Grid>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Transmit}">
@@ -766,7 +815,7 @@
                 <Grid ColumnDefinitions="236,*,312" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8">
 
                     <!-- Left: TxControlsPaneView's own restyled Mode/Identification/Output/Stock
-                         cards. The Drive slider now lives inside its Output card, ancestor-bound
+                         cards. The TX volume slider now lives inside its Output card, ancestor-bound
                          to this same RadioStatus.TxVolumePercent value rather than a separate
                          standalone card here. Top headroom for the first card's title notch lives
                          INSIDE TxControlsPaneView.axaml's own root StackPanel (same fix, same
@@ -780,7 +829,17 @@
 
                     <!-- Centre: TX image editor, swapped in per Piece 2's nullable ActiveEditor
                          (a null Content just renders nothing, no visibility toggle needed). -->
-                    <ContentControl Grid.Column="1" Content="{Binding ActiveEditor}" />
+                    <!-- User-reported fix (2026-08-23): same ScrollViewer + pinned-Height treatment
+                         as the Receive tab's own middle/right columns, and the same 834 figure
+                         (this tab shares the identical outer Grid shape, per this file's own
+                         comment above). TxImageEditorPaneView.axaml's own root Grid
+                         (RowDefinitions="Auto,Auto,*,Auto") stretches to fill whatever height its
+                         host gives it, so pinning the height here keeps every nested "*" row
+                         inside the editor computing against the same fixed total it always has,
+                         rather than shrinking (and rescaling the TX canvas) when the window does. -->
+                    <ScrollViewer Grid.Column="1">
+                    <ContentControl Height="834" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
+                    </ScrollViewer>
 
                     <!-- Right: Queue (new placeholder) / Mode-timing-reference (real, untouched) /
                          TX log (new placeholder) / Recently sent (new placeholder), ported to
@@ -809,7 +868,10 @@
                          IndustryTableRowRule Border (not one Border around the whole Grid) — same
                          Border-per-cell fix Decode activity's header needed, since mock2's own
                          th/td padding is per-cell, not just the row's outer edges. -->
-                    <Grid Grid.Column="2" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <!-- Same ScrollViewer + pinned-Height + top-headroom fix as this tab's own
+                         middle column above. -->
+                    <ScrollViewer Grid.Column="2">
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
 
                         <!-- New: queue of frames waiting to transmit. Literal rows matching
                              mock2's own QueueItem shape (no queueing feature exists yet). Row1/2's
@@ -932,6 +994,7 @@
                         </HeaderedContentControl>
 
                     </Grid>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Gallery}">
@@ -1062,7 +1125,13 @@
                          rows ARE rendered below, as literals, since neither is tracked anywhere
                          today; they are not omitted, contrary to what an earlier pass's comment
                          here used to claim. -->
-                    <Grid Grid.Column="1" RowDefinitions="*,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <!-- Same ScrollViewer + pinned-Height + top-headroom fix as the Receive/
+                         Transmit tabs' own right columns — same 834 figure (identical outer Grid
+                         shape/margins). Column 0's own gallery grid needs no equivalent fix: its
+                         ListBox is already wrapped in its own ScrollViewer (a proper "arbitrarily
+                         many thumbnails" scroll, unrelated to window height). -->
+                    <ScrollViewer Grid.Column="1">
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="*,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.SelectedFrameHeader}" />
@@ -1181,6 +1250,7 @@
                             </StackPanel>
                         </HeaderedContentControl>
                     </Grid>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Logbook}">

@@ -130,16 +130,15 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
     [AvaloniaFact]
     public void TogglingAutoFollowRxMode_LeavesAnUnrelatedSiblingSectionUntouched()
     {
-        // TxPaneUiSettings only owns FavoriteModeIds/AutoFollowRxMode today (TxVolumePercent moved
-        // to AudioDeviceSettings -- ScanlineStudio.Application's playback pipeline needs to read it
-        // directly and cannot reference a ScanlineStudio.UI-owned type). This test's real target is
-        // the `settings.WithSection(...)` mechanism itself: saving one section must never disturb a
-        // completely different section already present in the same AppSettings.
+        // TxPaneUiSettings only owns FavoriteModeIds/AutoFollowRxMode today. This test's real target
+        // is the `settings.WithSection(...)` mechanism itself: saving one section must never disturb
+        // a completely different section already present in the same AppSettings -- AudioDeviceSettings
+        // (an arbitrary unrelated section) with a distinctive SampleRate sentinel stands in for that.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 ScanlineStudio.Core.Audio.AudioDeviceSettings.SectionKey,
-                new ScanlineStudio.Core.Audio.AudioDeviceSettings { TxVolumePercent = 77 },
+                new ScanlineStudio.Core.Audio.AudioDeviceSettings { SampleRate = 77000 },
                 ScanlineStudio.Core.Audio.AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
         var vm = CreateViewModel(settingsStore);
@@ -149,7 +148,7 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
         Dispatcher.UIThread.RunJobs();
 
         var audio = settingsStore.Settings.GetSection(ScanlineStudio.Core.Audio.AudioDeviceSettings.SectionKey, ScanlineStudio.Core.Audio.AudioSettingsJsonContext.Default.AudioDeviceSettings);
-        Assert.Equal(77, audio?.TxVolumePercent);
+        Assert.Equal(77000, audio?.SampleRate);
 
         var txPaneUi = settingsStore.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
         Assert.True(txPaneUi?.AutoFollowRxMode);

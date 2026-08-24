@@ -26,11 +26,16 @@ public sealed record OptionsSnapshot(
     string? CultureCode,
     string? CaptureDeviceId,
     string? PlaybackDeviceId,
+    // See AudioDeviceSettings.CaptureDeviceName/PlaybackDeviceName's own doc comment -- a fallback
+    // recovery aid for backend device-id churn, not itself a primary key.
+    string? CaptureDeviceName,
+    string? PlaybackDeviceName,
     int SampleRate,
     string RadioBackendId,
     string? RigctldHost,
     int? RigctldPort,
     uint? HamlibModel,
+    string? HamlibLibraryPath,
     string? HamlibSerialPort,
     int? HamlibBaudRate,
     string? HamlibPttType,

@@ -20,6 +20,10 @@ public partial class OptionsWindowView : Window
                 // Unsubscribing on Closed makes that a guaranteed no-op instead of relying on
                 // Window.Close() being benign when called twice.
                 Closed += (_, _) => vm.RequestClose -= Close;
+                // A Tune tone left running (PTT keyed) must not outlive this dialog -- covers every
+                // close path (Save, Cancel, the window's own X button), not just Cancel, since none
+                // of those routes is more "correct" to leave a transmitter keyed after.
+                Closed += (_, _) => vm.StopTuneIfActive();
             }
         };
     }

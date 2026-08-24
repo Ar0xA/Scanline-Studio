@@ -49,6 +49,11 @@ internal sealed class FakeHamlibNative : IHamlibNative
     public Dictionary<ulong, float> LevelValues { get; } = new();
     public Dictionary<ulong, int> LevelIntValues { get; } = new();
 
+    public int RigLoadAllBackendsCode { get; set; }
+    public List<uint> ModelIds { get; } = [];
+    public Dictionary<uint, string> CapsMfgNames { get; } = new();
+    public Dictionary<uint, string> CapsModelNames { get; } = new();
+
     public nint RigInit(uint model) => Enter(() =>
     {
         CallLog.Add("rig_init");
@@ -167,6 +172,30 @@ internal sealed class FakeHamlibNative : IHamlibNative
         value = LevelIntValues.GetValueOrDefault(level, 0);
         return code;
     }
+
+    public int RigLoadAllBackends() => Enter(() =>
+    {
+        CallLog.Add("rig_load_all_backends");
+        return RigLoadAllBackendsCode;
+    });
+
+    public IReadOnlyList<uint> RigListModelIds() => Enter(() =>
+    {
+        CallLog.Add("rig_list_foreach_model");
+        return (IReadOnlyList<uint>)ModelIds;
+    });
+
+    public string? RigGetCapsMfgName(uint model) => Enter(() =>
+    {
+        CallLog.Add($"rig_get_caps_cptr:mfg:{model}");
+        return CapsMfgNames.GetValueOrDefault(model);
+    });
+
+    public string? RigGetCapsModelName(uint model) => Enter(() =>
+    {
+        CallLog.Add($"rig_get_caps_cptr:model:{model}");
+        return CapsModelNames.GetValueOrDefault(model);
+    });
 
     private T Enter<T>(Func<T> body)
     {

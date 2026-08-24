@@ -35,7 +35,8 @@ public sealed class SstvSessionServicePttSafetyTests
             TimeSpan? inFlightKeyedTransmitWait = null,
             FakeAudioDeviceEnumerator? deviceEnumerator = null,
             TimeSpan? playbackStallTimeout = null,
-            FakeSettingsStore? settingsStore = null)
+            FakeSettingsStore? settingsStore = null,
+            FakeAudioDeviceMuteQuery? deviceMuteQuery = null)
     {
         var inner = new FakeAudioEngine();
         var engine = wrapEngine?.Invoke(inner) ?? inner;
@@ -51,6 +52,7 @@ public sealed class SstvSessionServicePttSafetyTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
+        deviceMuteQuery ??= new FakeAudioDeviceMuteQuery();
         var radio = new FakeRadioSessionService();
         var logger = new RecordingLogger<SstvSessionService>();
 
@@ -58,7 +60,7 @@ public sealed class SstvSessionServicePttSafetyTests
         // allowed to EXPIRE for these tests to distinguish fixed behavior from the bug, and the
         // production values (5s/5s/3s) would make this file take far too long to run.
         var service = new SstvSessionService(
-            engine, deviceEnumerator, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
+            engine, deviceEnumerator, deviceMuteQuery, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
             new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), radio, logger,
             cleanupTimeoutForTests: cleanupTimeout ?? TimeSpan.FromMilliseconds(300),
             playbackStopWaitBudgetForTests: playbackStopWaitBudget ?? TimeSpan.FromMilliseconds(200),
@@ -84,6 +86,7 @@ public sealed class SstvSessionServicePttSafetyTests
         var services = new ServiceCollection();
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new FakeAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
         services.AddSingleton<ISettingsStore>(new FakeSettingsStore { Settings = new AppSettings() });
         services.AddSingleton<ISstvDecoder>(new FakeSstvDecoder());
         services.AddSingleton<ISstvEncoder>(new FakeSstvEncoder());

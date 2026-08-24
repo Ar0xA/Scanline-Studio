@@ -256,6 +256,31 @@ YONIQ_AUDIO_API int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_a
 YONIQ_AUDIO_API int yoniq_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
                               int sample_rate_out, int lpf_order, float *output, int output_capacity_frames);
 
+/*
+ * Piece Audio 9: real OS device mute state -- deliberately DEVICE-scoped, not session-scoped
+ * (unlike every function above this point). The OS's own per-device mute flag is a property of
+ * the device itself, queryable whether or not this process currently has a capture/playback
+ * session open on it -- there is no yoniq_audio_capture_session/yoniq_audio_playback_session
+ * parameter here on purpose. Read-only by design: this shim never exposes a mute SETTER -- see
+ * yoniq_audio_get_device_mute's own doc comment for why. Reaches into each backend's real
+ * system-mixer API (WASAPI IAudioEndpointVolume, PulseAudio's own sink/source info, CoreAudio
+ * AudioObjectGetPropertyData). ALSA is best-effort (not every device exposes a simple-mixer mute
+ * switch); JACK has no OS mixer concept at all and always fails.
+ *
+ * This piece originally also carried real OS-mixer VOLUME get/set (both RX and TX) -- removed in
+ * a user-directed reversal once TX Pwr went back to app-internal gain (matching WSJT-X's/
+ * fldigi's own Pwr controls) and RX dropped any volume/mute concept for a plain incoming-level
+ * meter instead. Mute is the one piece that stayed, since it's a real OS device fact independent
+ * of whichever gain approach TX uses.
+ */
+
+/* Writes the device's current OS mute state (nonzero = muted, 0 = unmuted) to *is_muted_out.
+ * Read-only -- this shim does not expose a mute SETTER, only a query for display purposes (the
+ * TX Pwr slider shows a muted glyph instead of its percent when this is nonzero). Returns 0 on
+ * success, nonzero on failure -- not-supported cases are backend-specific (e.g. JACK always;
+ * ALSA if no mixer element with a mute switch is found for the device). */
+YONIQ_AUDIO_API int yoniq_audio_get_device_mute(const char *device_id, int is_capture, int *is_muted_out);
+
 #ifdef __cplusplus
 }
 #endif

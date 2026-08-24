@@ -162,6 +162,19 @@ public partial class MainViewModel : ViewModelBase
         OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
     }
 
+    /// <summary>The header-row callsign chip's click target -- previously a static, non-interactive
+    /// chip with nothing wired to it at all. Callsign/OperatorName/OperatorGrid live on the TX tab
+    /// (<see cref="OptionsWindowViewModel.TxTabIndex"/>), so this jumps straight there instead of
+    /// opening on whatever tab happened to be selected last time.</summary>
+    [RelayCommand]
+    private void OpenOptionsToTxTab()
+    {
+        Log.OpenOptionsInvoked(_logger);
+        var optionsViewModel = _services.GetRequiredService<OptionsWindowViewModel>();
+        optionsViewModel.SelectedTabIndex = OptionsWindowViewModel.TxTabIndex;
+        OptionsRequested?.Invoke(optionsViewModel);
+    }
+
     [RelayCommand]
     private void OpenAbout()
     {
@@ -176,7 +189,15 @@ public partial class MainViewModel : ViewModelBase
         ExitRequested?.Invoke();
     }
 
-    private async Task LoadCallsignAsync()
+    /// <summary>Not private: also called from <c>MainWindow.axaml.cs</c>'s <see cref="OptionsRequested"/>
+    /// handler once the Options window closes, so the header-row callsign chip
+    /// (<see cref="CallsignDisplay"/>) picks up a callsign the user just typed and saved. Before this,
+    /// this method only ever ran once, from the constructor -- the chip kept showing whatever
+    /// callsign (or "N0CALL") was on disk at app startup until the next full restart, even after a
+    /// successful Save (user-reported bug, 2026-08-23). Public, not internal -- this project has no
+    /// <c>InternalsVisibleTo</c> wired up anywhere (see e.g. <c>AboutWindowViewModel</c>'s own doc
+    /// comment), so a test needing to call this directly couldn't otherwise.</summary>
+    public async Task LoadCallsignAsync()
     {
         try
         {

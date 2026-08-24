@@ -203,11 +203,25 @@ public interface ISstvSessionService : IAsyncDisposable
     /// mechanism.</param>
     Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default);
 
-    /// <summary>Current post-encode playback gain (0-100), read fresh from
-    /// <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>.</summary>
+    /// <summary>"Pwr" -- post-encode TX playback gain (0-100), applied as a linear multiplier on
+    /// encoded PCM samples right before playback (same shape WSJT-X's/fldigi's own Pwr-style
+    /// controls use: pure app-internal gain on the audio THIS app generates, never touching the OS
+    /// mixer). User-directed reversal of an earlier same-session design (real OS device volume) --
+    /// see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>'s own doc comment
+    /// for the persisted field this reads/writes.</summary>
     Task<int> GetTxVolumePercentAsync(CancellationToken ct = default);
 
     Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
+
+    /// <summary>Whether the playback device a real <see cref="TransmitAsync"/> call would resolve
+    /// right now is currently muted at the OS level -- independent of <see cref="GetTxVolumePercentAsync"/>'s
+    /// own app-internal Pwr gain (muting the OS device silences it regardless of what Pwr is set to,
+    /// same way muting the OS output would silence WSJT-X too even at its own Pwr=100). Returns
+    /// <see langword="false"/> if the device/backend doesn't support a mute query -- a passive
+    /// readout defaulting to "assume unmuted," not an error. Read-only: there is no
+    /// <c>SetTxDeviceMutedAsync</c> -- see <c>IAudioDeviceMuteQuery.IsDeviceMutedAsync</c>'s own
+    /// doc comment for why.</summary>
+    Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default);
 
     /// <summary>The display name of the TX playback device that a real <see cref="TransmitAsync"/>
     /// call would actually resolve and use right now (`AudioDeviceSettings.PlaybackDeviceId`
@@ -250,6 +264,27 @@ public interface ISstvSessionService : IAsyncDisposable
     int? SyncOffsetSamples { get; }
 
     double SignalPeakLevel { get; }
+
+    /// <summary>User-reported fix (2026-08-23, round 2): <see cref="SignalPeakLevel"/> is NOT a
+    /// general-purpose audio-input meter -- it's <c>LevelAgc.CurMax</c>, computed from samples that
+    /// have already passed through the decoder's SSTV-band search bandpass filter
+    /// (<c>AnalogFmSstvDecoder.AgcSampleAt</c>'s own doc comment: "legacy's real POST-2-tap-LPF-
+    /// POST-bandpass-filter value"). Room noise, voice, or any audio outside the SSTV tone band gets
+    /// filtered out before that meter ever sees it, so it stayed pinned near its floor even with a
+    /// genuinely loud, correctly-selected microphone -- exactly the gap the user reported ("the
+    /// audio device volume is not realistically represented from the actually used audio device").
+    /// This property instead reports the peak absolute amplitude of the MOST RECENT raw captured
+    /// buffer, straight off <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.SamplesCaptured"/>
+    /// -- before any SSTV-specific filtering -- so it moves with whatever the selected input device
+    /// actually picks up, the same way a plain audio level meter (or WSJT-X's own input meter) does.
+    /// Linear <c>[0.0, 1.0]</c> (capture samples are already float-normalized, spec/05-audio-
+    /// engine.md:44 -- no <c>SignalPeakLevel</c>-style <c>/32768.0</c> rescale needed here). <c>0.0</c>
+    /// whenever capture isn't running (no buffers arrive to update it, and it's reset to 0 on every
+    /// <see cref="StopReceivingAsync"/>) -- never a stale reading from before capture stopped. Safe to
+    /// read from any thread, same as <see cref="SignalPeakLevel"/> above, for the same reason
+    /// (a plain field read/write, benign torn-read tolerance for a UI meter, not a correctness-
+    /// sensitive value).</summary>
+    double RawInputPeakLevel { get; }
 
     bool IsLevelOverdriven { get; }
 
