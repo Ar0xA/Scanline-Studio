@@ -359,7 +359,19 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;
 
-    public Task ConnectUsingSettingsAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public int ConnectUsingSettingsCallCount { get; private set; }
+
+    /// <summary>Scripts <see cref="ConnectUsingSettingsAsync"/> throwing -- <c>OptionsWindowViewModel.
+    /// ToggleRadioConnectionAsync</c>'s own contract says a genuine factory-resolution failure there
+    /// surfaces as an exception (a real connection/poll problem instead reaches <see cref="ConnectionEvents"/>,
+    /// same as at app startup).</summary>
+    public Exception? ConnectUsingSettingsExceptionToThrow { get; set; }
+
+    public Task ConnectUsingSettingsAsync(CancellationToken ct = default)
+    {
+        ConnectUsingSettingsCallCount++;
+        return ConnectUsingSettingsExceptionToThrow is { } ex ? Task.FromException(ex) : Task.CompletedTask;
+    }
 
     public RadioConnectionTestResult TestConnectionResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.None, null);
 
@@ -407,7 +419,13 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
         return TestPttResultToReturn;
     }
 
-    public Task DisconnectAsync() => Task.CompletedTask;
+    public int DisconnectCallCount { get; private set; }
+
+    public Task DisconnectAsync()
+    {
+        DisconnectCallCount++;
+        return Task.CompletedTask;
+    }
 
     public List<long> SetFrequencyCalls { get; } = [];
 
