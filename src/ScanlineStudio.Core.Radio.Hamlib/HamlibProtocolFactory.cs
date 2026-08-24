@@ -66,7 +66,8 @@ public sealed partial class HamlibProtocolFactory : IRadioProtocolFactory
         Log.CreatingProtocol(_logger, hamlibSpec.Model);
         var protocolLogger = _loggerFactory?.CreateLogger<HamlibRadioProtocol>() ?? _logger;
         return new HamlibRadioProtocol(
-            _runtime.Native, hamlibSpec.Model, hamlibSpec.SerialPort, hamlibSpec.BaudRate, hamlibSpec.PttType, protocolLogger);
+            _runtime.Native, hamlibSpec.Model, hamlibSpec.SerialPort, hamlibSpec.BaudRate, hamlibSpec.PttType,
+            hamlibSpec.PttPort, protocolLogger);
     }
 
     private static partial class Log

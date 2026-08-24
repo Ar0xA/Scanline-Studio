@@ -124,6 +124,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
     private readonly string? _serialPort;
     private readonly int? _baudRate;
     private readonly string? _pttType;
+    private readonly string? _pttPort;
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
@@ -135,7 +136,8 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
     // outside this assembly). HamlibProtocolFactory (public, same assembly) is the only intended way
     // to obtain an instance from outside; tests construct this directly via InternalsVisibleTo.
     internal HamlibRadioProtocol(
-        IHamlibNative native, uint model, string? serialPort = null, int? baudRate = null, string? pttType = null, ILogger? logger = null)
+        IHamlibNative native, uint model, string? serialPort = null, int? baudRate = null, string? pttType = null,
+        string? pttPort = null, ILogger? logger = null)
     {
         if (pttType is not null && !KnownPttTypes.Contains(pttType))
         {
@@ -148,6 +150,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
         _serialPort = serialPort;
         _baudRate = baudRate;
         _pttType = pttType;
+        _pttPort = pttPort;
         _logger = logger ?? NullLogger.Instance;
     }
 
@@ -315,6 +318,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
                 ApplyConf("rig_pathname", _serialPort);
                 ApplyConf("serial_speed", _baudRate?.ToString(CultureInfo.InvariantCulture));
                 ApplyConf("ptt_type", _pttType);
+                ApplyConf("ptt_pathname", _pttPort);
 
                 ThrowIfError(_native.RigOpen(_rig));
             }

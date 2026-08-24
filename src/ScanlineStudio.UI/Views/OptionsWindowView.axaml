@@ -206,13 +206,21 @@
                                                      GroupName="RadioBackend"
                                                      Content="{loc:Translate Options.Radio.Backend.Hamlib}"
                                                      IsChecked="{Binding IsHamlibBackendSelected}" />
-                                        <!-- Disabled placeholder: matches spec/03-cat-layer.md's documented
-                                             (but "speculative/not yet designed") 5th backend. -->
+                                        <!-- Disabled placeholders: matches spec/03-cat-layer.md's documented
+                                             (but "design deferred") flrig/OmniRig backends. Separate
+                                             GroupNames — two unrelated disabled RadioButtons sharing one
+                                             group is confusing to read even though it's functionally
+                                             harmless (neither can ever be checked). -->
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
-                                                     GroupName="RadioBackendPlaceholder"
+                                                     GroupName="RadioBackendPlaceholderOmniRig"
                                                      IsEnabled="False"
                                                      Content="{loc:Translate Options.Radio.Backend.OmniRig}"
                                                      ToolTip.Tip="{loc:Translate Options.Radio.Backend.OmniRig.Help}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                     GroupName="RadioBackendPlaceholderFlRig"
+                                                     IsEnabled="False"
+                                                     Content="{loc:Translate Options.Radio.Backend.FlRig}"
+                                                     ToolTip.Tip="{loc:Translate Options.Radio.Backend.FlRig.Help}" />
                                     </WrapPanel>
 
                                     <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
@@ -305,19 +313,76 @@
                                         <Grid ColumnDefinitions="Auto,Auto,*">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.SerialPort}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.SerialPort.Help}" />
-                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibSerialPort}" />
+                                            <Grid Grid.Column="2" ColumnDefinitions="*,Auto">
+                                                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableSerialPorts}"
+                                                          Text="{Binding HamlibSerialPort}" IsEditable="True"
+                                                          HorizontalAlignment="Stretch" />
+                                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="4,0,0,0"
+                                                        Content="{loc:Translate Options.Radio.Hamlib.SerialPort.Refresh}"
+                                                        Command="{Binding RefreshSerialPortsCommand}" />
+                                            </Grid>
                                         </Grid>
 
                                         <Grid ColumnDefinitions="Auto,*">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.BaudRate}" />
-                                            <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding HamlibBaudRate}" />
+                                            <!-- Code-review finding: SelectedItem alone silently erases
+                                                 a persisted value outside this fixed list on the next
+                                                 Save (e.g. an unusual rate the old free-text field
+                                                 allowed) — editable, same as the serial port fields
+                                                 above, so an out-of-list value round-trips instead. -->
+                                            <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableBaudRates}"
+                                                      Text="{Binding HamlibBaudRate}" IsEditable="True" HorizontalAlignment="Left" />
                                         </Grid>
 
-                                        <Grid ColumnDefinitions="Auto,Auto,*">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttType}" />
-                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
-                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibPttType}" />
+                                            <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttType.Help}" />
+                                        </StackPanel>
+                                        <WrapPanel>
+                                            <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                         GroupName="PttMethod"
+                                                         Content="{loc:Translate Options.Radio.Hamlib.PttMethod.Vox}"
+                                                         IsChecked="{Binding IsPttMethodVoxSelected}" />
+                                            <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                         GroupName="PttMethod"
+                                                         Content="{loc:Translate Options.Radio.Hamlib.PttMethod.Cat}"
+                                                         IsChecked="{Binding IsPttMethodCatSelected}" />
+                                            <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                         GroupName="PttMethod"
+                                                         Content="{loc:Translate Options.Radio.Hamlib.PttMethod.Rts}"
+                                                         IsChecked="{Binding IsPttMethodRtsSelected}" />
+                                            <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4"
+                                                         GroupName="PttMethod"
+                                                         Content="{loc:Translate Options.Radio.Hamlib.PttMethod.Dtr}"
+                                                         IsChecked="{Binding IsPttMethodDtrSelected}" />
+                                        </WrapPanel>
+
+                                        <Grid ColumnDefinitions="Auto,Auto,*" IsEnabled="{Binding IsPttPortEnabled}">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.PttPort}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.PttPort.Help}" />
+                                            <ComboBox Grid.Column="2" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableSerialPorts}"
+                                                      Text="{Binding HamlibPttPort}" IsEditable="True"
+                                                      HorizontalAlignment="Stretch" />
                                         </Grid>
+
+                                        <WrapPanel>
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,0,4,0"
+                                                    Content="{loc:Translate Options.Radio.Hamlib.TestCat}"
+                                                    Command="{Binding TestHamlibConnectionCommand}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                    Content="{Binding TestPttButtonLabel}"
+                                                    Command="{Binding TestPttCommand}"
+                                                    IsEnabled="{Binding CanTestPtt}"
+                                                    ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.TestPtt.VoxDisabled.Help}" />
+                                        </WrapPanel>
+                                        <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding TestConnectionStatusMessage}"
+                                                   IsVisible="{Binding TestConnectionStatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding TestPttErrorMessage}"
+                                                   IsVisible="{Binding TestPttErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                     </StackPanel>
                                 </StackPanel>
                             </ContentControl>
