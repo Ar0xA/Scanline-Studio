@@ -9,6 +9,15 @@ namespace ScanlineStudio.Core.Radio.Hamlib;
 /// </summary>
 internal interface INativeLibraryLoader
 {
-    bool TryLoad(string libraryPath, out nint handle);
+    /// <summary>User-reported gap: <c>NativeLibrary.TryLoad</c> alone collapses every possible OS
+    /// loader failure -- file genuinely missing, a dependency DLL it needs isn't found, a 32/64-bit
+    /// image mismatch, a permissions problem -- into a single <see langword="false"/>, with zero way
+    /// to tell them apart. A user who picked an EXISTING file (confirmed via a real file-picker
+    /// dialog) and got "not found" back had no way to know it actually meant something like "this
+    /// DLL's own dependency couldn't be resolved." <paramref name="errorDetail"/> is the real
+    /// implementation's <c>Marshal.GetLastPInvokeError()</c> read immediately after the underlying
+    /// OS call, formatted into a human message -- <see langword="null"/> whenever this returns
+    /// <see langword="true"/>.</summary>
+    bool TryLoad(string libraryPath, out nint handle, out string? errorDetail);
     bool TryGetExport(nint handle, string name, out nint address);
 }
