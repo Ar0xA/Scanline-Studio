@@ -1151,6 +1151,16 @@
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
     </Style>
+    <!-- User-reported bug: an editable ComboBox (IsEditable="True", first used by the Hamlib
+         serial-port/baud-rate pickers) renders its typed text clipped against the top border
+         instead of centered — the Fluent theme's default template gives the internal edit
+         TextBox part its own Padding/VerticalContentAlignment that the outer ComboBox's own
+         setters above don't reach. Targeted directly via the template part. -->
+    <Style Selector="ComboBox.IndustryInput /template/ TextBox">
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Stretch" />
+    </Style>
     <Style Selector="NumericUpDown.IndustryInput">
         <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
