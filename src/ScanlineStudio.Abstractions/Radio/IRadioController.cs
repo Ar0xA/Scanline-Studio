@@ -20,7 +20,13 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// <c>Connected</c>/<c>Disconnected</c> synchronously) or the poll loop's background thread
 /// (<c>Reconnecting</c>/<c>Failed</c>, emitted when a transport-level failure trips backoff — see
 /// <see cref="IRadioProtocol"/>/spec/04-rigctld.md's error taxonomy: a protocol-level error alone never
-/// produces one of these). A slow subscriber on either stream stalls the poll loop's own cadence
+/// produces one of these). <c>Connected</c> specifically can fire from EITHER thread: once,
+/// synchronously, from <see cref="ConnectAsync"/> itself the instant a backend resolves (before any
+/// real I/O — see <see cref="RigId"/>'s own doc comment on why resolution alone proves nothing about
+/// reachability), and again, from the poll loop's background thread, the first time a poll genuinely
+/// confirms the connection (see <see cref="IsGenuinelyConnected"/>) — including after a real recovery
+/// from <c>Reconnecting</c>/<c>Failed</c>, which otherwise publishes nothing on its own. A slow
+/// subscriber on either stream stalls the poll loop's own cadence
 /// (acceptable at a 250ms default interval — unlike a real-time audio callback, this is low-consequence
 /// — see <c>ScanlineStudio.Abstractions.Audio.IAudioEngine</c> for the contrasting case that does need a
 /// drop policy) — subscribers doing real work must marshal to their own scheduler
@@ -59,6 +65,19 @@ public interface IRadioController
     /// <c>SstvSessionService.PlayWithPttAsync</c>'s own PTT-capability guard for why that
     /// distinction is safety-relevant, not cosmetic.</summary>
     string RigId { get; }
+
+    /// <summary>Distinct from <see cref="RigId"/>: <see cref="RigId"/> goes non-<c>"none"</c> the
+    /// instant a backend resolves (before any real I/O), so it answers "is there a session that
+    /// <see cref="DisconnectAsync"/> would tear down." This answers a different question — "has this
+    /// exact session actually been verified reachable" — <see langword="false"/> for a fresh
+    /// <see cref="ConnectAsync"/> and for the whole duration of any reconnect-backoff episode, flipping
+    /// <see langword="true"/> only once a poll genuinely returns a <see cref="RadioState"/> (not merely
+    /// on a command-level <see cref="RadioConnectionState.CommandFailed"/> — that only proves the
+    /// session is intact, not that a radio is actually attached). Use this for presentation/status
+    /// (e.g. "not yet confirmed reachable"), never as a substitute for <see cref="RigId"/>'s own
+    /// "is there a session" contract — the two answer genuinely different questions and callers that
+    /// need the disconnect-gating answer must keep using <see cref="RigId"/>.</summary>
+    bool IsGenuinelyConnected { get; }
 
     IObservable<RadioState> StateChanges { get; }
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }

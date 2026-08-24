@@ -467,10 +467,16 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.False(vm.CatLinked);
 
+        // CatLinked now reads IsGenuinelyConnected live (not evt.State directly -- see that
+        // property's own doc comment for why), so the fake's own latch must be set alongside each
+        // pushed event, matching what the real RadioController would have already done by the time
+        // it published the matching event.
+        radioSession.IsGenuinelyConnected = true;
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.CatLinked);
 
+        radioSession.IsGenuinelyConnected = false;
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
         Assert.False(vm.CatLinked);
@@ -483,10 +489,13 @@ public sealed class RadioStatusViewModelTests
         var vm = CreateViewModel(radioSession);
         Dispatcher.UIThread.RunJobs();
 
+        radioSession.IsGenuinelyConnected = true;
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.CatLinked);
 
+        // CommandFailed doesn't touch the latch either way (a command-level failure means the
+        // session stays healthy) -- IsGenuinelyConnected correctly stays true here, unchanged.
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.CommandFailed, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
 

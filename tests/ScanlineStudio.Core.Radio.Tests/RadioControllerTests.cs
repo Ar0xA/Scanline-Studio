@@ -91,7 +91,16 @@ public class RadioControllerTests
     [Fact]
     public async Task ConnectAsync_PublishesConnectingThenConnected_DisconnectAsync_PublishesDisconnected()
     {
-        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        // Deterministic gate, not a shared race: PollAsync never completes on its own (hangs until
+        // DisconnectAsync's own cancellation wins), so the poll loop's own ADDITIONAL Connected
+        // publish (on the first genuinely successful poll -- see RadioController.IsGenuinelyConnected)
+        // can never race this test's exact 3-event assertion below. That path has its own dedicated
+        // tests further down.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(async ct =>
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            return FixedStateValue; // unreachable -- Task.Delay throws on cancellation before returning
+        }));
         var events = new List<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
@@ -191,6 +200,143 @@ public class RadioControllerTests
     }
 
     [Fact]
+    public async Task IsGenuinelyConnected_FlipsTrue_AndPublishesASecondConnected_OnFirstSuccessfulPoll()
+    {
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        Assert.False(controller.IsGenuinelyConnected);
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => controller.IsGenuinelyConnected, TimeSpan.FromSeconds(2));
+        await controller.DisconnectAsync();
+
+        Assert.False(controller.IsGenuinelyConnected); // reset by the disconnect above
+        Assert.Equal(
+            [RadioConnectionState.Connecting, RadioConnectionState.Connected, RadioConnectionState.Connected, RadioConnectionState.Disconnected],
+            events);
+    }
+
+    [Fact]
+    public async Task CommandFailedPoll_DoesNotConfirmTheLatch()
+    {
+        // Round-2 plan-review finding: a command-level failure only proves the session is intact, not
+        // that a radio is actually attached -- e.g. FlrigClientProtocol.PollAsync's own "no
+        // transceiver" case is a CommandFailed that must never read as "genuinely connected."
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
+            _ => throw new RadioProtocolException("simulated: rig offline, session intact")));
+
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(10) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => events.Count(e => e == RadioConnectionState.CommandFailed) >= 3, TimeSpan.FromSeconds(2));
+        await controller.DisconnectAsync();
+
+        Assert.False(controller.IsGenuinelyConnected);
+        Assert.DoesNotContain(events, e => e == RadioConnectionState.Reconnecting || e == RadioConnectionState.Failed);
+        // Exactly the one Connected from ConnectAsync itself -- no second one from CommandFailed.
+        Assert.Equal(1, events.Count(e => e == RadioConnectionState.Connected));
+    }
+
+    [Fact]
+    public async Task RecoveryAfterTransportFailure_PublishesAnotherConnected_ClosingTheStuckCatLinkedBug()
+    {
+        var createCount = 0;
+        var factory = new FakeProtocolFactory(_ => true, _ =>
+        {
+            createCount++;
+            var failThisInstance = createCount == 1;
+            return new FakeProtocol(
+                _ => failThisInstance
+                    ? throw new IOException("simulated transport failure")
+                    : Task.FromResult(FixedStateValue));
+        });
+
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => controller.IsGenuinelyConnected, TimeSpan.FromSeconds(5));
+        await controller.DisconnectAsync();
+
+        // Connecting, Connected (optimistic, from ConnectAsync), Reconnecting (the simulated
+        // failure), Connected (genuine, once the recovered poll actually succeeded), Disconnected.
+        Assert.Equal(
+            [
+                RadioConnectionState.Connecting,
+                RadioConnectionState.Connected,
+                RadioConnectionState.Reconnecting,
+                RadioConnectionState.Connected,
+                RadioConnectionState.Disconnected,
+            ],
+            events);
+    }
+
+    [Fact]
+    public async Task NoneBackend_IsGenuinelyConnectedNeverBecomesTrue()
+    {
+        var controller = new RadioController([new NoneRadioProtocolFactory()], NullLogger<RadioController>.Instance);
+
+        await controller.ConnectAsync(new NoneConnectionSpec(), CancellationToken.None);
+        await Task.Delay(TimeSpan.FromMilliseconds(300)); // longer than the default 250ms poll interval
+
+        Assert.False(controller.IsGenuinelyConnected);
+
+        await controller.DisconnectAsync();
+        await controller.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task DisconnectAsync_RacingAStragglerSuccessfulPoll_LeavesIsGenuinelyConnectedFalse()
+    {
+        // Exercises the straggler-vs-DisconnectAsync guard: a poll that's about to confirm the latch
+        // is gated to complete only AFTER DisconnectAsync's own cancellation has already been
+        // requested -- the guard (re-checking _sessionActive/ct.IsCancellationRequested immediately
+        // before publishing) must stop it from publishing a false Connected, or leaving
+        // IsGenuinelyConnected true, after Disconnected has already fired.
+        var pollGate = new ManualResetEventSlim(initialState: false);
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(async ct =>
+        {
+            // Deterministic gate, not a timing assumption -- blocks the poll right until the test
+            // has issued (and given a moment to land) DisconnectAsync's own cancellation.
+            await Task.Run(() => pollGate.Wait(TimeSpan.FromSeconds(5)), CancellationToken.None);
+            return FixedStateValue;
+        }));
+
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+
+        try
+        {
+            var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+            await controller.ConnectAsync(spec, CancellationToken.None);
+
+            var disconnectTask = controller.DisconnectAsync();
+            await Task.Delay(TimeSpan.FromMilliseconds(100)); // let DisconnectAsync's own cts.CancelAsync land
+            pollGate.Set();
+            await disconnectTask;
+
+            Assert.False(controller.IsGenuinelyConnected);
+            // The straggler's own Connected (if it got far enough to publish at all) must never be
+            // the last thing observed -- Disconnected must win.
+            Assert.Equal(RadioConnectionState.Disconnected, events[^1]);
+        }
+        finally
+        {
+            pollGate.Set();
+        }
+    }
+
+    [Fact]
     public async Task RigId_StaysStable_DuringReconnectBackoff_NotFlappingToNone()
     {
         // Regression test for a code-review finding on spec/18-path-to-1.0.md Critical item 1:
@@ -217,10 +363,12 @@ public class RadioControllerTests
         Assert.Equal("fake", controller.RigId);
 
         var seenDuringBackoff = new List<string>();
+        var seenGenuinelyConnectedDuringBackoff = new List<bool>();
         var sw = Stopwatch.StartNew();
         while (createCount < 2 && sw.Elapsed < TimeSpan.FromSeconds(5))
         {
             seenDuringBackoff.Add(controller.RigId);
+            seenGenuinelyConnectedDuringBackoff.Add(controller.IsGenuinelyConnected);
             await Task.Delay(5);
         }
 
@@ -230,6 +378,12 @@ public class RadioControllerTests
         Assert.NotEmpty(seenDuringBackoff);
         Assert.All(seenDuringBackoff, id => Assert.Equal("fake", id));
         Assert.Equal("none", controller.RigId); // explicit disconnect does reset it
+        // RigId's sticky "a session exists" answer and IsGenuinelyConnected's "actually verified"
+        // answer are genuinely different questions -- RigId stays "fake" throughout the very backoff
+        // window where IsGenuinelyConnected is correctly still false (the first instance's transport
+        // failure hasn't been proven recovered from yet).
+        Assert.NotEmpty(seenGenuinelyConnectedDuringBackoff);
+        Assert.All(seenGenuinelyConnectedDuringBackoff, confirmed => Assert.False(confirmed));
     }
 
     [Fact]

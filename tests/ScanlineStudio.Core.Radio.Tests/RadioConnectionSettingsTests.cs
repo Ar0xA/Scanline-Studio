@@ -40,7 +40,7 @@ public sealed class RadioConnectionSettingsTests
     [Fact]
     public void ToConnectionSpec_UnknownBackendId_FallsBackToNone()
     {
-        var settings = new RadioConnectionSettings { BackendId = "flrig" };
+        var settings = new RadioConnectionSettings { BackendId = "omnirig" };
 
         var spec = settings.ToConnectionSpec();
 
@@ -72,6 +72,28 @@ public sealed class RadioConnectionSettingsTests
     public void ToConnectionSpec_HamlibMissingModel_FallsBackToNone()
     {
         var settings = new RadioConnectionSettings { BackendId = "hamlib" };
+
+        var spec = settings.ToConnectionSpec();
+
+        Assert.IsType<NoneConnectionSpec>(spec);
+    }
+
+    [Fact]
+    public void ToConnectionSpec_FlrigWithHostAndPort_ReturnsFlrigConnectionSpec()
+    {
+        var settings = new RadioConnectionSettings { BackendId = "flrig", FlrigHost = "localhost", FlrigPort = 12345 };
+
+        var spec = settings.ToConnectionSpec();
+
+        var flrigSpec = Assert.IsType<FlrigConnectionSpec>(spec);
+        Assert.Equal("localhost", flrigSpec.Host);
+        Assert.Equal(12345, flrigSpec.Port);
+    }
+
+    [Fact]
+    public void ToConnectionSpec_FlrigMissingHost_FallsBackToNone()
+    {
+        var settings = new RadioConnectionSettings { BackendId = "flrig", FlrigHost = null, FlrigPort = 12345 };
 
         var spec = settings.ToConnectionSpec();
 

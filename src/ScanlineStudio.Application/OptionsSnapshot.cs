@@ -40,6 +40,8 @@ public sealed record OptionsSnapshot(
     int? HamlibBaudRate,
     string? HamlibPttType,
     string? HamlibPttPort,
+    string? FlrigHost,
+    int? FlrigPort,
     string? Callsign,
     string? OperatorName,
     string? OperatorGrid,

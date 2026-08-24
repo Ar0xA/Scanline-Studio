@@ -1,10 +1,10 @@
 namespace ScanlineStudio.Abstractions.Radio;
 
 /// <summary>See spec/02-radio-layer.md. Describes *how* to reach a rig — a discriminated union via an
-/// open abstract record base with one sealed subtype per backend (spec/03-cat-layer.md). Only
-/// <see cref="NoneConnectionSpec"/> and <see cref="RigctldConnectionSpec"/> exist yet; future backends
-/// (linked Hamlib, flrig, OmniRig-as-client) each add their own sealed subtype here without requiring
-/// any existing code to change — <see cref="IRadioController"/> never switches on the concrete subtype
+/// open abstract record base with one sealed subtype per backend (spec/03-cat-layer.md).
+/// <see cref="NoneConnectionSpec"/>, <see cref="RigctldConnectionSpec"/>, <see cref="HamlibConnectionSpec"/>,
+/// and <see cref="FlrigConnectionSpec"/> exist; a future OmniRig-as-client backend adds its own sealed
+/// subtype here without requiring any existing code to change — <see cref="IRadioController"/> never switches on the concrete subtype
 /// itself, only each registered <see cref="IRadioProtocolFactory"/>'s own <c>CanHandle</c> does (see
 /// that interface's doc comment), so there is no exhaustiveness surface for a new subtype to silently
 /// fall through.
@@ -63,3 +63,12 @@ public sealed record HamlibConnectionSpec(uint Model) : RadioConnectionSpec
     /// other PTT types (verified against <c>hamlib/src/rig.c</c>'s PTT-open path).</summary>
     public string? PttPort { get; init; }
 }
+
+/// <summary>See spec/03-cat-layer.md's flrig section. Connects to a running flrig instance's XML-RPC
+/// server (default <c>http://Host:Port/RPC2</c>, default port 12345 -- flrig's own default,
+/// <c>flrig/src/support/status.cxx</c>). No <c>ConnectTimeout</c> property here unlike
+/// <see cref="RigctldConnectionSpec"/> -- deliberate: the HTTP client backing this connection is built
+/// once at DI-registration time via a named <c>IHttpClientFactory</c> client, so a per-spec timeout
+/// value has no way to reach it. Timeout is instead a single fixed value configured on that named
+/// client, covering connect+read together.</summary>
+public sealed record FlrigConnectionSpec(string Host, int Port) : RadioConnectionSpec;

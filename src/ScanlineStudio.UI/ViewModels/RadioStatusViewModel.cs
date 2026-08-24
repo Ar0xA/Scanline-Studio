@@ -153,11 +153,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private bool _suppressReceivingCommand;
 
-    /// <summary>Real state: true only while <see cref="IRadioSessionService.ConnectionEvents"/>'s most
-    /// recent lifecycle transition was <see cref="RadioConnectionState.Connected"/> -- a
-    /// <see cref="RadioConnectionState.CommandFailed"/> event is deliberately ignored here (that state
-    /// means a single command failed while the connection itself stays healthy, per that enum's own
-    /// doc comment; it must not flip this indicator off).</summary>
+    /// <summary>Real state: mirrors <see cref="IRadioSessionService.IsGenuinelyConnected"/>, refreshed
+    /// on every <see cref="IRadioSessionService.ConnectionEvents"/> transition except
+    /// <see cref="RadioConnectionState.CommandFailed"/> (that state means a single command failed while
+    /// the connection itself stays healthy, per that enum's own doc comment; it must not flip this
+    /// indicator off). Not the same thing as matching <c>evt.State == Connected</c> directly --
+    /// <c>Connected</c> can fire twice for one real connection (once optimistically, the instant a
+    /// backend resolves; again, only once a poll actually confirms it -- see
+    /// <see cref="IRadioController.IsGenuinelyConnected"/>'s own doc comment) and reading the live
+    /// latch instead of the event's own state field is what lets this correctly go dark for the first
+    /// one and relight for the second, including after a genuine recovery from
+    /// <see cref="RadioConnectionState.Reconnecting"/>/<see cref="RadioConnectionState.Failed"/>.</summary>
     [ObservableProperty]
     private bool _catLinked;
 
@@ -227,7 +233,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _frequencyDisplay = localization.GetString("RadioStatus.NoFrequency");
         _modeDisplay = string.Empty;
         _isReceiving = sstvSession.IsReceiving;
-        _catLinked = radioSession.LastKnownState is not null;
+        _catLinked = radioSession.IsGenuinelyConnected;
 
         radioSession.StateChanges.Subscribe(OnStateChanged);
         radioSession.ConnectionEvents.Subscribe(OnConnectionEvent);
@@ -378,7 +384,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         Dispatcher.UIThread.Post(() =>
         {
-            CatLinked = evt.State == RadioConnectionState.Connected;
+            // Reads the live latch, not evt.State directly -- Connected can now fire twice for one
+            // real connection (see CatLinked's own doc comment), and this is what lets CatLinked go
+            // dark for the first, optimistic one and relight only for the genuinely-confirmed second.
+            CatLinked = _radioSession.IsGenuinelyConnected;
 
             // spec/18-path-to-1.0.md High item 10, round-1 plan-review blocker: IsKeyed is only
             // ever refreshed by a SUCCESSFUL poll (OnStateChanged above) -- a transport failure

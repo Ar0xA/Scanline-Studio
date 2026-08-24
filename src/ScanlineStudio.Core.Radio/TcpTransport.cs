@@ -7,8 +7,10 @@ namespace ScanlineStudio.Core.Radio;
 
 /// <summary>
 /// See spec/02-radio-layer.md, spec/04-rigctld.md. <see cref="IRadioTransport"/> over a plain TCP
-/// socket — used by the rigctld and (later) flrig backends, never by call-based backends
-/// (linked Hamlib, OmniRig), which don't implement <see cref="IRadioTransport"/> at all.
+/// socket — used by the rigctld backend. Never by call-based backends (linked Hamlib, OmniRig),
+/// which don't implement <see cref="IRadioTransport"/> at all, and not by flrig either — flrig is
+/// TCP-based too, but its XML-RPC-over-HTTP wire shape doesn't fit this persistent-socket
+/// abstraction (see <see cref="IRadioTransport"/>'s own doc comment).
 ///
 /// Implements <see cref="IRadioTransport"/>'s buffer-survival contract by construction, not by
 /// convention: the internal read buffer (<c>_readBuffer</c>/<c>_readOffset</c>/<c>_readLength</c>)
