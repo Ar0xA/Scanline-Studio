@@ -27,7 +27,11 @@ dotnet build ScanlineStudio.sln
 
 The native audio shim is built automatically as part of this — `BuildNativeShimMacOS` runs before
 the managed build and produces `libyoniqaudio.dylib` alongside the managed output (via
-`clang -dynamiclib`, linked against `-lpthread -lm`). You do not need to build it separately.
+`clang -dynamiclib`, linked against `-lpthread -lm -framework CoreAudio -framework CoreFoundation`
+— the two frameworks were added 2026-08-24 for a real OS device-mute-state query the shim now makes
+via direct `AudioObjectGetPropertyData`/`CFStringRef` calls, not just miniaudio's own
+runtime-loaded CoreAudio path). Both frameworks ship with the Xcode Command Line Tools already
+required above — no extra install needed. You do not need to build the shim separately.
 
 ## Run
 
