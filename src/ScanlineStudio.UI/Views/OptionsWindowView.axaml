@@ -231,10 +231,20 @@
                                          it acts on whatever backend is ACTUALLY connected right now,
                                          not necessarily the one currently shown/being edited. -->
                                     <Grid ColumnDefinitions="Auto,*">
+                                        <!-- User-reported gap: Connect was enabled unconditionally —
+                                             including for "None" (nothing to connect to) and for
+                                             rigctld/Hamlib configs never actually verified to work.
+                                             IsEnabled gates on CanToggleRadioConnection (Connect
+                                             requires a successful test first; Disconnect never does).
+                                             ToolTip.ShowOnDisabled="True" — Avalonia doesn't show
+                                             tooltips on a disabled control by default, so without
+                                             this a disabled button would just sit there unexplained. -->
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
                                                 Content="{Binding ConnectRadioButtonLabel}"
                                                 Command="{Binding ToggleRadioConnectionCommand}"
-                                                ToolTip.Tip="{loc:Translate Options.Radio.Connect.Help}" />
+                                                IsEnabled="{Binding CanToggleRadioConnection}"
+                                                ToolTip.Tip="{Binding ConnectRadioTooltip}"
+                                                ToolTip.ShowOnDisabled="True" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="8,0,0,0"
                                                    TextWrapping="Wrap"
                                                    Text="{Binding ConnectRadioErrorMessage}"
