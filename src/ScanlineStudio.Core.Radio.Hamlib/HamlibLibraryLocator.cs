@@ -38,7 +38,7 @@ internal sealed class HamlibLibraryLocator
     {
         // Round-1 code-review finding (Tier A Batch 9 chunk 9d): `is not null` alone doesn't catch
         // an override persisted as an empty/whitespace string -- that would disable tiers 2/3 for
-        // no real path at all, failing with a confusing "(user override): not found" instead of
+        // no real path at all, failing with a confusing "(user override): failed to load" instead of
         // falling back to auto-detection. Unreachable today (no caller passes one yet, per
         // HamlibProtocolFactory.cs), but this is exactly the kind of setting a future Settings
         // wiring pass would introduce without necessarily re-reading this method.
@@ -49,7 +49,7 @@ internal sealed class HamlibLibraryLocator
                 return (overrideHandle, _overridePath);
             }
 
-            throw new HamlibUnavailableException([$"{_overridePath} (user override): not found ({overrideError})"]);
+            throw new HamlibUnavailableException([$"{_overridePath} (user override): failed to load ({overrideError})"]);
         }
 
         var attempts = new List<string>();
@@ -61,7 +61,7 @@ internal sealed class HamlibLibraryLocator
                 return (handle, candidate);
             }
 
-            attempts.Add($"{candidate}: not found ({candidateError})");
+            attempts.Add($"{candidate}: failed to load ({candidateError})");
         }
 
         throw new HamlibUnavailableException(attempts);
