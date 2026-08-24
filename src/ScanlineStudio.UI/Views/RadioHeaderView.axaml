@@ -256,19 +256,23 @@
             </HeaderedContentControl>
 
             <!-- Transceiver card: Receiving/Halt (real IsReceiving two-way + HaltReceivingCommand)
-                 and TX output volume (real, two-way TxVolumePercent) are real. RX level is a
-                 literal display-only meter (no gain parameter exists anywhere for it today) —
-                 both RX and TX use the same visual TRACK shape, but per design doc §2 they are NOT
-                 both meters: RX is display-only (Grid-based IndustryMeter pattern), TX is a real
-                 interactive control (IndustrySliderTheme) since it's genuinely bound two-way.
+                 is real. RX level: user-directed redesign (same session) — NOT a volume slider at
+                 all any more (that whole real-OS-device-volume/mute design was reverted for RX),
+                 it's a plain incoming-audio-LEVEL meter, WSJT-X-style: green while
+                 RadioStatusViewModel.RxLevelInGoodRange, red otherwise (too quiet or clipping-hot).
+                 Pwr (TX): app-internal playback gain again (TxVolumePercent, same WSJT-X/fldigi-
+                 style shape this app started with), NOT OS device volume — that reversal is the
+                 other half of the same user direction. TxIsMuted/TxVolumeDisplay still show a real
+                 OS mute readout for the TX device (independent of the Pwr gain, see
+                 RadioStatusViewModel.TxIsMuted's own doc comment for why that one piece stayed).
                  Receiving intentionally uses the SAME accent-filled palette as a primary button,
                  not a green state color (pre-Phase-2 file's own comment: sampled directly against
                  mock2's own pixels) — preserved, not "improved" toward a green/red status pair.
-                 NOTE (design doc's own flagged pre-existing inconsistency, not introduced by this
-                 phase): the Halt button used Classes="halt" (old design's red destructive-action
-                 look) despite the adjacent comment always saying Halt here is plain gray — this
-                 port follows the COMMENT's actual intent (secondary, not destructive-red), since
-                 mock2's own Halt in this specific card is plain gray, not red. -->
+                 Halt: direct user request supersedes the earlier mockup-fidelity call recorded here
+                 (mock2's own Halt in this specific card was plain gray, not red) — now styled
+                 IndustryBtnDanger to match TxControlsPaneView's own "Stop TX" button exactly, since
+                 both are the same kind of action (a destructive stop of an in-progress RX/TX
+                 operation) and the user wants them to read the same way. -->
             <HeaderedContentControl Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}"
                              Padding="{StaticResource IndustryGbPaddingFav}" ClipToBounds="False">
                 <HeaderedContentControl.Header>
@@ -292,47 +296,37 @@
                                       Opacity="{Binding IsCapturePausedForTx, Converter={x:Static conv:BoolToOpacityConverter.Instance}}"
                                       ToolTip.Tip="{loc:Translate RadioStatus.ReceivingPausedForTx.Help}"
                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary"
+                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger"
                                 Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                     </Grid>
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
-                        <!-- Tier 2/3 follow-up (2026-08-18): fill/marker were fixed 63%/78% literals,
-                             not bound to any real RX gain parameter (RadioState.SignalStrengthDb was
-                             hardcoded null in both protocol implementations). Now real:
-                             RadioStatusViewModel.RxLevelFillPercent (own doc comment has the
-                             S0..S9+60 dB-to-percent convention this meter uses) drives BOTH the fill
-                             AND the marker at the same position — every other fill/marker pair in
-                             the source mockup (SSTV Console.dc.html) uses identical width%/left%
-                             values; only this one row's static demo numbers happened to differ
-                             (63/78), most plausibly a copy-paste inconsistency in placeholder data
-                             rather than a deliberate distinct-value design (no OTHER row in that
-                             mockup ever gives fill and marker different values). DoubleToStarGridLengthConverter
-                             replaces the two separate literal-percent Grids with one pair of
-                             individually-bound ColumnDefinition.Widths (same technique as
-                             WaterfallViewModeToColumnWidthConverter). -->
-                        <Grid Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
+                    <!-- RX level and Pwr share ONE Grid (RowDefinitions, not two separate Grids) so
+                         their Auto label/value columns size off the WIDER of the two rows' content
+                         ("RX level" vs "Pwr", "0" vs "93") — two separate per-row Grids each size
+                         their own Auto columns independently, which left the star column (and so the
+                         rendered bar) a different width per row even though both used the same
+                         "Auto,*,Auto" spec. Confirmed as a real visual mismatch, not a false positive,
+                         via a live screenshot. -->
+                    <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9" RowSpacing="3">
+                        <TextBlock Grid.Row="0" Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
+                        <!-- WSJT-X-style level meter, not a slider: fill width tracks RxLevelFillPercent
+                             (0-100, from ISstvSessionService.RawInputPeakLevel), fill color switches
+                             green/red off RxLevelInGoodRange. DoubleToStarGridLengthConverter drives
+                             both the fill and its complementary remainder column off the SAME source
+                             value (same technique WaterfallViewModeToColumnWidthConverter uses). -->
+                        <Grid Grid.Row="0" Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
                             <Border Classes="IndustryMeterTrack" Height="8" />
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
                                     <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
                                 </Grid.ColumnDefinitions>
-                                <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
-                            </Grid>
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
-                                    <ColumnDefinition Width="{Binding RxLevelFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
-                                </Grid.ColumnDefinitions>
-                                <Border Grid.Column="1" Classes="IndustryMeterMarker" HorizontalAlignment="Left" />
+                                <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch"
+                                        Classes.good="{Binding RxLevelInGoodRange}" Classes.danger="{Binding !RxLevelInGoodRange}" />
                             </Grid>
                         </Grid>
-                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding RxLevelDisplay}" VerticalAlignment="Center" />
-                    </Grid>
-                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowValue" Text="{Binding RxLevelDisplay}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
                         <!-- Real bug found+fixed this session (not cosmetic): the fill/thumb never
                              reflected Value at all (confirmed via a runtime Bounds dump — DecreaseButton
                              Bounds.Width read exactly 0 regardless of Value=50 or 100) because
@@ -341,9 +335,9 @@
                              discarded in favor of their empty-content DesiredSize (0). Fixed in
                              IndustrySliderTheme (Atoms.axaml) with an explicit HorizontalAlignment="Stretch"
                              on both RepeatButtons. -->
-                        <Slider Grid.Column="1" Classes="Industry h8" Theme="{StaticResource IndustrySliderTheme}"
+                        <Slider Grid.Row="1" Grid.Column="1" Classes="Industry h8" Theme="{StaticResource IndustrySliderTheme}"
                                 Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
-                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding TxVolumePercent}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="IndustryRowValue" Text="{Binding TxVolumeDisplay}" VerticalAlignment="Center" />
                     </Grid>
                 </StackPanel>
             </HeaderedContentControl>

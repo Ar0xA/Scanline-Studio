@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Sstv;
+using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Sstv;
@@ -24,13 +25,13 @@ public sealed class SstvCompositionRootTests
         // this test can exist. Resolves the same things Main() itself resolves at startup
         // (MainViewModel and OptionsWindowViewModel transitively pull in almost every other
         // registration -- panes, the Application-layer services, the radio/logbook/image backends).
-        // IAudioEngine/IAudioDeviceEnumerator are substituted with fakes -- MiniAudioEngine's own
-        // constructor genuinely initializes a native audio context (Program.cs's own registration
-        // comment: "must not run at process start on a machine with no audio server"), which is not
-        // safe to do from a CI test host; every OTHER registration below is exactly what
-        // RegisterServices itself defines, unmodified.
+        // IAudioEngine/IAudioDeviceEnumerator/IAudioDeviceMuteQuery are substituted with fakes --
+        // MiniAudioEngine/MiniAudioDeviceMuteQuery's own constructors genuinely initialize a
+        // native audio context (Program.cs's own registration comment: "must not run at process
+        // start on a machine with no audio server"), which is not safe to do from a CI test host;
+        // every OTHER registration below is exactly what RegisterServices itself defines, unmodified.
         //
-        // Round-2 confirmation finding: all three substitute registrations MUST come AFTER
+        // Round-2 confirmation finding: all substitute registrations MUST come AFTER
         // RegisterServices, not before -- DI is last-registration-wins, so registering the fake
         // ISettingsStore first (as an earlier version of this test did) got silently SHADOWED by
         // RegisterServices's own real JsonSettingsStore registration, resolving against (and
@@ -42,6 +43,7 @@ public sealed class SstvCompositionRootTests
         services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
         // Not `using` -- ISstvSessionService's real implementation is IAsyncDisposable-only, same
         // reason Program.cs's own teardown handler goes through DisposeAsync explicitly rather than
         // a synchronous Dispose()/`using` (see that handler's own doc comment).
@@ -54,6 +56,42 @@ public sealed class SstvCompositionRootTests
 
         Assert.NotNull(mainViewModel);
         Assert.NotNull(optionsViewModel);
+    }
+
+    [Fact]
+    public async Task MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange()
+    {
+        // User-reported bug (2026-08-23): MainViewModel.Callsign (backs the header-row callsign
+        // chip) only ever loaded once, from the constructor's own fire-and-forget call -- typing a
+        // new callsign in Options and hitting Save persisted it correctly, but the chip kept
+        // showing the old value until the next full app restart. LoadCallsignAsync is now public
+        // and re-callable (MainWindow.axaml.cs calls it again once the Options window closes) --
+        // this proves the re-call actually reflects a settings change, not just that it doesn't
+        // throw. Same DI-substitution setup as RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup
+        // above, since MainViewModel needs the full composition root to construct.
+        var settingsStore = new StaticSettingsStore(new AppSettings());
+        var services = new ServiceCollection();
+        services.AddLogging();
+        Program.RegisterServices(services);
+        services.AddSingleton<ISettingsStore>(settingsStore);
+        services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
+        services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        await using var provider = services.BuildServiceProvider();
+        var mainViewModel = provider.GetRequiredService<MainViewModel>();
+
+        // Awaiting this directly (not the constructor's own separate fire-and-forget call) gives a
+        // deterministic completion point regardless of that background task's own timing.
+        await mainViewModel.LoadCallsignAsync();
+        Assert.Null(mainViewModel.Callsign);
+
+        settingsStore.Settings = new AppSettings().WithSection(
+            OperatorSettings.SectionKey,
+            new OperatorSettings { Callsign = "PD3AN" },
+            OperatorSettingsJsonContext.Default.OperatorSettings);
+        await mainViewModel.LoadCallsignAsync();
+
+        Assert.Equal("PD3AN", mainViewModel.Callsign);
     }
 
     [Fact]
@@ -230,9 +268,15 @@ public sealed class SstvCompositionRootTests
 
     private sealed class StaticSettingsStore(AppSettings settings) : ISettingsStore
     {
+        // Settable (not the ctor param directly) so a test can simulate a settings change between
+        // two LoadAsync calls -- e.g. MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange
+        // below, which mutates this between two calls to simulate what a real Options-dialog Save
+        // does to the on-disk settings.
+        public AppSettings Settings { get; set; } = settings;
+
         public IObservable<AppSettings> Changes { get; } = new NeverObservable();
 
-        public Task<AppSettings> LoadAsync(CancellationToken ct = default) => Task.FromResult(settings);
+        public Task<AppSettings> LoadAsync(CancellationToken ct = default) => Task.FromResult(Settings);
 
         public Task SaveAsync(AppSettings updatedSettings, CancellationToken ct = default) =>
             throw new NotSupportedException();

@@ -14,7 +14,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// Several properties are nullable even though their real default isn't the CLR default (<c>0</c>/
 /// <c>false</c>) -- System.Text.Json does not honor an <c>init</c>-only property's C# initializer
 /// default when that property is absent from the JSON payload (the same confirmed STJ limitation
-/// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent"/> documents) -- treat
+/// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.CaptureThreadPriority"/> documents) -- treat
 /// <see langword="null"/> as "unset, apply the documented default" at every read site, never add a
 /// non-null property-initializer default here.</summary>
 public sealed record StationIdSettings

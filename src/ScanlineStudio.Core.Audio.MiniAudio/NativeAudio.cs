@@ -133,6 +133,12 @@ internal static class NativeAudio
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern unsafe int yoniq_audio_resample_f32(float* input, int inputFrameCount, int sampleRateIn, int sampleRateOut, int lpfOrder, float* output, int outputCapacityFrames);
 
+    // Device-scoped (not session-scoped): real OS mute state, queryable whether or not a capture/
+    // playback session is currently open on the device. Read-only -- no setter is exposed
+    // (display-only, per yoniq_audio.h's own doc comment).
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int yoniq_audio_get_device_mute(byte[] deviceId, int isCapture, out int isMutedOut);
+
     /// <summary>Decodes a null-terminated, fixed-size native byte buffer (UTF-8, matching this
     /// shim's own convention for device ids/names) into a C# string.</summary>
     internal static string DecodeFixedString(byte[] buffer)

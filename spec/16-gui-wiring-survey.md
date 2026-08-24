@@ -49,8 +49,9 @@ XAML comments, e.g. `TxControlsPaneView.axaml:38-43`, `MainWindow.axaml:745-752`
 - replaced essentially every deceptive numeric/textual literal with an em-dash `"—"` in
   `assets/locale/en.json` — e.g. `MainWindow.StatusBar.SnrValue` is now `"—"` (`en.json:35`), not the
   `"SNR 21.6 dB"` the old survey led with as its "most important single finding";
-  `Panes.RxFrameMeta.SnrSlantValue` is `"—"` (`en.json:224`); the whole `Panes.TxOutgoing.*` block is
-  `"—"` (`en.json:357-372`);
+  `Panes.RxFrameMeta.SnrSlantValue` is `"—"` (`en.json:224`); the whole `Panes.TxOutgoing.*` block was
+  `"—"` (formerly `en.json:357-372`) — **removed entirely 2026-08-23** (user-reported: the "BURNED
+  INTO THE PICTURE" card did nothing), not just dashed out;
 - collapsed fabricated populated lists into honest empty states (the 45-`TextBlock` Session-frames
   list → one `Panes.RxSessionFrames.NoSessionYet` line, `MainWindow.axaml:757`; the TX Queue's two
   invented filenames → `Panes.TxQueue.NoQueueYet`, `:832`; Recently-sent's three fake thumbnails →

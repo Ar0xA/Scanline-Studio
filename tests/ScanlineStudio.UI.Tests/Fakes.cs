@@ -271,6 +271,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => Task.FromResult(TxVolumePercent);
 
+    public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    {
+        TxVolumePercent = percent;
+        return Task.CompletedTask;
+    }
+
+    public bool TxIsMuted { get; set; }
+
+    public Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default) => Task.FromResult(TxIsMuted);
+
     public bool IsPttLocked { get; private set; }
 
     public List<bool> PttLockCalls { get; } = [];
@@ -279,12 +289,6 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     {
         PttLockCalls.Add(locked);
         IsPttLocked = locked;
-        return Task.CompletedTask;
-    }
-
-    public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
-    {
-        TxVolumePercent = percent;
         return Task.CompletedTask;
     }
 
@@ -301,6 +305,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public int? SyncOffsetSamples { get; set; }
 
     public double SignalPeakLevel { get; set; }
+
+    public double RawInputPeakLevel { get; set; }
 
     public bool IsLevelOverdriven { get; set; }
 
@@ -435,6 +441,21 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     }
 }
 
+internal sealed class FakeHamlibDiscoveryService : IHamlibDiscoveryService
+{
+    public HamlibProbeResult ResultToReturn { get; set; } = new(false, null, null, [], []);
+
+    public Exception? ThrowOnProbe { get; set; }
+
+    public List<string?> ProbedPaths { get; } = [];
+
+    public Task<HamlibProbeResult> ProbeAsync(string? overridePath, CancellationToken cancellationToken = default)
+    {
+        ProbedPaths.Add(overridePath);
+        return ThrowOnProbe is { } ex ? Task.FromException<HamlibProbeResult>(ex) : Task.FromResult(ResultToReturn);
+    }
+}
+
 internal sealed class FakeImageSourceWriter : IImageSourceWriter
 {
     public List<(IImageSource Source, string Path)> Calls { get; } = [];
@@ -551,6 +572,8 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public string? AdifPathToReturn { get; set; } = "/tmp/fake.adi";
 
+    public string? HamlibLibraryPathToReturn { get; set; } = "/usr/lib/libhamlib.so.4";
+
     public string? SaveAdifPathToReturn { get; set; } = "/tmp/fake.adi";
 
     public (string Path, ImageExportFormat Format)? SaveImagePathToReturn { get; set; } = ("/tmp/fake-export.png", ImageExportFormat.Png);
@@ -586,6 +609,8 @@ internal sealed class FakeFilePickerService : IFilePickerService
         LastSuggestedImageFileName = suggestedFileName;
         return Task.FromResult(SaveImagePathToReturn);
     }
+
+    public Task<string?> PickHamlibLibraryFileAsync() => Task.FromResult(HamlibLibraryPathToReturn);
 }
 
 internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter

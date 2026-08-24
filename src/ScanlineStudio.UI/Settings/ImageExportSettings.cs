@@ -8,8 +8,7 @@ namespace ScanlineStudio.UI.Settings;
 /// automatic RX-history auto-save path hardcodes PNG unconditionally
 /// (`ReceiveHistoryRecorder.cs`) and does not read this value -- if a future auto-JPEG-save feature
 /// is ever added, this would need to move somewhere `ScanlineStudio.Application`'s own decode
-/// pipeline can reach, same caution `TxPaneUiSettings`' own doc comment already gives for
-/// `TxVolumePercent`.</summary>
+/// pipeline can reach, since that layer cannot reference a `ScanlineStudio.UI`-owned type.</summary>
 public sealed record ImageExportSettings
 {
     public const string SectionKey = "ImageExport";

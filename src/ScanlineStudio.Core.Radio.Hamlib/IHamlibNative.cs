@@ -63,4 +63,27 @@ internal interface IHamlibNative
     /// data export, not a function (see spec/03-cat-layer.md's "Version gate"). Already decoded;
     /// <see langword="null"/> if the native call returned a null pointer.</summary>
     string? RigVersion();
+
+    /// <summary><c>int rig_load_all_backends(void)</c>. Populates Hamlib's internal backend registry
+    /// so <see cref="RigListModelIds"/>/<see cref="RigGetCapsMfgName"/>/<see cref="RigGetCapsModelName"/>
+    /// can enumerate every compiled-in rig. Not needed for <see cref="RigInit"/> against a single
+    /// already-known model -- only for full-catalog listing (the Options dialog's Hamlib rig-list
+    /// picker). Touches process-global state with no internal locking -- callers must serialize this
+    /// against any other call into it (see <c>HamlibDiscoveryService</c>'s own doc comment).</summary>
+    int RigLoadAllBackends();
+
+    /// <summary><c>int rig_list_foreach_model(int (*cfunc)(rig_model_t, rig_ptr_t), rig_ptr_t)</c>.
+    /// The callback receives only the scalar model id, never a <c>rig_caps</c> struct pointer --
+    /// deliberately chosen over <c>rig_list_foreach</c> to avoid marshaling that struct's layout.
+    /// Requires <see cref="RigLoadAllBackends"/> to have been called first, or this only sees whatever
+    /// backends happen to already be registered.</summary>
+    IReadOnlyList<uint> RigListModelIds();
+
+    /// <summary><c>rig_get_caps_cptr(rig_model_t, RIG_CAPS_MFG_NAME_CPTR)</c>. <see langword="null"/>
+    /// if the model id isn't registered (call <see cref="RigLoadAllBackends"/> first).</summary>
+    string? RigGetCapsMfgName(uint model);
+
+    /// <summary><c>rig_get_caps_cptr(rig_model_t, RIG_CAPS_MODEL_NAME_CPTR)</c>. <see langword="null"/>
+    /// if the model id isn't registered (call <see cref="RigLoadAllBackends"/> first).</summary>
+    string? RigGetCapsModelName(uint model);
 }

@@ -338,6 +338,7 @@ internal static partial class Program
         // here, in ScanlineStudio.Host, does not violate that.
         services.AddSingleton<IAudioEngine, MiniAudioEngine>();
         services.AddSingleton<IAudioDeviceEnumerator, MiniAudioDeviceEnumerator>();
+        services.AddSingleton<IAudioDeviceMuteQuery, MiniAudioDeviceMuteQuery>();
 
         // SSTV DSP core -- one decoder/encoder/waterfall per app session (Phase 3 scope: a single
         // concurrent session, matching the single IAudioEngine instance above).
@@ -433,14 +434,47 @@ internal static partial class Program
         // happens later, if the user actually selects Hamlib and tries to connect.
         services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
         services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
-        services.AddSingleton<IRadioProtocolFactory>(sp => HamlibProtocolFactory.Create(loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton<IRadioProtocolFactory>(CreateHamlibProtocolFactory);
         services.AddSingleton<IRadioController, RadioController>();
+
+        // Options-dialog-facing Hamlib path/rig-list probing (spec/03-cat-layer.md's "Discovery
+        // order", tier 1) -- a separate service from IRadioProtocolFactory above since a probe here
+        // must never disturb the real singleton's already-loaded runtime (see
+        // HamlibDiscoveryService's own doc comment on why every native-registry call it makes is
+        // serialized behind a process-wide gate).
+        services.AddSingleton<IHamlibDiscoveryService>(sp => HamlibDiscoveryService.Create(sp.GetRequiredService<ILoggerFactory>()));
 
         // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
         services.AddSingleton<ISstvSessionService, SstvSessionService>();
         services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
+    }
+
+    /// <summary>Reads the persisted tier-1 Hamlib library-path override (spec/03-cat-layer.md's
+    /// "Discovery order") before constructing the real <see cref="HamlibProtocolFactory"/> -- must
+    /// happen here, inside the factory delegate, not at <see cref="RegisterServices"/> call time:
+    /// <see cref="IServiceCollection"/> has no built <see cref="IServiceProvider"/> yet to resolve
+    /// <see cref="ISettingsStore"/> from at that point. Mirrors <see cref="CreateSstvDecoder"/>'s own
+    /// "read settings inside the DI factory, log-and-fall-back on a corrupt section" pattern.</summary>
+    internal static HamlibProtocolFactory CreateHamlibProtocolFactory(IServiceProvider services)
+    {
+        var loggerFactory = services.GetRequiredService<ILoggerFactory>();
+        var appSettings = services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult();
+
+        RadioConnectionSettings radioSettings;
+        try
+        {
+            radioSettings = appSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings)
+                ?? new RadioConnectionSettings();
+        }
+        catch (JsonException ex)
+        {
+            Log.SettingsSectionReadFailed(loggerFactory.CreateLogger(nameof(Program)), RadioConnectionSettings.SectionKey, ex);
+            radioSettings = new RadioConnectionSettings();
+        }
+
+        return HamlibProtocolFactory.Create(radioSettings.HamlibLibraryPath, loggerFactory);
     }
 
     internal static void RegisterSstvServices(IServiceCollection services)

@@ -216,6 +216,33 @@ public sealed partial class FilePickerService : IFilePickerService
         return (normalizedPath, format);
     }
 
+    // "*.so.*" is its own pattern, not covered by "*.so" -- Linux Hamlib sonames are versioned
+    // (libhamlib.so.4), a compound suffix a bare "*.so" glob would silently exclude. The built-in
+    // FilePickerFileTypes.All escape hatch is always offered alongside this -- an unusual install
+    // layout (a renamed file, a non-standard extension) must never leave the user stuck unable to
+    // pick anything (auditor plan-review finding).
+    private static readonly FilePickerFileType HamlibLibraryFileType = new("Hamlib library files")
+    {
+        Patterns = ["*.dll", "*.dylib", "*.so", "*.so.*"],
+    };
+
+    public async Task<string?> PickHamlibLibraryFileAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            AllowMultiple = false,
+            FileTypeFilter = [HamlibLibraryFileType, FilePickerFileTypes.All],
+        });
+
+        return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
     private static partial class Log
     {
         // [CallerMemberName] resolves to whichever Pick*Async method called this, NOT the

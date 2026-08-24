@@ -407,8 +407,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     public event Action? EditorClosed;
 
     /// <summary>Set once by <see cref="MainViewModel"/>'s own constructor, right after both VMs
-    /// exist, so the Output card's Drive slider (moved here from the header) can bind straight to
-    /// <c>RadioStatus.TxVolumePercent</c> -- the single real source of truth for that value.
+    /// exist, so the Output card's TX volume slider (moved here from the header) can bind straight
+    /// to <c>RadioStatus.TxVolumePercent</c> -- the single real source of truth for that value.
     /// Deliberately NOT constructor-injected: <see cref="RadioStatusViewModel"/> isn't
     /// DI-registered (<see cref="MainViewModel"/> constructs it by hand), so DI can't supply it
     /// here, and a separate DI registration would fork the value into two out-of-sync instances.
@@ -529,9 +529,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Read-modify-write against whatever is currently persisted for this section, not a
-    /// fresh <c>new TxPaneUiSettings { ... }</c> -- the TX volume slider (a different view-model,
-    /// spec/14-roadmap.md's Piece 5) owns <see cref="TxPaneUiSettings.TxVolumePercent"/> in this same
-    /// section, and a from-scratch write here would silently clobber it.</summary>
+    /// fresh <c>new TxPaneUiSettings { ... }</c> -- a from-scratch write here would silently clobber
+    /// whichever of <see cref="TxPaneUiSettings.FavoriteModeIds"/>/<see cref="TxPaneUiSettings.AutoFollowRxMode"/>
+    /// this particular call isn't updating.</summary>
     private async Task PersistTxPaneUiSettingsAsync()
     {
         try

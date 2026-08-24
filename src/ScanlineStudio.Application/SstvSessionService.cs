@@ -12,6 +12,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
 {
     private readonly IAudioEngine _audioEngine;
     private readonly IAudioDeviceEnumerator _deviceEnumerator;
+    private readonly IAudioDeviceMuteQuery _deviceMuteQuery;
     private readonly ISettingsStore _settingsStore;
     private readonly ISstvDecoder _decoder;
     private readonly ISstvEncoder _encoder;
@@ -24,6 +25,32 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly TimeSpan _playbackStallTimeout;
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
+    private readonly Action<ReadOnlyMemory<float>> _levelMeterHandler;
+
+    /// <summary>Backs <see cref="RawInputPeakLevel"/> -- see that property's own doc comment for why
+    /// this exists as a THIRD fan-out target alongside <see cref="_decoderHandler"/>/
+    /// <see cref="_waterfallHandler"/> rather than reusing either one's own internal state. Written
+    /// only from <see cref="_levelMeterHandler"/> on the audio engine's own capture/drain thread (same
+    /// single-writer shape as those two handlers' own targets), read from whatever thread polls
+    /// <see cref="RawInputPeakLevel"/> (a UI-thread <c>DispatcherTimer</c> in practice) -- volatile
+    /// float is a well-defined atomic read/write in C#/.NET (unlike volatile double, which isn't
+    /// legal), so no lock is needed for this benign, approximate meter value.</summary>
+    private volatile float _rawInputPeakLevel;
+
+    /// <summary>The Pwr gain <see cref="PumpToPlaybackAsync"/> actually multiplies each outgoing
+    /// sample by RIGHT NOW -- read fresh once per 4096-sample chunk (not captured once per
+    /// <see cref="PlayWithPttAsync"/> call, the older behavior) specifically so a user can drag the
+    /// Pwr slider WHILE a <see cref="TuneAsync"/> tone or a live <see cref="TransmitAsync"/> is
+    /// already playing and hear/see the change immediately -- the WSJT-X-style "key Tune, watch the
+    /// radio's own power meter, dial Pwr to the wattage you want" workflow this exists for doesn't
+    /// work at all if gain is frozen at whatever it was the instant PTT keyed. Written by
+    /// <see cref="SetTxVolumePercentAsync"/> (every caller of that method updates this immediately,
+    /// not just the settings file), seeded from the persisted setting at the start of each
+    /// <see cref="PlayWithPttAsync"/> call in case nothing has called
+    /// <see cref="SetTxVolumePercentAsync"/> yet this process's life. Same volatile-float-is-a-
+    /// well-defined-atomic-read/write reasoning as <see cref="_rawInputPeakLevel"/> right above --
+    /// this is a single float, not a struct/tuple, so no lock is needed for cross-thread visibility.</summary>
+    private volatile float _liveTxGain = 1f;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
     // (which writes this) from the audio drain thread, not just from a UI-thread-initiated
     // StartReceivingAsync/StopReceivingAsync call -- volatile for the same reason _pttLocked below
@@ -190,6 +217,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public SstvSessionService(
         IAudioEngine audioEngine,
         IAudioDeviceEnumerator deviceEnumerator,
+        IAudioDeviceMuteQuery deviceMuteQuery,
         ISettingsStore settingsStore,
         ISstvDecoder decoder,
         ISstvEncoder encoder,
@@ -198,7 +226,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
         ILogger<SstvSessionService> logger)
-        : this(audioEngine, deviceEnumerator, settingsStore, decoder, encoder, macroTextResolver,
+        : this(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, macroTextResolver,
                waterfall, receivedImage, radioSession, logger,
                cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
                inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null)
@@ -212,6 +240,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     internal SstvSessionService(
         IAudioEngine audioEngine,
         IAudioDeviceEnumerator deviceEnumerator,
+        IAudioDeviceMuteQuery deviceMuteQuery,
         ISettingsStore settingsStore,
         ISstvDecoder decoder,
         ISstvEncoder encoder,
@@ -232,6 +261,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         _audioEngine = audioEngine;
         _deviceEnumerator = deviceEnumerator;
+        _deviceMuteQuery = deviceMuteQuery;
         _settingsStore = settingsStore;
         _decoder = decoder;
         _encoder = encoder;
@@ -277,6 +307,26 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     SafeLog(() => Log.WaterfallPushSamplesFailed(_logger, count, ex));
                 }
             }
+        };
+
+        // See RawInputPeakLevel's own doc comment -- deliberately reads the RAW buffer directly off
+        // this fan-out, not anything _decoderHandler/Waterfall.PushSamples derive from it, so this
+        // never sees the decoder's own SSTV-band bandpass filtering. No try/catch needed: this is a
+        // plain synchronous loop over already-in-hand memory with no external call that can throw.
+        _levelMeterHandler = samples =>
+        {
+            var span = samples.Span;
+            var peak = 0f;
+            for (var i = 0; i < span.Length; i++)
+            {
+                var abs = Math.Abs(span[i]);
+                if (abs > peak)
+                {
+                    peak = abs;
+                }
+            }
+
+            _rawInputPeakLevel = peak;
         };
 
         // Ultracode audit finding #34: ISstvDecoderMaintenance is an optional side-channel only
@@ -980,6 +1030,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.SignalPeakLevel"/> / <see cref="ISstvDecoder.SignalPeakLevel"/>.</summary>
     public double SignalPeakLevel => _decoder.SignalPeakLevel;
 
+    /// <summary>See <see cref="ISstvSessionService.RawInputPeakLevel"/> for the full contract and
+    /// why it's a separate value from <see cref="SignalPeakLevel"/> above.</summary>
+    public double RawInputPeakLevel => _rawInputPeakLevel;
+
     /// <summary>See <see cref="ISstvSessionService.IsLevelOverdriven"/> / <see cref="ISstvDecoder.IsLevelOverdriven"/>.</summary>
     public bool IsLevelOverdriven => _decoder.IsLevelOverdriven;
 
@@ -1274,6 +1328,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
+        _audioEngine.SamplesCaptured += _levelMeterHandler;
         _isReceiving = true;
 
         // ultracode audit finding #6: legacy resets its AGC (CLVL::Init) at every TX<->RX transition
@@ -1338,6 +1393,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         _audioEngine.SamplesCaptured -= _decoderHandler;
         _audioEngine.SamplesCaptured -= _waterfallHandler;
+        _audioEngine.SamplesCaptured -= _levelMeterHandler;
+        // RawInputPeakLevel's own contract: 0.0 whenever capture isn't running, never a stale
+        // reading left over from before this stop -- no more buffers will arrive to overwrite it.
+        _rawInputPeakLevel = 0f;
         try
         {
             // Round-16 finding: IAudioEngine.StopCaptureAsync takes no CancellationToken at all, and
@@ -1569,11 +1628,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         const int sampleRate = 48_000;
 
-        // Round-18 finding 3: neither parameter was validated at all -- unlike TxVolumePercent
-        // (round 16's precedent, same threat model of an unvalidated value reaching the transmitter),
-        // these are direct caller arguments with a live caller that already catches and surfaces a
-        // failure (RadioStatusViewModel's own RadioStatus.Error.TuneFailed), so this throws rather
-        // than silently clamping -- the caller needs to know its own value was wrong, not have it
+        // Round-18 finding 3: neither parameter was validated at all -- these are direct caller
+        // arguments with a live caller that already catches and surfaces a failure
+        // (RadioStatusViewModel's own RadioStatus.Error.TuneFailed), so this throws rather than
+        // silently clamping -- the caller needs to know its own value was wrong, not have it
         // silently substituted. Checked and thrown BEFORE Log.TuneStarting/PlayWithPttAsync, so PTT is
         // never touched and _transmitInFlight is never taken on an invalid call.
         //
@@ -1605,23 +1663,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
 
-        // Round-16 finding: unlike GetStationIdTransmitOptionsAsync's own WPM/tone-frequency
-        // boundary validation (see that method's own comment, same threat model: a corrupted/hand-
-        // edited settings.json), this value flowed straight into PlayWithPttAsync's `gain` multiplier
-        // with no range check at all -- an out-of-range value (e.g. a typo'd 10000, or a negative
-        // number) reaches PumpToPlaybackAsync's unclamped `sample * gain` directly, hard-clipping the
+        // Round-16 finding (this project's own history): unlike GetStationIdTransmitOptionsAsync's
+        // own WPM/tone-frequency boundary validation (same threat model: a corrupted/hand-edited
+        // settings.json), this value flows straight into PlayWithPttAsync's `gain` multiplier with
+        // no range check at all -- an out-of-range value (e.g. a typo'd 10000, or a negative number)
+        // would reach PumpToPlaybackAsync's unclamped `sample * gain` directly, hard-clipping the
         // transmitted audio into a square wave (real-world splatter risk on an actual transmitter) or
-        // inverting phase. Clamped here so every reader gets a safe value regardless of what's on
-        // disk.
+        // inverting phase. Clamped here so every reader gets a safe value regardless of what's on disk.
         return Math.Clamp(settings.TxVolumePercent ?? 100, 0, 100);
     }
 
     public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
     {
-        // Round-16 finding: clamped on write too, not just on read -- GetTxVolumePercentAsync's own
-        // clamp already makes an out-of-range value on disk safe to READ, but leaving it unclamped
-        // here would still let a bogus value silently reach disk via this API's own normal use (e.g.
-        // a UI control with a bug, or a scripted settings import), for GetTxVolumePercentAsync to mask
+        // Clamped on write too, not just on read -- GetTxVolumePercentAsync's own clamp already
+        // makes an out-of-range value on disk safe to READ, but leaving it unclamped here would
+        // still let a bogus value silently reach disk via this API's own normal use (e.g. a UI
+        // control with a bug, or a scripted settings import), for GetTxVolumePercentAsync to mask
         // again on every future read -- clamping at the write boundary keeps what's actually stored
         // consistent with what every reader promises.
         percent = Math.Clamp(percent, 0, 100);
@@ -1634,7 +1691,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
             current with { TxVolumePercent = percent },
             AudioSettingsJsonContext.Default.AudioDeviceSettings);
         await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+
+        // Write-through to the live field _before_ Log/return -- so a caller awaiting this method's
+        // completion (e.g. the Options window's debounced Pwr-slider persist) is guaranteed
+        // PumpToPlaybackAsync's NEXT chunk read already sees the new value, not just "eventually".
+        // See _liveTxGain's own doc comment for why a live in-flight transmission needs this at all.
+        _liveTxGain = percent / 100f;
+
         Log.TxVolumeSet(_logger, percent);
+    }
+
+    public async Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default)
+    {
+        var device = await TryResolveDeviceAsync(forCapture: false, ct).ConfigureAwait(false);
+        if (device is null)
+        {
+            return false;
+        }
+
+        return await _deviceMuteQuery.IsDeviceMutedAsync(device, isCapture: false, ct).ConfigureAwait(false) ?? false;
     }
 
     /// <summary>Shared bounded-step budget reused across this class's various cleanup/safety-critical
@@ -1875,7 +1950,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // pending Task for WaitAsync to race. Task.Run offloads that synchronous prefix onto a
                 // pool thread so WaitAsync's bound becomes real.
                 var device = await Task.Run(() => ResolveDeviceAsync(forCapture: false, ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
-                var gain = (await Task.Run(() => GetTxVolumePercentAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
+                // Seeds _liveTxGain for this call in case nothing has called SetTxVolumePercentAsync
+                // yet this process's life -- PumpToPlaybackAsync below reads the LIVE field per chunk,
+                // not this local, so a Pwr-slider change after this point (e.g. mid-Tune) still takes
+                // effect immediately. See _liveTxGain's own doc comment for the full reasoning.
+                _liveTxGain = (await Task.Run(() => GetTxVolumePercentAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
                 var audioSettings = await Task.Run(() => LoadAudioSettingsAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
                 // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md
@@ -2146,7 +2225,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 await _audioEngine.StartPlaybackAsync(
                     device, sampleRate, audioSettings.PeriodSizeInFrames, audioSettings.Periods,
                     audioSettings.StereoTxEnabled, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
-                await PumpToPlaybackAsync(samples, gain, sampleRate, totalSamplesEstimate, ct).ConfigureAwait(false);
+                await PumpToPlaybackAsync(samples, sampleRate, totalSamplesEstimate, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -3079,12 +3158,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <see cref="TuneAsync"/> (no <see cref="TransmitProgressChanged"/> reporting for a tone) and a
     /// real value for <see cref="TransmitAsync"/> (spec/18-path-to-1.0.md Medium item). The running
     /// sample counter is a local, not a field -- nothing must dangle across separate calls.</summary>
-    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, float gain, int sampleRate, long? totalSamplesEstimate, CancellationToken ct)
+    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, int sampleRate, long? totalSamplesEstimate, CancellationToken ct)
     {
         const int chunkSize = 4096;
         var buffer = new float[chunkSize];
         var count = 0;
         var samplesEnqueued = 0L;
+
+        // Re-read once per chunk (not once for the whole call, the older behavior) -- see
+        // _liveTxGain's own doc comment. A per-sample volatile read would be needlessly expensive on
+        // this hot loop; re-reading every 4096 samples (~0.1-0.4s at typical SSTV sample rates) is
+        // well within "immediate" for a human dragging a slider while watching a power meter.
+        // Auditor-caught: the chunk-boundary term above is not the WHOLE slider-to-air latency --
+        // gain is applied at enqueue time, and whatever is already sitting in MiniAudioPlaybackSession's
+        // own playback ring (16384 frames by default, StartPlaybackAsync's periodSizeInFrames/periods
+        // args) still plays at the OLD gain regardless. That adds up to ~0.3s more at Tune's fixed
+        // 48kHz (the primary workflow this exists for) and up to ~1.5s more mid-image at a real
+        // 11025Hz TX sample rate -- still usable for "drag Pwr, watch the meter," just not as tight
+        // as the chunk-boundary number alone implies.
+        var gain = _liveTxGain;
 
         await foreach (var sample in samples.WithCancellation(ct).ConfigureAwait(false))
         {
@@ -3095,6 +3187,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 samplesEnqueued += count;
                 ReportTransmitProgress(samplesEnqueued, totalSamplesEstimate, sampleRate);
                 count = 0;
+                gain = _liveTxGain;
             }
         }
 
@@ -3176,34 +3269,26 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
+    /// <summary>User-reported fix, round 3 (2026-08-23): a configured-but-missing device (unplugged,
+    /// uninstalled, or churned with no name match either) now falls all the way through to
+    /// <see cref="TryResolveDeviceAsync"/>'s own backend-default lookup instead of returning
+    /// <see langword="null"/> for that case specifically -- see that method's own doc comment. This
+    /// means <see langword="null"/> ONLY ever means "no device available at all," a single, simpler
+    /// error case (was two, "nothing configured + no default" vs "configured device not found" --
+    /// both now collapse into this one, since TryResolveDeviceAsync already tried everything before
+    /// giving up).</summary>
     private async Task<AudioDeviceInfo> ResolveDeviceAsync(bool forCapture, CancellationToken ct)
     {
-        var device = await TryResolveDeviceAsync(forCapture, ct).ConfigureAwait(false);
+        var device = await TryResolveDeviceAsync(forCapture, ct, persistIfResolvedIndirectly: true).ConfigureAwait(false);
         if (device is null)
         {
             var kind = forCapture ? "capture" : "playback";
-            var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
-            var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
-            if (deviceId is null)
-            {
-                // TryResolveDeviceAsync already tried the backend-reported default and found none
-                // (spec/18-path-to-1.0.md Critical item 1 / item 8) -- this is now the rarer
-                // "genuinely no audio device available at all" case, not "user never opened
-                // Options."
-                //
-                // Tier B audit finding: SafeLog-wrapped, same as every other logging call in this
-                // file's cleanup/device-resolution paths (see SafeLog's own doc comment) -- a
-                // throwing logging provider here must not substitute a generic logging exception
-                // for the actionable InvalidOperationException message this method is about to
-                // throw anyway.
-                SafeLog(() => Log.NoDeviceConfigured(_logger, kind));
-                throw new InvalidOperationException($"No {kind} audio device configured, and no default {kind} device is available -- set one in Options before starting a session.");
-            }
-
-            await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
-            var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
-            SafeLog(() => Log.ConfiguredDeviceNotFound(_logger, kind, deviceId, devices.Count));
-            throw new InvalidOperationException($"Configured {kind} device '{deviceId}' was not found among currently available devices.");
+            // Tier B audit finding: SafeLog-wrapped, same as every other logging call in this file's
+            // cleanup/device-resolution paths (see SafeLog's own doc comment) -- a throwing logging
+            // provider here must not substitute a generic logging exception for the actionable
+            // InvalidOperationException message this method is about to throw anyway.
+            SafeLog(() => Log.NoDeviceConfigured(_logger, kind));
+            throw new InvalidOperationException($"No {kind} audio device configured, and no default {kind} device is available -- connect one, or set one in Options before starting a session.");
         }
 
         return device;
@@ -3212,28 +3297,69 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>Non-throwing counterpart to <see cref="ResolveDeviceAsync"/>, extracted from it (not
     /// duplicated) so <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s passive readout use and
     /// <see cref="ResolveDeviceAsync"/>'s action-that-should-fail-loudly use share one lookup.
-    /// <see langword="null"/> means either "configured device not found" (a device WAS explicitly
-    /// configured, but isn't among the currently enumerated devices -- deliberately NOT
-    /// substituted with the default, since a device the user explicitly picked going missing is a
-    /// real problem worth surfacing, not silently working around) or "nothing configured, and the
-    /// backend reports no default device either" (spec/18-path-to-1.0.md Critical item 1 / item 8
-    /// -- a genuinely rare case, e.g. a headless machine with no audio hardware at all). When
-    /// nothing is explicitly configured but the backend DOES report a default, that default is
-    /// returned here -- this deliberately changes what
-    /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/>/<see cref="GetConfiguredCaptureDeviceNameAsync"/>
-    /// display: they now show the device that will actually be used, not a blank "not configured"
-    /// placeholder that silently implied nothing would happen.</summary>
-    private async Task<AudioDeviceInfo?> TryResolveDeviceAsync(bool forCapture, CancellationToken ct)
+    /// <see langword="null"/> means "no device available at all" -- neither an exact id match, a
+    /// same-name recovery match, nor a backend-reported default exists (spec/18-path-to-1.0.md
+    /// Critical item 1 / item 8's genuinely rare case, e.g. a headless machine with no audio
+    /// hardware). Every other case recovers to SOME real device rather than surfacing "not found."
+    /// <para>User-reported fix (2026-08-23): an id mismatch first tries recovering the SAME device by
+    /// its last-known <see cref="AudioDeviceSettings.CaptureDeviceName"/>/
+    /// <see cref="AudioDeviceSettings.PlaybackDeviceName"/> -- see that field's own doc comment for
+    /// the real, OS-agnostic device-id-churn scenario this closes (observed live: a PipeWire USB
+    /// capture node re-created under a new id after a mute toggle, same physical device, same
+    /// name).</para>
+    /// <para>User-reported fix, round 3, same day (explicit product decision, overriding this
+    /// method's own prior "surface a missing configured device, don't silently substitute"
+    /// stance): "if in the file there is an RX/TX device that is not currently attached to the
+    /// computer, just set it to the OS defaults." A configured device that matches NEITHER by id NOR
+    /// by name (genuinely unplugged/uninstalled, not just churned) now falls through to the same
+    /// backend-default lookup "nothing configured" already used, instead of returning
+    /// <see langword="null"/> and making <see cref="ResolveDeviceAsync"/> throw.</para>
+    /// <para>User-reported fix, round 2 (2026-08-23): <paramref name="persistIfResolvedIndirectly"/>
+    /// -- "load from the file; if nothing in the file, use the OS default; SAVE it to the file; use
+    /// it in the program" (verbatim user spec). Before this, a "nothing configured" resolution
+    /// re-ran the SAME backend-default lookup on every single call with nothing ever written back,
+    /// so a later OS-level default change (a different mic becoming the system default) silently
+    /// changed what this app used too, with no durable record of what was actually selected. Passed
+    /// <see langword="true"/> only from <see cref="ResolveDeviceAsync"/> (the action paths --
+    /// <see cref="StartReceivingAsync"/>/<see cref="TransmitAsync"/>/<see cref="TuneAsync"/> --
+    /// where actually committing to a device is appropriate); left <see langword="false"/> (its
+    /// default) for <see cref="GetConfiguredCaptureDeviceNameAsync"/>/
+    /// <see cref="GetConfiguredPlaybackDeviceNameAsync"/>'s passive display-only reads, which must
+    /// stay read-only and not write to disk just because the Options dialog (or this app's own
+    /// header chip) happened to ask "what would be used right now."</para></summary>
+    private async Task<AudioDeviceInfo?> TryResolveDeviceAsync(bool forCapture, CancellationToken ct, bool persistIfResolvedIndirectly = false)
     {
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
         var deviceId = forCapture ? settings.CaptureDeviceId : settings.PlaybackDeviceId;
+        var deviceName = forCapture ? settings.CaptureDeviceName : settings.PlaybackDeviceName;
 
         await _deviceEnumerator.RefreshAsync(ct).ConfigureAwait(false);
         var devices = forCapture ? _deviceEnumerator.InputDevices : _deviceEnumerator.OutputDevices;
 
         if (deviceId is not null)
         {
-            return devices.FirstOrDefault(d => d.Id == deviceId);
+            var exactMatch = devices.FirstOrDefault(d => d.Id == deviceId);
+            if (exactMatch is not null)
+            {
+                return exactMatch;
+            }
+
+            if (deviceName is not null)
+            {
+                var nameMatch = devices.FirstOrDefault(d => string.Equals(d.Name, deviceName, StringComparison.Ordinal));
+                if (nameMatch is not null)
+                {
+                    SafeLog(() => Log.RecoveredDeviceByName(_logger, forCapture ? "capture" : "playback", deviceId, nameMatch.Id, nameMatch.Name));
+                    if (persistIfResolvedIndirectly)
+                    {
+                        await PersistResolvedDeviceAsync(forCapture, nameMatch, ct).ConfigureAwait(false);
+                    }
+
+                    return nameMatch;
+                }
+            }
+
+            SafeLog(() => Log.ConfiguredDeviceNotFound(_logger, forCapture ? "capture" : "playback", deviceId, devices.Count));
         }
 
         var fallback = devices.FirstOrDefault(d => d.IsDefault);
@@ -3250,9 +3376,41 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // "one method has the guard, a near-identical sibling doesn't" pattern, just on the
             // device-resolution path instead of the RX-start path.
             SafeLog(() => Log.UsingDefaultDevice(_logger, forCapture ? "capture" : "playback", fallback.Name));
+            if (persistIfResolvedIndirectly)
+            {
+                await PersistResolvedDeviceAsync(forCapture, fallback, ct).ConfigureAwait(false);
+            }
         }
 
         return fallback;
+    }
+
+    /// <summary>Writes the just-resolved device's id+name back into <see cref="AudioDeviceSettings"/>
+    /// -- see <see cref="TryResolveDeviceAsync"/>'s own <c>persistIfResolvedIndirectly</c> doc
+    /// comment for when/why this runs. Read-modify-write against a freshly reloaded
+    /// <see cref="AppSettings"/> (not the possibly-stale one <see cref="TryResolveDeviceAsync"/>
+    /// already loaded a moment earlier), same "reload right before writing" precedent every OTHER
+    /// settings-writing method in this class already follows (see e.g. <see cref="SavePresetsInternalAsync"/>
+    /// in <c>RadioStatusViewModel</c> for the identical shape) -- minimizes, though does not fully
+    /// close, the window for clobbering a concurrent Options Save. Swallow-and-log on failure,
+    /// never propagate: a failed opportunistic persist must not turn an otherwise-successful device
+    /// resolution into a failed <see cref="StartReceivingAsync"/>/<see cref="TransmitAsync"/> call.</summary>
+    private async Task PersistResolvedDeviceAsync(bool forCapture, AudioDeviceInfo device, CancellationToken ct)
+    {
+        try
+        {
+            var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+            var previousAudio = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+            var updatedAudio = forCapture
+                ? previousAudio with { CaptureDeviceId = device.Id, CaptureDeviceName = device.Name }
+                : previousAudio with { PlaybackDeviceId = device.Id, PlaybackDeviceName = device.Name };
+            var updatedSettings = appSettings.WithSection(AudioDeviceSettings.SectionKey, updatedAudio, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+            await _settingsStore.SaveAsync(updatedSettings, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.PersistResolvedDeviceFailed(_logger, forCapture ? "capture" : "playback", device.Id, ex));
+        }
     }
 
     public async Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default)
@@ -3304,7 +3462,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Information, Message = "Tune starting: {FrequencyHz}Hz for {Duration}")]
         public static partial void TuneStarting(ILogger logger, double frequencyHz, TimeSpan duration);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "TX volume set to {Percent}%")]
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr set to {Percent}%")]
         public static partial void TxVolumeSet(ILogger logger, int percent);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "CaptureOverrunCount read raced a concurrent StopReceivingAsync; reporting 0")]
@@ -3370,8 +3528,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configured {Kind} device '{DeviceId}' not found among {AvailableCount} available devices")]
         public static partial void ConfiguredDeviceNotFound(ILogger logger, string kind, string deviceId, int availableCount);
 
+        [LoggerMessage(Level = LogLevel.Information, Message = "Configured {Kind} device id '{OldDeviceId}' not found, but recovered it by name as '{NewDeviceId}' ({DeviceName})")]
+        public static partial void RecoveredDeviceByName(ILogger logger, string kind, string oldDeviceId, string newDeviceId, string deviceName);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "No {Kind} device configured -- using backend-reported default '{DeviceName}'")]
         public static partial void UsingDefaultDevice(ILogger logger, string kind, string deviceName);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting resolved {Kind} device '{DeviceId}' back to settings failed -- will re-resolve the same way next time")]
+        public static partial void PersistResolvedDeviceFailed(ILogger logger, string kind, string deviceId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning raised (approaching automatic restart threshold)")]
         public static partial void MaintenanceWarningRaised(ILogger logger);

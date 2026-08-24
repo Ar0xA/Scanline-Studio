@@ -1568,12 +1568,18 @@ data behind them today):
   cap, oldest-evicted-first), appended in `OnRadioStateChanged` under the identical
   "actually transmitting" gate as the existing `LiveSwrRatio`/etc. readouts. Backend-only —
   nothing renders it yet; a future chart binds directly, no translation step needed.
-- Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
-  freq-mode/date burned into the picture) — **partially done (2026-08-08)**: callsign/name/grid
-  fields now real (`OperatorSettings`/`IMacroTextResolver`). FSK ID/CW ID content generation was
-  blocked on the separately-deferred FSK/CW-ID subsystem — **shipped 2026-08-12** (corrected
-  2026-08-22), no longer blocked; "to station"/report/QSO-context fields still need a "current QSO"
-  form concept that doesn't exist yet. Was medium-large, now small remaining.
+- ~~Whole Outgoing-metadata card (VIS code/FSK ID/CW ID/callsign/to-station/grid-beam/report/
+  freq-mode/date burned into the picture)~~ — **removed entirely (2026-08-23)**, not built. This
+  entry's prior "partially done" claim (callsign/name/grid fields real via
+  `OperatorSettings`/`IMacroTextResolver`) was stale: every row in this card
+  (`TxControlsPaneView.axaml`'s "OUTGOING METADATA" `HeaderedContentControl`) was still a static
+  `"—"` locale-string placeholder with no view-model binding at all, confirmed directly against the
+  running app (user-reported: "does 'burned into picture' even do anything?" — no). Deleted rather
+  than wired up, since the real, working way a user burns metadata into a transmitted image is
+  already the TX Image Editor's overlay tool + token picker (see the Insert-field token picker item
+  below) — this card was a redundant, never-finished read-only preview of the same data, not a
+  distinct feature. "To station"/report/QSO-context fields still need a "current QSO" form concept
+  that doesn't exist yet, same gap as the token picker's own remaining chips below.
 - TX image editor: Move/Scale/Rotate/Box/Line/Mask/Pick tools, Undo/Redo, zoom/snap-grid,
   brightness/contrast/saturation/gamma/sharpen/denoise adjustments — **largely done, corrected
   2026-08-22**: this line used to say `ITransmitImagePreparer` only implements Crop/Resize/

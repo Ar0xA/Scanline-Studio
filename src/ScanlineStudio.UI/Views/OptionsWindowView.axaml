@@ -29,7 +29,7 @@
     <Border Background="{StaticResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
-            <TabControl Grid.Row="0" Classes="Industry">
+            <TabControl Grid.Row="0" Classes="Industry" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
 
                 <TabItem Classes="Industry" Header="{loc:Translate Options.General.Tab}">
                     <ScrollViewer>
@@ -243,6 +243,60 @@
 
                                     <StackPanel IsVisible="{Binding IsHamlibSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
                                         <Grid ColumnDefinitions="Auto,Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.LibraryPath}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.LibraryPath.Help}" />
+                                            <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibLibraryPath}"
+                                                      Watermark="{loc:Translate Options.Radio.Hamlib.LibraryPath.Watermark}" IsEnabled="{Binding !IsProbingHamlib}" />
+                                        </Grid>
+                                        <WrapPanel>
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,0,4,0"
+                                                    Content="{loc:Translate Options.Radio.Hamlib.Browse}"
+                                                    Command="{Binding BrowseHamlibLibraryCommand}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,0,4,0"
+                                                    Content="{loc:Translate Options.Radio.Hamlib.AutoDetect}"
+                                                    Command="{Binding AutoDetectHamlibCommand}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                    Content="{loc:Translate Options.Radio.Hamlib.TestPath}"
+                                                    Command="{Binding ProbeHamlibCommand}" />
+                                        </WrapPanel>
+                                        <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
+                                                   Text="{Binding HamlibDiscoveryStatusMessage}"
+                                                   IsVisible="{Binding HamlibDiscoveryStatusMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                                        <Grid ColumnDefinitions="Auto,*">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.RigList}" />
+                                            <!-- Real-window check found a genuine Avalonia ComboBox
+                                                 quirk here (confirmed not a screenshot artifact — it
+                                                 persisted after the mouse moved away and the frame
+                                                 settled): with an empty ItemsSource and no selection,
+                                                 the control speculatively renders ItemTemplate once
+                                                 against the wrong (ambient) DataContext, so
+                                                 Manufacturer/ModelName resolve to Avalonia's unset-value
+                                                 marker and render as the literal text "(unset)".
+                                                 FallbackValue="" on both bindings makes that speculative
+                                                 render produce an empty string instead, so it neither
+                                                 shows garbage nor visually collides with
+                                                 PlaceholderText. -->
+                                            <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding HamlibRigModels}"
+                                                      SelectedItem="{Binding SelectedHamlibRigModel}"
+                                                      PlaceholderText="{loc:Translate Options.Radio.Hamlib.RigList.Placeholder}"
+                                                      HorizontalAlignment="Stretch">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock>
+                                                            <TextBlock.Text>
+                                                                <MultiBinding StringFormat="{}{0} {1}">
+                                                                    <Binding Path="Manufacturer" FallbackValue="" />
+                                                                    <Binding Path="ModelName" FallbackValue="" />
+                                                                </MultiBinding>
+                                                            </TextBlock.Text>
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                        </Grid>
+
+                                        <Grid ColumnDefinitions="Auto,Auto,*">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.Model}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.Model.Help}" />
                                             <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibModel}" />
@@ -281,6 +335,37 @@
                                     </StackPanel>
                                 </StackPanel>
                             </ContentControl>
+
+                            <!-- Pwr + Tune: direct-request feature (user quote: "TUNE button that
+                                 works like WSJTX ... so that we can set our Pwr slider to the TX
+                                 power output we want"). Deliberately NOT gated behind this dialog's
+                                 usual Save button — see TxVolumePercent's own doc comment for why;
+                                 this is the same live, debounced-persist shape as the header's own
+                                 Pwr slider, not part of the edit-buffer-committed-on-Save pattern
+                                 every other field on this tab follows. -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.PwrHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.PwrLabel}" VerticalAlignment="Center" />
+                                        <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}"
+                                                Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding TxVolumeDisplay}" VerticalAlignment="Center" />
+                                    </Grid>
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                Content="{Binding TuneButtonLabel}"
+                                                Command="{Binding TuneCommand}"
+                                                ToolTip.Tip="{loc:Translate Options.Radio.Tune.Help}" />
+                                        <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center"
+                                                   Text="{Binding TuneErrorMessage}"
+                                                   Foreground="{StaticResource IndustryDanger}"
+                                                   IsVisible="{Binding TuneErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </HeaderedContentControl>
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
                         </StackPanel>

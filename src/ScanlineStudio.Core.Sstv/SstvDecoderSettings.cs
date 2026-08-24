@@ -7,8 +7,8 @@ namespace ScanlineStudio.Core.Sstv;
 ///
 /// <b>Nullable, not a plain <see cref="bool"/> with a <c>= true</c> initializer</b> -- System.Text.Json
 /// does not honor property-initializer defaults for <c>init</c>-only properties absent from the JSON
-/// payload (see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>'s doc comment for
-/// the full explanation). The desired default for every field here is <see langword="true"/> (matches
+/// payload (see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.CaptureThreadPriority</c>'s doc
+/// comment for the full explanation). The desired default for every field here is <see langword="true"/> (matches
 /// today's always-on behavior) -- <b>except <see cref="AutoStopEnabled"/></b>, whose own desired default
 /// is <see langword="false"/> (legacy's real fresh-startup default too, <c>sys.m_AutoStop = 0</c>,
 /// <c>Main.cpp:900</c>) -- deliberately not the CLR default for every other <see cref="bool"/> field, so

@@ -172,51 +172,22 @@
             <ControlTheme x:Key="IndustryBlueprintBorderTheme" TargetType="ContentControl">
                 <!-- ClipToBounds=False, same Phase 3 fix/reasoning as IndustryGroupBoxTheme above. -->
                 <Setter Property="ClipToBounds" Value="False" />
+                <!-- User-reported fix (2026-08-23): the 4 corner-mark Canvas/Path blocks this
+                     template used to draw unconditionally (VFO A, and every Options group box that
+                     uses this theme) are removed entirely — unlike IndustryGroupBoxTheme's own
+                     corner marks (gated by the "blueprint" class, default off), this theme had no
+                     off switch at all, so every one of its call sites showed corners whether or not
+                     that matched the site's own intent. Name kept as-is (still the plain bordered
+                     ContentControl wrapper used throughout Options) even though "Blueprint" no
+                     longer describes what it draws — renaming it would mean touching every call
+                     site's Theme reference for a purely cosmetic rename, out of scope here. -->
                 <Setter Property="Template">
                     <ControlTemplate>
-                        <Grid>
-                            <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
-                                    CornerRadius="0" Padding="{TemplateBinding Padding}">
-                                <ContentPresenter Content="{TemplateBinding Content}"
-                                                   ContentTemplate="{TemplateBinding ContentTemplate}" />
-                            </Border>
-                            <Canvas Width="11" Height="11" Margin="-5,-5,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" UseLayoutRounding="False">
-                                <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
-                                      StrokeThickness="1"
-                                      Stretch="None"
-                                      UseLayoutRounding="False"
-                                      RenderOptions.EdgeMode="Aliased"
-                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
-                            </Canvas>
-                            <Canvas Width="11" Height="11" Margin="0,-5,-5,0" HorizontalAlignment="Right" VerticalAlignment="Top" IsHitTestVisible="False" UseLayoutRounding="False">
-                                <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
-                                      StrokeThickness="1"
-                                      Stretch="None"
-                                      UseLayoutRounding="False"
-                                      RenderOptions.EdgeMode="Aliased"
-                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
-                            </Canvas>
-                            <Canvas Width="11" Height="11" Margin="-5,0,0,-5" HorizontalAlignment="Left" VerticalAlignment="Bottom" IsHitTestVisible="False" UseLayoutRounding="False">
-                                <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
-                                      StrokeThickness="1"
-                                      Stretch="None"
-                                      UseLayoutRounding="False"
-                                      RenderOptions.EdgeMode="Aliased"
-                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
-                            </Canvas>
-                            <Canvas Width="11" Height="11" Margin="0,0,-5,-5" HorizontalAlignment="Right" VerticalAlignment="Bottom" IsHitTestVisible="False" UseLayoutRounding="False">
-                                <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
-                                      StrokeThickness="1"
-                                      Stretch="None"
-                                      UseLayoutRounding="False"
-                                      RenderOptions.EdgeMode="Aliased"
-                                      Data="M 5.5,0 L 5.5,11 M 0,5.5 L 11,5.5" />
-                            </Canvas>
-                        </Grid>
+                        <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                                CornerRadius="0" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}"
+                                               ContentTemplate="{TemplateBinding ContentTemplate}" />
+                        </Border>
                     </ControlTemplate>
                 </Setter>
             </ControlTheme>
@@ -368,20 +339,36 @@
                     <ControlTemplate>
                         <Border Background="Transparent" BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="0">
-                            <Grid ColumnDefinitions="18,*,18">
+                            <!-- User-reported layout fix (2026-08-23): was "- <value> +" (a button on
+                                 each side of the value); now "<value>-+" (value on the left, both
+                                 buttons stuck together on the right, no divider lines) — matches every
+                                 real stepper widget convention (spinner arrows/buttons live together
+                                 on one side, never flanking the value) and is what the user explicitly
+                                 asked for. Column order flipped (value first, then Decrease, then
+                                 Increase). No BorderThickness on either RepeatButton (round 2, same
+                                 user report): an 18px-wide button leaves barely any gap between its own
+                                 left border and its centered glyph, so a divider line there reads as an
+                                 extra stroke stuck to the glyph rather than a real separator — only the
+                                 outer control border (from ButtonSpinner's own BorderBrush/
+                                 BorderThickness, set where IndustryStepperTheme hosts PART_Spinner)
+                                 remains. -->
+                            <Grid ColumnDefinitions="*,18,18">
                                 <!-- Glyphs as Path geometry, not a literal Text= character: matches
                                      ChromeOverrides.axaml's own existing ButtonSpinner-glyph
                                      convention, and avoids NoHardcodedAxamlStringsTests's blanket
                                      ban on literal Text=/Content=/Header= attributes. -->
+                                <ContentPresenter Name="PART_ContentPresenter" Grid.Column="0"
+                                                   Content="{TemplateBinding Content}"
+                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
+                                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
                                 <!-- MinWidth/MinHeight="0" (round-2 code-review risk): the old
                                      design's own ButtonSpinner theme (ChromeOverrides.axaml's
                                      PART_IncreaseButton/PART_DecreaseButton) sets both explicitly,
                                      strong evidence Fluent's RepeatButton imposes a non-zero
                                      default minimum that would otherwise overflow this fixed
                                      18px column and overlap the value TextBox. -->
-                                <RepeatButton Name="PART_DecreaseButton" Grid.Column="0"
-                                              Background="Transparent" BorderThickness="0,0,1,0"
-                                              BorderBrush="{StaticResource IndustryControlBorder}" CornerRadius="0"
+                                <RepeatButton Name="PART_DecreaseButton" Grid.Column="1"
+                                              Background="Transparent" BorderThickness="0" CornerRadius="0"
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
@@ -403,13 +390,8 @@
                                           Stretch="None"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </RepeatButton>
-                                <ContentPresenter Name="PART_ContentPresenter" Grid.Column="1"
-                                                   Content="{TemplateBinding Content}"
-                                                   ContentTemplate="{TemplateBinding ContentTemplate}"
-                                                   HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch" />
                                 <RepeatButton Name="PART_IncreaseButton" Grid.Column="2"
-                                              Background="Transparent" BorderThickness="1,0,0,0"
-                                              BorderBrush="{StaticResource IndustryControlBorder}" CornerRadius="0"
+                                              Background="Transparent" BorderThickness="0" CornerRadius="0"
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
@@ -516,7 +498,19 @@
             <ControlTheme x:Key="IndustrySegTheme" TargetType="RadioButton">
                 <Setter Property="Template">
                     <ControlTemplate>
-                        <Border Name="PART_Face" Margin="-1,0,0,0"
+                        <!-- User-reported fix (2026-08-23): Margin="-1,0,0,0" used to collapse each
+                             segment's left border onto its previous sibling's right border, so
+                             adjacent segments shared one crisp 1px line instead of a doubled 2px one
+                             — but every segment in the group gets this same negative margin from one
+                             shared ControlTheme, including the FIRST one, which has no previous
+                             sibling to collapse onto: its own left border just gets pulled 1px
+                             outside the group's visible left edge instead, so the whole group's first
+                             segment (USB in the sideband row, Auto in the Mode row, Both in the
+                             waterfall display-mode row, etc.) rendered with no visible left edge at
+                             all. No margin at all fixes every group's missing edge uniformly (the
+                             only trade-off is a hairline-thicker divider between segments, 2px instead
+                             of 1px — not visually meaningful next to a genuinely missing edge). -->
+                        <Border Name="PART_Face"
                                 Background="{StaticResource IndustrySurface}"
                                 BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
@@ -628,12 +622,12 @@
     </Style>
 
     <!-- 1. Group box -->
-    <Style Selector="HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTL,
-                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerTR,
-                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerBL,
-                      HeaderedContentControl.blueprint /template/ Canvas#PART_CornerBR">
-        <Setter Property="IsVisible" Value="True" />
-    </Style>
+    <!-- User-reported fix (2026-08-23): blueprint corner marks removed app-wide — this rule used
+         to flip PART_CornerTL/TR/BL/BR back to visible for the "blueprint" class's 2 sites
+         (Incoming-frame, Editor); IndustryGroupBoxTheme's own template default (IsVisible="False")
+         now applies unconditionally everywhere instead. Left deleted, not set to False here, since
+         the template's own default already achieves that — keeping a dead Style rule around that
+         sets exactly what the default already is would just be confusing dead weight. -->
     <Style Selector="TextBlock.IndustryGbTitle">
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
@@ -661,11 +655,17 @@
          chip nests its 2 TextBlocks inside a Panel (RadioHeaderView.axaml's CatLinked/CatNotLinked
          pair), which a " > TextBlock" selector can't reach, so that one chip silently missed every
          setter below (font, size, weight, and the IndustryText foreground fix). -->
+    <!-- User-reported fix (2026-08-23): no VerticalAlignment here previously — worked by luck at
+         most call sites (Border's own fixed Height=17 happened to match the TextBlock's natural
+         line height closely enough), but the AUTO-DETECT chip's plain Border+TextBlock rendered
+         text noticeably too high. Explicit Center here fixes every Border.IndustryMini chip
+         uniformly. -->
     <Style Selector="Border.IndustryMini TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <!-- 2026-08-14: recolored blue -> green. Only real consumer is the status bar's "Rx" pill
          (MainWindow.axaml, bound to RadioStatus.IsReceiving) — a STATUS indicator ("receiving"),
@@ -837,6 +837,18 @@
                       Slider.Industry.h8 /template/ RepeatButton#PART_IncreaseButton">
         <Setter Property="Height" Value="8" />
     </Style>
+    <!-- User-requested fix: the header's Pwr slider (the only h8 user — every other slider in the
+         app uses h6) sat visibly taller than the RX level meter row right above it, even though
+         both tracks are already 8px, because IndustrySliderTheme's own PART_Thumb is a fixed
+         Width="3" Height="12" (matching the OLD meter's marker-overflow convention, item 6's own
+         doc comment) — it overflows an 8px track by 2px on each side, when the RX meter beside it
+         has no thumb at all to overflow. Scoped to .h8 only (its one real caller) so this does not
+         touch the shared IndustrySliderTheme's default thumb size, which every h6 slider elsewhere
+         (Waterfall Gain/Zero, TX image adjustments, the Output card's own Pwr row) still uses
+         unchanged. -->
+    <Style Selector="Slider.Industry.h8 /template/ Thumb#PART_Thumb">
+        <Setter Property="Height" Value="8" />
+    </Style>
     <Style Selector="Slider.Industry:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
@@ -885,6 +897,17 @@
         <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
         <Setter Property="HorizontalAlignment" Value="Left" />
     </Style>
+    <!-- RX level meter's own red/green range indicator (WSJT-X-style "is the incoming audio level
+         good for decoding" readout, user-directed) — overrides the plain-accent fill above when
+         the call site binds Classes.good/Classes.danger off a view-model bool. Reuses the existing
+         semantic IndustryHealthy/IndustryDanger tokens (already used elsewhere for status
+         pills/LEDs) rather than inventing new colors. -->
+    <Style Selector="Border.IndustryMeterFill.good">
+        <Setter Property="Background" Value="{StaticResource IndustryHealthy}" />
+    </Style>
+    <Style Selector="Border.IndustryMeterFill.danger">
+        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
+    </Style>
     <!-- Marker Height (12) intentionally exceeds the Grid's own Height (4) — confirmed against
          source CSS (SSTV Console.dc.html:41): ".trk b{top:-4px;width:3px;height:12px}" on a 4px
          track means the marker overflows the track by 4px on each side, vertically centered via a
@@ -914,6 +937,17 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
+        <!-- User-reported fix (2026-08-23): no variant below sets VerticalContentAlignment, so
+             centering depended entirely on each call site's own Padding happening to be vertically
+             symmetric against Fluent's default template. That held for most call sites (e.g. "Stop
+             TX"'s sibling "Transmit" button, the "+ TEXT"/"+ IMAGE"/"+ BOX" trio) but broke wherever
+             a call site set an explicitly asymmetric or zeroed vertical Padding for a different
+             reason (e.g. TxImageEditorPaneView's 21px FRONT/BACK/DUP/DEL buttons, whose
+             Padding="6,0" was added to fix vertical clipping at that small height, not to recenter
+             text) — that call site's text then rendered off-center relative to every other button.
+             One explicit Center here makes every IndustryBtn size variant vertically centered
+             regardless of its own Padding. -->
+        <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
     <!-- MinHeight paired with Height on every variant below (post-Phase-2-verification fix): same
          bug class already found and fixed on Menu.Industry/TabItem.Industry — Avalonia's layout
@@ -1564,11 +1598,19 @@
         <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
         <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
     </Style>
+    <!-- User-reported fix (2026-08-23): no VerticalAlignment here previously — some call sites
+         (e.g. the detected-mode lozenge, MainWindow.axaml) already set VerticalAlignment="Center"
+         inline on their own TextBlock as a per-site workaround; others (the CAT-link chip,
+         RadioHeaderView.axaml, whose two TextBlocks sit in a Panel rather than directly in the
+         StackPanel) never did, and rendered text too high. Explicit Center here fixes every
+         Border.IndustryStatus lozenge uniformly regardless of whether the call site remembered its
+         own inline override (a redundant inline Center is harmless). -->
     <Style Selector="Border.IndustryStatus TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{StaticResource IndustryStatusText}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="Border.IndustryStatus.healthyTint">
         <Setter Property="Background" Value="{StaticResource IndustryHealthyTint}" />

@@ -22,6 +22,12 @@ public sealed record RadioConnectionSettings
     /// name instead.</summary>
     public uint? HamlibModel { get; init; }
 
+    /// <summary>Discovery-order tier-1 user override path (spec/03-cat-layer.md's "Discovery order") --
+    /// a specific <c>libhamlib</c> file the user browsed to or an auto-detected path they accepted.
+    /// <see langword="null"/> means "run auto-detection" (tiers 2/3), matching
+    /// <c>HamlibLibraryLocator</c>'s own null-means-auto-detect contract exactly.</summary>
+    public string? HamlibLibraryPath { get; init; }
+
     public string? SerialPort { get; init; }
 
     public int? BaudRate { get; init; }

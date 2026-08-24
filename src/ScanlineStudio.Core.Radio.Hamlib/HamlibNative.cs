@@ -73,6 +73,23 @@ internal sealed class HamlibNative : IHamlibNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int RigGetLevelDelegate(nint rig, uint vfo, ulong level, out HamlibValue value);
 
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int RigLoadAllBackendsDelegate();
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int RigListForeachModelCallback(uint model, nint data);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate int RigListForeachModelDelegate(RigListForeachModelCallback cfunc, nint data);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate nint RigGetCapsCptrDelegate(uint model, int capsCptr);
+
+    // enum rig_caps_cptr_e (rig.h) -- order is VERSION=0, MFG_NAME=1, MODEL_NAME=2, STATUS=3; only
+    // the two this project reads are named here.
+    private const int RigCapsMfgNameCptr = 1;
+    private const int RigCapsModelNameCptr = 2;
+
     private readonly RigInitDelegate _rigInit;
     private readonly RigHandleOnlyDelegate _rigOpen;
     private readonly RigHandleOnlyDelegate _rigClose;
@@ -87,6 +104,9 @@ internal sealed class HamlibNative : IHamlibNative
     private readonly RigGetPttDelegate _rigGetPtt;
     private readonly RigVersionDelegate _rigVersion;
     private readonly RigGetLevelDelegate _rigGetLevel;
+    private readonly RigLoadAllBackendsDelegate _rigLoadAllBackends;
+    private readonly RigListForeachModelDelegate _rigListForeachModel;
+    private readonly RigGetCapsCptrDelegate _rigGetCapsCptr;
 
     public HamlibNative(INativeLibraryLoader loader, nint handle)
     {
@@ -106,6 +126,9 @@ internal sealed class HamlibNative : IHamlibNative
         // (spec/03-cat-layer.md's "Version gate"); P/Invoking it as a delegate would crash.
         _rigVersion = Resolve<RigVersionDelegate>(loader, handle, "rig_version");
         _rigGetLevel = Resolve<RigGetLevelDelegate>(loader, handle, "rig_get_level");
+        _rigLoadAllBackends = Resolve<RigLoadAllBackendsDelegate>(loader, handle, "rig_load_all_backends");
+        _rigListForeachModel = Resolve<RigListForeachModelDelegate>(loader, handle, "rig_list_foreach_model");
+        _rigGetCapsCptr = Resolve<RigGetCapsCptrDelegate>(loader, handle, "rig_get_caps_cptr");
     }
 
     public nint RigInit(uint model) => _rigInit(model);
@@ -147,6 +170,38 @@ internal sealed class HamlibNative : IHamlibNative
         var code = _rigGetLevel(rig, vfo, level, out var native);
         value = native.IntValue;
         return code;
+    }
+
+    public int RigLoadAllBackends() => _rigLoadAllBackends();
+
+    public IReadOnlyList<uint> RigListModelIds()
+    {
+        var models = new List<uint>();
+
+        // The delegate instance must stay alive for the duration of this native call --
+        // Marshal.GetFunctionPointerForDelegate (used internally when passing a delegate as a native
+        // callback parameter) hands the native side a raw function pointer with no managed reference
+        // keeping the delegate object alive, so an unrooted delegate is a real use-after-free risk if
+        // the GC collects it mid-enumeration. GC.KeepAlive below pins it past the native call.
+        RigListForeachModelCallback callback = (model, _) =>
+        {
+            models.Add(model);
+            return 1; // non-zero = continue enumeration (rig_list_foreach_model returns early on 0)
+        };
+
+        _rigListForeachModel(callback, nint.Zero);
+        GC.KeepAlive(callback);
+        return models;
+    }
+
+    public string? RigGetCapsMfgName(uint model) => DecodeCapsCptr(model, RigCapsMfgNameCptr);
+
+    public string? RigGetCapsModelName(uint model) => DecodeCapsCptr(model, RigCapsModelNameCptr);
+
+    private string? DecodeCapsCptr(uint model, int capsCptr)
+    {
+        var ptr = _rigGetCapsCptr(model, capsCptr);
+        return ptr == nint.Zero ? null : Marshal.PtrToStringUTF8(ptr);
     }
 
     private static TDelegate Resolve<TDelegate>(INativeLibraryLoader loader, nint handle, string exportName)
