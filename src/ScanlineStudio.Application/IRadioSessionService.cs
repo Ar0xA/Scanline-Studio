@@ -22,6 +22,10 @@ public interface IRadioSessionService
     /// <see cref="Capabilities"/>.</summary>
     string RigId { get; }
 
+    /// <summary>Pass-through of <see cref="IRadioController.IsGenuinelyConnected"/> — see that
+    /// member's own doc comment for how it differs from <see cref="RigId"/>.</summary>
+    bool IsGenuinelyConnected { get; }
+
     IObservable<RadioState> StateChanges { get; }
 
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }

@@ -18,6 +18,7 @@ using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
+using ScanlineStudio.Core.Radio.Flrig;
 using ScanlineStudio.Core.Radio.Hamlib;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
@@ -435,7 +436,16 @@ internal static partial class Program
         services.AddSingleton<IRadioProtocolFactory, NoneRadioProtocolFactory>();
         services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
         services.AddSingleton<IRadioProtocolFactory>(CreateHamlibProtocolFactory);
+        services.AddSingleton<IRadioProtocolFactory, FlrigProtocolFactory>();
         services.AddSingleton<IRadioController, RadioController>();
+
+        // flrig's own named HttpClient -- explicit Timeout backstop (see FlrigClientProtocol's own
+        // doc comment for why a per-call CancellationToken alone isn't enough: the un-key retry path
+        // deliberately calls SetPttAsync with CancellationToken.None). RemoveAllLoggers() here is for
+        // hot-path log volume (up to ~16 requests/sec at the default 250ms poll interval, each RPC
+        // logged at Information by IHttpClientFactory's own handler) -- NOT credential leakage like
+        // QrzXmlLookup above; flrig's URI carries no credentials.
+        services.AddHttpClient("Flrig", c => c.Timeout = TimeSpan.FromSeconds(10)).RemoveAllLoggers();
 
         // Options-dialog-facing Hamlib path/rig-list probing (spec/03-cat-layer.md's "Discovery
         // order", tier 1) -- a separate service from IRadioProtocolFactory above since a probe here

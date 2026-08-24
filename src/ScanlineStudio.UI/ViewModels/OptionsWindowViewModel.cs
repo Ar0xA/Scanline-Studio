@@ -187,6 +187,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _hamlibPttPort;
 
+    /// <summary>Own field set, not shared with <see cref="RigctldHost"/>/<see cref="RigctldPort"/> --
+    /// different service, different default port (12345, flrig's own default), and sharing would let
+    /// editing one backend's panel spuriously invalidate the other's test state.</summary>
+    [ObservableProperty]
+    private string? _flrigHost = "127.0.0.1";
+
+    [ObservableProperty]
+    private int? _flrigPort = 12345;
+
     [ObservableProperty]
     private string? _callsign;
 
@@ -393,13 +402,39 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// instead, that path could change it silently and this property would go stale.</summary>
     private void OnConnectionEvent(RadioConnectionEvent evt)
     {
-        if (evt.State is not (RadioConnectionState.Connected or RadioConnectionState.Disconnected))
+        Dispatcher.UIThread.Post(() =>
         {
-            return;
-        }
+            // IsRadioConnected itself stays exactly as documented above -- only Connected/Disconnected
+            // touch it, deliberately, so the button's action/enablement never flaps during a normal
+            // backoff retry. RadioLinkStatusMessage is a SEPARATE, purely presentational signal built
+            // on IsGenuinelyConnected, which DOES reset on Reconnecting/Failed -- so it must be
+            // re-evaluated on every event, not just these two, or it would freeze (stop updating, not
+            // show wrong text) for the whole duration of a later backoff episode. Order matters:
+            // IsRadioConnected is assigned FIRST so RadioLinkStatusMessage's own getter (which reads
+            // IsRadioConnected) sees the settled value when the explicit notify below runs, not the
+            // stale one from before this event.
+            if (evt.State is RadioConnectionState.Connected or RadioConnectionState.Disconnected)
+            {
+                IsRadioConnected = evt.State == RadioConnectionState.Connected;
+            }
 
-        Dispatcher.UIThread.Post(() => IsRadioConnected = evt.State == RadioConnectionState.Connected);
+            OnPropertyChanged(nameof(RadioLinkStatusMessage));
+        });
     }
+
+    /// <summary>Purely presentational -- see <see cref="OnConnectionEvent"/>'s own comment for why this
+    /// is deliberately separate from <see cref="IsRadioConnected"/> rather than folded into it. User-
+    /// reported gap: the button correctly says "Disconnect" the instant a backend resolves (see
+    /// <see cref="IsRadioConnected"/>'s own doc comment for why that's correct), but nothing told the
+    /// operator whether that session had ever actually been verified reachable -- this fills that gap
+    /// without touching the button's own action/enablement contract at all. `RadioBackendId != "none"`
+    /// guards the "None" backend specifically: its own poll never returns (there is nothing to
+    /// confirm), so without this a stray Connected event reaching an open dialog for "no radio
+    /// configured" could show "not yet confirmed reachable" for a config with nothing to reach.</summary>
+    public string? RadioLinkStatusMessage =>
+        IsRadioConnected && !_radioSession.IsGenuinelyConnected && RadioBackendId != "none"
+            ? _localization.GetString("Options.Radio.Connect.NotYetConfirmed")
+            : null;
 
     public IReadOnlyList<CultureInfo> AvailableCultures => _localization.AvailableCultures;
 
@@ -495,9 +530,25 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
     private bool _hamlibPttTestSucceeded;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _flrigTestSucceeded;
+
+    /// <summary>Unlike <see cref="HamlibPttTestSucceeded"/>, no VOX-style exemption -- flrig has
+    /// exactly one PTT mechanism (<c>rig.set_ptt</c>), always a real keying action, so this is always
+    /// required to connect.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _flrigPttTestSucceeded;
+
     public bool CanConnectRadio =>
         IsRigctldBackendSelected ? RigctldTestSucceeded :
         IsHamlibBackendSelected ? HamlibCatTestSucceeded && (HamlibPttTestSucceeded || IsPttMethodVoxSelected) :
+        IsFlrigBackendSelected ? FlrigTestSucceeded && FlrigPttTestSucceeded :
         false; // None (nothing to connect to) or no backend selected.
 
     /// <summary>Bound to the Connect/Disconnect button's own <c>IsEnabled</c> -- Connect is gated by
@@ -515,6 +566,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         false when IsRigctldBackendSelected && !RigctldTestSucceeded => "Options.Radio.Connect.Help.NeedsTestConnection",
         false when IsHamlibBackendSelected && !HamlibCatTestSucceeded => "Options.Radio.Connect.Help.NeedsTestCat",
         false when IsHamlibBackendSelected && !HamlibPttTestSucceeded && !IsPttMethodVoxSelected => "Options.Radio.Connect.Help.NeedsTestPtt",
+        false when IsFlrigBackendSelected && !FlrigTestSucceeded => "Options.Radio.Connect.Help.NeedsTestConnection",
+        false when IsFlrigBackendSelected && !FlrigPttTestSucceeded => "Options.Radio.Connect.Help.NeedsTestPtt",
         false => "Options.Radio.Connect.Help",
     });
 
@@ -612,6 +665,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     }
 
     public bool IsHamlibSelected => RadioBackendId == "hamlib";
+
+    public bool IsFlrigBackendSelected
+    {
+        get => RadioBackendId == "flrig";
+        set
+        {
+            if (value)
+            {
+                RadioBackendId = "flrig";
+            }
+        }
+    }
+
+    public bool IsFlrigSelected => RadioBackendId == "flrig";
 
     /// <summary>Backs the Radio/CAT tab's PTT-method 4-way radio group -- same computed-property
     /// idiom as <see cref="IsNoneBackendSelected"/>/etc., over the existing <see cref="HamlibPttType"/>
@@ -768,10 +835,82 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Radio/CAT tab's flrig "Test connection" button -- same throwaway-protocol contract as
+    /// <see cref="TestRigctldConnectionAsync"/> above (tests whatever is CURRENTLY TYPED into
+    /// <see cref="FlrigHost"/>/<see cref="FlrigPort"/>, possibly not yet saved), reusing the same
+    /// <see cref="TestConnectionStatusMessage"/>/<see cref="IsTestingConnection"/> fields -- safe
+    /// since only one backend section is ever visible at a time. Never keys PTT -- reachability only,
+    /// see <see cref="TestFlrigPttAsync"/> for the actual PTT-key test.</summary>
+    private bool CanTestFlrigConnection() => !IsTestingConnection && !string.IsNullOrWhiteSpace(FlrigHost) && FlrigPort is > 0;
+
+    [RelayCommand(CanExecute = nameof(CanTestFlrigConnection))]
+    private async Task TestFlrigConnectionAsync()
+    {
+        if (FlrigHost is not { } host || FlrigPort is not { } port)
+        {
+            return;
+        }
+
+        if (_radioSession.RigId != "none")
+        {
+            TestConnectionStatusMessage = _localization.GetString("Options.Radio.Flrig.AlreadyConnected");
+            return;
+        }
+
+        Log.TestFlrigConnectionInvoked(_logger, host, port);
+        IsTestingConnection = true;
+        FlrigTestSucceeded = false;
+        TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
+        try
+        {
+            var result = await _radioSession.TestConnectionAsync(new FlrigConnectionSpec(host, port)).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                FlrigTestSucceeded = result.Success;
+                try
+                {
+                    TestConnectionStatusMessage = result.Success
+                        ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
+                        : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Log.TestFlrigConnectionStatusDisplayFailed(_logger, ex);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.TestFlrigConnectionFailed(_logger, host, port, ex);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
+                }
+                catch (Exception formatEx)
+                {
+                    Log.TestFlrigConnectionStatusDisplayFailed(_logger, formatEx);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+    }
+
     partial void OnIsTestingConnectionChanged(bool value)
     {
         TestRigctldConnectionCommand.NotifyCanExecuteChanged();
         TestHamlibConnectionCommand.NotifyCanExecuteChanged();
+        TestFlrigConnectionCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnRigctldHostChanged(string? value)
@@ -784,6 +923,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         TestRigctldConnectionCommand.NotifyCanExecuteChanged();
         RigctldTestSucceeded = false;
+    }
+
+    partial void OnFlrigHostChanged(string? value)
+    {
+        TestFlrigConnectionCommand.NotifyCanExecuteChanged();
+        FlrigTestSucceeded = false;
+        FlrigPttTestSucceeded = false;
+    }
+
+    partial void OnFlrigPortChanged(int? value)
+    {
+        TestFlrigConnectionCommand.NotifyCanExecuteChanged();
+        FlrigTestSucceeded = false;
+        FlrigPttTestSucceeded = false;
     }
 
     partial void OnHamlibModelChanged(uint? value)
@@ -979,6 +1132,63 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // is nulled/disposed left a narrow window where a click's `_testPttCts?.Cancel()` could
             // race this finally's own cts.Dispose(), throwing ObjectDisposedException. With this
             // order, any click that observes IsTestingPtt == true finds _testPttCts still live.
+            _testPttCts = null;
+            cts.Dispose();
+            IsTestingPtt = false;
+        }
+    }
+
+    /// <summary>flrig's own PTT-key test -- same start/stop toggle shape as <see cref="TestPttAsync"/>
+    /// above (shares <see cref="IsTestingPtt"/>/<see cref="TestPttErrorMessage"/>/<see cref="_testPttCts"/>,
+    /// same "only one backend section visible at a time" safety as the shared test-status fields
+    /// elsewhere in this class), capped at the same <see cref="MaxTestPttDuration"/>. No
+    /// <see cref="CanTestPtt"/>-style VOX exemption check -- flrig has exactly one PTT mechanism.</summary>
+    [RelayCommand(AllowConcurrentExecutions = true)]
+    private async Task TestFlrigPttAsync()
+    {
+        if (IsTestingPtt)
+        {
+            _testPttCts?.Cancel();
+            return;
+        }
+
+        if (FlrigHost is not { } host || FlrigPort is not { } port)
+        {
+            return;
+        }
+
+        if (_radioSession.RigId != "none")
+        {
+            TestPttErrorMessage = _localization.GetString("Options.Radio.Flrig.AlreadyConnected");
+            return;
+        }
+
+        Log.TestFlrigPttInvoked(_logger, host, port, MaxTestPttDuration.TotalSeconds);
+        TestPttErrorMessage = null;
+        IsTestingPtt = true;
+        FlrigPttTestSucceeded = false;
+        var cts = new CancellationTokenSource();
+        _testPttCts = cts;
+        var spec = new FlrigConnectionSpec(host, port);
+        try
+        {
+            // RadioSessionService.TestPttAsync's own contract: always returns a result, never
+            // throws -- same reasoning as TestPttAsync's own call above.
+            var result = await _radioSession.TestPttAsync(spec, MaxTestPttDuration, cts.Token).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() => FlrigPttTestSucceeded = result.Success);
+            if (!result.Success)
+            {
+                Dispatcher.UIThread.Post(() => TestPttErrorMessage = result.ErrorMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.TestFlrigPttFailed(_logger, host, port, ex);
+            Dispatcher.UIThread.Post(() => TestPttErrorMessage = ex.Message);
+        }
+        finally
+        {
+            // Same ordering reasoning as TestPttAsync's own finally block above.
             _testPttCts = null;
             cts.Dispose();
             IsTestingPtt = false;
@@ -1267,13 +1477,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// OperationCanceledException handling, which this feeds.</summary>
     public void StopTuneIfActive() => _tuneCts?.Cancel();
 
-    /// <summary>Toggle state for <see cref="TestPttCommand"/> -- see <see cref="IsTuning"/>'s own
+    /// <summary>Toggle state for <see cref="TestPttCommand"/>/<see cref="TestFlrigPttCommand"/> --
+    /// shared across both (only one backend section is ever visible at a time, same reasoning as
+    /// <see cref="TestConnectionStatusMessage"/>'s own sharing) -- see <see cref="IsTuning"/>'s own
     /// doc comment for the identical pattern.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TestPttButtonLabel))]
+    [NotifyPropertyChangedFor(nameof(TestFlrigPttButtonLabel))]
     private bool _isTestingPtt;
 
     public string TestPttButtonLabel => _localization.GetString(IsTestingPtt ? "Options.Radio.Hamlib.TestPtt.Stop" : "Options.Radio.Hamlib.TestPtt");
+
+    public string TestFlrigPttButtonLabel => _localization.GetString(IsTestingPtt ? "Options.Radio.Flrig.TestPtt.Stop" : "Options.Radio.Flrig.TestPtt");
 
     [ObservableProperty]
     private string? _testPttErrorMessage;
@@ -1602,7 +1817,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             RefreshSerialPorts();
 
             var appSettings = await _settingsStore.LoadAsync();
-            RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? false;
+            RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? true;
             JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
 
             await _audioDeviceEnumerator.RefreshAsync();
@@ -1662,7 +1877,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         CaptureChannelSource = Enum.IsDefined(snapshot.CaptureChannelSource) ? snapshot.CaptureChannelSource : AudioChannelSource.Mono;
         StereoTxEnabled = snapshot.StereoTxEnabled;
         AppPriorityIsHigh = snapshot.AppPriorityIsHigh;
-        RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" ? snapshot.RadioBackendId : "none";
+        RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" or "flrig" ? snapshot.RadioBackendId : "none";
         RigctldHost = snapshot.RigctldHost;
         RigctldPort = snapshot.RigctldPort;
         HamlibModel = snapshot.HamlibModel;
@@ -1681,6 +1896,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             ? snapshot.HamlibPttType
             : "RIG";
         HamlibPttPort = snapshot.HamlibPttPort;
+        FlrigHost = snapshot.FlrigHost;
+        FlrigPort = snapshot.FlrigPort;
         Callsign = snapshot.Callsign;
         OperatorName = snapshot.OperatorName;
         OperatorGrid = snapshot.OperatorGrid;
@@ -1772,6 +1989,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             HamlibBaudRate: HamlibBaudRate,
             HamlibPttType: HamlibPttType,
             HamlibPttPort: HamlibPttPort,
+            FlrigHost: FlrigHost,
+            FlrigPort: FlrigPort,
             Callsign: Callsign,
             OperatorName: OperatorName,
             OperatorGrid: OperatorGrid,
@@ -1851,7 +2070,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         // Language ComboBox on every Reset -- ApplyFromSnapshot already has this exact fallback for
         // the same reason (see its own line), applied here too.
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode) ?? _localization.CurrentCulture;
-        RememberWindowPosition = false;
+        RememberWindowPosition = true;
         JpegQuality = 85;
     }
 
@@ -1884,6 +2103,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         // why null selects nothing among the 4 fixed radio buttons.
         HamlibPttType = "RIG";
         HamlibPttPort = defaults.HamlibPttPort;
+        FlrigHost = defaults.FlrigHost;
+        FlrigPort = defaults.FlrigPort;
         // Tier B audit finding: sibling ResetQrzToDefault already clears its own test-result status
         // (TestQrzLookupStatus) -- this one didn't, so a prior "Connected to IC-7300" success line
         // stayed visible under the now-blank host field after a reset.
@@ -1899,6 +2120,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         RigctldTestSucceeded = false;
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
+        FlrigTestSucceeded = false;
+        FlrigPttTestSucceeded = false;
     }
 
     [RelayCommand]
@@ -2037,15 +2260,24 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         OnPropertyChanged(nameof(IsRigctldSelected));
         OnPropertyChanged(nameof(IsHamlibSelected));
+        OnPropertyChanged(nameof(IsFlrigSelected));
         OnPropertyChanged(nameof(IsNoneBackendSelected));
         OnPropertyChanged(nameof(IsRigctldBackendSelected));
         OnPropertyChanged(nameof(IsHamlibBackendSelected));
+        OnPropertyChanged(nameof(IsFlrigBackendSelected));
 
         // Plan-review finding: without this, a stale rigctld test result stays visible after
         // switching to the Hamlib panel (they share TestConnectionStatusMessage), and vice versa --
         // both panels are never shown at once, but the message field is.
         TestConnectionStatusMessage = null;
         TestPttErrorMessage = null;
+
+        // Code-review finding: RadioLinkStatusMessage reads RadioBackendId (the "None" guard) but
+        // nothing re-raised it on a backend switch -- since ApplyFromSnapshot sets the real backend
+        // AFTER the dialog's first binding evaluation (it runs from LoadSafeAsync, a fire-and-forget
+        // task started in the constructor), a dialog opened on an already-broken session could show
+        // nothing until the next Reconnecting tick, up to 30s away at a saturated backoff cap.
+        OnPropertyChanged(nameof(RadioLinkStatusMessage));
     }
 
     partial void OnSenseLevelChanged(int value)
@@ -2165,6 +2397,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPtt(model={Model}) threw unexpectedly")]
         public static partial void TestPttFailed(ILogger logger, uint model, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestFlrigConnection invoked: host={Host}, port={Port}")]
+        public static partial void TestFlrigConnectionInvoked(ILogger logger, string host, int port);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestFlrigConnection({Host}:{Port}) threw unexpectedly")]
+        public static partial void TestFlrigConnectionFailed(ILogger logger, string host, int port, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the flrig connection-test result status message failed; status left blank")]
+        public static partial void TestFlrigConnectionStatusDisplayFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestFlrigPtt invoked: {Host}:{Port} for up to {MaxSeconds}s")]
+        public static partial void TestFlrigPttInvoked(ILogger logger, string host, int port, double maxSeconds);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestFlrigPtt({Host}:{Port}) threw unexpectedly")]
+        public static partial void TestFlrigPttFailed(ILogger logger, string host, int port, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "DisconnectRadio invoked")]
         public static partial void DisconnectRadioInvoked(ILogger logger);

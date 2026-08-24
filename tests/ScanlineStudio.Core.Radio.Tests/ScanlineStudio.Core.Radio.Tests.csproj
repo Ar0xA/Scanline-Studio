@@ -22,6 +22,7 @@
     <ProjectReference Include="..\..\src\ScanlineStudio.Core.Radio.Cat\ScanlineStudio.Core.Radio.Cat.csproj" />
     <ProjectReference Include="..\..\src\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />
     <ProjectReference Include="..\..\src\ScanlineStudio.Core.Radio.Hamlib\ScanlineStudio.Core.Radio.Hamlib.csproj" />
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Radio.Flrig\ScanlineStudio.Core.Radio.Flrig.csproj" />
   </ItemGroup>
 
 </Project>

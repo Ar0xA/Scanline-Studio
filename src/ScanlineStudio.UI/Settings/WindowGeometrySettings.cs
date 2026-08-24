@@ -11,17 +11,16 @@ namespace ScanlineStudio.UI.Settings;
 /// it gates (<c>Main.cpp:1686-1692</c> load, <c>:2214-2224</c> save -- both gated on
 /// <c>sys.m_MemWindow</c>; save is ALSO gated on <c>WindowState == wsNormal</c>, so geometry is
 /// never captured while maximized/minimized). <see cref="RememberWindowPosition"/>'s desired
-/// default when absent is <see langword="false"/> -- unlike this port's decoder-toggle settings
-/// (<c>SstvDecoderSettings</c>), legacy's own ctor-default list (<c>Main.cpp:890-920</c>) never
-/// assigns <c>sys.m_MemWindow</c> an explicit value, so there is no confirmed "shipped fresh-install
-/// default" to preserve either way -- <see langword="false"/> is the conservative choice (a fresh
-/// install won't silently restore/persist window bounds until the user opts in, and never risks
-/// applying a stale/nonsensical position on first run).</summary>
+/// default when absent is <see langword="true"/> -- legacy's own ctor-default list
+/// (<c>Main.cpp:890-920</c>) never assigns <c>sys.m_MemWindow</c> an explicit value, so there is no
+/// confirmed "shipped fresh-install default" to port either way; this project's own UX call is to
+/// remember window position/size out of the box, matching most users' actual expectation for a
+/// desktop app.</summary>
 public sealed record WindowGeometrySettings
 {
     public const string SectionKey = "WindowGeometry";
 
-    public bool? RememberWindowPosition { get; init; }
+    public bool? RememberWindowPosition { get; init; } = true;
 
     public double? Left { get; init; }
 

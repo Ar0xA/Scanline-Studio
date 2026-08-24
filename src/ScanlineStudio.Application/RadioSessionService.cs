@@ -28,6 +28,8 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public string RigId => _controller.RigId;
 
+    public bool IsGenuinelyConnected => _controller.IsGenuinelyConnected;
+
     public IObservable<RadioState> StateChanges => _controller.StateChanges;
 
     public IObservable<RadioConnectionEvent> ConnectionEvents => _controller.ConnectionEvents;

@@ -49,6 +49,8 @@ public sealed partial class OptionsSettingsService
         HamlibBaudRate: new RadioConnectionSettings().BaudRate,
         HamlibPttType: new RadioConnectionSettings().PttType,
         HamlibPttPort: new RadioConnectionSettings().PttPort,
+        FlrigHost: new RadioConnectionSettings().FlrigHost,
+        FlrigPort: new RadioConnectionSettings().FlrigPort,
         Callsign: new OperatorSettings().Callsign,
         OperatorName: new OperatorSettings().Name,
         OperatorGrid: new OperatorSettings().Grid,
@@ -133,6 +135,12 @@ public sealed partial class OptionsSettingsService
             HamlibBaudRate: radio.BaudRate,
             HamlibPttType: radio.PttType,
             HamlibPttPort: radio.PttPort,
+            // "?? default", not raw radio.FlrigHost/Port -- a settings.json predating this backend
+            // (or any future hand-edit dropping these keys) deserializes them as null regardless of
+            // RadioConnectionSettings' own init defaults, same reasoning as AutoSyncEnabled/etc.
+            // above use "?? true" for.
+            FlrigHost: radio.FlrigHost ?? "127.0.0.1",
+            FlrigPort: radio.FlrigPort ?? 12345,
             Callsign: operatorSettings.Callsign,
             OperatorName: operatorSettings.Name,
             OperatorGrid: operatorSettings.Grid,
@@ -242,6 +250,8 @@ public sealed partial class OptionsSettingsService
                     BaudRate = snapshot.HamlibBaudRate,
                     PttType = snapshot.HamlibPttType,
                     PttPort = snapshot.HamlibPttPort,
+                    FlrigHost = snapshot.FlrigHost,
+                    FlrigPort = snapshot.FlrigPort,
                 },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings)
             .WithSection(

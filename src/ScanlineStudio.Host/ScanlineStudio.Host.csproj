@@ -59,6 +59,7 @@
     <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Radio.Hamlib\ScanlineStudio.Core.Radio.Hamlib.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Radio.Flrig\ScanlineStudio.Core.Radio.Flrig.csproj" />
   </ItemGroup>
 
   <!-- Locale assets (spec/10-localization.md): repo-root assets/locale/**, copied alongside the

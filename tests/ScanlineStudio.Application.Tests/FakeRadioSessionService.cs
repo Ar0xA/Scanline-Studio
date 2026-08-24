@@ -17,6 +17,8 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <c>"none"</c> only in the new tests that exercise the no-radio-configured path.</summary>
     public string RigId { get; set; } = "fake-radio";
 
+    public bool IsGenuinelyConnected { get; set; }
+
     public IObservable<RadioState> StateChanges { get; } = System.Reactive.Linq.Observable.Never<RadioState>();
 
     public IObservable<RadioConnectionEvent> ConnectionEvents { get; } = System.Reactive.Linq.Observable.Never<RadioConnectionEvent>();
