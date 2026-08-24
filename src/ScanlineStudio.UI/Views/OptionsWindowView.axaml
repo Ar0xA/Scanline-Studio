@@ -223,6 +223,24 @@
                                                      ToolTip.Tip="{loc:Translate Options.Radio.Backend.FlRig.Help}" />
                                     </WrapPanel>
 
+                                    <!-- User-reported gap: the real session only ever connected at
+                                         app startup — Save alone needed a full restart before the
+                                         main window showed anything connected, and Test CAT/PTT's own
+                                         "disconnect first" guard had no way to be satisfied. Applies
+                                         regardless of which backend section below is expanded, since
+                                         it acts on whatever backend is ACTUALLY connected right now,
+                                         not necessarily the one currently shown/being edited. -->
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
+                                                Content="{Binding ConnectRadioButtonLabel}"
+                                                Command="{Binding ToggleRadioConnectionCommand}"
+                                                ToolTip.Tip="{loc:Translate Options.Radio.Connect.Help}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Margin="8,0,0,0"
+                                                   TextWrapping="Wrap"
+                                                   Text="{Binding ConnectRadioErrorMessage}"
+                                                   IsVisible="{Binding ConnectRadioErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </Grid>
+
                                     <StackPanel IsVisible="{Binding IsRigctldSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
                                         <Grid ColumnDefinitions="Auto,*">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Host}" />

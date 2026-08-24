@@ -442,6 +442,155 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("Options.Radio.Hamlib.AlreadyConnected", vm.TestConnectionStatusMessage);
     }
 
+    // User-reported gap: Test CAT/Test PTT's own "disconnect the active radio connection first"
+    // guard had no way to actually be satisfied -- IRadioSessionService.DisconnectAsync existed but
+    // no control anywhere in the app called it, and the real session only ever connected once at
+    // app startup (a Save needed a full restart before anything showed connected). These tests also
+    // cover the live-reproduced flapping bug: IsRadioConnected must NOT mirror RadioStatusViewModel.
+    // CatLinked's intentionally-flapping semantics (that property is a "reachable right now" status
+    // light) -- it tracks RigId's own STICKY contract instead (reset to "none" only on an explicit
+    // Disconnect, never by a transient reconnect-backoff cycle), or the button's own label can
+    // disagree with what the real Test CAT/PTT gate check says.
+
+    [AvaloniaFact]
+    public void IsRadioConnected_InitializesFromRigId()
+    {
+        var connected = new FakeRadioSessionService { RigId = "elecraft-k3" };
+        var vmConnected = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), connected, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vmConnected.IsRadioConnected);
+
+        var none = new FakeRadioSessionService { RigId = "none" };
+        var vmNone = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), none, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vmNone.IsRadioConnected);
+    }
+
+    [AvaloniaFact]
+    public void IsRadioConnected_DoesNotFlapOnTransientBackoffEvents()
+    {
+        // The exact bug: a poll-loop backoff cycle publishes Connecting/Reconnecting/Failed/
+        // CommandFailed repeatedly while RigId stays non-"none" the whole time -- none of those may
+        // flip this property, or a click during a retry lands on the wrong action.
+        var radioSession = new FakeRadioSessionService { RigId = "elecraft-k3" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsRadioConnected);
+
+        foreach (var state in new[] { RadioConnectionState.Connecting, RadioConnectionState.Reconnecting, RadioConnectionState.Failed, RadioConnectionState.CommandFailed })
+        {
+            radioSession.PushConnectionEvent(new RadioConnectionEvent(state, null, null, DateTimeOffset.UtcNow));
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.IsRadioConnected);
+        }
+    }
+
+    [AvaloniaFact]
+    public void IsRadioConnected_UpdatesOnConnectedAndDisconnectedEvents()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "none" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsRadioConnected);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsRadioConnected);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsRadioConnected);
+    }
+
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_WhenDisconnected_CallsConnectUsingSettings()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "none" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Options.Radio.Connect", vm.ConnectRadioButtonLabel);
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.ConnectUsingSettingsCallCount);
+        Assert.Equal(0, radioSession.DisconnectCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_WhenConnected_CallsDisconnectAndClearsStaleMessages()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "elecraft-k3" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Options.Radio.Disconnect", vm.ConnectRadioButtonLabel);
+        vm.HamlibModel = 1035;
+        await vm.TestHamlibConnectionCommand.ExecuteAsync(null); // sets a stale "already connected" message
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.TestConnectionStatusMessage);
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.DisconnectCallCount);
+        Assert.Equal(0, radioSession.ConnectUsingSettingsCallCount);
+        Assert.Null(vm.TestConnectionStatusMessage);
+        Assert.Null(vm.TestPttErrorMessage);
+        Assert.Null(vm.ConnectRadioErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_ConnectThrows_SetsErrorMessage()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            ConnectUsingSettingsExceptionToThrow = new InvalidOperationException("2 backends all claim RigctldConnectionSpec"),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("backends all claim", vm.ConnectRadioErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void Dispose_UnsubscribesFromConnectionEvents()
+    {
+        // Code-review finding: OptionsWindowViewModel is AddTransient (a fresh instance per dialog
+        // open) but subscribes to the singleton IRadioSessionService.ConnectionEvents stream --
+        // without disposing that subscription, every Options open permanently rooted a dead
+        // view-model graph for the app's remaining lifetime.
+        var radioSession = new FakeRadioSessionService { RigId = "none" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.Dispose();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsRadioConnected);
+    }
+
     [AvaloniaFact]
     public void TestHamlibConnectionCommand_CanExecute_FalseWithoutAModel()
     {

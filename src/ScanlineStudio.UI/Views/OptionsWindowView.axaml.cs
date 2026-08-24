@@ -26,6 +26,10 @@ public partial class OptionsWindowView : Window
                 Closed += (_, _) => vm.StopTuneIfActive();
                 // Same reasoning as StopTuneIfActive above, for the Radio/CAT tab's own Test PTT.
                 Closed += (_, _) => vm.StopTestPttIfActive();
+                // Code-review finding: this dialog's own view-model is transient (a fresh instance
+                // per open) but subscribes to the singleton radio session's ConnectionEvents stream
+                // -- without this, every Options open permanently rooted a dead view-model graph.
+                Closed += (_, _) => vm.Dispose();
             }
         };
     }
