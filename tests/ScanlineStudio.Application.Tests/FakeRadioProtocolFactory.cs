@@ -19,14 +19,48 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
 
     public bool Disposed { get; private set; }
 
-    public Task<RadioState> PollAsync(CancellationToken ct)
-        => PollExceptionToThrow is { } ex ? Task.FromException<RadioState>(ex) : Task.FromResult(StateToReturn);
+    /// <summary>Test-only hook: when set, <see cref="PollAsync"/> awaits this before returning --
+    /// lets a test hold a <c>TestPttAsync</c> call in-flight to prove its single-flight guard
+    /// rejects a concurrent second call.</summary>
+    public Task? PollGate { get; set; }
+
+    public async Task<RadioState> PollAsync(CancellationToken ct)
+    {
+        if (PollGate is not null)
+        {
+            await PollGate.ConfigureAwait(false);
+        }
+
+        if (PollExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        return StateToReturn;
+    }
 
     public Task SetFrequencyAsync(long hz, CancellationToken ct) => Task.CompletedTask;
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct) => Task.CompletedTask;
 
-    public Task SetPttAsync(bool tx, CancellationToken ct) => Task.CompletedTask;
+    public List<bool> SetPttCalls { get; } = [];
+
+    /// <summary>Scripts <see cref="SetPttAsync"/>'s next several calls, dequeued one per call --
+    /// <see langword="null"/> means "succeed." An empty queue means every call succeeds. Lets a test
+    /// drive <c>RadioSessionService.TestPttAsync</c>'s bounded un-key retry (fail N times then
+    /// succeed, or fail every time).</summary>
+    public Queue<Exception?> SetPttExceptionsToThrow { get; } = new();
+
+    public Task SetPttAsync(bool tx, CancellationToken ct)
+    {
+        SetPttCalls.Add(tx);
+        if (SetPttExceptionsToThrow.Count > 0 && SetPttExceptionsToThrow.Dequeue() is { } ex)
+        {
+            throw ex;
+        }
+
+        return Task.CompletedTask;
+    }
 
     public ValueTask DisposeAsync()
     {

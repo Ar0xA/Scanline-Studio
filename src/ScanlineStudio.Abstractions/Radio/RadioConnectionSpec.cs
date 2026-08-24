@@ -55,4 +55,11 @@ public sealed record HamlibConnectionSpec(uint Model) : RadioConnectionSpec
     public string? SerialPort { get; init; }
     public int? BaudRate { get; init; }
     public string? PttType { get; init; }
+
+    /// <summary>Hamlib's own <c>ptt_pathname</c> config token -- a PTT-only serial device, separate
+    /// from <see cref="SerialPort"/> (the CAT port). Only meaningful when <see cref="PttType"/> is
+    /// <c>"RTS"</c>/<c>"DTR"</c> (CAT/VOX/none key over the CAT link itself or not at all) -- passed
+    /// through unconditionally regardless, since Hamlib's own config layer ignores it for those
+    /// other PTT types (verified against <c>hamlib/src/rig.c</c>'s PTT-open path).</summary>
+    public string? PttPort { get; init; }
 }

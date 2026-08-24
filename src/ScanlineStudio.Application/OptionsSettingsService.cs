@@ -48,6 +48,7 @@ public sealed partial class OptionsSettingsService
         HamlibSerialPort: new RadioConnectionSettings().SerialPort,
         HamlibBaudRate: new RadioConnectionSettings().BaudRate,
         HamlibPttType: new RadioConnectionSettings().PttType,
+        HamlibPttPort: new RadioConnectionSettings().PttPort,
         Callsign: new OperatorSettings().Callsign,
         OperatorName: new OperatorSettings().Name,
         OperatorGrid: new OperatorSettings().Grid,
@@ -131,6 +132,7 @@ public sealed partial class OptionsSettingsService
             HamlibSerialPort: radio.SerialPort,
             HamlibBaudRate: radio.BaudRate,
             HamlibPttType: radio.PttType,
+            HamlibPttPort: radio.PttPort,
             Callsign: operatorSettings.Callsign,
             OperatorName: operatorSettings.Name,
             OperatorGrid: operatorSettings.Grid,
@@ -239,6 +241,7 @@ public sealed partial class OptionsSettingsService
                     SerialPort = snapshot.HamlibSerialPort,
                     BaudRate = snapshot.HamlibBaudRate,
                     PttType = snapshot.HamlibPttType,
+                    PttPort = snapshot.HamlibPttPort,
                 },
                 RadioSettingsJsonContext.Default.RadioConnectionSettings)
             .WithSection(

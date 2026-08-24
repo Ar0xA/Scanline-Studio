@@ -379,7 +379,7 @@ public class HamlibRadioProtocolTests
     {
         var native = new FakeHamlibNative();
         var sut = new HamlibRadioProtocol(
-            native, model: 1, serialPort: "/dev/ttyUSB0", baudRate: 9600, pttType: "RTS");
+            native, model: 1, serialPort: "/dev/ttyUSB0", baudRate: 9600, pttType: "RTS", pttPort: "/dev/ttyUSB1");
 
         await sut.PollAsync(CancellationToken.None);
 
@@ -391,9 +391,22 @@ public class HamlibRadioProtocolTests
         Assert.Contains("rig_token_lookup:rig_pathname", beforeOpen);
         Assert.Contains("rig_token_lookup:serial_speed", beforeOpen);
         Assert.Contains("rig_token_lookup:ptt_type", beforeOpen);
+        Assert.Contains("rig_token_lookup:ptt_pathname", beforeOpen);
         Assert.Contains(beforeOpen, c => c.StartsWith("rig_set_conf:/dev/ttyUSB0", StringComparison.Ordinal));
         Assert.Contains(beforeOpen, c => c.StartsWith("rig_set_conf:9600", StringComparison.Ordinal));
         Assert.Contains(beforeOpen, c => c.StartsWith("rig_set_conf:RTS", StringComparison.Ordinal));
+        Assert.Contains(beforeOpen, c => c.StartsWith("rig_set_conf:/dev/ttyUSB1", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Connect_NoPttPort_SkipsPttPathnameConfCall()
+    {
+        var native = new FakeHamlibNative();
+        var sut = new HamlibRadioProtocol(native, model: 1, pttType: "RIG");
+
+        await sut.PollAsync(CancellationToken.None);
+
+        Assert.DoesNotContain("rig_token_lookup:ptt_pathname", native.CallLog);
     }
 
     [Fact]

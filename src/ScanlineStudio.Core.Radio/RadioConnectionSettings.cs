@@ -33,6 +33,8 @@ public sealed record RadioConnectionSettings
     public int? BaudRate { get; init; }
 
     public string? PttType { get; init; }
+
+    public string? PttPort { get; init; }
 }
 
 public static class RadioConnectionSettingsExtensions
@@ -51,6 +53,7 @@ public static class RadioConnectionSettingsExtensions
                     SerialPort = settings.SerialPort,
                     BaudRate = settings.BaudRate,
                     PttType = settings.PttType,
+                    PttPort = settings.PttPort,
                 },
             _ => new NoneConnectionSpec(),
         };

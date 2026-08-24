@@ -444,6 +444,10 @@ internal static partial class Program
         // serialized behind a process-wide gate).
         services.AddSingleton<IHamlibDiscoveryService>(sp => HamlibDiscoveryService.Create(sp.GetRequiredService<ILoggerFactory>()));
 
+        // Options-dialog-facing serial port listing for the Hamlib CAT/PTT port pickers -- same
+        // placement reasoning as IHamlibDiscoveryService directly above.
+        services.AddSingleton<ISerialPortEnumerator, SerialPortEnumerator>();
+
         // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
