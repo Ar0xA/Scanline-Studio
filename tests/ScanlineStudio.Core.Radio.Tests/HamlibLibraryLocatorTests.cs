@@ -56,7 +56,7 @@ public class HamlibLibraryLocatorTests
     {
         // Closes a coverage gap flagged by Tier A Batch 9 chunk 9d (docs/functional-audit-playbook.md):
         // a bare `is not null` check treats an empty/whitespace override the same as a real one,
-        // going exclusive-mode for no real path at all and failing with a confusing "not found"
+        // going exclusive-mode for no real path at all and failing with a confusing "failed to load"
         // instead of falling back to auto-detection. Unreachable today (no caller passes one yet),
         // but a real footgun the moment a future Settings wiring pass introduces one.
         var loader = new FakeNativeLibraryLoader();
@@ -90,10 +90,11 @@ public class HamlibLibraryLocatorTests
     // User-reported gap: a real "not found" message for a user-override path that genuinely EXISTS
     // (picked via a real file dialog) gave zero indication of why the OS loader actually rejected
     // it -- e.g. a missing dependency DLL vs. a 32/64-bit image mismatch look identical from a bare
-    // "not found". The real NativeLibraryLoader now also reports Marshal.GetLastPInvokeError()'s
-    // message; this test only checks that the locator actually INCLUDES whatever detail the loader
-    // reports in its own thrown message, not the real Win32-specific error text (that's the real
-    // loader's own concern, unverifiable on this Linux sandbox).
+    // "not found". The real NativeLibraryLoader now reports the OS error text captured by the
+    // throwing NativeLibrary.Load overload's exception message; this test only checks that the
+    // locator actually INCLUDES whatever detail the loader reports in its own thrown message, not
+    // the real Win32-specific error text (that's the real loader's own concern, unverifiable on
+    // this Linux sandbox).
     [Fact]
     public void Locate_OverrideSetButFails_IncludesTheLoaderReportedErrorDetail()
     {

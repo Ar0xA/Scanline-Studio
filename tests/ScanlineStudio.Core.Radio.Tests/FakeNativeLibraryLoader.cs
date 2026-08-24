@@ -16,9 +16,9 @@ internal sealed class FakeNativeLibraryLoader : INativeLibraryLoader
     public void SucceedExport(nint handle, string name, nint address) => _exports[(handle, name)] = address;
 
     /// <summary>Scripts what a FAILED <see cref="TryLoad"/> call for this exact path reports as its
-    /// <c>errorDetail</c> -- mirrors the real loader's <c>Marshal.GetLastPInvokeError()</c> text
-    /// (e.g. "The specified module could not be found."). Paths with nothing scripted here default
-    /// to a generic placeholder, same as any path that was simply never registered via
+    /// <c>errorDetail</c> -- mirrors the real loader's caught-exception message text (e.g. "The
+    /// specified module could not be found."). Paths with nothing scripted here default to a
+    /// generic placeholder, same as any path that was simply never registered via
     /// <see cref="Succeed"/>.</summary>
     public void FailWithDetail(string libraryPath, string errorDetail) => _errorDetails[libraryPath] = errorDetail;
 
