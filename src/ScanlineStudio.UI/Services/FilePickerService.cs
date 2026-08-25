@@ -135,6 +135,46 @@ public sealed partial class FilePickerService : IFilePickerService
         return file?.TryGetLocalPath();
     }
 
+    private static readonly FilePickerFileType WavFileType = new("WAV audio files")
+    {
+        Patterns = ["*.wav"],
+    };
+
+    public async Task<string?> PickOpenWavFileAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            AllowMultiple = false,
+            FileTypeFilter = [WavFileType],
+        });
+
+        return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
+    public async Task<string?> PickSaveWavFileAsync(string suggestedFileName)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var file = await mainWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggestedFileName,
+            DefaultExtension = "wav",
+            FileTypeChoices = [WavFileType],
+        });
+
+        return file?.TryGetLocalPath();
+    }
+
     // Public (not private): code-review finding -- ResolveDestination below needs to reference the
     // EXACT SAME instances a real picker would echo back via SelectedFileType, and tests need to
     // construct that same realistic scenario without needing Application.Current/MainWindow (which

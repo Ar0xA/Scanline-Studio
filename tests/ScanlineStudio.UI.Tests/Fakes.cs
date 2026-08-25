@@ -292,6 +292,55 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         return Task.CompletedTask;
     }
 
+    public List<string> StartRecordingCalls { get; } = [];
+
+    public int StopRecordingCallCount { get; private set; }
+
+    public bool IsRecordingForTests { get; private set; }
+
+    public Exception? ThrowOnStartRecording { get; set; }
+
+    public Exception? ThrowOnStopRecording { get; set; }
+
+    public Task StartRecordingAsync(string path)
+    {
+        if (ThrowOnStartRecording is { } ex)
+        {
+            throw ex;
+        }
+
+        StartRecordingCalls.Add(path);
+        IsRecordingForTests = true;
+        return Task.CompletedTask;
+    }
+
+    public Task StopRecordingAsync()
+    {
+        StopRecordingCallCount++;
+        IsRecordingForTests = false;
+        if (ThrowOnStopRecording is { } ex)
+        {
+            throw ex;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public List<string> DecodeFromFileCalls { get; } = [];
+
+    public Exception? ThrowOnDecodeFromFile { get; set; }
+
+    public Task DecodeFromFileAsync(string path, CancellationToken ct = default)
+    {
+        DecodeFromFileCalls.Add(path);
+        if (ThrowOnDecodeFromFile is { } ex)
+        {
+            throw ex;
+        }
+
+        return Task.CompletedTask;
+    }
+
     /// <summary>When true, <see cref="TransmitAsync"/> doesn't return until <paramref name="ct"/> is
     /// cancelled (throwing <see cref="OperationCanceledException"/> then) -- lets a test simulate an
     /// in-flight transmission long enough to push several <c>RadioState</c> updates through
@@ -750,6 +799,20 @@ internal sealed class FakeFilePickerService : IFilePickerService
         CompletePickHamlibLibraryFileOnBackgroundThread
             ? Task.Run(() => HamlibLibraryPathToReturn)
             : Task.FromResult(HamlibLibraryPathToReturn);
+
+    public string? OpenWavPathToReturn { get; set; } = "/tmp/fake-open.wav";
+
+    public string? SaveWavPathToReturn { get; set; } = "/tmp/fake-record.wav";
+
+    public string? LastSuggestedWavFileName { get; private set; }
+
+    public Task<string?> PickOpenWavFileAsync() => Task.FromResult(OpenWavPathToReturn);
+
+    public Task<string?> PickSaveWavFileAsync(string suggestedFileName)
+    {
+        LastSuggestedWavFileName = suggestedFileName;
+        return Task.FromResult(SaveWavPathToReturn);
+    }
 }
 
 internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter

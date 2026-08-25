@@ -538,6 +538,92 @@ public sealed class PaneViewModelTests
         Assert.Empty(((FakeReceivedImageBuffer)sstvSession.ReceivedImage).SavedPaths);
     }
 
+    // ---- Piece C1/C2 (RX tab Re-decode port) ----
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ToggleRecordingCommand_StartsThenStopsRecording()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var filePicker = new FakeFilePickerService { SaveWavPathToReturn = "/tmp/chosen.wav" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.ToggleRecordingCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsRecording);
+        Assert.Null(vm.RecordErrorMessage);
+        Assert.Equal(["/tmp/chosen.wav"], sstvSession.StartRecordingCalls);
+
+        await vm.ToggleRecordingCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsRecording);
+        Assert.Equal(1, sstvSession.StopRecordingCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ToggleRecordingCommand_UserCancelsPicker_DoesNotStartRecording()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var filePicker = new FakeFilePickerService { SaveWavPathToReturn = null };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.ToggleRecordingCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsRecording);
+        Assert.Empty(sstvSession.StartRecordingCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ToggleRecordingCommand_StartFails_ShowsErrorAndStaysNotRecording()
+    {
+        var sstvSession = new FakeSstvSessionService { ThrowOnStartRecording = new InvalidOperationException("Cannot start recording while not receiving.") };
+        var filePicker = new FakeFilePickerService { SaveWavPathToReturn = "/tmp/chosen.wav" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.ToggleRecordingCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsRecording);
+        Assert.NotNull(vm.RecordErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeCommand_DecodesThePickedFile()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var filePicker = new FakeFilePickerService { OpenWavPathToReturn = "/tmp/chosen.wav" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.RedecodeErrorMessage);
+        Assert.False(vm.IsRedecoding);
+        Assert.Equal(["/tmp/chosen.wav"], sstvSession.DecodeFromFileCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeCommand_UserCancelsPicker_DoesNotDecode()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var filePicker = new FakeFilePickerService { OpenWavPathToReturn = null };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeCommand.ExecuteAsync(null);
+
+        Assert.Empty(sstvSession.DecodeFromFileCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeCommand_DecodeFails_ShowsError()
+    {
+        var sstvSession = new FakeSstvSessionService { ThrowOnDecodeFromFile = new InvalidOperationException("File sample rate mismatch.") };
+        var filePicker = new FakeFilePickerService { OpenWavPathToReturn = "/tmp/chosen.wav" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.RedecodeErrorMessage);
+        Assert.False(vm.IsRedecoding);
+    }
+
     // Wired 2026-08-18: RxFrameMeta's Note/Flag controls were disabled -- "this pane has no way to
     // learn a just-saved frame's ReceiveHistoryEntry id yet." IReceiveHistoryStore.Recorded is the
     // real hook; OnHistoryRecorded correlates it back to the currently-displayed frame by matching

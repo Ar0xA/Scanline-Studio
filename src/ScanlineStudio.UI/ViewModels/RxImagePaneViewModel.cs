@@ -1346,6 +1346,108 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Piece C1 (RX tab Re-decode port): toggles <see cref="ISstvSessionService.StartRecordingAsync"/>/
+    /// <see cref="ISstvSessionService.StopRecordingAsync"/>. Save location picked via
+    /// <see cref="IFilePickerService.PickSaveWavFileAsync"/>, same round-trip shape as
+    /// <see cref="SaveFrameAsync"/>. Reflects <see cref="IsRecording"/> as <see langword="false"/> on
+    /// ANY failure (start or stop) -- <c>StopRecordingAsync</c>'s own finalize step clears the
+    /// service's "is recording" state before attempting the file write, so "not recording" is
+    /// accurate here regardless of which side threw.</summary>
+    [ObservableProperty]
+    private string? _recordErrorMessage;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RecordButtonLabel))]
+    private bool _isRecording;
+
+    /// <summary>Same locale-recompute shape as <see cref="SyncSourceDisplay"/> -- a plain computed
+    /// property recomputed via <see cref="NotifyPropertyChangedFor"/> on the state it depends on, not
+    /// a live-language-switch subscription of its own.</summary>
+    public string RecordButtonLabel => _localization.GetString(
+        IsRecording ? "Panes.RxImage.StopRecording" : "Panes.RxImage.Record");
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleRecordingCommand))]
+    private bool _isTogglingRecording;
+
+    private bool CanToggleRecording() => !IsTogglingRecording;
+
+    [RelayCommand(CanExecute = nameof(CanToggleRecording))]
+    private async Task ToggleRecordingAsync()
+    {
+        RecordErrorMessage = null;
+        IsTogglingRecording = true;
+        try
+        {
+            if (IsRecording)
+            {
+                await _sstvSession.StopRecordingAsync();
+                IsRecording = false;
+                return;
+            }
+
+            var suggestedFileName = $"{DateTime.Now:yyyyMMdd-HHmmss}_rx.wav";
+            var picked = await _filePickerService.PickSaveWavFileAsync(suggestedFileName);
+            if (picked is null)
+            {
+                return;
+            }
+
+            await _sstvSession.StartRecordingAsync(picked);
+            IsRecording = true;
+        }
+        catch (Exception ex)
+        {
+            Log.RecordToggleFailed(_logger, ex);
+            RecordErrorMessage = _localization.GetString("Panes.RxImage.Error.RecordFailed");
+            IsRecording = false;
+        }
+        finally
+        {
+            IsTogglingRecording = false;
+        }
+    }
+
+    /// <summary>Piece C2 (RX tab Re-decode port): opens a WAV file via
+    /// <see cref="IFilePickerService.PickOpenWavFileAsync"/> and decodes it via
+    /// <see cref="ISstvSessionService.DecodeFromFileAsync"/> -- the SAME command backs both the RX
+    /// pane's own "Re-decode" button and the Tools menu's "Re-decode from WAV…" item (they are one
+    /// feature with two entry points, not two separate features).</summary>
+    [ObservableProperty]
+    private string? _redecodeErrorMessage;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RedecodeCommand))]
+    private bool _isRedecoding;
+
+    private bool CanRedecode() => !IsRedecoding;
+
+    [RelayCommand(CanExecute = nameof(CanRedecode))]
+    private async Task RedecodeAsync(CancellationToken ct)
+    {
+        RedecodeErrorMessage = null;
+        var picked = await _filePickerService.PickOpenWavFileAsync();
+        if (picked is null)
+        {
+            return;
+        }
+
+        IsRedecoding = true;
+        try
+        {
+            await _sstvSession.DecodeFromFileAsync(picked, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.RedecodeFailed(_logger, ex);
+            RedecodeErrorMessage = _localization.GetString("Panes.RxImage.Error.RedecodeFailed");
+        }
+        finally
+        {
+            IsRedecoding = false;
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
@@ -1383,6 +1485,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Manual SaveFrame failed")]
         public static partial void SaveFrameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Record toggle failed")]
+        public static partial void RecordToggleFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Re-decode from file failed")]
+        public static partial void RedecodeFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the operator's own callsign (for the decoded station-ID self-filter) failed")]
         public static partial void GetOperatorCallsignFailed(ILogger logger, Exception ex);
