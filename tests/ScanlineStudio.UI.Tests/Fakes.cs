@@ -186,6 +186,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) =>
         OperatorCallsignGate?.Task ?? Task.FromResult(OperatorCallsign);
 
+    public string? OperatorGrid { get; set; }
+
+    public Task<string?> GetOperatorGridAsync(CancellationToken ct = default) => Task.FromResult(OperatorGrid);
+
     public StationIdTransmitOptions StationIdTransmitOptionsToReturn { get; set; } = StationIdTransmitOptions.None;
 
     public Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default) => Task.FromResult(StationIdTransmitOptionsToReturn);
@@ -302,6 +306,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public double? SlantPpm { get; set; }
 
+    public SstvSyncSource SyncSource { get; set; }
+
     public int? SyncOffsetSamples { get; set; }
 
     public double SignalPeakLevel { get; set; }
@@ -311,6 +317,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public bool IsLevelOverdriven { get; set; }
 
     public bool AutoSlantEnabled { get; set; } = true;
+
+    public int SenseLevel { get; set; } = 1;
+
+    public RxBpfPreset RxBpfPreset { get; set; } = RxBpfPreset.Wide;
 
     public double? SyncFrequencyCorrectionHz { get; set; }
 

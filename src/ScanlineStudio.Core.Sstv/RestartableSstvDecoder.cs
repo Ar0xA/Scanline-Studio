@@ -575,6 +575,21 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
+    /// <see cref="SstvSyncSource.Idle"/> for any realistic triggering chunk -- same state-gated
+    /// reasoning as <see cref="SlantPpm"/> above (a fresh inner has no lock and no AVT training in
+    /// progress until a fresh header search reaches one of those states).</summary>
+    public SstvSyncSource SyncSource
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SyncSource;
+            }
+        }
+    }
+
     /// <summary>Forwards to whichever inner instance is current. Unlike <see cref="SlantPpm"/>/
     /// <see cref="SyncOffsetSamples"/> above, a restart swap does NOT reliably reset this to
     /// <c>0.0</c>: <see cref="PushSamples"/> swaps to a fresh inner and then forwards that SAME
@@ -598,6 +613,37 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// same reasoning as every constructor-injected toggle here), so there's no post-swap caveat to
     /// document and no need to take <see cref="_gate"/> to read it.</summary>
     public bool AutoSlantEnabled => _autoSlantEnabled;
+
+    /// <summary>Forwards to whichever inner instance is current, under the same lock as
+    /// <see cref="InnerRxBpfPresetForTests"/>-style diagnostics -- deliberately NOT this wrapper's
+    /// own raw <see cref="_senseLevel"/> constructor field (that field is unclamped; the inner
+    /// decoder's own <see cref="AnalogFmSstvDecoder.SenseLevel"/> is the already-clamped value
+    /// actually in effect). A restart swap always reconstructs the fresh inner with this same
+    /// constructor value (<see cref="CreateInner"/>), so this is stable across restarts despite the
+    /// forward.</summary>
+    public int SenseLevel
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SenseLevel;
+            }
+        }
+    }
+
+    /// <summary>Forwards to whichever inner instance is current -- same reasoning/shape as
+    /// <see cref="SenseLevel"/> above.</summary>
+    public RxBpfPreset RxBpfPreset
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.RxBpfPreset;
+            }
+        }
+    }
 
     /// <summary>See <see cref="ISstvDecoder.StationIdDecodeEnabled"/> for the full contract --
     /// unlike <see cref="AutoSlantEnabled"/> above, this is genuinely live: a set value is applied to
@@ -684,7 +730,8 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // the class doc comment) -- the outgoing instance's own Dispose() does a bounded
         // channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout, waited twice =
         // ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
-        // (SignalPeakLevel/SlantPpm/BufferedSampleCount) is waiting on this same lock for up to that
+        // (SignalPeakLevel/SlantPpm/SyncSource/SyncOffsetSamples/BufferedSampleCount/
+        // IsLevelOverdriven/SyncFrequencyCorrectionHz) is waiting on this same lock for up to that
         // long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
         // a many-hour maintenance swap interval, not a normal-operation cost.
         var outgoing = _inner;

@@ -32,6 +32,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public double? SlantPpm => null;
 
+    public SstvSyncSource SyncSource => SstvSyncSource.Idle;
+
     public int? SyncOffsetSamples => null;
 
     public double SignalPeakLevel => 0.0;
@@ -43,6 +45,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     public int BufferedSampleCount => 0;
 
     public bool AutoSlantEnabled => true;
+
+    public int SenseLevel => 1;
+
+    public RxBpfPreset RxBpfPreset => RxBpfPreset.Wide;
 
     public bool StationIdDecodeEnabled { get; set; }
 
