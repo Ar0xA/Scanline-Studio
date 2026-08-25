@@ -508,8 +508,8 @@ public sealed class RadioStatusViewModelTests
         // Give-up-after-5 feature: a Disconnected event with a non-null Reason means
         // RadioController's own give-up branch fired, not a real Disconnect click (always
         // reason: null -- see the next test). This is the persistent, always-reachable half of the
-        // signal (RadioHeaderView.axaml, visible even with Options closed) plus the dismissible
-        // toast (ConnectionGaveUp, wired by MainWindow.axaml.cs).
+        // signal (RadioHeaderView.axaml, visible even with Options closed) plus the must-acknowledge
+        // popup (ConnectionGaveUp, wired by MainWindow.axaml.cs -- RadioConnectionGaveUpWindowView).
         var radioSession = new FakeRadioSessionService();
         var vm = CreateViewModel(radioSession);
         Dispatcher.UIThread.RunJobs();
