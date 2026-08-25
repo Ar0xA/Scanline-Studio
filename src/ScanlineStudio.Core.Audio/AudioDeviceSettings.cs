@@ -68,8 +68,8 @@ public sealed record AudioDeviceSettings
 
     /// <summary>Requested native hardware/backend buffer period size, in frames, for BOTH capture
     /// and playback sessions -- <c>0</c> means "leave miniaudio's own default period/backend
-    /// heuristic alone" (see <c>native/yoniq_audio.c</c>'s own doc comment on
-    /// <c>yoniq_audio_open_options</c>). A separate, lower-level knob from the fixed
+    /// heuristic alone" (see <c>native/scanline_audio.c</c>'s own doc comment on
+    /// <c>scanline_audio_open_options</c>). A separate, lower-level knob from the fixed
     /// managed-side ring capacity <c>MiniAudioCaptureSession</c>/<c>MiniAudioPlaybackSession</c>
     /// already use internally -- this tunes the actual device buffer, not this shim's own ring.
     ///

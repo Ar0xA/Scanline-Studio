@@ -15,16 +15,16 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "miniaudio.h"
 
-#include "yoniq_audio.h"
+#include "scanline_audio.h"
 #include <string.h>
 #include <stdlib.h>
 
 /* Second-opus-review fix: the mutex itself is now statically initialized and NEVER destroyed --
  * SRWLOCK_INIT/PTHREAD_MUTEX_INITIALIZER are valid, lockable states with no init/destroy call
- * needed at all. The previous version called yoniq_mutex_init/_destroy from
- * yoniq_audio_context_init/_uninit, which meant: (1) every other entry point below checked
+ * needed at all. The previous version called scanline_mutex_init/_destroy from
+ * scanline_audio_context_init/_uninit, which meant: (1) every other entry point below checked
  * g_context_initialized *before* locking, a TOCTOU window where a concurrent
- * yoniq_audio_context_uninit could destroy a mutex this thread was about to lock (locking a
+ * scanline_audio_context_uninit could destroy a mutex this thread was about to lock (locking a
  * destroyed pthread_mutex_t/CRITICAL_SECTION is undefined behavior), and (2)
  * pthread_mutex_destroy/DeleteCriticalSection on a currently-locked mutex is itself undefined
  * behavior. Making the mutex permanently valid removes both problems at once: every entry point
@@ -32,16 +32,16 @@
  * check and the context-uninit that clears it can never interleave. */
 #if defined(_WIN32)
 #include <windows.h>
-typedef SRWLOCK yoniq_mutex;
-#define YONIQ_MUTEX_INIT SRWLOCK_INIT
-static void yoniq_mutex_lock(yoniq_mutex *m) { AcquireSRWLockExclusive(m); }
-static void yoniq_mutex_unlock(yoniq_mutex *m) { ReleaseSRWLockExclusive(m); }
+typedef SRWLOCK scanline_mutex;
+#define SCANLINE_MUTEX_INIT SRWLOCK_INIT
+static void scanline_mutex_lock(scanline_mutex *m) { AcquireSRWLockExclusive(m); }
+static void scanline_mutex_unlock(scanline_mutex *m) { ReleaseSRWLockExclusive(m); }
 #else
 #include <pthread.h>
-typedef pthread_mutex_t yoniq_mutex;
-#define YONIQ_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-static void yoniq_mutex_lock(yoniq_mutex *m) { pthread_mutex_lock(m); }
-static void yoniq_mutex_unlock(yoniq_mutex *m) { pthread_mutex_unlock(m); }
+typedef pthread_mutex_t scanline_mutex;
+#define SCANLINE_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
+static void scanline_mutex_lock(scanline_mutex *m) { pthread_mutex_lock(m); }
+static void scanline_mutex_unlock(scanline_mutex *m) { pthread_mutex_unlock(m); }
 #endif
 
 static ma_context g_context;
@@ -75,19 +75,19 @@ static int g_context_initialized = 0;
  *
  * Third-opus-review addendum: generic ma_device_init also falls through to ma_device_get_info,
  * which for PulseAudio (no onDeviceGetInfo callback registered for this backend) resolves to
- * ma_context_get_device_info -- the *same* shared-mainloop call yoniq_audio_get_native_formats
+ * ma_context_get_device_info -- the *same* shared-mainloop call scanline_audio_get_native_formats
  * makes -- so ma_device_init touches the shared mainloop twice per open, not once. Both are
  * still inside the single critical section below, so this doesn't change correctness, only
  * widens (slightly) how long the above residual risk's window actually is in practice. */
-static yoniq_mutex g_context_mutex = YONIQ_MUTEX_INIT;
+static scanline_mutex g_context_mutex = SCANLINE_MUTEX_INIT;
 
-int yoniq_audio_context_init(char *backend_name_out)
+int scanline_audio_context_init(char *backend_name_out)
 {
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
 
     if (g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1; /* misuse: already initialized */
     }
 
@@ -109,7 +109,7 @@ int yoniq_audio_context_init(char *backend_name_out)
     ma_result result = ma_context_init(backends, backend_count, &config, &g_context);
     if (result != MA_SUCCESS)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return (int)result;
     }
 
@@ -119,27 +119,27 @@ int yoniq_audio_context_init(char *backend_name_out)
     {
         const char *name = ma_get_backend_name(g_context.backend);
         size_t len = strlen(name);
-        if (len >= YONIQ_AUDIO_BACKEND_NAME_SIZE)
+        if (len >= SCANLINE_AUDIO_BACKEND_NAME_SIZE)
         {
-            len = YONIQ_AUDIO_BACKEND_NAME_SIZE - 1;
+            len = SCANLINE_AUDIO_BACKEND_NAME_SIZE - 1;
         }
         memcpy(backend_name_out, name, len);
         backend_name_out[len] = '\0';
     }
 
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     return 0;
 }
 
-void yoniq_audio_context_uninit(void)
+void scanline_audio_context_uninit(void)
 {
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (g_context_initialized)
     {
         ma_context_uninit(&g_context);
         g_context_initialized = 0;
     }
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
 }
 
 /* Converts a backend-native ma_device_id into our own ABI's plain string convention. Only the
@@ -202,7 +202,7 @@ static int string_to_device_id(ma_backend backend, const char *device_id, ma_dev
         return 0;
     case ma_backend_coreaudio:
         /* Opus-review fix: this case was missing entirely, so on macOS every
-         * yoniq_audio_get_native_formats/capture_session_open/playback_session_open call would
+         * scanline_audio_get_native_formats/capture_session_open/playback_session_open call would
          * have failed unconditionally (device_id_to_string already handled coreaudio going the
          * other way -- enumeration alone would have looked fine, masking this). */
         strncpy(out_id->coreaudio, device_id, sizeof(out_id->coreaudio) - 1);
@@ -213,7 +213,7 @@ static int string_to_device_id(ma_backend backend, const char *device_id, ma_dev
          * shim's own requested backend list (see the backends[] array a few lines up), so a host
          * where PulseAudio and ALSA context-init both fail but JACK succeeds would enumerate real
          * devices fine (device_id_to_string's own jack case, above, already handles the reverse
-         * direction) but then fail every single yoniq_audio_get_native_formats/
+         * direction) but then fail every single scanline_audio_get_native_formats/
          * capture_session_open/playback_session_open call unconditionally -- exactly the
          * "enumeration alone would have looked fine, masking this" trap the coreaudio comment
          * already names. device_id_to_string's own jack case renders id->jack via "%d" (a plain
@@ -235,7 +235,7 @@ static int string_to_device_id(ma_backend backend, const char *device_id, ma_dev
 typedef struct
 {
     ma_device_type wanted_type;
-    yoniq_audio_device_info *out_devices;
+    scanline_audio_device_info *out_devices;
     int max_count;
     int count;
 } enum_state;
@@ -252,13 +252,13 @@ static ma_bool32 enum_callback(ma_context *pContext, ma_device_type deviceType, 
         return MA_FALSE; /* stop, caller's buffer is full */
     }
 
-    yoniq_audio_device_info *out = &state->out_devices[state->count];
-    device_id_to_string(pContext->backend, &pInfo->id, out->id, YONIQ_AUDIO_ID_SIZE);
+    scanline_audio_device_info *out = &state->out_devices[state->count];
+    device_id_to_string(pContext->backend, &pInfo->id, out->id, SCANLINE_AUDIO_ID_SIZE);
 
     size_t name_len = strlen(pInfo->name);
-    if (name_len >= YONIQ_AUDIO_NAME_SIZE)
+    if (name_len >= SCANLINE_AUDIO_NAME_SIZE)
     {
-        name_len = YONIQ_AUDIO_NAME_SIZE - 1;
+        name_len = SCANLINE_AUDIO_NAME_SIZE - 1;
     }
     memcpy(out->name, pInfo->name, name_len);
     out->name[name_len] = '\0';
@@ -269,7 +269,7 @@ static ma_bool32 enum_callback(ma_context *pContext, ma_device_type deviceType, 
     return MA_TRUE;
 }
 
-int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_devices, int max_count)
+int scanline_audio_enumerate_devices(int is_capture, scanline_audio_device_info *out_devices, int max_count)
 {
     /* ma_context_enumerate_devices (callback-based) chosen over ma_context_get_devices
      * deliberately: the latter returns context-owned memory invalidated by the next call to it,
@@ -284,18 +284,18 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
 
     /* Second-opus-review fix: lock FIRST, check g_context_initialized while holding the lock --
      * see g_context_mutex's own doc comment for why the previous check-then-lock ordering was a
-     * real TOCTOU race against a concurrent yoniq_audio_context_uninit. Also shares the mutex with
+     * real TOCTOU race against a concurrent scanline_audio_context_uninit. Also shares the mutex with
      * get_native_formats/session-open, none of which are individually thread-safe against each
      * other either. */
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
     ma_result result = ma_context_enumerate_devices(&g_context, enum_callback, &state);
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     if (result != MA_SUCCESS)
     {
         return -1;
@@ -304,14 +304,14 @@ int yoniq_audio_enumerate_devices(int is_capture, yoniq_audio_device_info *out_d
     return state.count;
 }
 
-int yoniq_audio_get_native_formats(const char *device_id, int is_capture, yoniq_audio_native_format *out_formats, int max_count)
+int scanline_audio_get_native_formats(const char *device_id, int is_capture, scanline_audio_native_format *out_formats, int max_count)
 {
     ma_device_info info;
 
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
@@ -320,12 +320,12 @@ int yoniq_audio_get_native_formats(const char *device_id, int is_capture, yoniq_
     ma_device_id id;
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
     ma_result result = ma_context_get_device_info(&g_context, is_capture ? ma_device_type_capture : ma_device_type_playback, &id, &info);
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     if (result != MA_SUCCESS)
     {
         return -1;
@@ -370,7 +370,7 @@ static void spike_capture_data_callback(ma_device *pDevice, void *pOutput, const
     }
 }
 
-int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float *peak_out)
+int scanline_audio_spike_capture_test(const char *device_id, int duration_ms, float *peak_out)
 {
     spike_capture_state state;
     state.peak = 0.0f;
@@ -382,16 +382,16 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
      * the device has its own separate mainloop/context and start doesn't touch the shared one. */
     ma_device_id id;
     ma_device device;
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -2; /* unsupported backend for this spike */
     }
 
@@ -404,7 +404,7 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
     config.pUserData = &state;
 
     ma_result init_result = ma_device_init(&g_context, &config, &device);
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     if (init_result != MA_SUCCESS)
     {
         return -3;
@@ -431,16 +431,16 @@ int yoniq_audio_spike_capture_test(const char *device_id, int duration_ms, float
 
 /*
  * Piece Audio 3: standalone SPSC ring buffer, built on miniaudio's own ma_pcm_rb -- see this
- * function's own doc comment in yoniq_audio.h for why this exists independent of any real device.
+ * function's own doc comment in scanline_audio.h for why this exists independent of any real device.
  */
 
-struct yoniq_audio_ring
+struct scanline_audio_ring
 {
     ma_pcm_rb rb;
     int channels;
 };
 
-yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels)
+scanline_audio_ring *scanline_audio_ring_create(int capacity_frames, int channels)
 {
     if (capacity_frames <= 0 || channels <= 0)
     {
@@ -461,7 +461,7 @@ yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels)
         return NULL;
     }
 
-    yoniq_audio_ring *ring = (yoniq_audio_ring *)malloc(sizeof(yoniq_audio_ring));
+    scanline_audio_ring *ring = (scanline_audio_ring *)malloc(sizeof(scanline_audio_ring));
     if (ring == NULL)
     {
         return NULL;
@@ -478,7 +478,7 @@ yoniq_audio_ring *yoniq_audio_ring_create(int capacity_frames, int channels)
     return ring;
 }
 
-void yoniq_audio_ring_destroy(yoniq_audio_ring *ring)
+void scanline_audio_ring_destroy(scanline_audio_ring *ring)
 {
     if (ring != NULL)
     {
@@ -487,7 +487,7 @@ void yoniq_audio_ring_destroy(yoniq_audio_ring *ring)
     }
 }
 
-int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_count)
+int scanline_audio_ring_write(scanline_audio_ring *ring, const float *data, int frame_count)
 {
     if (ring == NULL || data == NULL || frame_count < 0)
     {
@@ -519,7 +519,7 @@ int yoniq_audio_ring_write(yoniq_audio_ring *ring, const float *data, int frame_
     return total_written;
 }
 
-int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_count)
+int scanline_audio_ring_read(scanline_audio_ring *ring, float *out_data, int frame_count)
 {
     if (ring == NULL || out_data == NULL || frame_count < 0)
     {
@@ -546,7 +546,7 @@ int yoniq_audio_ring_read(yoniq_audio_ring *ring, float *out_data, int frame_cou
     return total_read;
 }
 
-int yoniq_audio_ring_available_read(yoniq_audio_ring *ring)
+int scanline_audio_ring_available_read(scanline_audio_ring *ring)
 {
     if (ring == NULL)
     {
@@ -557,28 +557,28 @@ int yoniq_audio_ring_available_read(yoniq_audio_ring *ring)
 }
 
 /*
- * Piece Audio 5: the real capture path. See yoniq_audio.h's own doc comment on
- * yoniq_audio_capture_session_open for the design.
+ * Piece Audio 5: the real capture path. See scanline_audio.h's own doc comment on
+ * scanline_audio_capture_session_open for the design.
  */
 
-struct yoniq_audio_capture_session
+struct scanline_audio_capture_session
 {
     ma_device device;
-    yoniq_audio_ring *ring;
+    scanline_audio_ring *ring;
     volatile int stopped; /* set by capture_session_notification_callback, real-time thread; read
-                            * and cleared by yoniq_audio_capture_session_check_and_clear_stopped,
+                            * and cleared by scanline_audio_capture_session_check_and_clear_stopped,
                             * managed thread -- a single int written from one side and read/cleared
                             * from the other needs no separate lock (no ordering dependency on
                             * anything else, a torn write of an int-sized value isn't a real
                             * concern on any platform this project targets). */
     volatile int overrun_count; /* Piece Engine 0: same single-writer (real-time callback)/
                                   * single-reader (managed) reasoning as `stopped` above -- no lock
-                                  * needed. Mirrors yoniq_audio_playback_session's underrun_count:
+                                  * needed. Mirrors scanline_audio_playback_session's underrun_count:
                                   * an event counter (incremented once per callback that dropped
                                   * frames), not a dropped-frame counter, for the same reason --
                                   * this is a raw signal for the caller to interpret, not a verdict. */
     int channels;       /* 1 or 2, set once at open, read-only from the real-time callback --
-                          * stereo-capture-source backlog item, see yoniq_audio_open_options'
+                          * stereo-capture-source backlog item, see scanline_audio_open_options'
                           * own doc comment. */
     int channel_select; /* 0=unused, 1=Left, 2=Right -- only meaningful when channels==2. */
 };
@@ -586,24 +586,24 @@ struct yoniq_audio_capture_session
 /* Bounded stack scratch for the stereo->mono channel-extraction path below -- no dynamic
  * allocation in a real-time callback. frameCount is backend/caller-determined and not itself
  * bounded, so extraction is chunked in slices of at most this many frames. */
-#define YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES 256
+#define SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES 256
 
 static void capture_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
 {
     (void)pOutput;
-    yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)pDevice->pUserData;
+    scanline_audio_capture_session *session = (scanline_audio_capture_session *)pDevice->pUserData;
 
     if (session->channels == 1)
     {
         /* Today's exact pre-existing path, byte-for-byte unchanged -- mono in, mono to the ring
          * (this covers "Mono" channel-select too: miniaudio's own data converter already does
          * whatever downmix the device's real native format needs, exactly as before this feature
-         * existed). Drop-newest-when-full is already yoniq_audio_ring_write's own behavior (never
+         * existed). Drop-newest-when-full is already scanline_audio_ring_write's own behavior (never
          * blocks, writes only as many frames as currently fit) -- exactly IAudioEngine's
          * documented overrun policy (piece Audio 2): if the managed drain side has fallen behind,
          * the newest incoming frames are dropped here, never corrupting or reordering what's
          * already buffered. */
-        int frames_written = yoniq_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
+        int frames_written = scanline_audio_ring_write(session->ring, (const float *)pInput, (int)frameCount);
         if (frames_written < 0 || (ma_uint32)frames_written < frameCount)
         {
             session->overrun_count++;
@@ -614,11 +614,11 @@ static void capture_session_data_callback(ma_device *pDevice, void *pOutput, con
     /* Stereo capture (Left/Right channel select, stereo-capture-source backlog item): extract the
      * selected channel from the interleaved LRLR... input into the bounded scratch buffer above,
      * then feed the ring exactly the same way the mono path does -- the ring itself stays mono
-     * always (see yoniq_audio_open_options' own doc comment on where the stereo<->mono conversion
+     * always (see scanline_audio_open_options' own doc comment on where the stereo<->mono conversion
      * happens). */
     const float *input = (const float *)pInput;
     int channel_index = (session->channel_select == 2) ? 1 : 0; /* Right=index 1, else (Left/unset)=index 0 */
-    float scratch[YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
+    float scratch[SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
     ma_uint32 offset = 0;
     int any_overrun = 0; /* incremented at most once per callback below, matching the mono path's
                            * own "event counter, not a dropped-frame counter" semantics -- not once
@@ -627,9 +627,9 @@ static void capture_session_data_callback(ma_device *pDevice, void *pOutput, con
     while (offset < frameCount)
     {
         ma_uint32 chunk = frameCount - offset;
-        if (chunk > YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
+        if (chunk > SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
         {
-            chunk = YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
+            chunk = SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
         }
 
         for (ma_uint32 i = 0; i < chunk; i++)
@@ -637,7 +637,7 @@ static void capture_session_data_callback(ma_device *pDevice, void *pOutput, con
             scratch[i] = input[(offset + i) * 2 + (ma_uint32)channel_index];
         }
 
-        int frames_written = yoniq_audio_ring_write(session->ring, scratch, (int)chunk);
+        int frames_written = scanline_audio_ring_write(session->ring, scratch, (int)chunk);
         if (frames_written < 0 || (ma_uint32)frames_written < chunk)
         {
             any_overrun = 1;
@@ -656,18 +656,18 @@ static void capture_session_notification_callback(const ma_device_notification *
 {
     if (pNotification->type == ma_device_notification_type_stopped)
     {
-        yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)pNotification->pDevice->pUserData;
+        scanline_audio_capture_session *session = (scanline_audio_capture_session *)pNotification->pDevice->pUserData;
         session->stopped = 1;
     }
 }
 
-yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device_id, const yoniq_audio_open_options *options)
+scanline_audio_capture_session *scanline_audio_capture_session_open(const char *device_id, const scanline_audio_open_options *options)
 {
     int sample_rate = options->sample_rate;
     int ring_capacity_frames = options->ring_capacity_frames;
 
     /* Third-opus-review fix: reverted to a single critical section spanning flag check, id
-     * resolution, and ma_device_init, matching yoniq_audio_spike_capture_test's own (deliberately
+     * resolution, and ma_device_init, matching scanline_audio_spike_capture_test's own (deliberately
      * single-section) shape exactly. A prior revision split this into two short sections (id
      * resolution, then init) on the theory that string_to_device_id is fast enough not to be worth
      * holding the lock across -- true, but splitting manufactured a real gap for no actual benefit
@@ -675,23 +675,23 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
      * functions that all touch g_context_mutex inconsistent with each other for no reason. Single
      * section, same as the spike test: simpler to verify correct, not just faster. */
     ma_device_id id;
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
-    yoniq_audio_capture_session *session = (yoniq_audio_capture_session *)malloc(sizeof(yoniq_audio_capture_session));
+    scanline_audio_capture_session *session = (scanline_audio_capture_session *)malloc(sizeof(scanline_audio_capture_session));
     if (session == NULL)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
@@ -699,10 +699,10 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     session->overrun_count = 0;
     session->channels = (options->channels == 2) ? 2 : 1;
     session->channel_select = options->channel_select;
-    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
+    session->ring = scanline_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
     if (session->ring == NULL)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         free(session);
         return NULL;
     }
@@ -736,10 +736,10 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
      * ma_device_start is deliberately NOT covered -- it only touches this device's own separate
      * mainloop once init has succeeded. */
     ma_result init_result = ma_device_init(&g_context, &config, &session->device);
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     if (init_result != MA_SUCCESS)
     {
-        yoniq_audio_ring_destroy(session->ring);
+        scanline_audio_ring_destroy(session->ring);
         free(session);
         return NULL;
     }
@@ -748,7 +748,7 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     if (start_result != MA_SUCCESS)
     {
         ma_device_uninit(&session->device);
-        yoniq_audio_ring_destroy(session->ring);
+        scanline_audio_ring_destroy(session->ring);
         free(session);
         return NULL;
     }
@@ -756,7 +756,7 @@ yoniq_audio_capture_session *yoniq_audio_capture_session_open(const char *device
     return session;
 }
 
-void yoniq_audio_capture_session_close(yoniq_audio_capture_session *session)
+void scanline_audio_capture_session_close(scanline_audio_capture_session *session)
 {
     if (session == NULL)
     {
@@ -764,21 +764,21 @@ void yoniq_audio_capture_session_close(yoniq_audio_capture_session *session)
     }
 
     ma_device_uninit(&session->device); /* also stops it first */
-    yoniq_audio_ring_destroy(session->ring);
+    scanline_audio_ring_destroy(session->ring);
     free(session);
 }
 
-int yoniq_audio_capture_session_read(yoniq_audio_capture_session *session, float *out_data, int frame_count)
+int scanline_audio_capture_session_read(scanline_audio_capture_session *session, float *out_data, int frame_count)
 {
     if (session == NULL)
     {
         return -1;
     }
 
-    return yoniq_audio_ring_read(session->ring, out_data, frame_count);
+    return scanline_audio_ring_read(session->ring, out_data, frame_count);
 }
 
-int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_session *session)
+int scanline_audio_capture_session_check_and_clear_stopped(scanline_audio_capture_session *session)
 {
     if (session == NULL)
     {
@@ -790,7 +790,7 @@ int yoniq_audio_capture_session_check_and_clear_stopped(yoniq_audio_capture_sess
     return was_stopped;
 }
 
-int yoniq_audio_capture_session_overrun_count(yoniq_audio_capture_session *session)
+int scanline_audio_capture_session_overrun_count(scanline_audio_capture_session *session)
 {
     if (session == NULL)
     {
@@ -801,31 +801,31 @@ int yoniq_audio_capture_session_overrun_count(yoniq_audio_capture_session *sessi
 }
 
 /*
- * Piece Audio 6: the real playback path -- see yoniq_audio.h's own doc comment on
- * yoniq_audio_playback_session_open for the design.
+ * Piece Audio 6: the real playback path -- see scanline_audio.h's own doc comment on
+ * scanline_audio_playback_session_open for the design.
  */
 
-struct yoniq_audio_playback_session
+struct scanline_audio_playback_session
 {
     ma_device device;
-    yoniq_audio_ring *ring;
-    volatile int stopped;         /* see yoniq_audio_capture_session's own comment on this field --
+    scanline_audio_ring *ring;
+    volatile int stopped;         /* see scanline_audio_capture_session's own comment on this field --
                                     * same single-writer/single-reader reasoning applies here. */
     volatile int underrun_count;
     int channels; /* 1 or 2, set once at open -- stereo-TX backlog item. No channel_select
                    * equivalent here: stereo TX always duplicates the same mono ring content to
-                   * both output channels, see yoniq_audio_open_options' own doc comment. */
+                   * both output channels, see scanline_audio_open_options' own doc comment. */
 };
 
 static void playback_session_data_callback(ma_device *pDevice, void *pOutput, const void *pInput, ma_uint32 frameCount)
 {
     (void)pInput;
-    yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)pDevice->pUserData;
+    scanline_audio_playback_session *session = (scanline_audio_playback_session *)pDevice->pUserData;
 
     if (session->channels == 1)
     {
         /* Today's exact pre-existing path, byte-for-byte unchanged. */
-        int frames_read = yoniq_audio_ring_read(session->ring, (float *)pOutput, (int)frameCount);
+        int frames_read = scanline_audio_ring_read(session->ring, (float *)pOutput, (int)frameCount);
         if (frames_read < 0)
         {
             frames_read = 0;
@@ -851,18 +851,18 @@ static void playback_session_data_callback(ma_device *pDevice, void *pOutput, co
      * channel's bytes on underrun here, leaving R with whatever the backend/miniaudio last left
      * in that buffer -- garbage, not silence. */
     float *output = (float *)pOutput;
-    float scratch[YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
+    float scratch[SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES];
     ma_uint32 offset = 0;
     int any_underrun = 0;
     while (offset < frameCount)
     {
         ma_uint32 chunk = frameCount - offset;
-        if (chunk > YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
+        if (chunk > SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES)
         {
-            chunk = YONIQ_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
+            chunk = SCANLINE_AUDIO_CHANNEL_EXTRACT_CHUNK_FRAMES;
         }
 
-        int frames_read = yoniq_audio_ring_read(session->ring, scratch, (int)chunk);
+        int frames_read = scanline_audio_ring_read(session->ring, scratch, (int)chunk);
         if (frames_read < 0)
         {
             frames_read = 0;
@@ -895,46 +895,46 @@ static void playback_session_notification_callback(const ma_device_notification 
 {
     if (pNotification->type == ma_device_notification_type_stopped)
     {
-        yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)pNotification->pDevice->pUserData;
+        scanline_audio_playback_session *session = (scanline_audio_playback_session *)pNotification->pDevice->pUserData;
         session->stopped = 1;
     }
 }
 
-yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *device_id, const yoniq_audio_open_options *options)
+scanline_audio_playback_session *scanline_audio_playback_session_open(const char *device_id, const scanline_audio_open_options *options)
 {
     int sample_rate = options->sample_rate;
     int ring_capacity_frames = options->ring_capacity_frames;
 
-    /* See yoniq_audio_capture_session_open's identical pattern and comment (third-opus-review
+    /* See scanline_audio_capture_session_open's identical pattern and comment (third-opus-review
      * fix: single critical section, matching the spike test). */
     ma_device_id id;
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
     if (string_to_device_id(g_context.backend, device_id, &id) != 0)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
-    yoniq_audio_playback_session *session = (yoniq_audio_playback_session *)malloc(sizeof(yoniq_audio_playback_session));
+    scanline_audio_playback_session *session = (scanline_audio_playback_session *)malloc(sizeof(scanline_audio_playback_session));
     if (session == NULL)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return NULL;
     }
 
     session->stopped = 0;
     session->underrun_count = 0;
     session->channels = (options->channels == 2) ? 2 : 1;
-    session->ring = yoniq_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
+    session->ring = scanline_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
     if (session->ring == NULL)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         free(session);
         return NULL;
     }
@@ -949,7 +949,7 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
      * has no way to attach a notification callback to an already-initialized device. */
     config.notificationCallback = playback_session_notification_callback;
     config.pUserData = session;
-    /* See yoniq_audio_capture_session_open's identical comment. */
+    /* See scanline_audio_capture_session_open's identical comment. */
     if (options->period_size_in_frames > 0)
     {
         config.periodSizeInFrames = (ma_uint32)options->period_size_in_frames;
@@ -962,10 +962,10 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
     /* See g_context_mutex's doc comment. ma_device_start deliberately not covered -- see the
      * capture session's identical comment. */
     ma_result init_result = ma_device_init(&g_context, &config, &session->device);
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     if (init_result != MA_SUCCESS)
     {
-        yoniq_audio_ring_destroy(session->ring);
+        scanline_audio_ring_destroy(session->ring);
         free(session);
         return NULL;
     }
@@ -974,7 +974,7 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
     if (start_result != MA_SUCCESS)
     {
         ma_device_uninit(&session->device);
-        yoniq_audio_ring_destroy(session->ring);
+        scanline_audio_ring_destroy(session->ring);
         free(session);
         return NULL;
     }
@@ -982,7 +982,7 @@ yoniq_audio_playback_session *yoniq_audio_playback_session_open(const char *devi
     return session;
 }
 
-void yoniq_audio_playback_session_close(yoniq_audio_playback_session *session)
+void scanline_audio_playback_session_close(scanline_audio_playback_session *session)
 {
     if (session == NULL)
     {
@@ -990,31 +990,31 @@ void yoniq_audio_playback_session_close(yoniq_audio_playback_session *session)
     }
 
     ma_device_uninit(&session->device); /* also stops it first */
-    yoniq_audio_ring_destroy(session->ring);
+    scanline_audio_ring_destroy(session->ring);
     free(session);
 }
 
-int yoniq_audio_playback_session_write(yoniq_audio_playback_session *session, const float *data, int frame_count)
+int scanline_audio_playback_session_write(scanline_audio_playback_session *session, const float *data, int frame_count)
 {
     if (session == NULL)
     {
         return -1;
     }
 
-    return yoniq_audio_ring_write(session->ring, data, frame_count);
+    return scanline_audio_ring_write(session->ring, data, frame_count);
 }
 
-int yoniq_audio_playback_session_pending_frames(yoniq_audio_playback_session *session)
+int scanline_audio_playback_session_pending_frames(scanline_audio_playback_session *session)
 {
     if (session == NULL)
     {
         return -1;
     }
 
-    return yoniq_audio_ring_available_read(session->ring);
+    return scanline_audio_ring_available_read(session->ring);
 }
 
-int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *session)
+int scanline_audio_playback_session_underrun_count(scanline_audio_playback_session *session)
 {
     if (session == NULL)
     {
@@ -1024,7 +1024,7 @@ int yoniq_audio_playback_session_underrun_count(yoniq_audio_playback_session *se
     return session->underrun_count;
 }
 
-int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_session *session)
+int scanline_audio_playback_session_check_and_clear_stopped(scanline_audio_playback_session *session)
 {
     if (session == NULL)
     {
@@ -1036,7 +1036,7 @@ int yoniq_audio_playback_session_check_and_clear_stopped(yoniq_audio_playback_se
     return was_stopped;
 }
 
-int yoniq_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
+int scanline_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
                               int sample_rate_out, int lpf_order, float *output, int output_capacity_frames)
 {
     if (input == NULL || output == NULL || input_frame_count < 0 || output_capacity_frames < 0)
@@ -1095,8 +1095,8 @@ int yoniq_audio_resample_f32(const float *input, int input_frame_count, int samp
 
 /* ============================================================================================
  * Piece Audio 9: real OS device mute state. Device-scoped, not session-scoped (no
- * yoniq_audio_capture_session/yoniq_audio_playback_session parameter) -- see yoniq_audio.h's own
- * doc comment on yoniq_audio_get_device_mute for the read-only-by-design reasoning.
+ * scanline_audio_capture_session/scanline_audio_playback_session parameter) -- see scanline_audio.h's own
+ * doc comment on scanline_audio_get_device_mute for the read-only-by-design reasoning.
  *
  * User-directed reversal (same session): this piece originally also carried real OS-mixer VOLUME
  * get/set (WASAPI IAudioEndpointVolume/PulseAudio pa_context_set_sink/source_volume_by_name/
@@ -1150,7 +1150,7 @@ DEFINE_GUID(IID_IAudioEndpointVolume, 0x5cdf2c82, 0x841e, 0x4546, 0x97, 0x22, 0x
  * own CoInitializeEx/CoUninitialize since this can run on an arbitrary thread-pool thread with no
  * guarantee COM is already initialized there; MULTITHREADED (not APARTMENTTHREADED) since this is
  * a background worker with no message pump. */
-static int yoniq_wasapi_with_endpoint_volume(const wchar_t *device_id_w, int (*fn)(IAudioEndpointVolume *, void *), void *userdata)
+static int scanline_wasapi_with_endpoint_volume(const wchar_t *device_id_w, int (*fn)(IAudioEndpointVolume *, void *), void *userdata)
 {
     HRESULT co_hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
     /* RPC_E_CHANGED_MODE: this thread already has COM initialized under a different concurrency
@@ -1192,7 +1192,7 @@ static int yoniq_wasapi_with_endpoint_volume(const wchar_t *device_id_w, int (*f
     return result;
 }
 
-static int yoniq_wasapi_get_mute_cb(IAudioEndpointVolume *vol, void *userdata)
+static int scanline_wasapi_get_mute_cb(IAudioEndpointVolume *vol, void *userdata)
 {
     BOOL muted = FALSE;
     if (FAILED(IAudioEndpointVolume_GetMute(vol, &muted)))
@@ -1208,7 +1208,7 @@ static int yoniq_wasapi_get_mute_cb(IAudioEndpointVolume *vol, void *userdata)
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CoreFoundation.h>
 
-static int yoniq_coreaudio_resolve_device_id(const char *uid_utf8, AudioDeviceID *out_device_id)
+static int scanline_coreaudio_resolve_device_id(const char *uid_utf8, AudioDeviceID *out_device_id)
 {
     CFStringRef uid_cfstr = CFStringCreateWithCString(NULL, uid_utf8, kCFStringEncodingUTF8);
     if (uid_cfstr == NULL)
@@ -1238,7 +1238,7 @@ static int yoniq_coreaudio_resolve_device_id(const char *uid_utf8, AudioDeviceID
 
 /* Fills out_address for the given selector/scope/element. Shared by every CoreAudio property
  * lookup in this file so the scope-from-is_capture mapping lives in exactly one place. */
-static int yoniq_coreaudio_property_address(AudioObjectPropertySelector selector, int is_capture, AudioObjectPropertyElement element, AudioObjectPropertyAddress *out_address)
+static int scanline_coreaudio_property_address(AudioObjectPropertySelector selector, int is_capture, AudioObjectPropertyElement element, AudioObjectPropertyAddress *out_address)
 {
     out_address->mSelector = selector;
     out_address->mScope = is_capture ? kAudioDevicePropertyScopeInput : kAudioDevicePropertyScopeOutput;
@@ -1246,14 +1246,14 @@ static int yoniq_coreaudio_property_address(AudioObjectPropertySelector selector
     return 0;
 }
 
-static int yoniq_coreaudio_get_device_mute(const char *uid_utf8, int is_capture, int *is_muted_out)
+static int scanline_coreaudio_get_device_mute(const char *uid_utf8, int is_capture, int *is_muted_out)
 {
-    /* Pre-set, not left uninitialized: yoniq_coreaudio_resolve_device_id's own failure path is
+    /* Pre-set, not left uninitialized: scanline_coreaudio_resolve_device_id's own failure path is
      * short-circuited before this is ever read today, but some OS versions are documented to
      * return noErr without writing *out_device_id for an unknown UID -- defense-in-depth against
      * that, matching the documented CoreAudio idiom. */
     AudioDeviceID device_id = kAudioObjectUnknown;
-    if (yoniq_coreaudio_resolve_device_id(uid_utf8, &device_id) != 0)
+    if (scanline_coreaudio_resolve_device_id(uid_utf8, &device_id) != 0)
     {
         return -1;
     }
@@ -1265,7 +1265,7 @@ static int yoniq_coreaudio_get_device_mute(const char *uid_utf8, int is_capture,
     AudioObjectPropertyElement elements[] = {kAudioObjectPropertyElementMaster, 1};
     for (size_t i = 0; i < sizeof(elements) / sizeof(elements[0]); i++)
     {
-        yoniq_coreaudio_property_address(kAudioDevicePropertyMute, is_capture, elements[i], &address);
+        scanline_coreaudio_property_address(kAudioDevicePropertyMute, is_capture, elements[i], &address);
         if (!AudioObjectHasProperty(device_id, &address))
         {
             continue;
@@ -1288,13 +1288,13 @@ static int yoniq_coreaudio_get_device_mute(const char *uid_utf8, int is_capture,
 /* PulseAudio's own sink/source info already carries a mute flag (ma_pa_sink_info/ma_pa_source_info
  * both have a plain `int mute`, confirmed against the vendored miniaudio.h's own compatible
  * structs) -- reuses the already-open libpulse handle/mainloop/context miniaudio's own PulseAudio
- * backend opened at yoniq_audio_context_init time (g_context.pulse.*), via
+ * backend opened at scanline_audio_context_init time (g_context.pulse.*), via
  * ma_context_get_sink_info__pulse/ma_context_get_source_info__pulse (static helpers a few
  * thousand lines up in the vendored miniaudio.h, same translation unit --
  * MINIAUDIO_IMPLEMENTATION -- so directly callable here) that miniaudio's own device-info path
  * already uses. No second dlopen, no second mainloop, no pactl shell-out, no new production
  * dependency, no new link flags. Caller must already hold g_context_mutex. */
-static int yoniq_pulse_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
+static int scanline_pulse_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
 {
     if (is_capture)
     {
@@ -1333,68 +1333,68 @@ static int yoniq_pulse_get_device_mute(const char *device_name, int is_capture, 
 typedef struct snd_mixer_t snd_mixer_t;
 typedef struct snd_mixer_elem_t snd_mixer_elem_t;
 
-typedef int (*yoniq_snd_mixer_open_proc)(snd_mixer_t **mixer, int mode);
-typedef int (*yoniq_snd_mixer_attach_proc)(snd_mixer_t *mixer, const char *name);
-typedef int (*yoniq_snd_mixer_selem_register_proc)(snd_mixer_t *mixer, void *options, void *classp);
-typedef int (*yoniq_snd_mixer_load_proc)(snd_mixer_t *mixer);
-typedef int (*yoniq_snd_mixer_close_proc)(snd_mixer_t *mixer); /* real ALSA prototype returns int */
-typedef snd_mixer_elem_t *(*yoniq_snd_mixer_first_elem_proc)(snd_mixer_t *mixer);
-typedef snd_mixer_elem_t *(*yoniq_snd_mixer_elem_next_proc)(snd_mixer_elem_t *elem);
-typedef const char *(*yoniq_snd_mixer_selem_get_name_proc)(snd_mixer_elem_t *elem);
+typedef int (*scanline_snd_mixer_open_proc)(snd_mixer_t **mixer, int mode);
+typedef int (*scanline_snd_mixer_attach_proc)(snd_mixer_t *mixer, const char *name);
+typedef int (*scanline_snd_mixer_selem_register_proc)(snd_mixer_t *mixer, void *options, void *classp);
+typedef int (*scanline_snd_mixer_load_proc)(snd_mixer_t *mixer);
+typedef int (*scanline_snd_mixer_close_proc)(snd_mixer_t *mixer); /* real ALSA prototype returns int */
+typedef snd_mixer_elem_t *(*scanline_snd_mixer_first_elem_proc)(snd_mixer_t *mixer);
+typedef snd_mixer_elem_t *(*scanline_snd_mixer_elem_next_proc)(snd_mixer_elem_t *elem);
+typedef const char *(*scanline_snd_mixer_selem_get_name_proc)(snd_mixer_elem_t *elem);
 /* Auditor-caught: an earlier revision here still filtered candidate elements by
  * has_playback_volume/has_capture_volume (a leftover from when this shim also read/wrote the
  * volume itself) -- since this shim now only ever reads the MUTE switch, the direct predicate is
  * has_playback_switch/has_capture_switch instead. A real element can expose a mute switch with no
  * volume control at all (or vice versa); filtering on the wrong capability would report
  * "unsupported" for a device that actually does have a real switch to read. */
-typedef int (*yoniq_snd_mixer_selem_has_playback_switch_proc)(snd_mixer_elem_t *elem);
-typedef int (*yoniq_snd_mixer_selem_has_capture_switch_proc)(snd_mixer_elem_t *elem);
+typedef int (*scanline_snd_mixer_selem_has_playback_switch_proc)(snd_mixer_elem_t *elem);
+typedef int (*scanline_snd_mixer_selem_has_capture_switch_proc)(snd_mixer_elem_t *elem);
 /* Mute in ALSA's simple-mixer API is a per-channel "switch," not a volume property -- 1 = on
  * (unmuted), 0 = off (muted). Queried on channel 0 only (snd_mixer_selem_channel_id_t's
  * SND_MIXER_SCHN_FRONT_LEFT is value 0, always valid to query even on a mono element). */
-typedef int (*yoniq_snd_mixer_selem_get_playback_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
-typedef int (*yoniq_snd_mixer_selem_get_capture_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
+typedef int (*scanline_snd_mixer_selem_get_playback_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
+typedef int (*scanline_snd_mixer_selem_get_capture_switch_proc)(snd_mixer_elem_t *elem, int channel, int *value);
 
 typedef struct
 {
-    yoniq_snd_mixer_open_proc open;
-    yoniq_snd_mixer_attach_proc attach;
-    yoniq_snd_mixer_selem_register_proc selem_register;
-    yoniq_snd_mixer_load_proc load;
-    yoniq_snd_mixer_close_proc close;
-    yoniq_snd_mixer_first_elem_proc first_elem;
-    yoniq_snd_mixer_elem_next_proc elem_next;
-    yoniq_snd_mixer_selem_get_name_proc selem_get_name;
-    yoniq_snd_mixer_selem_has_playback_switch_proc selem_has_playback_switch;
-    yoniq_snd_mixer_selem_has_capture_switch_proc selem_has_capture_switch;
-    yoniq_snd_mixer_selem_get_playback_switch_proc selem_get_playback_switch;
-    yoniq_snd_mixer_selem_get_capture_switch_proc selem_get_capture_switch;
-} yoniq_alsa_mixer_api;
+    scanline_snd_mixer_open_proc open;
+    scanline_snd_mixer_attach_proc attach;
+    scanline_snd_mixer_selem_register_proc selem_register;
+    scanline_snd_mixer_load_proc load;
+    scanline_snd_mixer_close_proc close;
+    scanline_snd_mixer_first_elem_proc first_elem;
+    scanline_snd_mixer_elem_next_proc elem_next;
+    scanline_snd_mixer_selem_get_name_proc selem_get_name;
+    scanline_snd_mixer_selem_has_playback_switch_proc selem_has_playback_switch;
+    scanline_snd_mixer_selem_has_capture_switch_proc selem_has_capture_switch;
+    scanline_snd_mixer_selem_get_playback_switch_proc selem_get_playback_switch;
+    scanline_snd_mixer_selem_get_capture_switch_proc selem_get_capture_switch;
+} scanline_alsa_mixer_api;
 
 /* Returns nonzero if every symbol resolved. */
-static int yoniq_alsa_mixer_api_load(yoniq_alsa_mixer_api *api)
+static int scanline_alsa_mixer_api_load(scanline_alsa_mixer_api *api)
 {
     ma_log *log = ma_context_get_log(&g_context);
     ma_handle so = g_context.alsa.asoundSO;
 
-#define YONIQ_DLSYM(field, name) \
+#define SCANLINE_DLSYM(field, name) \
     api->field = (void *)ma_dlsym(log, so, name); \
     if (api->field == NULL) return 0;
 
-    YONIQ_DLSYM(open, "snd_mixer_open")
-    YONIQ_DLSYM(attach, "snd_mixer_attach")
-    YONIQ_DLSYM(selem_register, "snd_mixer_selem_register")
-    YONIQ_DLSYM(load, "snd_mixer_load")
-    YONIQ_DLSYM(close, "snd_mixer_close")
-    YONIQ_DLSYM(first_elem, "snd_mixer_first_elem")
-    YONIQ_DLSYM(elem_next, "snd_mixer_elem_next")
-    YONIQ_DLSYM(selem_get_name, "snd_mixer_selem_get_name")
-    YONIQ_DLSYM(selem_has_playback_switch, "snd_mixer_selem_has_playback_switch")
-    YONIQ_DLSYM(selem_has_capture_switch, "snd_mixer_selem_has_capture_switch")
-    YONIQ_DLSYM(selem_get_playback_switch, "snd_mixer_selem_get_playback_switch")
-    YONIQ_DLSYM(selem_get_capture_switch, "snd_mixer_selem_get_capture_switch")
+    SCANLINE_DLSYM(open, "snd_mixer_open")
+    SCANLINE_DLSYM(attach, "snd_mixer_attach")
+    SCANLINE_DLSYM(selem_register, "snd_mixer_selem_register")
+    SCANLINE_DLSYM(load, "snd_mixer_load")
+    SCANLINE_DLSYM(close, "snd_mixer_close")
+    SCANLINE_DLSYM(first_elem, "snd_mixer_first_elem")
+    SCANLINE_DLSYM(elem_next, "snd_mixer_elem_next")
+    SCANLINE_DLSYM(selem_get_name, "snd_mixer_selem_get_name")
+    SCANLINE_DLSYM(selem_has_playback_switch, "snd_mixer_selem_has_playback_switch")
+    SCANLINE_DLSYM(selem_has_capture_switch, "snd_mixer_selem_has_capture_switch")
+    SCANLINE_DLSYM(selem_get_playback_switch, "snd_mixer_selem_get_playback_switch")
+    SCANLINE_DLSYM(selem_get_capture_switch, "snd_mixer_selem_get_capture_switch")
 
-#undef YONIQ_DLSYM
+#undef SCANLINE_DLSYM
     return 1;
 }
 
@@ -1403,8 +1403,8 @@ static int yoniq_alsa_mixer_api_load(yoniq_alsa_mixer_api *api)
  * against miniaudio.h's own ALSA device-id formatting), so passing device_name straight through
  * only ever worked for the literal "default" id. Derives the CTL form by truncating at the first
  * comma; anything without a comma (including "default" and any id not shaped like "hw:C,D")
- * passes through unchanged. buf must be at least YONIQ_AUDIO_ID_SIZE bytes. */
-static void yoniq_alsa_ctl_name_from_pcm_name(const char *pcm_name, char *buf, size_t buf_size)
+ * passes through unchanged. buf must be at least SCANLINE_AUDIO_ID_SIZE bytes. */
+static void scanline_alsa_ctl_name_from_pcm_name(const char *pcm_name, char *buf, size_t buf_size)
 {
     size_t len = strlen(pcm_name);
     const char *comma = strchr(pcm_name, ',');
@@ -1424,10 +1424,10 @@ static void yoniq_alsa_ctl_name_from_pcm_name(const char *pcm_name, char *buf, s
  * "PCM" for playback, "Capture" for capture). Returns NULL if anything along the way fails or no
  * suitable element exists -- caller must still call api->close(*out_mixer) if *out_mixer != NULL
  * even on a NULL element return (attach/load can succeed with no matching element). */
-static snd_mixer_elem_t *yoniq_alsa_find_element(const yoniq_alsa_mixer_api *api, const char *device_name, int is_capture, snd_mixer_t **out_mixer)
+static snd_mixer_elem_t *scanline_alsa_find_element(const scanline_alsa_mixer_api *api, const char *device_name, int is_capture, snd_mixer_t **out_mixer)
 {
-    char ctl_name[YONIQ_AUDIO_ID_SIZE];
-    yoniq_alsa_ctl_name_from_pcm_name(device_name, ctl_name, sizeof(ctl_name));
+    char ctl_name[SCANLINE_AUDIO_ID_SIZE];
+    scanline_alsa_ctl_name_from_pcm_name(device_name, ctl_name, sizeof(ctl_name));
 
     *out_mixer = NULL;
     if (api->open(out_mixer, 0) != 0 || *out_mixer == NULL)
@@ -1469,16 +1469,16 @@ static snd_mixer_elem_t *yoniq_alsa_find_element(const yoniq_alsa_mixer_api *api
     return NULL;
 }
 
-static int yoniq_alsa_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
+static int scanline_alsa_get_device_mute(const char *device_name, int is_capture, int *is_muted_out)
 {
-    yoniq_alsa_mixer_api api;
-    if (!yoniq_alsa_mixer_api_load(&api))
+    scanline_alsa_mixer_api api;
+    if (!scanline_alsa_mixer_api_load(&api))
     {
         return -1;
     }
 
     snd_mixer_t *mixer;
-    snd_mixer_elem_t *elem = yoniq_alsa_find_element(&api, device_name, is_capture, &mixer);
+    snd_mixer_elem_t *elem = scanline_alsa_find_element(&api, device_name, is_capture, &mixer);
     int result = -1;
     if (elem != NULL)
     {
@@ -1499,7 +1499,7 @@ static int yoniq_alsa_get_device_mute(const char *device_name, int is_capture, i
 
 #endif
 
-int yoniq_audio_get_device_mute(const char *device_id, int is_capture, int *is_muted_out)
+int scanline_audio_get_device_mute(const char *device_id, int is_capture, int *is_muted_out)
 {
     if (device_id == NULL || is_muted_out == NULL)
     {
@@ -1507,37 +1507,37 @@ int yoniq_audio_get_device_mute(const char *device_id, int is_capture, int *is_m
     }
 
 #if defined(_WIN32)
-    wchar_t device_id_w[YONIQ_AUDIO_ID_SIZE];
-    if (MultiByteToWideChar(CP_UTF8, 0, device_id, -1, device_id_w, YONIQ_AUDIO_ID_SIZE) <= 0)
+    wchar_t device_id_w[SCANLINE_AUDIO_ID_SIZE];
+    if (MultiByteToWideChar(CP_UTF8, 0, device_id, -1, device_id_w, SCANLINE_AUDIO_ID_SIZE) <= 0)
     {
         return -1;
     }
-    return yoniq_wasapi_with_endpoint_volume(device_id_w, yoniq_wasapi_get_mute_cb, is_muted_out);
+    return scanline_wasapi_with_endpoint_volume(device_id_w, scanline_wasapi_get_mute_cb, is_muted_out);
 #elif defined(__APPLE__)
-    return yoniq_coreaudio_get_device_mute(device_id, is_capture, is_muted_out);
+    return scanline_coreaudio_get_device_mute(device_id, is_capture, is_muted_out);
 #else
-    yoniq_mutex_lock(&g_context_mutex);
+    scanline_mutex_lock(&g_context_mutex);
     if (!g_context_initialized)
     {
-        yoniq_mutex_unlock(&g_context_mutex);
+        scanline_mutex_unlock(&g_context_mutex);
         return -1;
     }
 
     int result;
     if (g_context.backend == ma_backend_pulseaudio)
     {
-        result = yoniq_pulse_get_device_mute(device_id, is_capture, is_muted_out);
+        result = scanline_pulse_get_device_mute(device_id, is_capture, is_muted_out);
     }
     else if (g_context.backend == ma_backend_alsa)
     {
-        result = yoniq_alsa_get_device_mute(device_id, is_capture, is_muted_out);
+        result = scanline_alsa_get_device_mute(device_id, is_capture, is_muted_out);
     }
     else
     {
         result = -1; /* JACK: no OS mixer concept applies */
     }
 
-    yoniq_mutex_unlock(&g_context_mutex);
+    scanline_mutex_unlock(&g_context_mutex);
     return result;
 #endif
 }

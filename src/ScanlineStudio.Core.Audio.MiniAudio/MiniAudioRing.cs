@@ -2,7 +2,7 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
 /// Managed wrapper around the native shim's standalone SPSC ring buffer (`ma_pcm_rb`-backed, see
-/// `native/yoniq_audio.c`'s own doc comment on <c>yoniq_audio_ring_create</c> for why this exists
+/// `native/scanline_audio.c`'s own doc comment on <c>scanline_audio_ring_create</c> for why this exists
 /// independent of any real capture/playback device -- piece Audio 3, before pieces Audio 5/6 wire
 /// a real device's native callback to write into one of these).
 ///
@@ -31,7 +31,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
     public MiniAudioRing(int capacityFrames, int channels)
     {
         _channels = channels;
-        _handle = NativeAudio.yoniq_audio_ring_create(capacityFrames, channels);
+        _handle = NativeAudio.scanline_audio_ring_create(capacityFrames, channels);
         if (_handle == IntPtr.Zero)
         {
             throw new InvalidOperationException("Failed to create native ring buffer.");
@@ -63,7 +63,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
             var frameCount = data.Length / _channels;
             // Round-1 functional-audit finding: Span<T>.GetPinnableReference returns a null ref
             // for a zero-length span, so `fixed` pins a NULL pointer -- the native shim's own
-            // NULL guard (yoniq_audio.c) then returns -1, silently violating this method's own
+            // NULL guard (scanline_audio.c) then returns -1, silently violating this method's own
             // documented "0..the input's own frame count" contract (a caller doing offset
             // arithmetic on a negative return would misbehave). Zero frames requested is
             // trivially satisfied by writing zero frames -- short-circuit before ever reaching
@@ -75,7 +75,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
 
             fixed (float* ptr = data)
             {
-                return NativeAudio.yoniq_audio_ring_write(_handle, ptr, frameCount);
+                return NativeAudio.scanline_audio_ring_write(_handle, ptr, frameCount);
             }
         }
         finally
@@ -110,7 +110,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
 
             fixed (float* ptr = destination)
             {
-                return NativeAudio.yoniq_audio_ring_read(_handle, ptr, frameCount);
+                return NativeAudio.scanline_audio_ring_read(_handle, ptr, frameCount);
             }
         }
         finally
@@ -135,7 +135,7 @@ internal sealed unsafe class MiniAudioRing : IDisposable
             if (!_disposed)
             {
                 _disposed = true;
-                NativeAudio.yoniq_audio_ring_destroy(_handle);
+                NativeAudio.scanline_audio_ring_destroy(_handle);
             }
         }
         finally

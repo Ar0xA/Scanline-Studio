@@ -4,7 +4,7 @@
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 - A C compiler toolchain for the native audio shim
-  (`src/ScanlineStudio.Core.Audio.MiniAudio/native/yoniq_audio.c`): `gcc` and `ld` — on Debian/Ubuntu,
+  (`src/ScanlineStudio.Core.Audio.MiniAudio/native/scanline_audio.c`): `gcc` and `ld` — on Debian/Ubuntu,
   `sudo apt install build-essential`; on Fedora, `sudo dnf install gcc make`; on Arch,
   `sudo pacman -S base-devel`. The MSBuild target that builds this shim
   (`BuildNativeShimLinux` in `src/ScanlineStudio.Core.Audio.MiniAudio/ScanlineStudio.Core.Audio.MiniAudio.csproj`)
@@ -26,7 +26,7 @@ dotnet build ScanlineStudio.sln
 ```
 
 The native audio shim is built automatically as part of this — `BuildNativeShimLinux` runs before
-the managed build and produces `libyoniqaudio.so` alongside the managed output. You do not need to
+the managed build and produces `libscanlineaudio.so` alongside the managed output. You do not need to
 build it separately.
 
 ## Run

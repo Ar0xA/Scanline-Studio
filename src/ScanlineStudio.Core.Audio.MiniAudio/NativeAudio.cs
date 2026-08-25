@@ -4,7 +4,7 @@ using System.Text;
 namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
-/// P/Invoke bindings against our own shim (`native/yoniq_audio.c`/`.h`), never against miniaudio's
+/// P/Invoke bindings against our own shim (`native/scanline_audio.c`/`.h`), never against miniaudio's
 /// own structs directly -- see that shim's own doc comment for why: <c>ma_device</c>'s layout
 /// varies by platform *and* by which <c>MA_NO_*</c> flags it's compiled with, so no C# struct
 /// could ever safely be pinned to a specific layout for it. Every type crossing this boundary is a
@@ -20,7 +20,7 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// </summary>
 internal static class NativeAudio
 {
-    private const string LibraryName = "yoniqaudio";
+    private const string LibraryName = "scanlineaudio";
 
     internal const int BackendNameSize = 32;
     internal const int IdSize = 256;
@@ -45,7 +45,7 @@ internal static class NativeAudio
         public int SampleRate; // 0 means "any sample rate supported"
     }
 
-    /// <summary>Mirrors <c>yoniq_audio_open_options</c> (native/yoniq_audio.h) field-for-field --
+    /// <summary>Mirrors <c>scanline_audio_open_options</c> (native/scanline_audio.h) field-for-field --
     /// shared by both capture and playback session opens. <c>PeriodSizeInFrames</c>/<c>Periods</c>
     /// (0 = miniaudio's own default, unchanged from before these two fields existed) additionally
     /// tune the underlying hardware/backend buffer size, separate from
@@ -67,77 +67,77 @@ internal static class NativeAudio
     }
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_context_init(byte[] backendNameOut);
+    internal static extern int scanline_audio_context_init(byte[] backendNameOut);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void yoniq_audio_context_uninit();
+    internal static extern void scanline_audio_context_uninit();
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_enumerate_devices(int isCapture, [Out] DeviceInfo[] outDevices, int maxCount);
+    internal static extern int scanline_audio_enumerate_devices(int isCapture, [Out] DeviceInfo[] outDevices, int maxCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_spike_capture_test(byte[] deviceId, int durationMs, out float peakOut);
+    internal static extern int scanline_audio_spike_capture_test(byte[] deviceId, int durationMs, out float peakOut);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_get_native_formats(byte[] deviceId, int isCapture, [Out] NativeFormat[] outFormats, int maxCount);
+    internal static extern int scanline_audio_get_native_formats(byte[] deviceId, int isCapture, [Out] NativeFormat[] outFormats, int maxCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr yoniq_audio_ring_create(int capacityFrames, int channels);
+    internal static extern IntPtr scanline_audio_ring_create(int capacityFrames, int channels);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void yoniq_audio_ring_destroy(IntPtr ring);
+    internal static extern void scanline_audio_ring_destroy(IntPtr ring);
 
     // Pointer-based, not float[]: marshaling an array parameter copies on every call, which for a
     // ring buffer written/read on every audio buffer would allocate/copy continuously -- exactly
     // what piece Audio 3 exists to avoid. Callers pin their own Span/array via `fixed` and pass the
     // raw pointer instead (see MiniAudioRing).
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern unsafe int yoniq_audio_ring_write(IntPtr ring, float* data, int frameCount);
+    internal static extern unsafe int scanline_audio_ring_write(IntPtr ring, float* data, int frameCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern unsafe int yoniq_audio_ring_read(IntPtr ring, float* outData, int frameCount);
+    internal static extern unsafe int scanline_audio_ring_read(IntPtr ring, float* outData, int frameCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr yoniq_audio_capture_session_open(byte[] deviceId, ref OpenOptions options);
+    internal static extern IntPtr scanline_audio_capture_session_open(byte[] deviceId, ref OpenOptions options);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void yoniq_audio_capture_session_close(IntPtr session);
+    internal static extern void scanline_audio_capture_session_close(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern unsafe int yoniq_audio_capture_session_read(IntPtr session, float* outData, int frameCount);
+    internal static extern unsafe int scanline_audio_capture_session_read(IntPtr session, float* outData, int frameCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_capture_session_check_and_clear_stopped(IntPtr session);
+    internal static extern int scanline_audio_capture_session_check_and_clear_stopped(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_capture_session_overrun_count(IntPtr session);
+    internal static extern int scanline_audio_capture_session_overrun_count(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr yoniq_audio_playback_session_open(byte[] deviceId, ref OpenOptions options);
+    internal static extern IntPtr scanline_audio_playback_session_open(byte[] deviceId, ref OpenOptions options);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void yoniq_audio_playback_session_close(IntPtr session);
+    internal static extern void scanline_audio_playback_session_close(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern unsafe int yoniq_audio_playback_session_write(IntPtr session, float* data, int frameCount);
+    internal static extern unsafe int scanline_audio_playback_session_write(IntPtr session, float* data, int frameCount);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_playback_session_pending_frames(IntPtr session);
+    internal static extern int scanline_audio_playback_session_pending_frames(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_playback_session_underrun_count(IntPtr session);
+    internal static extern int scanline_audio_playback_session_underrun_count(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_playback_session_check_and_clear_stopped(IntPtr session);
+    internal static extern int scanline_audio_playback_session_check_and_clear_stopped(IntPtr session);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern unsafe int yoniq_audio_resample_f32(float* input, int inputFrameCount, int sampleRateIn, int sampleRateOut, int lpfOrder, float* output, int outputCapacityFrames);
+    internal static extern unsafe int scanline_audio_resample_f32(float* input, int inputFrameCount, int sampleRateIn, int sampleRateOut, int lpfOrder, float* output, int outputCapacityFrames);
 
     // Device-scoped (not session-scoped): real OS mute state, queryable whether or not a capture/
     // playback session is currently open on the device. Read-only -- no setter is exposed
-    // (display-only, per yoniq_audio.h's own doc comment).
+    // (display-only, per scanline_audio.h's own doc comment).
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int yoniq_audio_get_device_mute(byte[] deviceId, int isCapture, out int isMutedOut);
+    internal static extern int scanline_audio_get_device_mute(byte[] deviceId, int isCapture, out int isMutedOut);
 
     /// <summary>Decodes a null-terminated, fixed-size native byte buffer (UTF-8, matching this
     /// shim's own convention for device ids/names) into a C# string.</summary>
