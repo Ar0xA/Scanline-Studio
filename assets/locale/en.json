@@ -592,6 +592,8 @@
   "Options.Radio.Connect.Help.NeedsTestCat": "Run \"Test CAT\" successfully first.",
   "Options.Radio.Connect.Help.NeedsTestPtt": "Run \"Test PTT\" successfully first.",
   "Options.Radio.Connect.NotYetConfirmed": "Connecting — not yet confirmed reachable.",
+  "Options.Radio.Connect.GaveUp": "Could not connect: {0}",
+  "Options.Radio.Connect.GaveUp.Title": "Radio disconnected",
   "Options.Radio.Host": "Host",
   "Options.Radio.Port": "Port",
   "Options.Radio.TestConnection": "Test connection",

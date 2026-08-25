@@ -418,6 +418,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 IsRadioConnected = evt.State == RadioConnectionState.Connected;
             }
 
+            // Give-up-after-5 feature: a Disconnected event carrying a non-null Reason means the poll
+            // loop gave up automatically (RadioController's own give-up branch), not a real Disconnect
+            // click (which always publishes reason: null). Surfaced only here, not woven into
+            // IsRadioConnected/ConnectRadioTooltip's own logic above -- this dialog may not even be
+            // open when a give-up happens; see RadioStatusViewModel.ConnectionErrorMessage for the
+            // persistent, always-reachable half of this same signal.
+            if (evt.State == RadioConnectionState.Disconnected && evt.Reason is not null)
+            {
+                ConnectRadioErrorMessage = _localization.GetString("Options.Radio.Connect.GaveUp", evt.Reason);
+            }
+
             OnPropertyChanged(nameof(RadioLinkStatusMessage));
         });
     }

@@ -28,6 +28,13 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                                                // the shift below from ever overflowing.
     private static readonly TimeSpan MaxBackoffDelay = TimeSpan.FromSeconds(30);
 
+    // User-reported gap: a saved backend config pointing at nothing (e.g. a stale rigctld host/port
+    // with no daemon running) retried forever with no operator-visible signal beyond the passive
+    // status line. 5 consecutive transport-level failures with no intervening success or
+    // CommandFailed (both reset the counter -- see RunPollLoopAsync's own catch blocks) now gives up:
+    // a full disconnect, not another backoff round.
+    private const int MaxConnectAttempts = 5;
+
     private readonly IReadOnlyList<IRadioProtocolFactory> _factories;
     private readonly ILogger<RadioController> _logger;
     private readonly BehaviorSubject<RadioState?> _stateChanges = new(null);
@@ -355,6 +362,47 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 // Transport-level failure -- back off, then close/reopen via a fresh protocol instance
                 // from the factory (never just retry the same dead transport forever).
                 attempt = Math.Min(attempt + 1, MaxBackoffAttempt);
+
+                if (attempt >= MaxConnectAttempts)
+                {
+                    if (ct.IsCancellationRequested)
+                    {
+                        // Abandoned loop (DisconnectAsync's own bounded wait already timed out and
+                        // moved on, or this loop was cancelled for some other reason) -- whatever
+                        // superseded this session owns its own teardown; touching shared state here
+                        // would race it, same reasoning as the other guarded exits in this loop.
+                        if (protocol is not null)
+                        {
+                            await SafeDisposeProtocolAsync(protocol).ConfigureAwait(false);
+                        }
+
+                        return;
+                    }
+
+                    _rigId = "none";
+                    _connectionConfirmed = false;
+                    _sessionActive = false;
+                    _stateChanges.OnNext(null);
+
+                    // Log + publish BEFORE the dispose below, with NO await in between:
+                    // SafeDisposeProtocolAsync is unbounded (unlike DisconnectAsync's own
+                    // ProtocolDisposeTimeout-wrapped dispose), so a racing DisconnectAsync could time
+                    // out waiting for this loop task, see _sessionActive already false, and skip its
+                    // own teardown entirely while this dispose is still stuck -- nobody would ever
+                    // publish Disconnected. Publishing first (not after, unlike DisconnectAsync's own
+                    // order) closes that window structurally, not just by a second cancellation check.
+                    Log.GaveUp(_logger, MaxConnectAttempts, ex);
+                    PublishConnectionEvent(RadioConnectionState.Disconnected,
+                        $"Gave up after {MaxConnectAttempts} attempts: {ex.Message}", ex);
+
+                    if (protocol is not null)
+                    {
+                        await SafeDisposeProtocolAsync(protocol).ConfigureAwait(false);
+                    }
+
+                    return;
+                }
+
                 var delay = ComputeBackoffDelay(attempt, spec.PollInterval);
                 // Must not survive a backoff episode -- a stale "confirmed" would let
                 // IsGenuinelyConnected keep reporting true for a link that just genuinely broke.
@@ -604,6 +652,9 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Radio reconnect attempt {Attempt} failed")]
         public static partial void ReconnectAttemptFailed(ILogger logger, int attempt, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Radio gave up after {Attempt} consecutive failed connection attempts")]
+        public static partial void GaveUp(ILogger logger, int attempt, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Disposing the current (broken) protocol instance threw")]
         public static partial void DisposeCurrentProtocolFailed(ILogger logger, Exception ex);
