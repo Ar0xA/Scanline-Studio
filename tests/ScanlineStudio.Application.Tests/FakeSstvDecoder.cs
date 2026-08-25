@@ -117,9 +117,16 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public bool StationIdDecodeEnabled { get; set; }
 
+    /// <summary>Piece C2 test hook: lets a test synchronously observe/block inside a PushSamples call
+    /// (e.g. to hold DecodeFromFileAsync's background-thread chunk loop open long enough to assert
+    /// single-flight/cross-guard behavior against a concurrent call) -- same shape as
+    /// <see cref="ThrowOnPush"/>, just a callback instead of an exception.</summary>
+    public Action<ReadOnlyMemory<float>>? OnPushSamples { get; set; }
+
     public void PushSamples(ReadOnlyMemory<float> samples)
     {
         PushedSamples.Add(samples);
+        OnPushSamples?.Invoke(samples);
         if (ThrowOnPush is not null)
         {
             throw ThrowOnPush;

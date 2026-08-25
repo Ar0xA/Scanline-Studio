@@ -209,6 +209,41 @@ public interface ISstvSessionService : IAsyncDisposable
 
     Task StopReceivingAsync();
 
+    /// <summary>Piece C1 (RX tab Re-decode port, `spec/16-gui-wiring-survey.md`): starts recording
+    /// the raw capture stream to <paramref name="path"/> as a 16-bit mono WAV file, matching legacy's
+    /// own record tap point (<c>WaveFile.ReadWrite</c> runs before the notch/LMS/demod loop,
+    /// `Sound.cpp:334`) — the SAME pre-filter buffer <see cref="Waterfall"/>/the decoder itself
+    /// receive, not a post-filter tap. Throws <see cref="InvalidOperationException"/> if a recording
+    /// is already in progress, or if <see cref="IsReceiving"/> is <see langword="false"/> (recording
+    /// while not receiving would silently produce an empty file). The recording is a parallel sink,
+    /// independent of <see cref="StartReceivingAsync"/>/<see cref="StopReceivingAsync"/>'s own
+    /// subscribe/unsubscribe cycle — it deliberately survives a Stop/Start RX cycle while armed
+    /// (gapping silently across it, since no samples arrive while capture is stopped), matching
+    /// legacy's own record mode not touching capture devices at all
+    /// (<c>Sound.cpp:459-471</c>'s device-swap branch is never entered for <c>m_mode==2</c>).</summary>
+    Task StartRecordingAsync(string path);
+
+    /// <summary>Stops an in-progress recording started by <see cref="StartRecordingAsync"/> and
+    /// writes the buffered samples to disk. A no-op if no recording is in progress. Throws whatever
+    /// the underlying file write throws (e.g. disk full, invalid path) — a genuine, user-visible
+    /// failure for this explicit, user-initiated action, unlike <see cref="DisposeAsync"/>'s own
+    /// best-effort finalize of an in-progress recording, which swallows and logs instead.</summary>
+    Task StopRecordingAsync();
+
+    /// <summary>Piece C2 (RX tab Re-decode port): decodes a previously-recorded WAV file at
+    /// <paramref name="path"/> through the SAME decoder/waterfall/level-meter pipeline live capture
+    /// uses — legacy's own file playback (<c>m_playmode</c>, `Sound.cpp:334-471`) substitutes only
+    /// the audio SOURCE feeding the identical demod loop, no special-cased decode branch, and this
+    /// mirrors that. Live RX is paused for the duration and resumed afterward only if it was already
+    /// running. Rejects (throwing <see cref="InvalidOperationException"/>) if a file decode or a
+    /// transmit/tune is already in progress, if auto-detect is paused, if the file's sample rate
+    /// doesn't match <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SampleRate"/> (this
+    /// port does not implement legacy's real resampler, `CWaveFile::ChangeSampFreq`,
+    /// `Sound.cpp:713-785` — a known gap, tracked in `spec/14-roadmap.md`), or if the file contains no
+    /// samples. The decoder's prior AGC/resonator/lock state carries through the seam onto the file's
+    /// samples, matching legacy's own behavior at the same seam — not a "clean decode."</summary>
+    Task DecodeFromFileAsync(string path, CancellationToken ct = default);
+
     /// <summary>Encodes and transmits <paramref name="image"/> as <paramref name="mode"/>. Pauses
     /// capture/decode for the duration (restored afterward only if RX was already running) and keys
     /// PTT via the injected <c>IRadioSessionService</c> around playback.</summary>
