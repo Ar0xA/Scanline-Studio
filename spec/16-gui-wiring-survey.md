@@ -230,27 +230,29 @@ right = Queue/Mode-timing/TX-log/Recently-sent.
 | Control | Class | File:line | Note |
 |---|---|---|---|
 | Auto / Manual segment | REAL | `:35-36` | `AutoFollowRxMode` (`TxControlsPaneViewModel.cs:217`), persisted to `TxPaneUiSettings`. |
-| "Auto picks" caption value | PLACEHOLDER | `:46` | `"—"` (`en.json:323`). |
+| "Auto picks" caption value | REAL (2026-08-25) | `:56` | `AutoPicksText` (`.cs`) — selected mode's name while Auto, "Manual selection" while Manual. |
 | Quick-mode pill grid (16 buttons) | REAL | `:59-76` | `QuickSelectModeCommand` (`.cs:808`), real mode ids as `CommandParameter`; sets `SelectedMode` on this pane (distinct from the RX tab's grid, which calls `ForceMode`). |
 | Mode `ComboBox` | REAL | `:77-86` | `AvailableModes` / `SelectedMode` (`.cs:163`), `IsEnabled="{Binding CanChangeSourceOrMode}"` (`.cs:775`). Genuinely drives the encode pipeline. |
 | Selected | REAL | `:93` | `SelectedMode.DisplayName`. |
-| Duration / Geometry / VOX tone / VIS header | PLACEHOLDER | `:97`, `:101`, `:105`, `:109` | All `"—"` (`en.json:327,329,331,333`). |
+| Duration / Geometry / VOX tone / VIS header | REAL (2026-08-25) | `:97`, `:101`, `:105`, `:109` | `DurationText`/`GeometryText`/`VoxToneText`/`VisHeaderText` (`.cs`), all off `SelectedMode`; VOX tone and VIS header route through new `ISstvSessionService.GetLeaderToneDurationMs`/`GetVisHeaderInfo` (backed by `AnalogFmSstvEncoder`/`VisHeader`). |
 | Favorites row | REAL | `:113-128` | `FavoriteModes` (`.cs:454`), each with a real `SelectCommand`. |
 | "Edit favorites…" flyout | REAL | `:129-141` | `FavoriteModeOptions` (`.cs:444`) `CheckBox` list; persisted as `TxPaneUiSettings.FavoriteModeIds` (`.cs:543`). |
 
-**Identification card** (`:149-167`) — **REAL, with one caveat.**
+**Identification card** (`:149-167`) — **REAL.**
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| FSK ID | REAL (snapshot) | `:156` | `FskIdDisplay` (`.cs:322`). |
-| CW ID | REAL (snapshot) | `:160` | `CwIdDisplay` (`.cs:327`). |
-| Tail | REAL (snapshot) | `:164` | `TailDisplay` (`.cs:337`). |
+| FSK ID | REAL | `:156` | `FskIdDisplay` (`.cs:322`). |
+| CW ID | REAL | `:160` | `CwIdDisplay` (`.cs:327`). |
+| Tail | REAL | `:164` | `TailDisplay` (`.cs:337`). |
 
 All three reflect the current effective Options configuration via
-`ISstvSessionService.GetStationIdTransmitOptionsAsync`, **loaded once at construction and not
-re-read while the pane stays open** (the file's own comment, `:145-148`). Changing Identification
-settings in Options and returning here shows stale values until restart — arguably PARTIAL; recorded
-as REAL-with-caveat because the value it shows was genuinely correct when read.
+`ISstvSessionService.GetStationIdTransmitOptionsAsync`. **Fixed 2026-08-25**: previously loaded
+once at construction and never re-read while the pane stayed open (changing Identification
+settings in Options and returning here showed stale values until restart); now also re-loaded when
+the Options dialog closes (`MainWindow.axaml.cs`'s `OptionsRequested` handler, same fix as the
+header callsign chip's own `LoadCallsignAsync`). Same fix applied to the Output card's Device row
+below (`OutputDeviceName`).
 
 **Output card** (`:177-265`)
 
@@ -261,10 +263,12 @@ as REAL-with-caveat because the value it shows was genuinely correct when read.
 | Power / ALC / SWR rows | REAL (capability-gated) | `:196-207` | `LivePowerPercent` / `LiveAlcLevel` / `LiveSwrRatio`, each row `IsVisible`-gated on the real `ShowPowerMeter`/`ShowAlcMeter`/`ShowSwrMeter` capability flags (`.cs:652-654`). Rows vanish rather than showing a placeholder on an unsupported rig. |
 | SWR auto-cutoff toggle | REAL | `:220-224` | `SwrCutoffEnabled` (`.cs:263`), `IsEnabled="{Binding ShowSwrMeter}"`. |
 | SWR threshold | REAL | `:226` | `SwrCutoffThreshold` (`.cs:266`). |
-| Tune drive | PLACEHOLDER | `:243` | `"—"` (`en.json:335`). |
+| Tune drive | REAL (2026-08-25) | `:243` | `RadioStatus.TxVolumeDisplay` — same value as the Drive slider above it. |
 | Tone map | REAL | `:247` | `ToneMapText` (`.cs:174`), static per-mode `SstvModeDefinition.LuminanceMinHz/MaxHz`. |
-| TX clock / Monitor audio / Occupied BW | PLACEHOLDER | `:251`, `:255`, `:259` | All `"—"` (`en.json:348,350,352`). Occupied BW was researched and deliberately deferred, per the file's own comment (`:229-236`). |
-| Meter plot | STUB (empty) | `:262-263` | Kicker + empty `Border Classes="IndustryHatchPanel"`. |
+| TX clock | REAL (2026-08-25) | `:251` | `TxClockText` — elapsed transmit time while transmitting, idle placeholder otherwise. |
+| Monitor audio | PLACEHOLDER | `:255` | `"—"`. No legacy precedent and no tappable TX audio signal — moved to `spec/14-roadmap.md`'s "maybe one day" list, 2026-08-25. |
+| Occupied BW | PLACEHOLDER | `:259` | `"—"`. Researched and deliberately deferred, per the file's own comment (`:229-236`). |
+| POWER/ALC meters | REAL (2026-08-25) | `:262-263` | Fill-bar meters (`Atoms.axaml`'s `IndustryMeter` atom) off the already-real `LivePowerPercent`/`LiveAlcPercentDisplay`, replacing the previously-empty hatch panel. `LiveAlcPercentDisplay` also fixed a real scale bug: `RadioState.AlcLevel` is 0.0-1.0, not 0-100 like `PowerPercent` — the ALC text row above it was rendering the raw fraction as if it were a percentage. |
 
 **Stock / browse card** (`:269-345`) — fully REAL: `StockEntries` `ListBox` (`:294-316`, `.cs:439`,
 `IsEnabled="{Binding CanChangeSourceOrMode}"`), Browse (`:317-319`, `SelectImageCommand`, `.cs:885`),
@@ -733,5 +737,6 @@ File > Open/Exit, Help > About, and Options.
 5. **Options → Decode settings are restart-only.** Every decoder toggle on that tab is baked into a DI
    singleton with no live-reconfiguration path. Sense level is the most user-visible case, since it's
    the control most likely to be adjusted while actively chasing a signal (legacy applies it live).
-6. **The Identification card in the TX pane is a construction-time snapshot** (`TxControlsPaneView.axaml:145-148`)
-   — it shows the Options values as they were when the pane was built, not as they are now.
+6. **Fixed 2026-08-25.** The Identification card in the TX pane used to be a construction-time
+   snapshot (`TxControlsPaneView.axaml:145-148`) — it showed the Options values as they were when
+   the pane was built, not as they are now. Now re-loaded whenever the Options dialog closes.
