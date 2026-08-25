@@ -402,9 +402,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         ? _localization.GetString("MainWindow.StatusBar.LineProgressValueFormat", (int)Math.Round(progress * mode.ImageHeight), mode.ImageHeight)
         : _localization.GetString("MainWindow.StatusBar.LineProgressValueNoLock");
 
-    /// <summary>Mode card's "Remaining" row -- lines and time left in the current decode, derived
-    /// from the same <see cref="Progress"/> x <c>DetectedMode.ImageHeight</c> source as
-    /// <see cref="LineProgressText"/>, not a separate tracked quantity.</summary>
+    /// <summary>Mode card's "Remaining" row -- lines and time left in the current decode.
+    /// <c>linesRemaining</c> (image rows) is derived from the same <see cref="Progress"/> x
+    /// <c>DetectedMode.ImageHeight</c> source as <see cref="LineProgressText"/>, not a separate
+    /// tracked quantity. The time figure is NOT <c>linesRemaining * mode.LineDurationMs</c> --
+    /// <c>LineDurationMs</c> is per TRANSMISSION line, not per image row, and
+    /// <see cref="ColorEncoding.YCbCrLinePaired"/>/<see cref="ColorEncoding.MonoAveragedPaired"/>
+    /// modes transmit one line per 2 image rows (same double-counting bug class
+    /// <see cref="TxControlsPaneViewModel.GetFrameSeconds"/> was fixed for on the TX side, found
+    /// during that fix's own code-review -- PD90-family modes were showing ~2x the real remaining
+    /// time here). Correct instead: total decode time is proportional to <see cref="Progress"/>
+    /// regardless of family (each transmission-line-duration step advances both the row count and
+    /// the elapsed-time fraction by the same proportional amount, since exactly 2 rows land per
+    /// step for paired families), so <c>(1 - progress) * GetFrameSeconds(mode)</c> is exact without
+    /// needing to separately reconstruct the transmission-line count here.</summary>
     public string RemainingText
     {
         get
@@ -415,8 +426,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             }
 
             var linesRemaining = mode.ImageHeight - (int)Math.Round(progress * mode.ImageHeight);
-            var msRemaining = linesRemaining * mode.LineDurationMs;
-            return _localization.GetString("Panes.RxImage.RemainingValueFormat", linesRemaining, msRemaining / 1000.0);
+            var secondsRemaining = (1.0 - progress) * TxControlsPaneViewModel.GetFrameSeconds(mode);
+            return _localization.GetString("Panes.RxImage.RemainingValueFormat", linesRemaining, secondsRemaining);
         }
     }
 
