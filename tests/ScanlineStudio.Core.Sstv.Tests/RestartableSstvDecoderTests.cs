@@ -170,6 +170,42 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void ArmScopeCapture_Channel0_SurvivesAPeriodicSwap()
+    {
+        // Un-stub-RX-tab Piece B: unlike RequestNotch above, there is no wrapper-level "re-seed on
+        // rebuild" step to prove here -- the state that must survive a restart is the capture's OWN
+        // fill progress, which lives on the SHARED ScopeCaptureBuffer instances CreateInner hands to
+        // every fresh inner decoder (see RestartableSstvDecoder's own _scopeCaptureChannel0 doc
+        // comment). If a future change ever passed CreateInner a FRESH buffer instead of the shared
+        // instance, post-restart writes would land on an orphaned buffer this wrapper's own
+        // TryGetScopeCaptureChannel0 never reads -- the capture would stall forever instead of
+        // completing, which is exactly what this test would catch (a bounded loop that fails to
+        // observe completion), not something a "restart happened" assertion alone could catch.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 20_000, criticalThresholdSamples: 1_000_000);
+        decoder.ArmScopeCapture(200_000); // large enough to still be incomplete once a restart lands
+        decoder.PushSamples(new float[1]); // drains the arm request
+
+        var sawRestartBeforeCompletion = false;
+        for (var i = 0; i < 30 && decoder.TryGetScopeCaptureChannel0() is null; i++)
+        {
+            // The restart-threshold check uses TotalSamplesReceived as of the START of each call (see
+            // RestartableSstvDecoder's own PushSamplesCore), so which push number actually crosses
+            // warningThresholdSamples isn't pinned to an exact iteration here -- only that it happens
+            // at some point before this capture completes, which is what this test needs to prove.
+            decoder.PushSamples(new float[25_000]);
+            if (decoder.RestartCountForTests > 0)
+            {
+                sawRestartBeforeCompletion = true;
+            }
+        }
+
+        var channel0 = decoder.TryGetScopeCaptureChannel0();
+        Assert.NotNull(channel0);
+        Assert.Equal(200_000, channel0!.Length);
+        Assert.True(sawRestartBeforeCompletion, "Test setup problem -- no restart happened before the capture completed, so this test never actually exercised cross-restart persistence.");
+    }
+
+    [Fact]
     public void DemodType_ConstructorValue_SurvivesAPeriodicSwap()
     {
         // Demod-type subsystem Phase 3 auditor code-review finding: DemodType has no public

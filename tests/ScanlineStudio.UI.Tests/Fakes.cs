@@ -235,6 +235,24 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         LastNotchFrequencyHz = frequencyHz;
     }
 
+    public int ArmScopeCaptureCallCount { get; private set; }
+
+    public int? LastScopeCaptureSize { get; private set; }
+
+    public void ArmScopeCapture(int size)
+    {
+        ArmScopeCaptureCallCount++;
+        LastScopeCaptureSize = size;
+    }
+
+    public double[]? ScopeCaptureChannel0ToReturn { get; set; }
+
+    public double[]? TryGetScopeCaptureChannel0() => ScopeCaptureChannel0ToReturn;
+
+    public double[]? ScopeCaptureChannel1ToReturn { get; set; }
+
+    public double[]? TryGetScopeCaptureChannel1() => ScopeCaptureChannel1ToReturn;
+
     public int RequestCorrectSlantCallCount { get; private set; }
 
     public void RequestCorrectSlant() => RequestCorrectSlantCallCount++;

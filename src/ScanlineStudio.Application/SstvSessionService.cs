@@ -1177,6 +1177,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestNotch(enabled, frequencyHz);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.ArmScopeCapture"/>.</summary>
+    public void ArmScopeCapture(int size)
+    {
+        Log.ScopeCaptureArmed(_logger, size);
+        _decoder.ArmScopeCapture(size);
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.TryGetScopeCaptureChannel0"/>. A plain read, no
+    /// logging -- matches this class's own established convention of only logging COMMANDS
+    /// (RequestNotch/ArmScopeCapture above), not polled getters.</summary>
+    public double[]? TryGetScopeCaptureChannel0() => _decoder.TryGetScopeCaptureChannel0();
+
+    /// <summary>See <see cref="ISstvSessionService.TryGetScopeCaptureChannel1"/>.</summary>
+    public double[]? TryGetScopeCaptureChannel1() => _decoder.TryGetScopeCaptureChannel1();
+
     /// <summary>See <see cref="ISstvSessionService.RequestCorrectSlant"/>.</summary>
     public void RequestCorrectSlant()
     {
@@ -3547,6 +3562,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX notch {Enabled} (frequency {FrequencyHz} Hz)")]
         public static partial void NotchRequested(ILogger logger, bool enabled, double? frequencyHz);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Decoder Trace capture armed ({Size} samples)")]
+        public static partial void ScopeCaptureArmed(ILogger logger, int size);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);
