@@ -52,10 +52,12 @@
          see RadioHeaderView.axaml's Favourites card comment). -->
     <Grid RowDefinitions="26,102,*,25">
         <!-- Menu bar: mock2's own 6 top-level menus reproduced (File/Configurations/Rig & PTT/
-             Calibration/Tools/Help), minus View: the fixed Receive/Transmit/Gallery TabControl
-             below has nothing closable, so View's reopen-a-closed-pane purpose doesn't apply here
-             (spec/09-ui.md). Only File > Open image (routes into the real TX image editor via
-             TxControlsPaneViewModel.SelectImageCommand) and File > Exit are wired to real
+             Calibration/Tools/Help), minus View (the fixed Receive/Transmit/Gallery TabControl
+             below has nothing closable, so View's reopen-a-closed-pane purpose doesn't apply here,
+             spec/09-ui.md) and minus Rig & PTT (removed per direct user request, 2026-08-25 —
+             see that menu's own former location below for why). Only File > Open image (routes into
+             the real TX image editor via TxControlsPaneViewModel.SelectImageCommand) and File >
+             Exit are wired to real
              commands; every other item is IsEnabled="False" with a "not yet implemented" tooltip,
              the same convention as the Options window's own disabled-placeholder items. -->
         <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
@@ -82,17 +84,12 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations.StorageNaming}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations.Macros}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
             </MenuItem>
-            <!-- CAT interface pruned (redundant with Options' real Radio/CAT tab - backend
-                 selection, host/port, Hamlib fields). PTT method/Frequency memories/Test PTT stay -
-                 none are settings duplicates: PTT method is a different concept than Options' RTS/
-                 PTT-lock checkboxes, frequency memories are the header's own M1-M7 favourites (not
-                 an Options concept at all), Test PTT is a live diagnostic action, not a settings
-                 screen. -->
-            <MenuItem Header="{loc:Translate MainWindow.Menu.RigPtt}">
-                <MenuItem Header="{loc:Translate MainWindow.Menu.RigPtt.PttMethod}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.RigPtt.FrequencyMemories}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.RigPtt.TestPtt}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-            </MenuItem>
+            <!-- Rig & PTT removed per direct user request (2026-08-25) — all 3 items (PTT method,
+                 Frequency memories, Test PTT) were disabled stubs, never wired to a real command;
+                 no docs/removed-features.md entry needed (that doc covers dropping a PORTED legacy
+                 capability, and nothing here was ever functional to drop). Frequency memories/Test
+                 PTT both have real equivalents elsewhere already (the header's own M1-M7 favourites;
+                 Options' Radio/CAT tab Test PTT), so nothing here still lacks a home if implemented. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ClockCalibration}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
