@@ -458,16 +458,17 @@ just collapses to zero width).
 | File > Save frame as (Ctrl+S) | STUB (disabled) | `:73` |
 | File > Exit | REAL | `:75` — `ExitCommand`. |
 | Configurations > Storage & naming, Macros | STUB (disabled) | `:82-83` |
-| Rig & PTT > PTT method, Frequency memories, Test PTT | STUB (disabled) | `:92-94` |
-| Calibration > Clock calibration, Loopback self-test, Tone generator, Slant reference | STUB (disabled) | `:97-100` |
-| Tools > Re-decode from WAV, Export session log | STUB (disabled) | `:103-104` |
-| Help > About | REAL | `:107` — `OpenAboutCommand` (`MainViewModel.cs:179`) → `AboutRequested` → `MainWindow.axaml.cs:173`. |
-| Options… | REAL | `:109` — `OpenOptionsCommand` (`MainViewModel.cs:159`). |
-| Callsign chip | REAL | `:128-137` — `CallsignDisplay` (`MainViewModel.cs:137`), `"N0CALL"` fallback until set in Options. Opens Options straight to the Station tab (`OpenOptionsToTxTabCommand`, `.cs:170` — internal name unchanged by the tab's 2026-08-24 "TX"→"Station" rename, see the Options-window section below). |
+| Calibration > Clock calibration, Loopback self-test, Tone generator, Slant reference | STUB (disabled) | (line numbers shifted by the Rig & PTT removal below — re-verify at the next docs audit) |
+| Tools > Re-decode from WAV, Export session log | STUB (disabled) | (line numbers shifted, see above) |
+| Help > About | REAL | `OpenAboutCommand` (`MainViewModel.cs:179`) → `AboutRequested` → `MainWindow.axaml.cs:173`. |
+| Options… | REAL | `OpenOptionsCommand` (`MainViewModel.cs:159`). |
+| Callsign chip | REAL | `CallsignDisplay` (`MainViewModel.cs:137`), `"N0CALL"` fallback until set in Options. Opens Options straight to the Station tab (`OpenOptionsToTxTabCommand`, `.cs:170` — internal name unchanged by the tab's 2026-08-24 "TX"→"Station" rename, see the Options-window section below). |
 
-Menu total: 2 real File items + Help>About + Options = 4 real; 12 disabled stubs. The three
+Menu total: 2 real File items + Help>About + Options = 4 real; 9 disabled stubs. The three
 Options-duplicating stubs (Station, Audio devices, CAT interface) were pruned outright rather than
-left disabled.
+left disabled. Rig & PTT (PTT method/Frequency memories/Test PTT, all 3 disabled stubs) was removed
+outright too, 2026-08-25, per direct user request — same treatment as the Options-duplicating stubs
+above, not left disabled.
 
 **Tab-strip status chips** (`:1473-1497`, right-aligned in the tab band)
 

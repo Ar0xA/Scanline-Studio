@@ -1378,8 +1378,8 @@
          a from-scratch MenuItem template would need before shipping (unlike TabControl below,
          where the existing ChromeOverrides.axaml already proves the real Fluent part names via a
          working `/template/` reach). Getting a replaced MenuItem template's Popup wiring wrong
-         would silently break every submenu (File/Configurations/Rig & PTT/Calibration/Tools all
-         stop opening, no exception) — a far worse failure mode than this Setter-only approach's
+         would silently break every submenu (File/Configurations/Calibration/Tools all stop
+         opening, no exception) — a far worse failure mode than this Setter-only approach's
          one known limitation: Fluent's own icon-gutter column still reserves its usual space
          before the text (no icon is ever set anywhere in this app, so it reads as a few extra
          pixels of left padding, not a functional problem), and MenuItem's :pointerover hover fill
