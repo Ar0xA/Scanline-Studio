@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.RadioConnectionGaveUpWindowView"
+        x:DataType="vm:RadioConnectionGaveUpWindowViewModel"
+        Title="{loc:Translate Options.Radio.Connect.GaveUp.Title}"
+        Width="380" Height="180"
+        MinWidth="340" MinHeight="160"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Give-up-after-5 feature's modal popup, replacing that feature's earlier dismissible toast
+         per direct user feedback ("should be a popup window, not a tiny text under the VFO").
+         Modeled on AboutWindowView.axaml — Industry atoms, Grid RowDefinitions="*,Auto"
+         content/footer split, RequestClose event wired in the code-behind. No mockup exists: new
+         scope, not a legacy MMSSTV screen — radio-connection UX is a rewrite-only concern, CAT
+         control itself is explicitly not ported (CLAUDE.md §2). -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <!-- Code-review finding: Message is an arbitrary-length exception-derived string
+                 (RadioController.cs's give-up Reason), not static content like About's — wrapped
+                 in a ScrollViewer, matching AboutWindowView.axaml's own content row, so a long
+                 message scrolls instead of silently clipping against the fixed CanResize="False"
+                 height. -->
+            <ScrollViewer Grid.Row="0">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.Connect.GaveUp.Title}" FontSize="16" />
+                    <TextBlock Classes="IndustryRowValue" Text="{Binding Message}" TextWrapping="Wrap" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate Options.Radio.Connect.GaveUp.CloseButton}" Command="{Binding CloseCommand}" IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

@@ -552,6 +552,7 @@
   "Options.Radio.Connect.NotYetConfirmed": "Connecting — not yet confirmed reachable.",
   "Options.Radio.Connect.GaveUp": "Could not connect: {0}",
   "Options.Radio.Connect.GaveUp.Title": "Radio disconnected",
+  "Options.Radio.Connect.GaveUp.CloseButton": "Close",
   "Options.Radio.Host": "Host",
   "Options.Radio.Port": "Port",
   "Options.Radio.TestConnection": "Test connection",

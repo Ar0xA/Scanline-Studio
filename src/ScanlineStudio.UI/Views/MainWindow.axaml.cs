@@ -1,10 +1,8 @@
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Controls.Notifications;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
@@ -15,10 +13,11 @@ public partial class MainWindow : Window
 {
     private readonly ISettingsStore? _settingsStore;
 
-    // Give-up-after-5 feature: needs a templated host, so it's constructed in the Opened handler
-    // below, not here or in DataContextChanged (which fires before this window is shown/templated).
-    // ??=-guarded at its construction site so a later Close/re-Show cycle can't build a second one.
-    private WindowNotificationManager? _notificationManager;
+    // Give-up-after-5 feature: dedup guard for the modal popup below -- ConnectionGaveUp is a
+    // system-triggered event that can in principle fire again (e.g. the user retries via Options and
+    // that retry also exhausts its 5 attempts) before the user has dismissed an already-open popup
+    // from the previous give-up. Null once the window is closed (or before the first give-up).
+    private RadioConnectionGaveUpWindowView? _connectionGaveUpWindow;
 
     public MainWindow()
     {
@@ -32,13 +31,6 @@ public partial class MainWindow : Window
         // App.Services set must not throw here.
         var logger = App.Services?.GetService<ILogger<MainWindow>>();
         _settingsStore = App.Services?.GetService<ISettingsStore>();
-        var localization = App.Services?.GetService<ILocalizationService>();
-
-        // Give-up-after-5 feature: WindowNotificationManager needs a templated TopLevel host, which
-        // this window only has once shown -- Opened fires once, after that, with no dispatcher
-        // pumping between DataContextChanged (below)/Show()/Opened, so the ConnectionGaveUp
-        // subscription wired in DataContextChanged can never race this construction.
-        Opened += (_, _) => _notificationManager ??= new WindowNotificationManager(this) { MaxItems = 3 };
 
         // Restore window geometry BEFORE the window is ever shown (App.axaml.cs constructs this
         // window, then hands it to the desktop lifetime -- no visible "jump" this way).
@@ -143,32 +135,57 @@ public partial class MainWindow : Window
         {
             if (DataContext is MainViewModel vm)
             {
-                // Give-up-after-5 feature: the dismissible-toast half of the user's own request.
-                // RadioStatusViewModel.ConnectionErrorMessage (RadioHeaderView.axaml) is the
-                // persistent half and already covers the same information on its own -- if
-                // _notificationManager somehow isn't built yet when this fires (not reachable given
-                // the Opened-handler ordering above, but not load-bearing either way), this is simply
-                // a no-op toast, not a lost signal.
+                // Give-up-after-5 feature: the must-acknowledge-popup half of the user's own request
+                // (direct feedback: "should be a popup window, not a tiny text under the VFO" --
+                // replaces this feature's earlier dismissible-toast half entirely, per that
+                // decision). RadioStatusViewModel.ConnectionErrorMessage (RadioHeaderView.axaml) is
+                // the persistent half and already covers the same information on its own, unaffected
+                // by this change.
                 //
-                // Code-review finding: wrapped in try/catch, same reasoning as OptionsRequested/
-                // AboutRequested/QsoLinkRequested's own handlers below -- an unhandled exception here
-                // would otherwise crash the process, AND (this handler's own extra hazard,
-                // RadioStatusViewModel.OnConnectionEvent's own doc comment) abort the CALLER's
-                // Dispatcher.Post callback mid-way, since that raises this event synchronously.
+                // Dedup-guarded by _connectionGaveUpWindow: ConnectionGaveUp is system-triggered and
+                // can in principle fire again (e.g. a user-initiated retry via Options also exhausts
+                // its own 5 attempts) before an already-open popup from a previous give-up has been
+                // dismissed -- skip opening a second one rather than stacking dialogs; the header's
+                // persistent ConnectionErrorMessage line already reflects the latest reason either way.
+                //
+                // Code-review finding (carried over from the toast this replaces): wrapped in
+                // try/catch, same reasoning as OptionsRequested/AboutRequested/QsoLinkRequested's own
+                // handlers below -- an unhandled exception here would otherwise crash the process,
+                // AND (this handler's own extra hazard, RadioStatusViewModel.OnConnectionEvent's own
+                // doc comment) abort the CALLER's Dispatcher.Post callback mid-way, since that raises
+                // this event synchronously.
                 vm.RadioStatus.ConnectionGaveUp += message =>
                 {
+                    if (_connectionGaveUpWindow is not null)
+                    {
+                        return;
+                    }
+
+                    if (logger is not null)
+                    {
+                        Log.ConstructingConnectionGaveUpWindow(logger);
+                    }
+
                     try
                     {
-                        _notificationManager?.Show(new Notification(
-                            localization?.GetString("Options.Radio.Connect.GaveUp.Title") ?? string.Empty,
-                            message,
-                            NotificationType.Warning));
+                        var window = new RadioConnectionGaveUpWindowView
+                        {
+                            DataContext = new RadioConnectionGaveUpWindowViewModel(message),
+                        };
+                        _connectionGaveUpWindow = window;
+                        window.Closed += (_, _) => _connectionGaveUpWindow = null;
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.ConnectionGaveUpShowDialogReturned(logger);
+                        }
                     }
                     catch (Exception ex)
                     {
+                        _connectionGaveUpWindow = null;
                         if (logger is not null)
                         {
-                            Log.ConnectionGaveUpToastFailed(logger, ex);
+                            Log.ConnectionGaveUpWindowFailed(logger, ex);
                         }
                     }
                 };
@@ -358,7 +375,13 @@ public partial class MainWindow : Window
         [LoggerMessage(Level = LogLevel.Warning, Message = "AboutWindowView failed to open or show")]
         public static partial void AboutWindowFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Showing the radio give-up toast notification failed")]
-        public static partial void ConnectionGaveUpToastFailed(ILogger logger, Exception ex);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing RadioConnectionGaveUpWindowView")]
+        public static partial void ConstructingConnectionGaveUpWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "RadioConnectionGaveUpWindowView.ShowDialog returned")]
+        public static partial void ConnectionGaveUpShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "RadioConnectionGaveUpWindowView failed to open or show")]
+        public static partial void ConnectionGaveUpWindowFailed(ILogger logger, Exception ex);
     }
 }

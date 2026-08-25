@@ -333,9 +333,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     /// <summary>Give-up-after-5 feature: fired once per give-up (the same event that sets
     /// <see cref="ConnectionErrorMessage"/>), carrying the already-localized message text -- the
-    /// dismissible-toast half of the user's own request ("a notification"), on top of the persistent
-    /// status line. Raised from the same <see cref="Dispatcher.UIThread.Post"/> callback as every
-    /// other cross-thread signal in this class.</summary>
+    /// must-acknowledge-popup half of the user's own request, on top of the persistent status line
+    /// (direct user feedback: "should be a popup window, not a tiny text under the VFO" -- this used
+    /// to feed a dismissible toast instead; see <c>MainWindow.axaml.cs</c>'s own handler for the
+    /// modal it opens now). Raised from the same <see cref="Dispatcher.UIThread.Post"/> callback as
+    /// every other cross-thread signal in this class.</summary>
     public event Action<string>? ConnectionGaveUp;
 
     public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
@@ -419,7 +421,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // (always reason: null) -- see ConnectionErrorMessage's own doc comment for why this is
             // kept separate from ErrorMessage. giveUpMessage's own ConnectionGaveUp?.Invoke is
             // deferred to the END of this callback (code-review finding) -- ConnectionGaveUp's
-            // subscriber is arbitrary external code (MainWindow.axaml.cs's toast handler) that this
+            // subscriber is arbitrary external code (MainWindow.axaml.cs's popup handler) that this
             // class cannot guarantee won't throw; invoking it before the CatLinked/IsKeyed/
             // RigMetersDisplay staleness resets below would let such a throw abort this whole
             // callback, leaving the header claiming a live link with stale keyed/meter readings
