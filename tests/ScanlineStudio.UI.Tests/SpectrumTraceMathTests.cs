@@ -34,6 +34,46 @@ public sealed class SpectrumTraceMathTests
     }
 
     [Fact]
+    public void MapXToFrequency_AtZero_ReturnsStartHz()
+    {
+        var freqHz = SpectrumTraceMath.MapXToFrequency(x: 0, startHz: 1000, spanHz: 1600, width: 400);
+        Assert.Equal(1000, freqHz);
+    }
+
+    [Fact]
+    public void MapXToFrequency_AtWidth_ReturnsStartPlusSpan()
+    {
+        var freqHz = SpectrumTraceMath.MapXToFrequency(x: 400, startHz: 1000, spanHz: 1600, width: 400);
+        Assert.Equal(2600, freqHz);
+    }
+
+    [Fact]
+    public void MapXToFrequency_AtHalfWidth_ReturnsMidpoint()
+    {
+        var freqHz = SpectrumTraceMath.MapXToFrequency(x: 200, startHz: 1000, spanHz: 1600, width: 400);
+        Assert.Equal(1800, freqHz);
+    }
+
+    [Fact]
+    public void MapXToFrequency_ZeroWidth_DoesNotDivideByZero()
+    {
+        var freqHz = SpectrumTraceMath.MapXToFrequency(x: 200, startHz: 1000, spanHz: 1600, width: 0);
+        Assert.Equal(1000, freqHz);
+    }
+
+    [Fact]
+    public void MapXToFrequency_IsTheExactInverseOfMapFrequencyToX()
+    {
+        const double startHz = 1000, spanHz = 1600, width = 400;
+        for (var freqHz = startHz; freqHz <= startHz + spanHz; freqHz += 137.0)
+        {
+            var x = SpectrumTraceMath.MapFrequencyToX(freqHz, startHz, spanHz, width);
+            var roundTripped = SpectrumTraceMath.MapXToFrequency(x, startHz, spanHz, width);
+            Assert.Equal(freqHz, roundTripped, precision: 9);
+        }
+    }
+
+    [Fact]
     public void MapDbToY_AtZeroDb_ReturnsHeight_Bottom()
     {
         // ZeroDb=0/GainDb=50: a 0dB reading is the floor -> bottom of the trace (Y=height).
