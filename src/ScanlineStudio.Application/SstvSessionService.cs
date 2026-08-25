@@ -58,6 +58,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // between them).
     private volatile bool _isReceiving;
 
+    // RX pause/resume toggle (elegant-wondering-hinton.md, port of legacy's RxAutoPush toggle,
+    // Main.cpp:6042-6060) -- session-owned, NOT decoder state (see ISstvDecoder.RequestAbandonReception's
+    // own doc comment for why). Written from the UI thread (SetAutoDetectPaused), read on the audio
+    // engine's own capture/drain thread inside _decoderHandler below, before every PushSamples call --
+    // volatile for the same cross-thread-visibility reason _isReceiving above already is.
+    private volatile bool _autoDetectPaused;
+
+    // One-shot: true only in the brief window between SetAutoDetectPaused(true) and the NEXT audio
+    // callback actually draining it (forwarding one empty buffer so the decoder's own deferred
+    // RequestAbandonReception applies promptly instead of possibly sitting pending until resume --
+    // see _decoderHandler's own gate below). Also volatile, same reasoning as _autoDetectPaused.
+    private volatile bool _autoDetectPauseDrainPending;
+
     // Round-15 nit: every other cross-thread flag on this class (_isReceiving immediately above,
     // _pttLocked/_rxPendingResumeAfterUnlock below) is volatile with an explicit comment justifying
     // it -- this one is written from OnDecoderRestarted/OnDecoderRestartCriticallyOverdue (see the
@@ -278,6 +291,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             try
             {
+                if (_autoDetectPaused)
+                {
+                    // Round-3 plan-review fix: forward one EMPTY buffer instead of skipping outright
+                    // on the transition edge, so the decoder's own deferred RequestAbandonReception
+                    // applies within about one callback instead of possibly sitting pending until
+                    // resume. Same audio-callback thread as every other real PushSamples call here --
+                    // NOT an out-of-band call from the UI thread (round-1's rejected design), so no
+                    // overlapping-call risk.
+                    if (_autoDetectPauseDrainPending)
+                    {
+                        _autoDetectPauseDrainPending = false;
+                        _decoder.PushSamples(ReadOnlyMemory<float>.Empty);
+                    }
+
+                    return;
+                }
+
                 _decoder.PushSamples(samples);
             }
             catch (Exception ex)
@@ -348,6 +378,30 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public IReadOnlyList<SstvModeDefinition> AvailableModes => SstvModeRegistry.All;
 
     public bool IsReceiving => _isReceiving;
+
+    /// <summary>See <see cref="ISstvSessionService.IsAutoDetectPaused"/>.</summary>
+    public bool IsAutoDetectPaused => _autoDetectPaused;
+
+    /// <summary>See <see cref="ISstvSessionService.SetAutoDetectPaused"/>. Session-owned toggle, not
+    /// decoder state -- setting <see langword="true"/> requests the decoder abandon whatever's in
+    /// progress (<see cref="ISstvDecoder.RequestAbandonReception"/>), arms the one-shot drain-pending
+    /// flag so that request applies promptly (see <see cref="_decoderHandler"/>'s own gate), then
+    /// stops forwarding real audio to the decoder until cleared. Capture and the waterfall are
+    /// untouched either way.</summary>
+    public void SetAutoDetectPaused(bool paused)
+    {
+        if (paused)
+        {
+            _decoder.RequestAbandonReception();
+            _autoDetectPauseDrainPending = true;
+            _autoDetectPaused = true;
+        }
+        else
+        {
+            _autoDetectPaused = false;
+            _autoDetectPauseDrainPending = false;
+        }
+    }
 
     public bool IsPttLocked => _pttLocked;
 
@@ -1263,6 +1317,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
             return;
         }
 
+        // Code-review finding (round 2, elegant-wondering-hinton.md): _autoDetectPaused is
+        // deliberately NOT reset here -- a DELIBERATE DEVIATION from verified legacy behavior, not a
+        // legacy-fidelity claim (an earlier version of this comment wrongly claimed the latter; see
+        // that finding for the correction). Legacy's own pause flag (pDem->m_SyncMode = -1,
+        // Main.cpp:6042-6060) does NOT survive a transmit: TMmsstv::ToTX (Main.cpp:7360) calls
+        // pDem->Stop() (guarded only by the TXLoopBack option, off by default -- Main.cpp:7358),
+        // which sets m_SyncMode = 512 (sstv.cpp:1786) -- not a parking
+        // state, but the entry to a 0.5s self-clearing wait (case 512/513, sstv.cpp:2243-2252) that
+        // lands on 0 (unpaused) regardless of what the flag was before Stop(). So in legacy, pausing
+        // then transmitting silently un-pauses ~0.5s after RX audio resumes, and legacy's own UI
+        // honestly reflects that (SBAuto->Down re-derives from the flag, Main.cpp:5988). This port
+        // chooses STICKY pause instead -- surviving TX and any Stop/Start RX cycle, changed only by
+        // the user's own toggle (or QuickSelectMode's own explicit resume-on-force, see that
+        // method's comment) -- because this is session/UX state, not DSP/protocol math (out of this
+        // project's legacy-fidelity scope), and legacy's drop-after-TX reads as an artifact of
+        // Stop()'s shared teardown path rather than an intentional design choice; an operator who
+        // explicitly paused auto-detect should not have it silently resume just because they keyed
+        // up. A fresh SstvSessionService instance still starts unpaused, via _autoDetectPaused's own
+        // `false` field default -- no explicit reset needed for that case.
         var device = await ResolveDeviceAsync(forCapture: true, ct).ConfigureAwait(false);
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
 

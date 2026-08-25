@@ -251,6 +251,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(SaveFrameCommand))]
     private SstvModeDefinition? _detectedMode;
 
+    /// <summary>Mode card's "Listening / Paused" toggle -- port of legacy's RX-page <c>SBAuto</c>
+    /// (<c>TMmsstv::RxAutoPush</c>, `Main.cpp:6042-6060`). Optimistic UI, same shape as
+    /// <c>TxControlsPaneViewModel.AutoFollowRxMode</c>: set immediately on click, no round-trip poll
+    /// needed. See <see cref="ISstvSessionService.SetAutoDetectPaused"/>'s own doc comment for the
+    /// full session/decoder-layer design (four rounds of plan-readiness review).</summary>
+    [ObservableProperty]
+    private bool _isAutoDetectPaused;
+
     /// <summary>Frame-metadata card's "Size on disk" row -- real, but only for a COMPLETED save: set
     /// from <see cref="IReceivedImageBuffer.Saved"/>, the only hook a live pane has to "what file did
     /// this frame end up as" -- this fires for BOTH real production write paths:
@@ -672,6 +680,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
 
         Log.QuickSelectModeInvoked(_logger, modeId);
+        // Forcing a mode always resumes auto-detect, matching legacy's Start()/Start(mode,f) sharing
+        // SBAuto's own variable -- the underlying decoder-side ordering is already safe regardless
+        // (RequestAbandonReception always drains before ForceMode, see that method's own doc
+        // comment), this is purely so the UI toggle visibly flips back to "Listening" too. Setting
+        // the property (not calling the session directly) so IsAutoDetectPaused's own bound segment
+        // updates.
+        IsAutoDetectPaused = false;
         _sstvSession.ForceMode(mode);
     }
 
@@ -711,6 +726,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         // Same race/staleness reasoning as LineProgressText above -- RemainingText also depends on
         // DetectedMode.ImageHeight/LineDurationMs, not just Progress.
         OnPropertyChanged(nameof(RemainingText));
+    }
+
+    partial void OnIsAutoDetectPausedChanged(bool value)
+    {
+        Log.AutoDetectPausedChanged(_logger, value);
+        _sstvSession.SetAutoDetectPaused(value);
     }
 
     private void OnModeDetected(SstvModeDefinition mode)
@@ -1333,6 +1354,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode button pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
         public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX auto-detect pause toggled: paused={Paused}")]
+        public static partial void AutoDetectPausedChanged(ILogger logger, bool paused);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the just-saved RX image's file size failed")]
         public static partial void ReadSavedFileSizeFailed(ILogger logger, Exception ex);

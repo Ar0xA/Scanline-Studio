@@ -543,6 +543,20 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.ForceMode(mode);
     }
 
+    /// <summary>Forwards to whichever inner instance is current, same shape as <see cref="ForceMode"/>
+    /// above. A request racing a restart is silently dropped if the swap wins -- harmless, since a
+    /// fresh inner is already idle (nothing to abandon).</summary>
+    public void RequestAbandonReception()
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.RequestAbandonReception();
+    }
+
     /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
     /// <see langword="null"/> for any realistic triggering chunk (a fresh inner has no lock/
     /// slant-tracker yet, and establishing one requires a full VIS lock, not just pre-lock

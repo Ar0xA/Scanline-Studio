@@ -225,6 +225,26 @@
                                         <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.PD290}" Command="{Binding QuickSelectModeCommand}" CommandParameter="pd290" />
                                         <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Content="{loc:Translate Panes.QuickModeGrid.SC2180}" Command="{Binding QuickSelectModeCommand}" CommandParameter="sc2-180" />
                                     </UniformGrid>
+                                    <!-- Wired 2026-08-25 (elegant-wondering-hinton.md): port of legacy's
+                                         RX-page SBAuto toggle (TMmsstv::RxAutoPush, Main.cpp:6042-6060)
+                                         — a SEPARATE, distinct control from the Auto/Locked segment
+                                         above (that one is about mode-selection persistence, a
+                                         different concept, still an unresolved stub from an earlier
+                                         audit — not repurposed here). Pausing stops the decoder from
+                                         searching for/decoding pictures; the waterfall keeps running,
+                                         but the signal-level meter and station-ID decode pause too
+                                         (session-layer design, not decoder-owned — see
+                                         ISstvSessionService.SetAutoDetectPaused's own doc comment for
+                                         the four-round plan-review reasoning). Forcing a specific mode
+                                         (the quick-mode buttons above) automatically resumes. -->
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.RxImage.AutoDetect}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.RxImage.AutoDetect.Help}" />
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
+                                        <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxAutoDetectPause" Content="{loc:Translate Panes.RxImage.AutoDetectListening}" IsChecked="{Binding !IsAutoDetectPaused}" />
+                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxAutoDetectPause" Content="{loc:Translate Panes.RxImage.AutoDetectPaused}" IsChecked="{Binding IsAutoDetectPaused}" />
+                                    </Grid>
                                     <StackPanel Classes="Industry IndustryRows">
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.LineTime}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LineTimeText}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Lines}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LinesText}" /></Grid></Border>

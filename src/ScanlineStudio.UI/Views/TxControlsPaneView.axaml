@@ -31,6 +31,17 @@
                 <!-- Auto/Manual segment replaces the old plain CheckBox as the real affordance
                      for AutoFollowRxMode; same underlying real property, mock2's own control
                      shape (a two-option segment reads better than a checkbox for this). -->
+                <!-- [?] tooltip added 2026-08-25 (elegant-wondering-hinton.md): this is a real,
+                     working PARTIAL port of legacy's TX-page SBAuto/TrackTxMode (Main.cpp:4907-4915,
+                     6062-6068) — describes what THIS port's toggle actually does, not legacy's full
+                     behavior. Legacy additionally gates on "not currently transmitting" and an
+                     RX/TX picture-width match, neither of which OnModeDetected checks — a
+                     pre-existing gap, out of scope for this batch; the tooltip deliberately doesn't
+                     claim those guards exist. -->
+                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.AutoFollowRxMode}" />
+                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.TxControls.AutoFollowRxMode.Help}" />
+                </StackPanel>
                 <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
                     <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualAuto}" />
                     <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />

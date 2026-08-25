@@ -155,6 +155,21 @@ public interface ISstvDecoder
     /// this call.</summary>
     void ForceMode(SstvModeDefinition mode);
 
+    /// <summary>Requests that any in-progress decode (auto-detected or previously forced) be
+    /// abandoned, and any in-progress AVT training be aborted — the port of legacy's RX "pause
+    /// auto-detect" toggle's own cleanup step (<c>TMmsstv::RxAutoPush</c>'s <c>pDem->Stop()</c>,
+    /// `Main.cpp:6042-6060`), NOT a persistent pause state — this decoder has no concept of
+    /// "paused"; a consumer wanting that (e.g. a UI pause/resume toggle) implements it by simply
+    /// not calling <see cref="PushSamples"/> while paused, and calls this once first so whatever
+    /// was in progress gets cleanly torn down (and, if a mode was locked, reported via
+    /// <see cref="DecodeRestarted"/>) rather than left dangling. Idle-safe: if nothing was in
+    /// progress, this is a harmless no-op. Safe to call from any thread; the request is deferred
+    /// (one-shot, not last-request-wins — there's no payload to overwrite) and applied on
+    /// whichever thread next calls <see cref="PushSamples"/>, strictly before that same call's own
+    /// <see cref="ForceMode"/> drain if one is also pending — so a mode forced while paused always
+    /// lands cleanly, never torn down by a stale pending abandon request.</summary>
+    void RequestAbandonReception();
+
     /// <summary>Requests a one-time "Correct Slant" search — the port of legacy's real manual
     /// "Correct Slant" toolbar action (<c>CorrectSlant</c>/<c>KRCS</c>, `Main.cpp:5264-5426`): a
     /// 5-iteration search over the currently staged reception that finds a corrected sample rate and
