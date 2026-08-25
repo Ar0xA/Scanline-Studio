@@ -103,7 +103,7 @@ superseded.
 5. ✅ **DONE** (commit `4b05322`, missing this annotation until now): **Packaging doesn't exist, and
    `dotnet publish` would ship a broken binary — plus no version stamping, no About dialog, dead Help
    menu.** Fixed: `ScanlineStudio.Host.csproj` now adds the native audio shim
-   (`libyoniqaudio.so`/`yoniqaudio.dll`/`.dylib`) to `@(ResolvedFileToPublish)` for each OS so a
+   (`libscanlineaudio.so`/`scanlineaudio.dll`/`.dylib`) to `@(ResolvedFileToPublish)` for each OS so a
    published build no longer `DllNotFoundException`s on first `IAudioEngine` resolve;
    `Directory.Build.props` now sets `<Version>0.9.0</Version>`/`<Product>Scanline Studio</Product>`;
    a real `AboutWindowView`/`AboutWindowViewModel` exists, wired to `Help > About`
@@ -113,7 +113,7 @@ superseded.
    shipped together, not sequentially). No publish profile, installer, or release workflow anywhere
    (`.github/` has only `workflows/ci.yml`; `spec/01-architecture.md:21`'s packaging line is
    unimplemented). Worse: the native audio shim
-   (`libyoniqaudio.so`/`yoniqaudio.dll`/`.dylib`, built via a raw `<Exec>` in
+   (`libscanlineaudio.so`/`scanlineaudio.dll`/`.dylib`, built via a raw `<Exec>` in
    `src/ScanlineStudio.Core.Audio.MiniAudio/ScanlineStudio.Core.Audio.MiniAudio.csproj:51-89`) is
    not a `None`/`Content` MSBuild item, so it never reaches `ResolvedFileToPublish` — a published
    app would `DllNotFoundException` on first `IAudioEngine` resolve. No RX, no TX, ever, in a

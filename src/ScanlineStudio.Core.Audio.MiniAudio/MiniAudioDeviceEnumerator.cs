@@ -8,7 +8,7 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// (piece Audio 1) and native-format probing (piece Audio 4).
 ///
 /// <see cref="AudioDeviceInfo.SupportedSampleRates"/> is populated honestly from whatever the
-/// backend reports via <c>yoniq_audio_get_native_formats</c> -- but per that function's own doc
+/// backend reports via <c>scanline_audio_get_native_formats</c> -- but per that function's own doc
 /// comment, probing opens/queries the device (slower than enumeration, can fail on a busy device),
 /// and on backends that resample/mix server-side (PulseAudio/PipeWire in particular) the reported
 /// format may just reflect the server's *current* format, not a real capability list. Callers
@@ -53,7 +53,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
     // 9b): this closes the race for THE MOST RECENT refresh only -- _refreshTask is a single slot,
     // not a set, so two concurrent RefreshAsync calls leave the earlier task untracked; Dispose then
     // waits on (and bases its release decision on) only the later one. Confirmed non-catastrophic by
-    // tracing into the native shim (yoniq_audio.c's g_context_mutex is held around both the
+    // tracing into the native shim (scanline_audio.c's g_context_mutex is held around both the
     // enumerate/probe calls AND context_uninit), so an orphaned earlier refresh can't be mid-call
     // when the context is torn down -- it just fails cleanly and logs at Error, leaving a stale
     // snapshot rather than corrupting anything. Low-risk given today's actual call pattern, but not
@@ -81,7 +81,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
     /// just in spirit. Now runs on the thread pool via <see cref="Task.Run(Action)"/>.
     /// <paramref name="ct"/> only prevents the work from *starting* if already cancelled -- once
     /// running, there is no way to cancel it partway through, because the underlying native calls
-    /// (<c>yoniq_audio_get_native_formats</c> in particular) are themselves blocking with no
+    /// (<c>scanline_audio_get_native_formats</c> in particular) are themselves blocking with no
     /// cancellation or timeout of their own. Those same native calls share the process-wide
     /// context's PulseAudio mainloop with <c>ma_wait_for_operation__pulse</c> -- the exact call
     /// Piece Audio 8 found can block forever if the server never responds (see
@@ -114,7 +114,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
     private List<AudioDeviceInfo> Enumerate(bool isCapture)
     {
         var nativeDevices = new NativeAudio.DeviceInfo[MaxDevices];
-        var count = NativeAudio.yoniq_audio_enumerate_devices(isCapture ? 1 : 0, nativeDevices, MaxDevices);
+        var count = NativeAudio.scanline_audio_enumerate_devices(isCapture ? 1 : 0, nativeDevices, MaxDevices);
         if (count < 0)
         {
             // Today this is the entire explanation for "no audio devices show up in Options" --
@@ -131,7 +131,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
             var name = NativeAudio.DecodeFixedString(nativeDevices[i].Name);
             var (maxChannels, sampleRates) = ProbeNativeFormats(id, isCapture);
             // spec/18-path-to-1.0.md Critical item 1 / item 8: previously discarded -- the native
-            // shim has always reported this (yoniq_audio.h/.c's own IsDefault field), it just never
+            // shim has always reported this (scanline_audio.h/.c's own IsDefault field), it just never
             // reached AudioDeviceInfo until SstvSessionService needed a fallback device.
             var isDefault = nativeDevices[i].IsDefault != 0;
 
@@ -159,7 +159,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
         }
 
         var formats = new NativeAudio.NativeFormat[MaxNativeFormats];
-        var count = NativeAudio.yoniq_audio_get_native_formats(idBytes, isCapture ? 1 : 0, formats, MaxNativeFormats);
+        var count = NativeAudio.scanline_audio_get_native_formats(idBytes, isCapture ? 1 : 0, formats, MaxNativeFormats);
         if (count <= 0)
         {
             // Probing failed (busy device, backend this shim doesn't yet support probing on,
@@ -172,7 +172,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
         var sampleRates = new SortedSet<int>();
         for (var i = 0; i < count; i++)
         {
-            // 0 means "any" per miniaudio's own convention (see yoniq_audio_get_native_formats'
+            // 0 means "any" per miniaudio's own convention (see scanline_audio_get_native_formats'
             // doc comment) -- not a real constraint to report.
             if (formats[i].Channels > maxChannels)
             {
@@ -271,7 +271,7 @@ public sealed partial class MiniAudioDeviceEnumerator : IAudioDeviceEnumerator, 
 
     /// <summary>Only release if the refresh is confirmed done -- if it timed out, it may still be
     /// touching the shared native context, so releasing (and possibly triggering
-    /// yoniq_audio_context_uninit) here would be the exact use-after-free this fix exists to
+    /// scanline_audio_context_uninit) here would be the exact use-after-free this fix exists to
     /// prevent. Mirrors MiniAudioCaptureSession/PlaybackSession's TimedOutDuringClose: a
     /// deliberate, accepted leak of this instance's context reference in that rare case,
     /// preferable to a crash. Round-1 code-review finding (Tier A Batch 9 chunk 9b, this chunk's own

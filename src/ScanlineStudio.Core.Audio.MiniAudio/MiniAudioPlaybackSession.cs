@@ -69,7 +69,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
                 Periods = periods,
                 Channels = stereoTx ? 2 : 1,
             };
-            _handle = NativeAudio.yoniq_audio_playback_session_open(deviceIdBytes, ref options);
+            _handle = NativeAudio.scanline_audio_playback_session_open(deviceIdBytes, ref options);
             if (_handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException($"Failed to open playback device '{deviceId}' at {sampleRate}Hz.");
@@ -108,7 +108,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
 
             fixed (float* ptr = data)
             {
-                return NativeAudio.yoniq_audio_playback_session_write(_handle, ptr, data.Length);
+                return NativeAudio.scanline_audio_playback_session_write(_handle, ptr, data.Length);
             }
         }
         finally
@@ -130,7 +130,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return NativeAudio.yoniq_audio_playback_session_pending_frames(_handle);
+                return NativeAudio.scanline_audio_playback_session_pending_frames(_handle);
             }
             finally
             {
@@ -152,7 +152,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return NativeAudio.yoniq_audio_playback_session_underrun_count(_handle);
+                return NativeAudio.scanline_audio_playback_session_underrun_count(_handle);
             }
             finally
             {
@@ -175,7 +175,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return NativeAudio.yoniq_audio_playback_session_check_and_clear_stopped(_handle) != 0;
+                return NativeAudio.scanline_audio_playback_session_check_and_clear_stopped(_handle) != 0;
             }
             finally
             {
@@ -235,7 +235,7 @@ internal sealed class MiniAudioPlaybackSession : IDisposable
                 // _handle, at the cost of blocking new callers for up to CloseTimeout in the rare
                 // case a close is actually slow.
                 var handle = _handle;
-                var closeThread = new Thread(() => NativeAudio.yoniq_audio_playback_session_close(handle))
+                var closeThread = new Thread(() => NativeAudio.scanline_audio_playback_session_close(handle))
                 {
                     IsBackground = true,
                     Name = "MiniAudioPlaybackClose",

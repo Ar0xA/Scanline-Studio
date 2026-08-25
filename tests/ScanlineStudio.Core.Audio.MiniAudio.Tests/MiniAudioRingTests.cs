@@ -303,8 +303,8 @@ public class MiniAudioRingTests
         }
     }
 
-    // Tier A Batch 1 re-audit round 2/3: yoniq_audio_ring_create's own overflow guard
-    // (native/yoniq_audio.c) was added with no paired test -- this closes that gap. Round-2 finding,
+    // Tier A Batch 1 re-audit round 2/3: scanline_audio_ring_create's own overflow guard
+    // (native/scanline_audio.c) was added with no paired test -- this closes that gap. Round-2 finding,
     // followed exactly: capacityFrames must be a value whose byte product (capacityFrames *
     // channels * sizeof(float)) actually WRAPS mod 2^32 to something small, not just anything large
     // -- int.MaxValue would throw with OR without the guard (0x7FFFFFFF * 4 wraps to 0xFFFFFFFC,
@@ -321,7 +321,7 @@ public class MiniAudioRingTests
         Assert.IsType<InvalidOperationException>(exception);
     }
 
-    // Tier A Batch 1 re-audit round 5 nit: yoniq_audio_ring_create's `<= 0` guard (native/yoniq_audio.c,
+    // Tier A Batch 1 re-audit round 5 nit: scanline_audio_ring_create's `<= 0` guard (native/scanline_audio.c,
     // right above the overflow guard the test above covers) had no test either. Real, if a lower one:
     // a channels <= 0 value that somehow slipped past this guard would reach Write/Read's own
     // `data.Length % _channels` (MiniAudioRing.cs) as a DivideByZeroException, a much less

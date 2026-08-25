@@ -4,7 +4,7 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
 /// Implements <see cref="IAudioDeviceMuteQuery"/> against the native shim's device-scoped mute
-/// query (`yoniq_audio_get_device_mute`, piece Audio 9). Holds a <see cref="MiniAudioContext"/>
+/// query (`scanline_audio_get_device_mute`, piece Audio 9). Holds a <see cref="MiniAudioContext"/>
 /// reference for its own lifetime, same ref-counted-singleton pattern as
 /// <see cref="MiniAudioDeviceEnumerator"/>.
 ///
@@ -32,7 +32,7 @@ public sealed class MiniAudioDeviceMuteQuery : IAudioDeviceMuteQuery, IDisposabl
             () =>
             {
                 var deviceIdBytes = NativeAudio.EncodeFixedString(device.Id, NativeAudio.IdSize);
-                var result = NativeAudio.yoniq_audio_get_device_mute(deviceIdBytes, isCapture ? 1 : 0, out var isMuted);
+                var result = NativeAudio.scanline_audio_get_device_mute(deviceIdBytes, isCapture ? 1 : 0, out var isMuted);
                 if (result != 0)
                 {
                     return (bool?)null;

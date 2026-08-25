@@ -19,7 +19,7 @@ Trigger: *"run the functional audit from the playbook."*
 ## Scope
 
 - **In scope**: all of `src/` (production code, including **native C**, not just
-  C# — `src/ScanlineStudio.Core.Audio.MiniAudio/native/yoniq_audio.c` is our own
+  C# — `src/ScanlineStudio.Core.Audio.MiniAudio/native/scanline_audio.c` is our own
   code and the audio-thread callback; a C#-only triage heuristic will silently
   miss it, confirmed the hard way on the first Tier A triage pass) and its paired
   `tests/` files.
@@ -226,7 +226,7 @@ target in this codebase.
 |  | **D0 round 12 — NOT clean, 0 blockers, real finding surfaced via test-construction (streak broken again)** (2026-08-19) | Fresh full re-derivation independently confirmed round 11's fix (the `TryNarrowFskScan` hoist and its inner commit gate) correct and complete, including the now-redundant internal `TryVisLockStateMachine` call to the same method (confirmed a genuine no-op via the shared bound-idempotent cursor). Pushed back on round 11's own deferred-test decision: round 11 had queued the regression test rather than write it, citing an unverified concern that narrow-FSK tones might not survive the locked-mode bandpass filter; round 12 checked the filter's own cutoff constants (`SearchBandpassFilter.cs`) and judged the concern didn't hold, recommending the test be written using the existing `StationIdDoesNotAbortScanTests` pattern. Building the test surfaced a genuinely separate, deeper finding: the same construction fails identically with `syncRestartEnabled: true` (the pre-round-11 code path, entirely unaffected by that fix) -- narrow-FSK/station-ID apparently never decodes while the decoder is genuinely locked mid-reception through the locked (`useLocked`) filter selection, REGARDLESS of the Lock/Restart setting, and this exact scenario (mid-image, still locked) has no existing test coverage anywhere in the suite -- every existing `StationIdDecoded` test is either pre-lock or a post-image footer burst that plays only after `EndOfImage` has already nulled `_mode` again. This is real but explicitly out of scope for a one-round follow-up (a DSP-filter/demodulation question, not a field-lifecycle one) -- the failing test was removed, the finding documented precisely in its place (a comment in `MidReceptionRestartTests.cs`), and flagged for a dedicated future investigation rather than chased inline. Also fixed 2 real nits from the same sweep: `_syncSegmentOffsetSamples` was the one `InitializeSlant` field left stale on an AVT lock (its 11 siblings all reset unconditionally before the AVT early-return; this one sat after it, provably unread for AVT either way) -- moved ahead to match the method's own established convention; `TryNarrowFskScan`'s commit gate got a 1-line comment noting legacy's one gate term with no port equivalent (`m_SyncMode >= 0`), confirmed unreachable rather than silently unremarked. Closed a 3rd, already-queued nit as not-a-defect: `FirstLockedBandpassIndex`/`FirstNarrowDemodIndex` are diagnostic-only "first ever" fields by documented design, correctly never reset across images. This is a genuine example of the review cadence earning its keep in an unexpected direction -- not by finding a bug in the fix itself (round 12 confirmed that was already correct), but by pushing back on a deferred-test judgment call and, in the course of actually writing that test, surfacing a real, previously-invisible gap neither round 11 nor round 12's own static analysis had caught. Verification: scoped `SlantTests`/`CorrectSlantTests`/`CorrectSlantRequestTests`/`AvtNoiseTolerantDetectionTests`/`NarrowFskDuringAvtTrainingTests`/`SyncBypassDetectionTests`/`StationIdDoesNotAbortScanTests`/`MidReceptionRestartTests` 68/68 passing, full-suite run pending, solution build clean. Streak restarted at zero — round 13 is next. |
 |  | **D0 round 13 — CLEAN, first of the required 2 consecutive clean rounds** (2026-08-19) | Fresh full field-lifecycle re-derivation (79 mutable fields + 3 mutable auto-properties + ~28 stateful sub-objects), explicit yes, zero blockers, zero risks -- not a diff against prior rounds' claims. Independently re-verified every area rounds 8-12 touched as part of the normal sweep, not a special-cased re-check: the slant/replay commit-or-revert transaction (`TryCorrectSlant`'s mutation set confirmed exactly `_effectiveSamplesPerLine` + the tracker's rate + the two excluded counters; all 3 `PerformReplay` `false` returns confirmed to precede its first mutation), the narrow-FSK hoist + trim-watermark gating (confirmed `_visLockProcessedUpTo`'s conditional exclusion and `_narrowFskProcessedUpTo`'s unconditional inclusion are both individually correct given their respective advancers' own gating), and `_syncSegmentOffsetSamples`'s corrected reset ordering. Also independently re-derived several subtler existing-design points and confirmed each legacy-correct by reading `sstv.cpp`/`Main.cpp` directly rather than trusting in-file comments: `_autoSyncCooldown`'s deliberate absence from `ResetAutoSyncDetectionState` (legacy's own `InitAutoStop` genuinely never touches `m_AutoSyncDis`), an automatic slant commit under `RxBufferMode.Off` not recomputing Auto-Sync thresholds (legacy-correct, `UpdateSampFreq`'s own `InitAutoStop()` call is gated on a real staging buffer existing), and `EndOfImage`'s 4-cursor equalization being load-bearing (not cosmetic) for both a pre-lock scan-bound edge case and `TryInterleavedHeaderScan`'s own runtime invariant check. 3 nits found, none required before round 14 (auditor's own words): a diagnostic getter (`SyncOffsetSamples`) missing a guard its two siblings carry, correct today only via an undocumented coupling, no pixel impact; `PerformForceMode` re-arming the anchor-correction flag could suspend `TrimBuffers` indefinitely under a pathological rapid-calling caller, not reachable from a real button click; no test pins `EndOfImage`'s ~25-field reset list field-by-field (concrete gap example given, not just an assertion). Round 14 is the next dispatch -- the second required consecutive clean round to actually close D0. |
 |  | **D0 round 14 — CLEAN, second consecutive clean round. D0 CLOSED.** (2026-08-19) | Fresh full independent field-lifecycle re-derivation (~80 mutable fields, ~29 stateful sub-objects), explicit yes, zero blockers, zero risks -- genuinely re-derived from source, not a confirmation pass over round 13. Re-swept every paired-field site this chunk's history flagged as a recurring hazard class (the 5 slant/envelope-field sibling re-anchor sites; sync-bypass/VIS-lock cursor-origin pairs; RX-buffer anchor/base-transmission-line pair) and found every one still correctly paired. Re-verified `TryCorrectSlantAndApply`'s snapshot completeness by reading `TryCorrectSlant`'s whole body directly, not the doc comment. Confirmed `FieldLifecycleTests.cs`'s 2 tests are genuinely mutation-sensitive (static argument: both assert a diverged mid-decode value AND the post-teardown cleared value, so neither passes vacuously). 3 tiny nits found and queued, none required: a redundant-but-inert double-assignment in `TryDecodeNarrowModeHeader`; the revert transaction reconstructs the pre-commit sample rate arithmetically (≤1 ULP drift) instead of snapshotting the tracker's own value, only on the already-untested `RxBufferMode.Extended` write-failure revert path; a test-only diagnostic field never reset across images. **D0 is now CLOSED -- 14 rounds + 1 structural fix, the second of the 2 required consecutive clean rounds.** This also closes the entire D1-D9+D0 `AnalogFmSstvDecoder.cs` functional-audit-sweep track (all 10 chunks now closed). One real, deliberately-unresolved finding remains outside D0's own scope: narrow-FSK/station-ID apparently never decodes while genuinely locked mid-reception through the locked bandpass filter, regardless of `syncRestartEnabled` (documented in `MidReceptionRestartTests.cs`, "D0-audit round-11/12") -- a DSP-filter question, not a field-lifecycle one, left for a dedicated future investigation. |
-| **1** | Native/managed boundary (highest blast radius — memory corruption, not just wrong pixels) | `MiniAudioEngine.cs`, `MiniAudioCaptureSession.cs`, `MiniAudioPlaybackSession.cs`, `MiniAudioRing.cs` (`unsafe`/`fixed`/SPSC), `NativeAudio.cs` (P/Invoke vs `native/yoniq_audio.c`) |
+| **1** | Native/managed boundary (highest blast radius — memory corruption, not just wrong pixels) | `MiniAudioEngine.cs`, `MiniAudioCaptureSession.cs`, `MiniAudioPlaybackSession.cs`, `MiniAudioRing.cs` (`unsafe`/`fixed`/SPSC), `NativeAudio.cs` (P/Invoke vs `native/scanline_audio.c`) |
 | **2** | RX buffer/replay arithmetic (this project's own recurring bug class) | `RxDiskLineStagingBuffer.cs`, `RxLineStagingBuffer.cs` (review together — one shared interface), `ReplayOriginCalculator.cs`, `SlantTracker.cs`, `RestartableSstvDecoder.cs`. Run AFTER decoder chunks D8/D9. |
 | **3** | PTT/transmit sequencing (real-world harm — a leaked keyed transmitter, not just bad output) | `SstvSessionService.cs`, `RadioController.cs`, `TcpTransport.cs`, `RigctldClientProtocol.cs`, `HamlibRadioProtocol.cs`. Point the auditor at `TryUnkeyPttAsync`/`TryCleanupAsync` exception paths specifically. |
 | **4** | Pixel math: TX/RX scanline codecs (the big triage gap above) | `PixelSampleReader.cs`, `YCbCrSequentialScanlineDecoder/Encoder.cs`, `YCbCrLinePairedScanlineDecoder/Encoder.cs`, `RgbSequentialScanlineDecoder/Encoder.cs`, `MonoAveragedPairedScanlineDecoder/Encoder.cs`, `RobotScanlineDecoder/Encoder.cs`, `ScanlineCodecFactory.cs`, `YCbCr.cs`. Review encoder+decoder pairs together, 3-4 files/round. |
@@ -271,7 +271,7 @@ regressions, 1 multi-subscriber-isolation regression, 10 `NativeAudio`
 none skipped. Queued nits (not blocking, left for a future pass if this file
 set is revisited): test-name overreach on the multi-subscriber test, missing
 `EncodeFixedString`/`DecodeFixedString` null/invalid-UTF-8 edge cases,
-`yoniq_audio_context_init`'s missing `[Out]` (cosmetic, confirmed harmless on
+`scanline_audio_context_init`'s missing `[Out]` (cosmetic, confirmed harmless on
 CoreCLR twice), a diagnostic double-read race in the two new
 `TimedOutDuringClose` log guards, zero test coverage for the two new log
 messages themselves, an `internal` type name leaking into one
@@ -301,7 +301,7 @@ new findings). 2 new regression tests, mutation-verified by the implementing ses
 disabled the fix -- the forced-interleaving test correctly failed with a 15s timeout, the
 opportunistic-probe test correctly passed regardless, exactly as its own honest doc comment
 predicts it should). Also fixed: a native-side integer-overflow guard in
-`yoniq_audio_ring_create` (`ma_pcm_rb_init`'s own `ma_uint32` multiplication can wrap before its
+`scanline_audio_ring_create` (`ma_pcm_rb_init`'s own `ma_uint32` multiplication can wrap before its
 internal overflow guard ever sees it -- not reachable today, closed before a future settings-driven
 buffer-size knob could make it live; mechanical fix, no separate review round needed). Documented,
 not fixed: every `[RequiresPipeWireFact]`-gated test -- including ALL of this cluster's hardest
@@ -322,7 +322,7 @@ through JSON with no `JsonStringEnumConverter`, so STJ's default numeric enum ha
 range-validate a hand-edited settings file's out-of-range value) plus widening the catch to mirror
 `Dispose()`'s own bounded-close-thread pattern (`CloseTimeout`) for any other failure mode
 (`OutOfMemoryException` from `Start()`). Also: round 1's own native overflow guard
-(`yoniq_audio_ring_create`) had zero test coverage -- added a `MiniAudioRingTests` case using a
+(`scanline_audio_ring_create`) had zero test coverage -- added a `MiniAudioRingTests` case using a
 capacity whose byte product genuinely wraps mod 2^32 (`0x40000100` frames, not `int.MaxValue`,
 which would pass with or without the guard and be vacuous). Both fixes mutation-verified (native
 guard: temporarily disabled, test correctly failed with no exception, restored; constructor fix:
@@ -407,7 +407,7 @@ test) -- added both, mirroring the exact sibling patterns. Mutation-verified in 
 way: temporarily removing the guard CRASHED the test host process outright (a native P/Invoke call
 against an already-freed handle), not just a failed assertion -- confirms the guard is genuinely
 load-bearing for memory safety, not just a nice-to-have. Also added missing negative/zero coverage
-for `yoniq_audio_ring_create`'s pre-existing `<= 0` guard (a round-5 nit; the guard itself is
+for `scanline_audio_ring_create`'s pre-existing `<= 0` guard (a round-5 nit; the guard itself is
 unchanged, pre-existing code). Code-review pass: go, folded in 2 more risks + several nits before
 merging (the correction hadn't propagated to `ISstvSessionService`'s own doc comment, which still
 asserted the class-level "safe to read from any thread" contract was fully upheld; UI-thread
@@ -420,7 +420,7 @@ not just zero). Full `ScanlineStudio.Core.Audio.MiniAudio.Tests` 83/83 passing, 
 clean. Commit `d542715`.
 
 Re-audit round 6 (2026-08-20): NOT clean, 2 real risks + 3 nits. (1) `string_to_device_id` (the
-reverse of `device_id_to_string`, used by every `yoniq_audio_get_native_formats`/
+reverse of `device_id_to_string`, used by every `scanline_audio_get_native_formats`/
 `capture_session_open`/`playback_session_open` call) was missing a case for `ma_backend_jack` --
 the exact same bug shape as an already-fixed `coreaudio` gap in the same function, whose own
 comment already warns "enumeration alone would have looked fine, masking this": `ma_backend_jack`
@@ -474,9 +474,9 @@ across all 8 paired files, including hand-re-checking mutation-sensitivity for t
 guards.
 
 Re-audit round 8 (2026-08-20, the second attempted clean confirmation): NOT clean, 1 real risk
-(documentation-only, no functional bug), resets the streak. `yoniq_audio.h`'s own doc comment for
-`yoniq_audio_playback_session_underrun_count` said it returns a count of padded FRAMES -- wrong; the
-implementation (`yoniq_audio.c`'s own field comment, and every C# doc) counts padded CALLBACKS, once
+(documentation-only, no functional bug), resets the streak. `scanline_audio.h`'s own doc comment for
+`scanline_audio_playback_session_underrun_count` said it returns a count of padded FRAMES -- wrong; the
+implementation (`scanline_audio.c`'s own field comment, and every C# doc) counts padded CALLBACKS, once
 per callback regardless of how many frames it padded. A native-side consumer computing "seconds of
 audio dropped" from this count would be wrong by roughly the period size. The capture-side header's
 own "mirrors ... exactly" cross-reference compounded it -- self-contradictory against its own

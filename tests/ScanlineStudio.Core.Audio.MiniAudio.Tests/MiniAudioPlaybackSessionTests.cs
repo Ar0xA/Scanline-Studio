@@ -237,7 +237,7 @@ public class MiniAudioPlaybackSessionTests
     }
 
     // Audit-relevant regression test for the real underrun-padding bug fixed as part of adding
-    // stereo TX (see playback_session_data_callback's own comment in native/yoniq_audio.c): a
+    // stereo TX (see playback_session_data_callback's own comment in native/scanline_audio.c): a
     // naive mono-shaped memset would only ever zero the L channel's bytes on underrun, leaving R
     // with stale/garbage backend memory. Opens stereo-TX playback and writes NOTHING at all, so
     // every single callback underruns -- both captured channels must still read back silence.
@@ -270,7 +270,7 @@ public class MiniAudioPlaybackSessionTests
             Assert.True(playbackSession.UnderrunCount > 0, "Expected genuine underruns with nothing ever written -- test setup itself is wrong if this is 0.");
 
             // Tier A Batch 1 re-audit round 8: discriminates "counts real-time CALLBACKS that
-            // underran" (the actual, documented, correct semantics -- yoniq_audio.c's own
+            // underran" (the actual, documented, correct semantics -- scanline_audio.c's own
             // underrun_count field comment) from "counts FRAMES padded with silence" (what the
             // native header's own doc comment wrongly said before this round's fix). 2 seconds of
             // continuous underrun at SampleRate would drop on the order of 2*SampleRate (~88,200)

@@ -8,8 +8,8 @@ namespace ScanlineStudio.Core.Audio.MiniAudio;
 /// wired into a full <c>IAudioEngine</c> implementation, since that also needs the playback side
 /// (piece Audio 6) before it makes sense to compose the two into one class.
 ///
-/// The real-time native callback runs entirely inside the shim (`native/yoniq_audio.c`'s
-/// <c>yoniq_audio_capture_session_open</c>), writing into an internal ring buffer; this class owns
+/// The real-time native callback runs entirely inside the shim (`native/scanline_audio.c`'s
+/// <c>scanline_audio_capture_session_open</c>), writing into an internal ring buffer; this class owns
 /// a normal-priority managed thread that drains that ring and raises <see cref="SamplesAvailable"/>
 /// -- matching <c>IAudioEngine.SamplesCaptured</c>'s own documented threading contract (piece
 /// Audio 2: fires on a drain thread, never the real-time callback thread) and overrun policy
@@ -95,7 +95,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
         // hand-edited/corrupt settings value reaches here unvalidated too. Left unguarded, an
         // out-of-range value would silently fall into the `channelSource == Mono ? 1 : 2` ternary's
         // else branch below -- opening the device STEREO and extracting Left (ChannelSelect's own
-        // native default, yoniq_audio.c's `channel_select == 2 ? 1 : 0`), with no exception and no
+        // native default, scanline_audio.c's `channel_select == 2 ? 1 : 0`), with no exception and no
         // log. If the real signal is only on Right, RX would go silently dead; on a strictly
         // mono-only device, the stereo open could instead fail and surface as a misleading "device
         // unavailable" rather than the real "invalid settings" cause.
@@ -124,7 +124,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
                 Channels = channelSource == AudioChannelSource.Mono ? 1 : 2,
                 ChannelSelect = (int)channelSource,
             };
-            _handle = NativeAudio.yoniq_audio_capture_session_open(deviceIdBytes, ref options);
+            _handle = NativeAudio.scanline_audio_capture_session_open(deviceIdBytes, ref options);
             if (_handle == IntPtr.Zero)
             {
                 throw new InvalidOperationException($"Failed to open capture device '{deviceId}' at {sampleRate}Hz.");
@@ -174,7 +174,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             _stopping = true;
 
             var handle = _handle;
-            var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
+            var closeThread = new Thread(() => NativeAudio.scanline_audio_capture_session_close(handle))
             {
                 IsBackground = true,
                 Name = "MiniAudioCaptureClose",
@@ -250,7 +250,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return NativeAudio.yoniq_audio_capture_session_check_and_clear_stopped(_handle) != 0;
+                return NativeAudio.scanline_audio_capture_session_check_and_clear_stopped(_handle) != 0;
             }
             finally
             {
@@ -285,7 +285,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             try
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
-                return NativeAudio.yoniq_audio_capture_session_overrun_count(_handle);
+                return NativeAudio.scanline_audio_capture_session_overrun_count(_handle);
             }
             finally
             {
@@ -381,7 +381,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
             int framesRead;
             fixed (float* ptr = buffer)
             {
-                framesRead = NativeAudio.yoniq_audio_capture_session_read(_handle, ptr, buffer.Length);
+                framesRead = NativeAudio.scanline_audio_capture_session_read(_handle, ptr, buffer.Length);
             }
 
             if (framesRead > 0)
@@ -539,7 +539,7 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
                 // finishes near-instantly and joins normally. Held under the write lock the whole
                 // time -- see _lifetimeLock's own doc comment for why.
                 var handle = _handle;
-                var closeThread = new Thread(() => NativeAudio.yoniq_audio_capture_session_close(handle))
+                var closeThread = new Thread(() => NativeAudio.scanline_audio_capture_session_close(handle))
                 {
                     IsBackground = true,
                     Name = "MiniAudioCaptureClose",

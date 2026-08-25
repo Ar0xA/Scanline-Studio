@@ -194,7 +194,7 @@ public sealed partial class MiniAudioEngine : IAudioEngine
         catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException)
         {
             // Round-1-engine-review fix: this used to catch only InvalidOperationException, but
-            // MiniAudioContext.Acquire() calls straight into a P/Invoke (yoniq_audio_context_init)
+            // MiniAudioContext.Acquire() calls straight into a P/Invoke (scanline_audio_context_init)
             // that throws DllNotFoundException/EntryPointNotFoundException if the native shim is
             // missing or mismatched -- the same real failure mode OpenCaptureSession/
             // OpenPlaybackSession already translate, confirmed by reading MiniAudioContext.cs.
@@ -562,8 +562,8 @@ public sealed partial class MiniAudioEngine : IAudioEngine
     private static readonly TimeSpan DrainTimeout = TimeSpan.FromSeconds(5);
 
     // Piece Engine 2, found by this project's Opus plan-review pass and confirmed by reading
-    // yoniq_audio_playback_session_pending_frames' native body (a one-line
-    // yoniq_audio_ring_available_read): PendingFrames reaching 0 only means the shim's own ring is
+    // scanline_audio_playback_session_pending_frames' native body (a one-line
+    // scanline_audio_ring_available_read): PendingFrames reaching 0 only means the shim's own ring is
     // empty, NOT that miniaudio's device buffer or the PulseAudio server's own output queue have
     // actually finished playing -- closing the session right at that point can truncate the very
     // tail of a real transmission, exactly what IAudioEngine.StopPlaybackAsync's contract exists to

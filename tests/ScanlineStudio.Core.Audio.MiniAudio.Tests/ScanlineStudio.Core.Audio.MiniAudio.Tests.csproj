@@ -44,7 +44,7 @@
   -->
   <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.so" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libscanlineaudio.so" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
@@ -53,14 +53,14 @@
        doc comment in the referenced project's csproj. -->
   <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)\..\..\src\ScanlineStudio.Core.Audio.MiniAudio\$(OutDir)yoniqaudio.dll" />
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\..\src\ScanlineStudio.Core.Audio.MiniAudio\$(OutDir)scanlineaudio.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
 
   <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libyoniqaudio.dylib" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../../src/ScanlineStudio.Core.Audio.MiniAudio/$(OutDir)libscanlineaudio.dylib" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
