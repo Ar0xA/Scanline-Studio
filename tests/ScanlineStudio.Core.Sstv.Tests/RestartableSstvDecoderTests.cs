@@ -144,6 +144,32 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void RequestNotch_SurvivesAPeriodicSwap()
+    {
+        // Un-stub-RX-tab Piece A code-review finding: RequestNotch mirrors StationIdDecodeEnabled's
+        // own live-settable shape (not RequestReSync's fire-and-forget-only one) -- same non-vacuous
+        // proof requirement as StationIdDecodeEnabled_SetLiveAfterConstruction_AlsoSurvivesAPeriodicSwap
+        // above: assert the LIVE inner decoder's own state post-swap via InnerNotchEnabledForTests/
+        // InnerNotchFrequencyForTests, not just that the wrapper remembers what it was told.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
+        Assert.False(decoder.InnerNotchEnabledForTests);
+
+        decoder.RequestNotch(true, 1750.0);
+        decoder.PushSamples(new float[1]); // RequestNotch only queues -- ApplyPendingNotchRequest drains it inside PushSamplesCore
+        Assert.True(decoder.InnerNotchEnabledForTests);
+        Assert.Equal(1750.0, decoder.InnerNotchFrequencyForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.True(decoder.InnerNotchEnabledForTests);
+        Assert.Equal(1750.0, decoder.InnerNotchFrequencyForTests);
+    }
+
+    [Fact]
     public void DemodType_ConstructorValue_SurvivesAPeriodicSwap()
     {
         // Demod-type subsystem Phase 3 auditor code-review finding: DemodType has no public

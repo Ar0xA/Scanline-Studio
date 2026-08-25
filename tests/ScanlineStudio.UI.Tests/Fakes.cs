@@ -222,6 +222,19 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public void RequestReSync() => RequestReSyncCallCount++;
 
+    public int RequestNotchCallCount { get; private set; }
+
+    public bool LastNotchEnabled { get; private set; }
+
+    public double? LastNotchFrequencyHz { get; private set; }
+
+    public void RequestNotch(bool enabled, double? frequencyHz)
+    {
+        RequestNotchCallCount++;
+        LastNotchEnabled = enabled;
+        LastNotchFrequencyHz = frequencyHz;
+    }
+
     public int RequestCorrectSlantCallCount { get; private set; }
 
     public void RequestCorrectSlant() => RequestCorrectSlantCallCount++;

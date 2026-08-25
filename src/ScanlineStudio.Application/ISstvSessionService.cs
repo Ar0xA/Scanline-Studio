@@ -166,6 +166,12 @@ public interface ISstvSessionService : IAsyncDisposable
     /// currently receiving a locked image.</summary>
     void RequestReSync();
 
+    /// <summary>Turns the RX notch filter on/off and/or retunes it — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestNotch"/> for the full contract
+    /// (the port of legacy's real spectrum-click notch control). Unlike <see cref="RequestReSync"/>,
+    /// this is persistent state, not a one-shot command. Safe to call from any thread.</summary>
+    void RequestNotch(bool enabled, double? frequencyHz);
+
     /// <summary>Requests a one-time "Correct Slant" search from the decoder — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestCorrectSlant"/> for the full
     /// contract (the port of legacy's real "Correct Slant" popup-menu item, `KRCS`/`KRCSClick`,

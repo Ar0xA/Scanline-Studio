@@ -139,6 +139,20 @@ public interface ISstvDecoder
     /// relative to this call.</summary>
     void RequestReSync();
 
+    /// <summary>Turns the RX notch filter on/off and/or retunes it — the port of legacy's real
+    /// spectrum-click notch control (<c>TMmsstv::PBoxFFTMouseDown</c>/<c>PBoxFFTMouseMove</c>,
+    /// `Main.cpp:14360-14390`). Unlike <see cref="RequestReSync"/>, this is persistent STATE, not a
+    /// one-shot command — it stays on/off (and at whatever frequency) until called again, surviving
+    /// across pushed sample batches and, on the production wrapper, across a periodic decoder
+    /// restart. <paramref name="frequencyHz"/> is optional so a caller can toggle on/off without
+    /// respecifying the current frequency, or retune without touching the enabled state (pass the
+    /// current <paramref name="enabled"/> value back) — passing both <c>true</c> and a frequency,
+    /// like legacy's own left-click, both tunes and turns the notch on in one call. Safe to call
+    /// from any thread; the request is deferred (last-request-wins) and applied, together with the
+    /// same group-delay compensation legacy applies for a toggle while locked, on whichever thread
+    /// next calls <see cref="PushSamples"/>.</summary>
+    void RequestNotch(bool enabled, double? frequencyHz);
+
     /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
     /// header detection — the port of legacy's real RX quick-mode-button click
     /// (<c>TMmsstv::SBMClick</c>, `Main.cpp:6096-6122`, calling <c>CSSTVDEM::Start(mode, TRUE)</c>,
