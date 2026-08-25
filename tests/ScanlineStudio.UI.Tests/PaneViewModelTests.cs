@@ -1652,9 +1652,6 @@ public sealed class PaneViewModelTests
 
         Assert.Equal("Panes.TxControls.DurationFormat", localization.LastKey);
         Assert.Equal(0.2, Assert.IsType<double>(localization.LastArgs[0]), precision: 10);
-        // ModeTimingRows (a different, already-live card) must agree exactly -- these two cards
-        // showing different numbers for the same mode was the actual bug plan-review caught.
-        Assert.Equal(0.2, vm.ModeTimingRows.Single(r => r.ModeName == mode.DisplayName).FrameSeconds, precision: 10);
     }
 
     [AvaloniaFact]
@@ -1771,23 +1768,6 @@ public sealed class PaneViewModelTests
 
         Assert.Equal("1500–2300 Hz", string.Format(System.Globalization.CultureInfo.InvariantCulture, format, 1500.0, 2300.0));
         Assert.Equal("2044–2300 Hz", string.Format(System.Globalization.CultureInfo.InvariantCulture, format, 2044.0, 2300.0));
-    }
-
-    [AvaloniaFact]
-    public void TxControlsPaneViewModel_ModeTimingRows_ComputedFromEachAvailableModesRealTiming()
-    {
-        var scottie1 = new SstvModeDefinition(
-            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
-            ColorEncoding: ColorEncoding.RgbSequential,
-            LineSegments: [new ScanSegment("R", 138.24)]);
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [scottie1] };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-
-        var row = Assert.Single(vm.ModeTimingRows);
-        Assert.Equal("Scottie 1", row.ModeName);
-        Assert.Equal(256, row.Lines);
-        Assert.Equal(138.24, row.LineMs, precision: 2);
-        Assert.Equal(138.24 * 256 / 1000.0, row.FrameSeconds, precision: 2);
     }
 
     [AvaloniaFact]

@@ -188,8 +188,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         : null;
 
     /// <summary>The selected mode's total transmit duration -- backs mock2's Transmit tab
-    /// "Duration" field. Same <see cref="GetFrameSeconds"/> formula as <see cref="ModeTimingRows"/>,
-    /// so the two cards can never disagree with each other.</summary>
+    /// "Duration" field. See <see cref="GetFrameSeconds"/>'s own doc comment for the formula.</summary>
     public string? DurationText => SelectedMode is { } mode
         ? _localization.GetString("Panes.TxControls.DurationFormat", GetFrameSeconds(mode))
         : null;
@@ -467,9 +466,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
-        ModeTimingRows = AvailableModes
-            .Select(m => new ModeTimingRowViewModel(m.DisplayName, m.ImageHeight, m.LineDurationMs, GetFrameSeconds(m)))
-            .ToList();
 
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.TransmitProgressChanged += OnTransmitProgressChanged;
@@ -514,11 +510,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private const int StockThumbnailMaxDimension = 64;
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
-
-    /// <summary>Mode-timing-reference table (mock2's own card) -- fully real, zero new data:
-    /// computed once from <see cref="AvailableModes"/>'s own <c>LineDurationMs</c>/<c>ImageHeight</c>,
-    /// via <see cref="GetFrameSeconds"/>.</summary>
-    public IReadOnlyList<ModeTimingRowViewModel> ModeTimingRows { get; }
 
     /// <summary>Total transmit duration for <paramref name="mode"/>. <c>ImageHeight</c> is the
     /// image's pixel height, not the transmitted-line count -- <see cref="ColorEncoding.YCbCrLinePaired"/>
@@ -1651,10 +1642,6 @@ public sealed partial class FavoriteModeOptionViewModel : ObservableObject
 /// construction), same shape as <see cref="StockEntryViewModel"/> and for the identical reason (see
 /// that type's own doc comment).</summary>
 public sealed record FavoriteModeButtonViewModel(SstvModeDefinition Mode, System.Windows.Input.ICommand SelectCommand);
-
-/// <summary>One row of the Mode-timing-reference table (mock2's own card) -- see
-/// <see cref="TxControlsPaneViewModel.ModeTimingRows"/>'s doc comment for how it's computed.</summary>
-public sealed record ModeTimingRowViewModel(string ModeName, int Lines, double LineMs, double FrameSeconds);
 
 /// <summary>One appended sample of <see cref="TxControlsPaneViewModel.TelemetryHistory"/> -- see that
 /// property's own doc comment.</summary>

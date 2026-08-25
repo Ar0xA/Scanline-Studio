@@ -238,13 +238,13 @@
                 </WrapPanel>
 
                 <!-- Tune drive, ToneMap, and TX clock are all real (un-stub-TX-tab pieces 1/2/7).
-                     Monitor audio and Occupied BW remain neutral "—" placeholders: Monitor audio has
-                     no legacy precedent and no tappable TX audio signal (spec/14-roadmap.md "maybe
-                     one day" list); Occupied BW was researched and deliberately deferred, not just
-                     not yet done, see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR
-                     values themselves are NOT duplicated here as text; the real conditional rows
-                     above already cover that (the fill-bar meters below DO reuse Power/ALC, as
-                     meters, which is a different presentation, not a duplicate). -->
+                     Monitor audio and Occupied BW rows removed 2026-08-25 (user decision, "maybe
+                     one day" — see spec/14-roadmap.md): Monitor audio has no legacy precedent and
+                     no tappable TX audio signal; Occupied BW was researched and deliberately
+                     deferred, not just not yet done, see ~/.claude/plans/wandering-glowing-otter.md.
+                     ALC/Power/SWR values themselves are NOT duplicated here as text; the real
+                     conditional rows above already cover that (the fill-bar meters below DO reuse
+                     Power/ALC, as meters, which is a different presentation, not a duplicate). -->
                 <StackPanel Classes="Industry IndustryRows">
                     <!-- design-fidelity-agent-caught addition — mock2 has this row, the port
                          previously dropped it; real binding since un-stub-TX-tab piece 1. -->
@@ -259,14 +259,6 @@
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding TxClockText}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudioValue}" />
-                    </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBw}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}"

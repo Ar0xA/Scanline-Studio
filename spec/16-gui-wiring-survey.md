@@ -218,10 +218,13 @@ designed (distinct from the real `ReceiveHistoryStore`, which persists across se
 
 ## Transmit tab
 
-`MainWindow.axaml:762-936`, `ColumnDefinitions="236,*,312"` (`:766`). Left = `TxControlsPaneView`
-(`:778`), centre = `ActiveEditor` (`:783`, a nullable `TxImageEditorPaneViewModel` — but see below:
-the editor is now auto-opened at startup, so the centre column is no longer empty on first landing),
-right = Queue/Mode-timing/TX-log/Recently-sent.
+`MainWindow.axaml:836-876`, `ColumnDefinitions="236,*"` (two columns — was `236,*,312` until the
+third, right-hand column's sole remaining card, Mode-timing-reference, was removed 2026-08-25, user
+decision; the editor column absorbs the freed width automatically). Left = `TxControlsPaneView`,
+centre = `ActiveEditor` (a nullable `TxImageEditorPaneViewModel` — but see below: the editor is now
+auto-opened at startup, so the centre column is no longer empty on first landing). No right column
+remains — Queue/TX-log/Recently-sent (removed 2026-08-25, "maybe one day") and Mode-timing-reference
+(removed 2026-08-25, no replacement, just freed space for the editor) all gone.
 
 ### Left column — `TxControlsPaneView.axaml` / `TxControlsPaneViewModel.cs`
 
@@ -266,8 +269,8 @@ below (`OutputDeviceName`).
 | Tune drive | REAL (2026-08-25) | `:243` | `RadioStatus.TxVolumeDisplay` — same value as the Drive slider above it. |
 | Tone map | REAL | `:247` | `ToneMapText` (`.cs:174`), static per-mode `SstvModeDefinition.LuminanceMinHz/MaxHz`. |
 | TX clock | REAL (2026-08-25) | `:251` | `TxClockText` — elapsed transmit time while transmitting, idle placeholder otherwise. |
-| Monitor audio | PLACEHOLDER | `:255` | `"—"`. No legacy precedent and no tappable TX audio signal — moved to `spec/14-roadmap.md`'s "maybe one day" list, 2026-08-25. |
-| Occupied BW | PLACEHOLDER | `:259` | `"—"`. Researched and deliberately deferred, per the file's own comment (`:229-236`). |
+| ~~Monitor audio~~ | **REMOVED 2026-08-25** | — | No legacy precedent and no tappable TX audio signal. Moved to `spec/14-roadmap.md`'s "maybe one day" list; row and locale keys deleted, not just unwired. |
+| ~~Occupied BW~~ | **REMOVED 2026-08-25** | — | Researched with a full implementation plan (`~/.claude/plans/wandering-glowing-otter.md`) then deliberately abandoned after design review (commit `c8b99ad`). Moved to `spec/14-roadmap.md`'s "maybe one day" list; row and locale keys deleted, not just unwired. |
 | POWER/ALC meters | REAL (2026-08-25) | `:262-263` | Fill-bar meters (`Atoms.axaml`'s `IndustryMeter` atom) off the already-real `LivePowerPercent`/`LiveAlcPercentDisplay`, replacing the previously-empty hatch panel. `LiveAlcPercentDisplay` also fixed a real scale bug: `RadioState.AlcLevel` is 0.0-1.0, not 0-100 like `PowerPercent` — the ALC text row above it was rendering the raw fraction as if it were a percentage. |
 
 **Stock / browse card** (`:269-345`) — fully REAL: `StockEntries` `ListBox` (`:294-316`, `.cs:439`,
@@ -324,15 +327,18 @@ template import; the mock's PULL FROM RX DECODE / FROM LOGBOOK / QUEUE & TRANSMI
 per-element visible/hidden "V" toggle and row-click selection (`:1256-1263`); the canvas's four corner
 "+" marks (`:1169-1182`).
 
-### Right column
+### Right column — gone entirely, 2026-08-25
+
+The whole third column was removed, not just its cards — the centre (editor) column takes the
+freed width instead, since it was already the `*` column. Four cards lived here at various points;
+all four are now gone.
 
 | Card | Class | File:line | Note |
 |---|---|---|---|
-| Queue | PLACEHOLDER | `MainWindow.axaml:828-833` | One honest empty state (`Panes.TxQueue.NoQueueYet` = *"No queued frames"*, `en.json:380`). No queueing feature exists. |
-| Mode-timing-reference table | REAL | `:845-876` | `TxControls.ModeTimingRows` (`TxControlsPaneViewModel.cs:437`), fully computed from `SstvModeDefinition.LineDurationMs`/`ImageHeight`. Real header + real `ItemsControl` rows, `MaxHeight="145"` for containment. |
-| TX log table | STUB (header-only) | `:887-894` | Six header cells, no `ItemsSource`. No logging-of-sent-frames feature exists. |
-| — TX time today / Duty cycle | PLACEHOLDER | `:902`, `:908` | `"—"` (`en.json:389,391`). |
-| Recently sent | PLACEHOLDER + STUB | `:921-932` | Empty state `Panes.TxRecentlySent.NoneYet` (`en.json:395`); Refill&Queue (`:927`) and Open-in-editor (`:928`) are `IsEnabled="False"` + tooltip. |
+| ~~Queue~~ | **REMOVED 2026-08-25** | — | No queueing feature exists. Card and `Panes.TxQueue.*` locale keys deleted, not just an empty state. Moved to `spec/14-roadmap.md`'s "maybe one day" list. |
+| ~~Mode-timing-reference table~~ | **REMOVED 2026-08-25** | — | Was fully real (`TxControlsPaneViewModel.GetFrameSeconds`, fully computed from `SstvModeDefinition.LineDurationMs`/`ImageHeight`, zero new data) — removed anyway, direct user instruction, to give the editor column its width back rather than for any correctness reason. `ModeTimingRows`/`ModeTimingRowViewModel` and the `Panes.TxControls.ModeTiming*` locale keys deleted from the ViewModel along with it (nothing else referenced them). |
+| ~~TX log table~~ | **REMOVED 2026-08-25** | — | No logging-of-sent-frames feature exists. Table, TX time today/Duty cycle rows, and `Panes.TxLog.*` locale keys deleted, not just header-only. Moved to `spec/14-roadmap.md`'s "maybe one day" list. |
+| ~~Recently sent~~ | **REMOVED 2026-08-25** | — | No send-history feature exists. Card and `Panes.TxRecentlySent.*` locale keys deleted, not just an empty state. Moved to `spec/14-roadmap.md`'s "maybe one day" list. |
 
 ---
 
@@ -699,25 +705,28 @@ figure below as ±10, not exact.
 | Classification | Count (approx.) | Where it's concentrated |
 |---|---|---|
 | **REAL** | ~275 | TX image editor (~130, 100 %), Logbook tab (~25, 100 %), Options General/Audio/Radio/Tx/Decode/Identification/QRZ/Forwarding cores (~50), Receive tab telemetry (~30), Radio header (~12), status bar + tab strip (~13), Gallery (~20), About/QSO-link dialogs (~12). |
-| **PLACEHOLDER** (honest) | ~60 | Receive Input-chain/Signal-quality/Frame-metadata/Unattended-RX unbacked rows, TX Outgoing-metadata card (9), TX mode/output scaffolding rows (8), Gallery per-entry SNR/freq/grid + Sidecar/Disk, status-bar Memory/SNR/Disk, TX Queue/Recently-sent/Session-frames empty states. |
-| **STUB** (disabled + tooltip) | ~51, **updated 2026-08-25** | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode (2, Reset/Advanced-timing removed 2026-08-25, see the Sync & Slant card table above), Gallery Re-decode + 14MHz filter (2), TX Recently-sent buttons (2), Decode-activity + TX-log header-only tables (2), 4 empty hatch plots. Options Decode Auto-start removed entirely (its real behavior ported as a real control instead — see the Receive tab's Mode card table above). |
+| **PLACEHOLDER** (honest) | ~40, **updated 2026-08-25, not re-audited beyond the items below** | Receive Input-chain/Signal-quality/Frame-metadata/Unattended-RX unbacked rows, Gallery per-entry SNR/freq/grid + Sidecar/Disk, status-bar Memory/SNR/Disk. TX mode/output scaffolding rows (8) fixed 2026-08-25 (un-stub-TX-tab pieces 1-9, see the Left column table above), not counted here anymore. The "TX Outgoing-metadata card (9)" this row used to count was already stale before this pass — that card doesn't exist in `src/` (removed commit `010b60d`, 2026-08-24). TX Queue/Recently-sent/Session-frames empty states are gone too (removed outright, not placeholders, 2026-08-25). |
+| **STUB** (disabled + tooltip) | ~44, **updated 2026-08-25, not re-audited beyond the items below** | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode (2, Reset/Advanced-timing removed 2026-08-25, see the Sync & Slant card table above), Gallery Re-decode + 14MHz filter (2), Decode-activity header-only table (1). Options Decode Auto-start removed entirely (its real behavior ported as a real control instead — see the Receive tab's Mode card table above). TX Recently-sent buttons and the TX-log header-only table removed entirely 2026-08-25 (see the Transmit tab's right-column table above), not counted here anymore. The 4 empty hatch plots this row used to count are also gone — 0 remain in `src/` (the TX POWER/ALC one became real meters 2026-08-25 in an earlier pass; no other hatch-panel usage exists). |
 | **STUB (dead-interactive)** | **0**, **closed 2026-08-22** | Was 4 (Gallery Search `TextBox`, 14MHz/Unlogged/Flagged `ToggleButton`s). Search and Unlogged/Flagged are now real (client-side `FilteredEntries`, `RxHistoryPaneViewModel`); 14MHz is now an honest disabled stub instead (see the STUB row above) — no frequency field exists on `ReceiveHistoryEntry` to filter by, and adding one is a schema change out of scope for a dead-control fix. No dead-interactive controls remain anywhere in the app. |
 | **FAKE-LIVE** | **4**, **latent risk closed 2026-08-25** | Gallery Sort chip `"SORT NEWEST"` (`:983`), Gallery Size chip `"SIZE M"` (`:984`), VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`), and the AUTOSAVE-ON chip's wording (`MainWindow.axaml:1495`, mitigated by being disabled+dimmed). Gallery Storage Naming (`:1168`) is fixed as of 2026-08-22 — see its own PLACEHOLDER row above. The previously-flagged "4 latent" Advanced-timing values are moot — that whole disclosure (Sample clock/Sync window/Drop-line) was removed 2026-08-25, not left reachable, so the risk closed rather than materialized. |
 | ~~**PARTIAL**~~ | **0**, **closed 2026-08-25** | Was 1 (Receive Frame-metadata "Grid / dist") — now REAL, see that card's own table above. |
 
-**Fully real screens:** TX image editor (100 %, zero disabled/unbacked controls). Logbook tab (100 %).
-About dialog. QSO-link dialog. Options Forwarding tab. Options QRZ.com tab. Spectrum & waterfall card.
-Mode-timing-reference card.
+**Fully real screens:** TX image editor (100 %, zero disabled/unbacked controls, and as of
+2026-08-25 the tab's entire centre+right width). Logbook tab (100 %). About dialog. QSO-link
+dialog. Options Forwarding tab. Options QRZ.com tab. Spectrum & waterfall card.
 
-**Mostly real, mixed:** Transmit tab left column (mode/ID/output/stock/transmit machinery real;
-Outgoing-metadata card fully placeholder). Gallery tab (list/filter/storage/note/flag/link real; the
-filter row is the honesty gap). Radio header (frequency/CAT/receiving/TX-volume/UTC/rig-meters/RX-level
-real; sideband/BW/split/step/RIT stubbed). Receive tab Sync&Slant / Input-chain / Signal-quality
+**Mostly real, mixed:** Transmit tab left column (mode/ID/output/stock/transmit machinery fully
+real as of 2026-08-25 — un-stub-TX-tab pieces 1-9; no placeholder rows remain there). Gallery tab
+(list/filter/storage/note/flag/link real; the filter row is the honesty gap). Radio header
+(frequency/CAT/receiving/TX-volume/UTC/rig-meters/RX-level real; sideband/BW/split/step/RIT
+stubbed; the persistent give-up-after-5 error text line was removed 2026-08-25, the must-acknowledge
+popup is the only surface for that signal now). Receive tab Sync&Slant / Input-chain / Signal-quality
 cards. Options General/Audio/Radio/Tx/Decode/Identification tabs.
 
 **Mostly/fully stub:** Options Advanced tab (100 %). Receive tab Decode-activity, Unattended-RX and
-Session-frames cards. Transmit tab right-column Queue / TX-log / Recently-sent. Menu bar outside
-File > Open/Exit, Help > About, and Options.
+Session-frames cards. Menu bar outside File > Open/Exit, Help > About, and Options. (Transmit tab's
+right column — formerly Queue/TX-log/Recently-sent — no longer exists at all, removed 2026-08-25,
+so it's dropped from this list rather than counted as stub.)
 
 ### Most important findings, current
 
