@@ -165,9 +165,16 @@ public partial class MainWindow : Window
 
                     try
                     {
+                        var giveUpViewModel = new RadioConnectionGaveUpWindowViewModel(message);
+                        // User request: the popup's own "Config" button has no DI access of its
+                        // own (see that view-model's own doc comment) -- this handler already owns
+                        // the popup's lifecycle, so it's also where the jump-to-Options-Radio-tab
+                        // request gets fulfilled, same view-model-never-touches-a-Window reasoning
+                        // as every other cross-window request in this file.
+                        giveUpViewModel.ConfigRequested += () => vm.OpenOptionsToRadioTabCommand.Execute(null);
                         var window = new RadioConnectionGaveUpWindowView
                         {
-                            DataContext = new RadioConnectionGaveUpWindowViewModel(message),
+                            DataContext = giveUpViewModel,
                         };
                         _connectionGaveUpWindow = window;
                         window.Closed += (_, _) => _connectionGaveUpWindow = null;

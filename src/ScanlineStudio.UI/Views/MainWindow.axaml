@@ -663,49 +663,45 @@
                              the design system's chrome for no benefit on a static, currently
                              header-only 9-column table; package removal deferred to whichever
                              phase confirms nothing else still references the old DataGrid theme). -->
+                        <!-- Decoder Trace moved out of this card 2026-08-25 (user-suggested layout
+                             fix, live-observed): the right column below (Grid.Column="2") had a
+                             completely empty row since the Unattended-RX/Session-Frames cards were
+                             removed, with far more real height and width (312px, not this card's own
+                             squeezed 250px sub-column) available to it there. Back to the plain
+                             single-content table this card had before Piece B2. -->
                         <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
                             </HeaderedContentControl.Header>
-                            <Grid ColumnDefinitions="*,250" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
-                                <!-- LastChildFill="False" (design-fidelity-caught fix, round 2):
-                                     this DockPanel has only ONE child, so LastChildFill's own
-                                     default of True made it (also being the last child) fill the
-                                     WHOLE card body regardless of its Dock="Top": the header row's
-                                     bottom rule ended up flush against the card's bottom edge
-                                     instead of directly under the header text. -->
-                                <DockPanel LastChildFill="False">
-                                    <!-- Border-per-cell (design-fidelity-caught fix over the first
-                                         draft): mockup's <th style="padding:2px 5px"> pads EACH
-                                         header cell individually, not just the row's own outer
-                                         edges; a single Border wrapping the whole Grid would only
-                                         apply IndustryTableHeaderRule's padding at the row's far
-                                         left/right. -->
-                                    <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*,*,*">
-                                        <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></Border>
-                                        <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></Border>
-                                        <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></Border>
-                                        <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></Border>
-                                        <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></Border>
-                                        <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></Border>
-                                        <Border Grid.Column="6" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></Border>
-                                        <Border Grid.Column="7" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></Border>
-                                        <Border Grid.Column="8" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></Border>
-                                    </Grid>
-                                    <!-- No data rows yet (header-only scaffolding, see above); an
-                                         ItemsControl would need a real ItemsSource to add
-                                         IndustryTableRowRule rows against, left empty until a real
-                                         decode-history event log exists. -->
-                                </DockPanel>
-                                <Border Grid.Column="1" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1,0,0,0" Padding="9,0,0,0">
-                                    <DockPanel LastChildFill="True">
-                                        <TextBlock DockPanel.Dock="Top" Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
-                                        <ScrollViewer>
-                            <ItemsControl />
-                                        </ScrollViewer>
-                                    </DockPanel>
-                                </Border>
-                            </Grid>
+                            <!-- LastChildFill="False" (design-fidelity-caught fix, round 2): this
+                                 DockPanel has only ONE child, so LastChildFill's own default of True
+                                 made it (also being the last child) fill the WHOLE card body
+                                 regardless of its Dock="Top": the header row's bottom rule ended up
+                                 flush against the card's bottom edge instead of directly under the
+                                 header text. -->
+                            <DockPanel LastChildFill="False">
+                                <!-- Border-per-cell (design-fidelity-caught fix over the first
+                                     draft): mockup's <th style="padding:2px 5px"> pads EACH
+                                     header cell individually, not just the row's own outer
+                                     edges; a single Border wrapping the whole Grid would only
+                                     apply IndustryTableHeaderRule's padding at the row's far
+                                     left/right. -->
+                                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*,*,*">
+                                    <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></Border>
+                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></Border>
+                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></Border>
+                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></Border>
+                                    <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></Border>
+                                    <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></Border>
+                                    <Border Grid.Column="6" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></Border>
+                                    <Border Grid.Column="7" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></Border>
+                                    <Border Grid.Column="8" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></Border>
+                                </Grid>
+                                <!-- No data rows yet (header-only scaffolding, see above); an
+                                     ItemsControl would need a real ItemsSource to add
+                                     IndustryTableRowRule rows against, left empty until a real
+                                     decode-history event log exists. -->
+                            </DockPanel>
                         </HeaderedContentControl>
                     </Grid>
                     </ScrollViewer>
@@ -736,17 +732,23 @@
                          product decision on what F1-F6 actually invoke first. -->
                     <!-- Same ScrollViewer + pinned-Height fix as the middle column above, and same
                          834 figure — this column is a sibling in the same outer Grid row, so it
-                         gets exactly the same available height. Row 2 here ("*", Session Frames)
-                         is the one that used to shrink with the window; it currently shows only a
-                         one-line empty state, so the shrink was invisible in practice, but pinning
-                         this Grid's Height keeps it consistent with its sibling and correct once
-                         Session Frames gets real content (spec/14-roadmap.md backlog). -->
+                         gets exactly the same available height. Auditor code-review correction
+                         (2026-08-25): this comment used to describe a Row 2 ("*", Session Frames)
+                         that no longer exists — that card was removed and Decoder Trace now
+                         occupies the row instead, see this Grid's own RowDefinitions comment
+                         below. -->
                     <ScrollViewer Grid.Column="2">
                     <!-- Same top-headroom fix as the middle column above (and the pre-existing
                          left column) — ScrollViewer clips to its own viewport, so the first
                          card's title notch needs literal headroom or it clips when scrolled fully
                          up. -->
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <!-- RowDefinitions simplified from "Auto,Auto,*" to "Auto,*" 2026-08-25: the
+                         middle Auto row existed for the since-removed Unattended-RX card; Decoder
+                         Trace (moved in below, replacing it and the also-removed Session Frames
+                         card) is the row's only remaining occupant, so it gets a plain "*" row and
+                         a plain Grid.Row="1", no RowSpan needed and no Auto/Star sizing mismatch
+                         to reason about. -->
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
@@ -845,6 +847,52 @@
                              a defined concept behind it — no scan/watch feature spec, no per-session
                              frame log design. Moved to spec/14-roadmap.md's "Explicitly deferred
                              beyond v1" list rather than left as UI stubs with no backing design. -->
+
+                        <!-- Un-stub-RX-tab Piece B2: real Decoder Trace oscilloscope, moved here
+                             2026-08-25 (user-suggested layout fix, live-observed) from a squeezed
+                             250px sub-column inside the Decode Activity card. This column's own
+                             row below Frame Metadata was completely empty (its Auto/Star pair
+                             collapsed into a single "*" row above, once the since-removed
+                             Unattended-RX/Session-Frames cards that used to occupy it were gone), so
+                             the plot now gets both more width (this column's full 312px) and all the
+                             remaining vertical space via that "*" row, instead of a fixed squeeze.
+                             Capture button (legacy's real manual TrigNext trigger, Scope.cpp:83-89)
+                             plus pan/zoom/gain buttons (legacy's real LeftBtn/RightBtn/SBUpW/SBDownW/
+                             UpBtn/DownBtn, Scope.cpp:247-324, exact step math ported in
+                             DecoderTracePaneViewModel, not invented) plus the two-channel trace plot
+                             itself (DecoderTraceControl). -->
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
+                            </HeaderedContentControl.Header>
+                            <DockPanel LastChildFill="True">
+                                <Button DockPanel.Dock="Top" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Margin="0,0,0,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.RxDecodeLog.TraceCapture}" Command="{Binding DecoderTrace.CaptureCommand}" />
+                                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*" ColumnSpacing="2" Margin="0,0,0,4">
+                                    <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TracePanLeft}" Command="{Binding DecoderTrace.PanLeftCommand}" IsEnabled="{Binding DecoderTrace.CanPanLeft}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TracePanTooltip}" />
+                                    <Button Grid.Column="1" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TracePanRight}" Command="{Binding DecoderTrace.PanRightCommand}" IsEnabled="{Binding DecoderTrace.CanPanRight}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TracePanTooltip}" />
+                                    <Button Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TraceZoomIn}" Command="{Binding DecoderTrace.NarrowWindowCommand}" IsEnabled="{Binding DecoderTrace.CanNarrowWindow}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TraceZoomTooltip}" />
+                                    <Button Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TraceZoomOut}" Command="{Binding DecoderTrace.WidenWindowCommand}" IsEnabled="{Binding DecoderTrace.CanWidenWindow}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TraceZoomTooltip}" />
+                                    <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TraceGainDown}" Command="{Binding DecoderTrace.GainDownCommand}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TraceGainTooltip}" />
+                                    <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TraceGainUp}" Command="{Binding DecoderTrace.GainUpCommand}" ToolTip.Tip="{loc:Translate Panes.RxDecodeLog.TraceGainTooltip}" />
+                                    <Button Grid.Column="6" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                            Content="{loc:Translate Panes.RxDecodeLog.TraceAutoGain}" Command="{Binding DecoderTrace.AutoGainCommand}" />
+                                </Grid>
+                                <Border Classes="IndustryPlot" ToolTip.Tip="{Binding DecoderTrace.WindowRangeDisplay}">
+                                    <controls:DecoderTraceControl Channel0="{Binding DecoderTrace.Channel0Snapshot}"
+                                                                   Channel1="{Binding DecoderTrace.Channel1Snapshot}"
+                                                                   XOffset="{Binding DecoderTrace.XOffset}"
+                                                                   XWindow="{Binding DecoderTrace.XWindow}"
+                                                                   Gain="{Binding DecoderTrace.Gain}" />
+                                </Border>
+                            </DockPanel>
+                        </HeaderedContentControl>
                     </Grid>
                     </ScrollViewer>
                 </Grid>
