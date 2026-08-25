@@ -584,6 +584,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // ForceMode/PushSamples's own consumption point for why this is checked BEFORE _reSyncRequested.
     private SstvModeDefinition? _forcedMode;
 
+    // Pause/abandon (legacy's RxAutoPush -> pDem->Stop(), Main.cpp:6042-6060) request state. Plain
+    // int (0/1), not a reference-type payload like _forcedMode above -- there's no payload to carry,
+    // just a one-shot "clean up whatever's in progress" signal, so Interlocked.Exchange's atomic
+    // read-and-clear (0 = no request pending) is sufficient. Deliberately NOT persistent "paused"
+    // state (SstvSessionService owns that, at the session layer, by simply not forwarding audio) --
+    // see RequestAbandonReception's own doc comment for why this stays a one-shot command.
+    private int _abandonRequested;
+
     // m_sint1 (sstv.cpp:1899-1904/1946-1972, sstv.h:700, isNarrow:false -- SyncCheckSub's own
     // m_fNarrow gating restricts it to non-narrow candidates, same as m_sint2) -- piece 7d, the last
     // of the 7-piece VIS/preamble-lock breakdown. Same CSYNCINT class as m_sint2/m_sint3, but wired
@@ -1337,6 +1345,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// thread marshaling, no synchronization context, no background dispatch).</summary>
     public void ForceMode(SstvModeDefinition mode) => Interlocked.Exchange(ref _forcedMode, mode);
 
+    /// <summary>See <see cref="ISstvDecoder.RequestAbandonReception"/>. A single atomic exchange,
+    /// safe from any thread -- consumed at the very top of the next <see cref="PushSamples"/> call,
+    /// strictly BEFORE the <see cref="_forcedMode"/> drain (plan-review round 3 finding: draining
+    /// after would let a pending abandon silently tear down a mode <see cref="ForceMode"/> just
+    /// committed in the same call -- draining first means <see cref="PerformForceMode"/> always
+    /// sees an already-idle decoder, so a mode forced while paused just proceeds normally, no
+    /// special-case interaction code needed anywhere).</summary>
+    public void RequestAbandonReception() => Interlocked.Exchange(ref _abandonRequested, 1);
+
     /// <summary>See <see cref="ISstvDecoder.SlantPpm"/>. Thin wrapper over
     /// <see cref="SlantTracker.DriftPpm"/>, but NOT simply <c>_slantTracker?.DriftPpm</c> -- auditor
     /// finding: <see cref="_slantTracker"/> alone is not null in every case the interface documents as
@@ -1512,6 +1529,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // only after fully unsubscribing and never pushing to it again), but this is a public type with
         // no such guarantee documented for arbitrary callers.
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Consumed BEFORE _forcedMode below (plan-review round 3 finding -- see
+        // RequestAbandonReception's own doc comment for why the order matters): a pending pause
+        // request must tear down whatever's in progress before any pending ForceMode request gets a
+        // chance to commit a new one, so a mode forced while paused always lands cleanly.
+        if (Interlocked.Exchange(ref _abandonRequested, 0) != 0)
+        {
+            if (_mode is not null)
+            {
+                var previousMode = _mode;
+                var hadPendingAnchor = _pendingAnchorCorrectionMode is not null;
+                EndOfImage(applyDeadTime: false);
+                if (previousMode is not null && !hadPendingAnchor)
+                {
+                    RaiseSubscribers(DecodeRestarted, previousMode);
+                }
+            }
+            else
+            {
+                // Idle or AVT-training-pending: EndOfImage's default _consumedSamples anchor is only
+                // valid while a mode is/was locked -- see EndOfImage's own resumeFrom doc comment.
+                // No DecodeRestarted here, matching legacy's WriteHistory being gated on m_Sync
+                // (false during AVT training -- no mode was ever locked to report).
+                EndOfImage(applyDeadTime: false, resumeFrom: TotalSamplesReceived);
+            }
+        }
 
         // Consumed before _reSyncRequested below: legacy resolves the same simultaneous-command
         // question by having Start() unconditionally zero m_Skip (sstv.cpp:1725), i.e. a forced start
@@ -3066,11 +3109,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // current sample, not 0.5s later. Auditor plan-review finding: an earlier draft of
     // this method reused the unconditional dead-time skip for Auto Stop too, which would
     // have created a silent ~500ms blind spot no duration/round-trip test could surface.
-    private void EndOfImage(bool applyDeadTime = true)
+    /// <param name="resumeFrom">Overrides the anchor every reset cursor/watermark below is set to.
+    /// Omitted (the default) for every pre-existing call site, which keeps the original
+    /// <paramref name="applyDeadTime"/>-based computation (anchored at <see cref="_consumedSamples"/>,
+    /// a cursor only valid while a mode is/was locked). <see cref="RequestAbandonReception"/>'s own
+    /// idle/AVT-pending branch is the one caller that supplies this explicitly, anchored at
+    /// <see cref="TotalSamplesReceived"/> instead -- <see cref="_consumedSamples"/> is a frozen
+    /// pre-lock header-search start that can sit behind <see cref="_bufferBase"/> once
+    /// <see cref="_fixedWindowExhausted"/> stops protecting it (see that field's own doc comment),
+    /// so anchoring there for a decoder that was never locked can leave every cursor below pointing
+    /// at already-trimmed buffer -- the same reasoning <see cref="PerformForceMode"/>'s own idle-safe
+    /// reset already anchors at <see cref="TotalSamplesReceived"/> for, not a new invariant.</param>
+    private void EndOfImage(bool applyDeadTime = true, int? resumeFrom = null)
     {
-        var resumeFrom = applyDeadTime
+        var resolvedResumeFrom = resumeFrom ?? (applyDeadTime
             ? _consumedSamples + (int)Math.Round(0.5 * _sampleRate)
-            : _consumedSamples;
+            : _consumedSamples);
 
         _mode = null;
         _lineDecoder = null;
@@ -3128,17 +3182,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _syncBypassTracker.Reset();
         _syncBypassNarrowTracker.Reset();
         _syncBypassNarrowPhaseActive = false;
-        _syncBypassProcessedUpTo = resumeFrom;
-        _syncBypassOriginSample = resumeFrom;
+        _syncBypassProcessedUpTo = resolvedResumeFrom;
+        _syncBypassOriginSample = resolvedResumeFrom;
 
         _visLockStateMachine.Reset();
-        _visLockProcessedUpTo = resumeFrom;
-        _visLockOriginSample = resumeFrom;
+        _visLockProcessedUpTo = resolvedResumeFrom;
+        _visLockOriginSample = resolvedResumeFrom;
 
-        _consumedSamples = resumeFrom;
-        _idealLineStartSample = resumeFrom; // MUST 4 -- see field's own doc comment
+        _consumedSamples = resolvedResumeFrom;
+        _idealLineStartSample = resolvedResumeFrom; // MUST 4 -- see field's own doc comment
 
-        _agcDeadZoneCatchUpTarget = resumeFrom;
+        _agcDeadZoneCatchUpTarget = resolvedResumeFrom;
     }
 
     // Functional-audit fix (chunk D4 round 1): `EndOfImage` itself has no precondition on decode

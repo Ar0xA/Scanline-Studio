@@ -26,6 +26,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void RequestAbandonReception()
+    {
+    }
+
     public void RequestCorrectSlant()
     {
     }

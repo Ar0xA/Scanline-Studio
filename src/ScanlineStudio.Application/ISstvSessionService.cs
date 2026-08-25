@@ -35,6 +35,38 @@ public interface ISstvSessionService : IAsyncDisposable
     /// pausing capture for the duration of a transmission.</summary>
     bool IsReceiving { get; }
 
+    /// <summary>Whether RX auto-detect is currently paused -- the port of legacy's RX-page
+    /// <c>SBAuto</c> toggle (<c>TMmsstv::RxAutoPush</c>, `Main.cpp:6042-6060`). Session-owned state,
+    /// NOT decoder state: capture and the waterfall keep running while paused; only the decoder
+    /// stops receiving audio. Defaults to <see langword="false"/> (listening) on a fresh instance and
+    /// changes ONLY via <see cref="SetAutoDetectPaused"/> -- does NOT reset on
+    /// <see cref="StartReceivingAsync"/>. This is a DELIBERATE DEVIATION from legacy (code-review
+    /// finding, round 2, elegant-wondering-hinton.md), not a fidelity claim: legacy's own
+    /// <c>m_SyncMode</c> does NOT survive a transmit -- <c>TMmsstv::ToTX</c> (`Main.cpp:7360`)
+    /// calls <c>pDem-&gt;Stop()</c> (guarded only by the TXLoopBack option, off by default --
+    /// `Main.cpp:7358`), which sets it to 512 (`sstv.cpp:1786`), the
+    /// entry to a self-clearing 0.5s wait (`sstv.cpp:2243-2252`) that lands back on 0 (unpaused)
+    /// regardless of the pre-Stop value -- so legacy silently un-pauses ~0.5s after every TX, and its
+    /// own UI honestly reflects that. This port keeps the flag STICKY across TX and any Stop/Start RX
+    /// cycle instead, because pause/resume is session/UX state, not DSP/protocol math -- outside this
+    /// project's legacy-fidelity scope -- and legacy's drop-after-TX reads as an artifact of
+    /// <c>Stop()</c>'s shared teardown path, not an intentional design choice.</summary>
+    bool IsAutoDetectPaused { get; }
+
+    /// <summary>Sets <see cref="IsAutoDetectPaused"/>. Pausing requests the decoder abandon whatever
+    /// reception is currently in progress (cleanly, via
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestAbandonReception"/> -- not
+    /// left dangling) before audio stops being forwarded to it. Safe to call from the UI thread.
+    /// This method does NOT get called implicitly by <see cref="ForceMode"/> -- forcing a mode while
+    /// paused leaves this session-layer flag paused (harmless: <c>RequestAbandonReception</c> always
+    /// drains before <c>ForceMode</c>'s own commit, see that method's own doc comment, so the forced
+    /// mode still locks correctly; it just won't decode anything, since audio is still being withheld
+    /// from the decoder). The production RX pane resumes explicitly and separately, by setting
+    /// <see cref="IsAutoDetectPaused"/> false itself before calling <see cref="ForceMode"/> --
+    /// matching legacy's <c>Start()</c>/<c>Start(mode,f)</c> sharing <c>SBAuto</c>'s own variable.
+    /// Any other caller that forces a mode while paused should do the same.</summary>
+    void SetAutoDetectPaused(bool paused);
+
     event Action<SstvModeDefinition>? ModeDetected;
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.DecodeRestarted"/>

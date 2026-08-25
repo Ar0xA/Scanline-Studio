@@ -552,9 +552,10 @@
                      wired 2026-08-15 (RX buffer subsystem Phase 9, the whole 9-phase subsystem's
                      final piece: a real buffered-line-replay/Correct-Slant search backs it now,
                      not a stub), all real SstvDecoderSettings fields, restart-required. Auto-start
-                     remains disabled: its real legacy behavior lives on the legacy TOOLBAR (SBAuto),
-                     not in Option.dfm: a placement question, not investigated further; see
-                     spec/16-gui-wiring-survey.md's Decode-tab section. -->
+                     removed 2026-08-25 (elegant-wondering-hinton.md): its real legacy behavior is
+                     the RX-page SBAuto toggle, ported instead as the Receive tab's own real
+                     "Listening / Paused" segment (MainWindow.axaml) — not a settings-dialog
+                     checkbox. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Decode.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -600,15 +601,6 @@
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.Off}" IsChecked="{Binding IsRxBufferOffSelected}" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.On}" IsChecked="{Binding IsRxBufferOnSelected}" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="RxBuffer" Content="{loc:Translate Options.Decode.RxBuffer.Extended}" IsChecked="{Binding IsRxBufferExtendedSelected}" />
-                                    </WrapPanel>
-
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.AutoStart}" />
-                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.AutoStart.Help}" />
-                                    </StackPanel>
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.Off}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AutoStartPlaceholder" Content="{loc:Translate Options.Decode.AutoStart.On}" />
                                     </WrapPanel>
 
                                     <!-- Wired 2026-08-12: SstvDecoderSettings.AutoStopEnabled/SyncRestartEnabled are
