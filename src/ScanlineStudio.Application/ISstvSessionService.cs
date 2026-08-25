@@ -78,6 +78,16 @@ public interface ISstvSessionService : IAsyncDisposable
     /// as-typed in storage; this method normalizes fresh on every call, it never writes back.</summary>
     Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default);
 
+    /// <summary>The operator's own configured Maidenhead grid square (<c>OperatorSettings.Grid</c>),
+    /// as-typed in storage -- no normalization, unlike <see cref="GetOperatorCallsignAsync"/> (grid
+    /// squares aren't compared for self-filtering, so there's no equivalent correctness reason to
+    /// canonicalize here; <see cref="MaidenheadLocator.TryToLatLon"/> already tolerates common
+    /// formatting variance on the consuming side). Exists for the same UI-layering reason as
+    /// <see cref="GetOperatorCallsignAsync"/> -- a <c>ScanlineStudio.UI</c> consumer (the Frame
+    /// Metadata card's own-station-to-worked-station distance readout) needs this without referencing
+    /// <c>ScanlineStudio.Settings.ISettingsStore</c> directly.</summary>
+    Task<string?> GetOperatorGridAsync(CancellationToken ct = default);
+
     /// <summary>Read-only preview of what <see cref="TransmitAsync"/> would actually resolve and
     /// encode right now -- literally the same settings-resolution logic (CW-ID/FSK station-ID
     /// subsystem Phase 4's <c>StationIdSettings</c>/<c>OperatorSettings</c> read + gate/fallback
@@ -261,6 +271,8 @@ public interface ISstvSessionService : IAsyncDisposable
     /// none of them are event-driven.</summary>
     double? SlantPpm { get; }
 
+    SstvSyncSource SyncSource { get; }
+
     int? SyncOffsetSamples { get; }
 
     double SignalPeakLevel { get; }
@@ -292,6 +304,14 @@ public interface ISstvSessionService : IAsyncDisposable
     /// -- restart-only, safe to read once at construction (no polling needed, this decoder is a DI
     /// singleton with no live-reconfigure path).</summary>
     bool AutoSlantEnabled { get; }
+
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SenseLevel"/>
+    /// -- restart-only, same reasoning as <see cref="AutoSlantEnabled"/> above.</summary>
+    int SenseLevel { get; }
+
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RxBpfPreset"/>
+    /// -- restart-only, same reasoning as <see cref="AutoSlantEnabled"/> above.</summary>
+    RxBpfPreset RxBpfPreset { get; }
 
     double? SyncFrequencyCorrectionHz { get; }
 

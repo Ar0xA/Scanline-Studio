@@ -1021,8 +1021,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
             : StationIdCallsignNormalizer.Normalize(operatorSettings.Callsign);
     }
 
+    public async Task<string?> GetOperatorGridAsync(CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+            ?? new OperatorSettings();
+        return operatorSettings.Grid;
+    }
+
     /// <summary>See <see cref="ISstvSessionService.SlantPpm"/> / <see cref="ISstvDecoder.SlantPpm"/>.</summary>
     public double? SlantPpm => _decoder.SlantPpm;
+
+    /// <summary>See <see cref="ISstvSessionService.SyncSource"/> / <see cref="ISstvDecoder.SyncSource"/>.</summary>
+    public SstvSyncSource SyncSource => _decoder.SyncSource;
 
     /// <summary>See <see cref="ISstvSessionService.SyncOffsetSamples"/> / <see cref="ISstvDecoder.SyncOffsetSamples"/>.</summary>
     public int? SyncOffsetSamples => _decoder.SyncOffsetSamples;
@@ -1039,6 +1050,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     /// <summary>See <see cref="ISstvSessionService.AutoSlantEnabled"/> / <see cref="ISstvDecoder.AutoSlantEnabled"/>.</summary>
     public bool AutoSlantEnabled => _decoder.AutoSlantEnabled;
+
+    /// <summary>See <see cref="ISstvSessionService.SenseLevel"/> / <see cref="ISstvDecoder.SenseLevel"/>.</summary>
+    public int SenseLevel => _decoder.SenseLevel;
+
+    /// <summary>See <see cref="ISstvSessionService.RxBpfPreset"/> / <see cref="ISstvDecoder.RxBpfPreset"/>.</summary>
+    public RxBpfPreset RxBpfPreset => _decoder.RxBpfPreset;
 
     /// <summary>See <see cref="ISstvSessionService.SyncFrequencyCorrectionHz"/> / <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>.</summary>
     public double? SyncFrequencyCorrectionHz => _decoder.SyncFrequencyCorrectionHz;

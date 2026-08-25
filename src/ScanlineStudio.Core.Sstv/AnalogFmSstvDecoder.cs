@@ -1366,6 +1366,32 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
     }
 
+    /// <summary>See <see cref="ISstvDecoder.SyncSource"/>. Directly reuses this class's own
+    /// already-vetted <c>IsIdle</c> invariant (<see cref="_mode"/> null and
+    /// <see cref="_avtTrainingPending"/> false), not a separately-derived condition -- same
+    /// once-into-locals read pattern as <see cref="SlantPpm"/> above, for the same cross-thread-poll
+    /// torn-read reasoning.
+    ///
+    /// Auditor finding, 2026-08-25: checking <c>mode is not null</c> FIRST is load-bearing, not
+    /// arbitrary ordering -- <c>TryResolveAvtTraining</c>'s narrow-FSK exits (case 4977-4983 and
+    /// 4987-4998) call <c>Commit()</c>, which sets <see cref="_mode"/>, several lines BEFORE
+    /// <see cref="_avtTrainingPending"/> is cleared back to <see langword="false"/>. A poll landing
+    /// in that narrow window has both fields true/non-null simultaneously; a narrow mode genuinely
+    /// owns decoder state there (training is already dead), so <see cref="SstvSyncSource.Locked"/>
+    /// is correct -- but only because this checks <c>mode</c> first. Reordering to check
+    /// <c>avtTrainingPending</c> first would silently misreport that window as still training.</summary>
+    public SstvSyncSource SyncSource
+    {
+        get
+        {
+            var mode = _mode;
+            var avtTrainingPending = _avtTrainingPending;
+            return mode is not null
+                ? SstvSyncSource.Locked
+                : avtTrainingPending ? SstvSyncSource.AvtTraining : SstvSyncSource.Idle;
+        }
+    }
+
     /// <summary>See <see cref="ISstvDecoder.SyncOffsetSamples"/>. Deliberately reads
     /// <see cref="_lastLineSyncPeakPosition"/>, NOT <see cref="ComputeAutoSyncPosition"/>'s own live
     /// <see cref="_slantLinePeakPosition"/> input -- that field is a within-line accumulator reset to
@@ -1425,6 +1451,17 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/>. Plain restart-only field readback --
     /// see <see cref="_autoSlantEnabled"/>'s own doc comment for what this gates.</summary>
     public bool AutoSlantEnabled => _autoSlantEnabled;
+
+    /// <summary>See <see cref="ISstvDecoder.SenseLevel"/>. Plain restart-only field readback -- the
+    /// already-CLAMPED value (0-3), see <see cref="_senseLevel"/>'s own doc comment. Previously only
+    /// exposed test-only as <see cref="SenseLevelForTests"/>; this is the same field, now a real
+    /// public member for the Sync &amp; Slant card's "VIS threshold" row.</summary>
+    public int SenseLevel => _senseLevel;
+
+    /// <summary>See <see cref="ISstvDecoder.RxBpfPreset"/>. Plain restart-only field readback.
+    /// Previously only exposed test-only as <see cref="RxBpfPresetForTests"/>; this is the same
+    /// field, now a real public member for the Input Chain card's "BPF" row.</summary>
+    public RxBpfPreset RxBpfPreset => _rxBpfPreset;
 
     /// <summary>See <see cref="ISstvDecoder.SyncFrequencyCorrectionHz"/>. Same shape as
     /// <see cref="SlantPpm"/>'s fix above, for the same reason: <see cref="_afcTracker"/>, like

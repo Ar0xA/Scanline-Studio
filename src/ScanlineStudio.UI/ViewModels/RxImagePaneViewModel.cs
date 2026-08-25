@@ -125,6 +125,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LineProgressText))]
     [NotifyPropertyChangedFor(nameof(ClipLoHiDisplay))]
+    [NotifyPropertyChangedFor(nameof(RemainingText))]
     private double? _progress;
 
     /// <summary>Fraction of the current image's pixels clipped to pure black/white -- see
@@ -183,6 +184,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(SlantPpmStatusBarDisplay))]
     [NotifyPropertyChangedFor(nameof(AutoCorrectDisplay))]
     private double? _slantPpm;
+
+    /// <summary>Live, polled telemetry (see <see cref="PollTelemetry"/>) -- NOT a restart-only
+    /// construction-time fetch, unlike <see cref="AutoSlantEnabled"/>. Defaults to
+    /// <see cref="SstvSyncSource.Idle"/> (the CLR's own enum default, and also the correct value
+    /// before this pane's first poll tick).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SyncSourceDisplay))]
+    private SstvSyncSource _syncSource;
+
+    /// <summary>Sync &amp; Slant card's "Source" row. Localized so a future locale can phrase these
+    /// 3 states in whatever way reads naturally, not hardcoded English.</summary>
+    public string SyncSourceDisplay => SyncSource switch
+    {
+        SstvSyncSource.Locked => _localization.GetString("Panes.RxSync.SourceValue.Locked"),
+        SstvSyncSource.AvtTraining => _localization.GetString("Panes.RxSync.SourceValue.AvtTraining"),
+        _ => _localization.GetString("Panes.RxSync.SourceValue.Idle"),
+    };
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SyncOffsetSamplesDisplay))]
@@ -281,7 +299,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// yet (the RxFrameMeta card's mockup has no RST field at all, unlike "Override callsign" which
     /// already had one to wire into) -- real, tested backing state ahead of its own UI exposure,
     /// same incremental pattern several sibling still-literal rows on this same card already follow
-    /// (Frequency/ModeVis/SnrSlant/OcrConfidence/DroppedLines). Deliberately not named <c>MyRst</c>
+    /// (Frequency/ModeVis/OcrConfidence). Deliberately not named <c>MyRst</c>
     /// (a literal legacy-field-name port) -- follows <see cref="OverrideCallsign"/>'s own precedent
     /// of an English, descriptive name instead.</summary>
     [ObservableProperty]
@@ -306,12 +324,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(GridDisplay))]
     private string? _lookupGrid;
 
-    /// <summary>"Grid / dist · QRZ" row's real half -- distance needs the operator's own grid
-    /// square plus a haversine calculation, out of scope for this pass (not requested); the
-    /// distance side keeps its own pre-existing "--" placeholder text (that specific ASCII "--"
-    /// -- not this property's own em-dash "—" fallback -- predates the 0.9-beta UI-honesty pass
-    /// and is kept as-is for the half that's still unwired, not touched by that pass).</summary>
-    public string GridDisplay => $"{LookupGrid ?? "—"} / --";
+    /// <summary>Operator's own configured grid square, loaded once at construction via
+    /// <see cref="LoadOperatorGridAsync"/> -- same cached-fire-and-forget pattern as
+    /// <see cref="CaptureDeviceName"/>, not a per-call read, since <see cref="ISstvSessionService.GetOperatorGridAsync"/>
+    /// reads uncached settings-file disk. Reflects the value at session start; editing the grid in
+    /// Options mid-session does not retroactively update an already-open Receive tab (same staleness
+    /// characteristic <see cref="CaptureDeviceNameDisplay"/> already has).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GridDisplay))]
+    private string? _operatorGrid;
+
+    /// <summary>"Grid / dist · QRZ" row -- grid half is the worked station's own grid (from QRZ
+    /// lookup); distance half is real, computed via <see cref="MaidenheadLocator.TryComputeDistanceBearing"/>
+    /// from <see cref="OperatorGrid"/> (this operator's own configured grid) to <see cref="LookupGrid"/>
+    /// (the worked station's grid). "--" (matching this row's own pre-existing placeholder shape) when
+    /// either grid is missing or malformed, not an exception -- <see cref="MaidenheadLocator.TryComputeDistanceBearing"/>
+    /// is a Try-pattern for exactly this reason.</summary>
+    public string GridDisplay => $"{LookupGrid ?? "—"} / {(MaidenheadLocator.TryComputeDistanceBearing(OperatorGrid, LookupGrid, out var distanceKm, out _) ? MaidenheadLocator.FormatDistance(distanceKm) : "--")}";
 
     [ObservableProperty]
     private string? _qrzLookupErrorMessage;
@@ -330,6 +359,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _historyStore = historyStore;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
+        SenseLevel = sstvSession.SenseLevel;
+        RxBpfPreset = sstvSession.RxBpfPreset;
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
@@ -342,6 +373,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _telemetryTimer.Start();
 
         _ = LoadCaptureDeviceNameAsync();
+        _ = LoadOperatorGridAsync();
     }
 
     public string DetectedModeText => DetectedMode?.DisplayName ?? "—";
@@ -361,6 +393,24 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public string LineProgressText => Progress is { } progress && DetectedMode is { } mode
         ? _localization.GetString("MainWindow.StatusBar.LineProgressValueFormat", (int)Math.Round(progress * mode.ImageHeight), mode.ImageHeight)
         : _localization.GetString("MainWindow.StatusBar.LineProgressValueNoLock");
+
+    /// <summary>Mode card's "Remaining" row -- lines and time left in the current decode, derived
+    /// from the same <see cref="Progress"/> x <c>DetectedMode.ImageHeight</c> source as
+    /// <see cref="LineProgressText"/>, not a separate tracked quantity.</summary>
+    public string RemainingText
+    {
+        get
+        {
+            if (Progress is not { } progress || DetectedMode is not { } mode)
+            {
+                return "—";
+            }
+
+            var linesRemaining = mode.ImageHeight - (int)Math.Round(progress * mode.ImageHeight);
+            var msRemaining = linesRemaining * mode.LineDurationMs;
+            return _localization.GetString("Panes.RxImage.RemainingValueFormat", linesRemaining, msRemaining / 1000.0);
+        }
+    }
 
     /// <summary>Signal-quality card's "Clip lo/hi" row -- real percentages over the rows actually
     /// decoded so far (see <see cref="ClippedBlackFraction"/>'s own doc comment for what's being
@@ -409,6 +459,47 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// documented restart-only (the decoder is a DI singleton with no live-reconfigure path), unlike
     /// the genuinely-live telemetry polled every 250ms elsewhere in this pane.</summary>
     public bool AutoSlantEnabled { get; }
+
+    /// <summary>Same restart-only construction-time-read shape as <see cref="AutoSlantEnabled"/>
+    /// above -- see <see cref="ISstvSessionService.SenseLevel"/> for the full contract.</summary>
+    public int SenseLevel { get; }
+
+    /// <summary>Sync &amp; Slant card's "VIS threshold" row -- the preset NAME, not a raw number
+    /// (see <see cref="ISstvDecoder.SenseLevel"/>'s own doc comment for why a raw value would be
+    /// dishonest: it's an AGC-domain amplitude, not dB). Reuses the Options window's own real
+    /// "Options.Decode.SenseLevel.*" locale keys for the same underlying setting, rather than a
+    /// second duplicate copy of the same 4 strings under a Panes.* key.
+    ///
+    /// Auditor finding, 2026-08-25: the fallback arm matches legacy's own out-of-range semantic
+    /// (<c>SetSenseLvl</c>'s <c>default:</c> branch, `sstv.cpp:1811-1815`, falls back to preset 0
+    /// "Very low", not "Low") -- <c>1</c> is explicit here rather than folded into the default, so
+    /// this can't silently drift to the wrong fallback if a future caller ever bypasses the
+    /// decoder's own clamp (unreachable today: <see cref="ISstvDecoder.SenseLevel"/> is always
+    /// pre-clamped 0-3 through the real production DI chain).</summary>
+    public string VisThresholdDisplay => SenseLevel switch
+    {
+        1 => _localization.GetString("Options.Decode.SenseLevel.Low"),
+        2 => _localization.GetString("Options.Decode.SenseLevel.High"),
+        3 => _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
+        _ => _localization.GetString("Options.Decode.SenseLevel.VeryLow"),
+    };
+
+    /// <summary>Same restart-only construction-time-read shape as <see cref="AutoSlantEnabled"/>
+    /// above -- see <see cref="ISstvSessionService.RxBpfPreset"/> for the full contract.</summary>
+    public RxBpfPreset RxBpfPreset { get; }
+
+    /// <summary>Input Chain card's "BPF" row -- the preset NAME only, not a cutoff figure (see
+    /// <see cref="ISstvDecoder.RxBpfPreset"/>'s own doc comment for why a cutoff would be wrong
+    /// whenever unlocked). Reuses the Options window's own real "Options.Decode.RxBpf.*" locale
+    /// keys for the same underlying setting (Off is labeled "Normal" there, Narrow/VeryNarrow are
+    /// "Sharp"/"Very sharp" -- matching that existing user-facing naming, not the enum's own).</summary>
+    public string RxBpfDisplay => RxBpfPreset switch
+    {
+        ScanlineStudio.Abstractions.Sstv.RxBpfPreset.Narrow => _localization.GetString("Options.Decode.RxBpf.Sharp"),
+        ScanlineStudio.Abstractions.Sstv.RxBpfPreset.VeryNarrow => _localization.GetString("Options.Decode.RxBpf.VerySharp"),
+        ScanlineStudio.Abstractions.Sstv.RxBpfPreset.Off => _localization.GetString("Options.Decode.RxBpf.Normal"),
+        _ => _localization.GetString("Options.Decode.RxBpf.Wide"),
+    };
 
     /// <summary>Four-way state, not just locked/not-locked. Checked in this order:
     /// <list type="number">
@@ -590,6 +681,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public void PollTelemetry()
     {
         SlantPpm = _sstvSession.SlantPpm;
+        SyncSource = _sstvSession.SyncSource;
         SyncOffsetSamples = _sstvSession.SyncOffsetSamples;
         SyncFrequencyCorrectionHz = _sstvSession.SyncFrequencyCorrectionHz;
         IsLevelOverdriven = _sstvSession.IsLevelOverdriven;
@@ -616,6 +708,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         // first line -- races ahead of DetectedMode updating here), and a mode change with a
         // different ImageHeight can briefly show the PREVIOUS mode's total.
         OnPropertyChanged(nameof(LineProgressText));
+        // Same race/staleness reasoning as LineProgressText above -- RemainingText also depends on
+        // DetectedMode.ImageHeight/LineDurationMs, not just Progress.
+        OnPropertyChanged(nameof(RemainingText));
     }
 
     private void OnModeDetected(SstvModeDefinition mode)
@@ -1089,6 +1184,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
     }
 
+    private async Task LoadOperatorGridAsync()
+    {
+        try
+        {
+            OperatorGrid = await _sstvSession.GetOperatorGridAsync();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadCaptureDeviceNameAsync -- a failure here leaves the
+            // field null (GridDisplay's distance half falls back to "--") rather than blocking
+            // construction.
+            Log.LoadOperatorGridFailed(_logger, ex);
+        }
+    }
+
     private bool CanLookupQrz() => !IsLookingUpQrz && !string.IsNullOrWhiteSpace(OverrideCallsign);
 
     /// <summary>Does NOT also check <c>QrzLookupSettings.Enabled</c> -- that would need a new
@@ -1208,6 +1318,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
         public static partial void LoadCaptureDeviceNameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading operator's own grid square failed")]
+        public static partial void LoadOperatorGridFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Mode detected: {ModeId}")]
         public static partial void ModeDetected(ILogger logger, string modeId);

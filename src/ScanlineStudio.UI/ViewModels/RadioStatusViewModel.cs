@@ -39,7 +39,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private CancellationTokenSource? _txVolumePersistCts;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(FrequencyDisplayOrPlaceholder))]
     private string _frequencyDisplay;
+
+    /// <summary>Same value as <see cref="FrequencyDisplay"/>, except while no rig has ever reported
+    /// a frequency this session (<c>_currentFrequencyHz == 0</c>) -- for a consumer outside the
+    /// status bar's own deliberate 7-segment-style idle readout ("000.000.000",
+    /// <c>RadioStatus.NoFrequency</c>), which reads as a real fake-live value everywhere else in
+    /// this app (e.g. sitting among the Frame Metadata card's own "—" placeholder rows). Auditor
+    /// finding, 2026-08-25 code-review round: <see cref="FrequencyDisplay"/> itself is left
+    /// untouched -- the status bar's idle readout is intentional there, this is a second, narrower
+    /// property for a different display context.</summary>
+    public string FrequencyDisplayOrPlaceholder => _currentFrequencyHz > 0 ? FrequencyDisplay : "—";
 
     [ObservableProperty]
     private string _modeDisplay;

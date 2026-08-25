@@ -215,6 +215,15 @@ public interface ISstvDecoder
     /// blocking duration.</summary>
     double? SlantPpm { get; }
 
+    /// <summary>Which lock mechanism currently owns this decoder's state -- see
+    /// <see cref="SstvSyncSource"/>'s own doc comment for why this is a 3-value classification, not
+    /// a 4-way Search/VisLock/Forced/AvtTraining split (plan-review, 2026-08-25). Live, polled
+    /// telemetry, not restart-only -- it changes within a session as a reception starts/locks/ends.
+    /// Same concurrency contract as <see cref="SlantPpm"/> above: safe to poll from any thread in the
+    /// sense that the getter does not throw, but is best-effort diagnostic telemetry that must never
+    /// drive decode correctness.</summary>
+    SstvSyncSource SyncSource { get; }
+
     /// <summary>Most recent per-line sync-envelope offset, in samples, relative to where the locked
     /// mode's sync segment is expected to start -- the same quantity legacy computes as
     /// <c>m_AutoStopPos</c> (`Main.cpp:3887`) for its own Auto Sync/Auto Stop triggers, but never
@@ -292,6 +301,27 @@ public interface ISstvDecoder
     /// genuine "off" reading of <c>0.0</c> from a genuine "on, zero drift measured so far" reading of
     /// the same value. Safe to read from any thread.</summary>
     bool AutoSlantEnabled { get; }
+
+    /// <summary>VIS-lock envelope-amplitude sense-level preset currently in effect, as the clamped
+    /// 0-3 index (0=Very low, 1=Low [the real shipped default], 2=High, 3=Very high) -- NOT a raw
+    /// threshold value in any physical unit; the underlying <c>SLvl</c>/<c>SLvl2</c>/<c>SLvl3</c>
+    /// thresholds this selects live in the same clamped AGC-envelope domain as
+    /// <see cref="SignalPeakLevel"/>'s pre-division reads, not dB (an earlier UI stub's "−26 dB"
+    /// placeholder was a fake, decorative literal with no real conversion behind it). For the Sync
+    /// &amp; Slant card's "VIS threshold" row -- a consumer should display the preset NAME (this
+    /// port's Options window already has real locale keys for the 4 names), not this raw index.
+    /// Restart-only, same limitation as <see cref="AutoSlantEnabled"/> above. Safe to read from any
+    /// thread.</summary>
+    int SenseLevel { get; }
+
+    /// <summary>RX bandpass-filter sharpness currently in effect, mirrors legacy's real
+    /// <c>CSSTVDEM::m_bpf</c> -- see <see cref="RxBpfPreset"/>'s own doc comment for the full
+    /// contract. For the Input Chain card's "BPF" row -- the locked-filter cutoff frequency varies
+    /// by whether a mode is currently locked (H1) vs still searching (H2, 400-2500 Hz at every
+    /// preset), so a consumer should display the preset NAME only, not a cutoff figure that would
+    /// be wrong whenever unlocked. Restart-only, same limitation as <see cref="AutoSlantEnabled"/>
+    /// above. Safe to read from any thread.</summary>
+    RxBpfPreset RxBpfPreset { get; }
 
     /// <summary>Current sync-tone AFC frequency correction, in Hz -- direct passthrough of the
     /// underlying AFC tracker's own correction value (no sign flip), which callers add to every
