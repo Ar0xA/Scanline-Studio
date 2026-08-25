@@ -1,6 +1,9 @@
+using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Media;
+using Avalonia.Rendering;
 using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.UI.Controls;
@@ -13,12 +16,29 @@ namespace ScanlineStudio.UI.Controls;
 /// this is a single live trace, not a scrolling history), inside a parent <c>Border Classes="plot"</c>
 /// which already supplies the dark background (same pattern <c>WaterfallPaneView.axaml</c> uses for
 /// <see cref="WaterfallControl"/>), so this control paints no background of its own.</summary>
-public sealed class SpectrumTraceControl : Control
+public sealed class SpectrumTraceControl : Control, ICustomHitTest
 {
+    /// <summary>Un-stub-RX-tab Piece A3, found live: this control's <see cref="Render"/> only ever
+    /// draws thin lines (trace/markers), never a fill covering the whole surface -- Avalonia 11's
+    /// composition renderer hit-tests against actually-painted geometry, not logical
+    /// <see cref="Visual.Bounds"/>, so almost the entire control was NOT click-hittable without this;
+    /// a real click on empty space between drawn lines silently fell through to the parent
+    /// <c>Border</c> instead of reaching <see cref="OnPointerPressed"/>. Confirmed via a real running
+    /// window, not just the headless test suite -- <see cref="SpectrumTraceControlTests"/>'s own
+    /// pointer tests raise events directly on this control (bypassing hit-testing entirely), so they
+    /// could not and did not catch this.</summary>
+    bool ICustomHitTest.HitTest(Point point) => new Rect(Bounds.Size).Contains(point);
+
     private static readonly IPen TracePen = new Pen(new SolidColorBrush(Color.FromRgb(0x00, 0xC8, 0xE8)), thickness: 1);
     private static readonly IPen PeakHoldPen = new Pen(new SolidColorBrush(Color.FromRgb(0x40, 0x60, 0xFF)), thickness: 1);
     private static readonly IPen SyncMarkerPen = new Pen(new SolidColorBrush(Color.FromRgb(0x30, 0xD0, 0x60)), thickness: 1);
     private static readonly IPen FreqMarkerPen = new Pen(new SolidColorBrush(Color.FromRgb(0xD0, 0x90, 0x30)), thickness: 1, dashStyle: DashStyle.Dash);
+    // Un-stub-RX-tab Piece A3: a distinct color from the mode-derived reference markers above, since
+    // this one represents an active filter the user placed, not a passive frequency reference. No
+    // legacy precedent for this exact visual -- legacy's own PBoxFFTMouseDown never draws a notch
+    // marker at all (Main.cpp has no PaintScope-style rendering for it), this is this port's own
+    // UI-only addition (spec/06's UI exemption covers it, same as every other marker on this control).
+    private static readonly IPen NotchMarkerPen = new Pen(new SolidColorBrush(Color.FromRgb(0xE0, 0x30, 0x30)), thickness: 2);
 
     public static readonly StyledProperty<WaterfallFrame?> FrameProperty =
         AvaloniaProperty.Register<SpectrumTraceControl, WaterfallFrame?>(nameof(Frame));
@@ -41,6 +61,19 @@ public sealed class SpectrumTraceControl : Control
     public static readonly StyledProperty<SstvModeDefinition?> CurrentModeProperty =
         AvaloniaProperty.Register<SpectrumTraceControl, SstvModeDefinition?>(nameof(CurrentMode));
 
+    public static readonly StyledProperty<bool> NotchEnabledProperty =
+        AvaloniaProperty.Register<SpectrumTraceControl, bool>(nameof(NotchEnabled));
+
+    public static readonly StyledProperty<double> NotchFrequencyHzProperty =
+        AvaloniaProperty.Register<SpectrumTraceControl, double>(nameof(NotchFrequencyHz), defaultValue: 2400.0);
+
+    /// <summary>Click-to-tune entry point (Un-stub-RX-tab Piece A3) -- invoked with the clicked/dragged
+    /// frequency in Hz from <see cref="OnPointerPressed"/>/<see cref="OnPointerMoved"/>. A bindable
+    /// <see cref="ICommand"/> property rather than a routed/CLR event, matching this control's existing
+    /// <c>BinsPerPixel</c> precedent for reaching the owning view-model without a code-behind handler.</summary>
+    public static readonly StyledProperty<ICommand?> NotchTuneRequestedCommandProperty =
+        AvaloniaProperty.Register<SpectrumTraceControl, ICommand?>(nameof(NotchTuneRequestedCommand));
+
     /// <summary>Read-only computed telemetry, not a user input (auditor round-2 finding: Bins/px,
     /// Start, Span were over-determined as three independent knobs for two real degrees of freedom --
     /// Start/Span are the real controls, this is a live readout of what they currently work out to).
@@ -58,6 +91,7 @@ public sealed class SpectrumTraceControl : Control
     private DateTimeOffset? _lastFrameObservedAt;
     private IReadOnlyList<SpectrumMarker>? _cachedMarkers;
     private Size _lastArrangedSize;
+    private bool _isDraggingNotch;
 
     static SpectrumTraceControl()
     {
@@ -73,7 +107,7 @@ public sealed class SpectrumTraceControl : Control
         // own change handler calls InvalidateVisual, which would re-enter Render while THIS render
         // pass's own SetAndRaise on BinsPerPixel is still unwinding -- self-limiting only because
         // SetAndRaise no-ops on an unchanged value, not a real guarantee against re-entrancy.
-        AffectsRender<SpectrumTraceControl>(FrameProperty, ZeroDbProperty, GainDbProperty, StartHzProperty, SpanHzProperty, PeakHoldEnabledProperty, CurrentModeProperty);
+        AffectsRender<SpectrumTraceControl>(FrameProperty, ZeroDbProperty, GainDbProperty, StartHzProperty, SpanHzProperty, PeakHoldEnabledProperty, CurrentModeProperty, NotchEnabledProperty, NotchFrequencyHzProperty);
     }
 
     public WaterfallFrame? Frame { get => GetValue(FrameProperty); set => SetValue(FrameProperty, value); }
@@ -83,6 +117,9 @@ public sealed class SpectrumTraceControl : Control
     public double SpanHz { get => GetValue(SpanHzProperty); set => SetValue(SpanHzProperty, value); }
     public bool PeakHoldEnabled { get => GetValue(PeakHoldEnabledProperty); set => SetValue(PeakHoldEnabledProperty, value); }
     public SstvModeDefinition? CurrentMode { get => GetValue(CurrentModeProperty); set => SetValue(CurrentModeProperty, value); }
+    public bool NotchEnabled { get => GetValue(NotchEnabledProperty); set => SetValue(NotchEnabledProperty, value); }
+    public double NotchFrequencyHz { get => GetValue(NotchFrequencyHzProperty); set => SetValue(NotchFrequencyHzProperty, value); }
+    public ICommand? NotchTuneRequestedCommand { get => GetValue(NotchTuneRequestedCommandProperty); set => SetValue(NotchTuneRequestedCommandProperty, value); }
 
     public double BinsPerPixel
     {
@@ -154,12 +191,78 @@ public sealed class SpectrumTraceControl : Control
         var gainDb = GainDb;
 
         DrawMarkers(context, CurrentMode, startHz, spanHz, width, height);
+        if (NotchEnabled)
+        {
+            var notchX = SpectrumTraceMath.MapFrequencyToX(NotchFrequencyHz, startHz, spanHz, width);
+            if (notchX >= 0 && notchX <= width)
+            {
+                context.DrawLine(NotchMarkerPen, new Point(notchX, 0), new Point(notchX, height));
+            }
+        }
+
         if (PeakHoldEnabled && _peakDb is not null)
         {
             DrawTrace(context, PeakHoldPen, _peakDb, frame.BinWidthHz, startHz, spanHz, zeroDb, gainDb, width, height);
         }
 
         DrawTrace(context, TracePen, frame.MagnitudesDb, frame.BinWidthHz, startHz, spanHz, zeroDb, gainDb, width, height);
+    }
+
+    /// <summary>Left-click-anywhere tunes the notch AND enables it (Un-stub-RX-tab Piece A3, matching
+    /// legacy's own left-click-both-tunes-and-enables gesture, <c>Main.cpp:14364-14371</c>, and
+    /// <see cref="ISstvDecoder.RequestNotch"/>'s own "frequencyHz implies enabled" contract) -- the
+    /// bound VM decides enable/tune semantics from the raw frequency this passes it, this control has
+    /// no notion of "enabled" beyond what it's told to render. Captures the pointer so a drag off the
+    /// control's own bounds still delivers <see cref="OnPointerMoved"/> events (continuous
+    /// retune-while-held).</summary>
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        e.Pointer.Capture(this);
+        _isDraggingNotch = true;
+        RequestNotchTune(e.GetPosition(this).X);
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        // Auditor-caught hardening: _isDraggingNotch alone would keep retuning on a button-less hover
+        // if pointer capture were ever lost without a release reaching this control (element detached
+        // mid-drag, touch cancel) -- self-healing against that, not reachable via ordinary mouse input
+        // (platform capture guarantees the release lands here) but cheap insurance regardless.
+        if (_isDraggingNotch && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            RequestNotchTune(e.GetPosition(this).X);
+        }
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        _isDraggingNotch = false;
+        e.Pointer.Capture(null);
+    }
+
+    private void RequestNotchTune(double x)
+    {
+        var width = Bounds.Width;
+        if (width < 1)
+        {
+            return;
+        }
+
+        var clampedX = Math.Clamp(x, 0, width);
+        var frequencyHz = SpectrumTraceMath.MapXToFrequency(clampedX, StartHz, SpanHz, width);
+        var command = NotchTuneRequestedCommand;
+        if (command?.CanExecute(frequencyHz) is true)
+        {
+            command.Execute(frequencyHz);
+        }
     }
 
     private void DrawMarkers(DrawingContext context, SstvModeDefinition? mode, double startHz, double spanHz, double width, double height)

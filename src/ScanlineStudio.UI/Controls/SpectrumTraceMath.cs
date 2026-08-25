@@ -17,6 +17,13 @@ public static class SpectrumTraceMath
     public static double MapFrequencyToX(double freqHz, double startHz, double spanHz, double width) =>
         spanHz > 0 ? (freqHz - startHz) / spanHz * width : 0.0;
 
+    /// <summary>Inverse of <see cref="MapFrequencyToX"/> -- Notch UI's click-to-tune gesture (Un-stub
+    /// RX-tab Piece A3). Not clamped -- same "callers decide" convention as
+    /// <see cref="MapFrequencyToX"/>; a pointer position outside [0, width) maps to a frequency
+    /// outside the visible [startHz, startHz+spanHz) window.</summary>
+    public static double MapXToFrequency(double x, double startHz, double spanHz, double width) =>
+        width > 0 ? x / width * spanHz + startHz : startHz;
+
     /// <summary>Maps a dB magnitude to a Y pixel position within a trace of <paramref name="height"/>
     /// pixels, using the same <paramref name="zeroDb"/>/<paramref name="gainDb"/> normalization
     /// window <see cref="WaterfallControl"/> uses for color -- deliberately the same two sliders

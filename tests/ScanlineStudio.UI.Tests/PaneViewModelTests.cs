@@ -207,6 +207,110 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void WaterfallPaneViewModel_NotchEnabled_DefaultsToFalse_AndFrequencyDefaultsTo2400()
+    {
+        // Matches NotchFilter/AnalogFmSstvDecoder._notchFrequencyHz's own default -- see
+        // WaterfallPaneViewModel.NotchFrequencyHz's own doc comment for why that matters.
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+
+        Assert.False(vm.NotchEnabled);
+        Assert.Equal(2400.0, vm.NotchFrequencyHz);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_TogglingNotchEnabled_ForwardsToTheSessionWithTheCurrentFrequency()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchFrequencyHz = 1750.0 };
+
+        vm.NotchEnabled = true;
+
+        Assert.Equal(1, sstvSession.RequestNotchCallCount);
+        Assert.True(sstvSession.LastNotchEnabled);
+        Assert.Equal(1750.0, sstvSession.LastNotchFrequencyHz);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_TogglingNotchDisabled_ForwardsNullFrequency()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchEnabled = true };
+
+        vm.NotchEnabled = false;
+
+        Assert.Equal(2, sstvSession.RequestNotchCallCount);
+        Assert.False(sstvSession.LastNotchEnabled);
+        Assert.Null(sstvSession.LastNotchFrequencyHz);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_TuneNotch_SetsStateAndForwardsEnabledTrueWithTheClickedFrequency()
+    {
+        // Click-to-tune (SpectrumTraceControl.NotchTuneRequestedCommand) -- legacy's left-click both
+        // tunes AND enables (Main.cpp:14364-14371).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+
+        vm.TuneNotchCommand.Execute(1900.0);
+
+        Assert.True(vm.NotchEnabled);
+        Assert.Equal(1900.0, vm.NotchFrequencyHz);
+        Assert.True(sstvSession.LastNotchEnabled);
+        Assert.Equal(1900.0, sstvSession.LastNotchFrequencyHz);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_TuneNotch_WhileAlreadyEnabled_StillForwardsTheRetune()
+    {
+        // The generated NotchEnabled setter no-ops (and skips OnNotchEnabledChanged) when the value
+        // doesn't actually change -- this proves TuneNotch's own explicit RequestNotch call covers
+        // the already-enabled retune-by-drag case regardless.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchEnabled = true };
+        var callCountBeforeRetune = sstvSession.RequestNotchCallCount;
+
+        vm.TuneNotchCommand.Execute(2100.0);
+
+        Assert.True(sstvSession.RequestNotchCallCount > callCountBeforeRetune);
+        Assert.Equal(2100.0, vm.NotchFrequencyHz);
+        Assert.Equal(2100.0, sstvSession.LastNotchFrequencyHz);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_TogglingNotchEnabled_RaisesPropertyChangedForNotchStatusDisplay()
+    {
+        // Live-app regression: re-reading NotchStatusDisplay alone (as the sibling
+        // WaterfallPaneViewModel_NotchStatusDisplay_ShowsFrequencyWhenEnabled_AndOffLiteralWhenNot test
+        // below does) would pass even if NotchEnabled's own [NotifyPropertyChangedFor] were missing --
+        // only a real PropertyChanged subscription proves the bound TextBlock would actually refresh.
+        // Caught live: the toggle chip visibly flipped and the session-service call landed correctly,
+        // but the Input Chain row's frequency text stayed stuck on "Off" until this was added.
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        vm.NotchEnabled = true;
+
+        Assert.Contains(nameof(WaterfallPaneViewModel.NotchStatusDisplay), raisedProperties);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_NotchStatusDisplay_ShowsFrequencyWhenEnabled_AndOffLiteralWhenNot()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+
+        _ = vm.NotchStatusDisplay;
+        Assert.Equal("Panes.RxInput.NotchValue", localization.LastKey);
+
+        vm.TuneNotchCommand.Execute(1850.0);
+        _ = vm.NotchStatusDisplay;
+
+        Assert.Equal("Panes.RxInput.NotchValueFormat", localization.LastKey);
+        Assert.Equal([1850.0], localization.LastArgs);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();

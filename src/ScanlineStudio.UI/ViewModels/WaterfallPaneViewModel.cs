@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -75,13 +76,72 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     [ObservableProperty]
     private SstvModeDefinition? _currentMode;
 
+    /// <summary>Un-stub-RX-tab Piece A3. This VM (not <c>RxImagePaneViewModel</c>, despite the Input
+    /// Chain card's "Notch" row living on THAT card's own <c>DataContext="{Binding RxImage}"</c>
+    /// scope) is the canonical owner: it already owns every other spectrum-trace-adjacent setting
+    /// (<see cref="ZeroDb"/>/<see cref="GainDb"/>/<see cref="StartHz"/>/<see cref="SpanHz"/>/
+    /// <see cref="PeakHoldEnabled"/>) and is where the click-to-tune gesture on
+    /// <see cref="SpectrumTraceControl"/> naturally lands -- the Input Chain row reaches up to it via
+    /// the same <c>$parent[Window].DataContext.X.Y</c> pattern the RxFrameMeta card's own Frequency row
+    /// already uses to reach <c>RadioStatus</c> from inside a different card's DataContext scope.
+    /// No getter exists on <see cref="ISstvSessionService.RequestNotch"/> (fire-and-forget-shaped,
+    /// like <see cref="ISstvSessionService.RequestReSync"/>) -- this VM is the sole source of truth
+    /// for "what does the user currently want," not a poll of decoder state.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NotchStatusDisplay))]
+    private bool _notchEnabled;
+
+    /// <summary>Default matches <c>NotchFilter</c>/<c>AnalogFmSstvDecoder._notchFrequencyHz</c>'s own
+    /// default center frequency, so a first-ever enable via the toggle chip (no prior click-to-tune)
+    /// requests the exact frequency the decoder would already default to on its own.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(NotchStatusDisplay))]
+    private double _notchFrequencyHz = 2400.0;
+
+    private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
 
     public WaterfallPaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
     {
+        _sstvSession = sstvSession;
         _localization = localization;
         sstvSession.Waterfall.Frames.Subscribe(OnFrame);
         sstvSession.ModeDetected += OnModeDetected;
+    }
+
+    /// <summary>Input Chain card's "Notch" row value -- real frequency in Hz while enabled, "Off"
+    /// otherwise. Replaces the placeholder <c>Panes.RxInput.NotchValue</c> literal "—" this row
+    /// showed before Piece A3.</summary>
+    public string NotchStatusDisplay => NotchEnabled
+        ? _localization.GetString("Panes.RxInput.NotchValueFormat", NotchFrequencyHz)
+        : _localization.GetString("Panes.RxInput.NotchValue");
+
+    /// <summary>Toggle-chip path -- see <see cref="NotchEnabled"/>'s own doc comment for why this VM
+    /// forwards rather than <c>RxImagePaneViewModel</c>. <see langword="null"/> frequency on disable
+    /// (matches <see cref="ISstvSessionService.RequestNotch"/>'s own contract); on enable, forwards
+    /// THIS VM's own currently-tracked <see cref="NotchFrequencyHz"/> explicitly rather than relying on
+    /// the decoder's own last-tuned-frequency persistence -- this VM is the UI's source of truth for
+    /// "what frequency does the user expect," independent of that decoder-side behavior.</summary>
+    partial void OnNotchEnabledChanged(bool value) => _sstvSession.RequestNotch(value, value ? NotchFrequencyHz : null);
+
+    /// <summary>Click-to-tune path (<see cref="SpectrumTraceControl.NotchTuneRequestedCommand"/>) --
+    /// legacy's left-click both tunes AND enables (<c>Main.cpp:14364-14371</c>), matching
+    /// <see cref="ISstvSessionService.RequestNotch"/>'s own "frequencyHz implies enabled" contract.
+    /// Calls <see cref="ISstvSessionService.RequestNotch"/> directly rather than relying on
+    /// <see cref="OnNotchEnabledChanged"/>'s own forward: a retune while ALREADY enabled (the drag
+    /// case) needs to reach the decoder every time, but the generated <see cref="NotchEnabled"/>
+    /// setter no-ops -- and skips its own changed handler -- when the value doesn't actually change.
+    /// The resulting harmless double-dispatch on a disabled-to-enabled transition (both this method
+    /// and the now-firing <see cref="OnNotchEnabledChanged"/> call <c>RequestNotch(true, ...)</c> with
+    /// the same arguments) is intentional, not a bug -- <c>ISstvDecoder.RequestNotch</c> is a plain
+    /// <c>Interlocked.Exchange</c> overwrite of a pending request, so a same-value re-request the
+    /// decoder hasn't drained yet is a no-op, not a double-application.</summary>
+    [RelayCommand]
+    private void TuneNotch(double frequencyHz)
+    {
+        NotchFrequencyHz = frequencyHz;
+        NotchEnabled = true;
+        _sstvSession.RequestNotch(true, frequencyHz);
     }
 
     /// <summary>spec/18-path-to-1.0.md Medium item 2: was a static localized literal

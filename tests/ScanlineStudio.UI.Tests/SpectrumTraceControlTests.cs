@@ -1,6 +1,9 @@
 using System.Reflection;
+using System.Windows.Input;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.Input;
 using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.UI.Controls;
@@ -121,5 +124,137 @@ public sealed class SpectrumTraceControlTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(beforeCollapse, control.BinsPerPixel);
+    }
+
+    /// <summary>Records every frequency an <see cref="ICommand"/> bound to
+    /// <see cref="SpectrumTraceControl.NotchTuneRequestedCommand"/> was invoked with -- test double,
+    /// not a mock framework dependency (this project's own established style, matching e.g.
+    /// <c>FakeSstvDecoder.cs</c>'s hand-rolled call-tracking).</summary>
+    private sealed class RecordingCommand : ICommand
+    {
+        public List<double> InvokedFrequenciesHz { get; } = [];
+        public bool CanExecute(object? parameter) => true;
+        public void Execute(object? parameter) => InvokedFrequenciesHz.Add((double)parameter!);
+        public event EventHandler? CanExecuteChanged { add { } remove { } }
+    }
+
+    /// <summary>Manually constructs and <c>RaiseEvent</c>s the pointer routed events directly on the
+    /// control (matching this project's own established input-simulation precedent,
+    /// <c>IndustryStepperTests.cs</c>'s <c>RaiseEvent(new RoutedEventArgs(Button.ClickEvent))</c>),
+    /// rather than the headless <c>TopLevel.MouseDown</c>/<c>MouseMove</c>/<c>MouseUp</c> window-level
+    /// simulation -- confirmed empirically (a throwaway harness against a plain <c>Control</c> with a
+    /// bare <c>OnPointerPressed</c> override) that window-level headless mouse simulation does not
+    /// route through hit-testing to reach a control's pointer overrides in this environment, while a
+    /// directly-raised <see cref="PointerPressedEventArgs"/> reliably does.</summary>
+    private static void RaisePointerPressed(SpectrumTraceControl control, TopLevel root, Point position)
+    {
+        var pointer = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
+        var props = new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.LeftButtonPressed);
+        control.RaiseEvent(new PointerPressedEventArgs(control, pointer, root, position, timestamp: 0, props, KeyModifiers.None, clickCount: 1));
+    }
+
+    private static void RaisePointerMoved(SpectrumTraceControl control, TopLevel root, Point position)
+    {
+        var pointer = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
+        var props = new PointerPointProperties(RawInputModifiers.LeftMouseButton, PointerUpdateKind.Other);
+        control.RaiseEvent(new PointerEventArgs(InputElement.PointerMovedEvent, control, pointer, root, position, timestamp: 0, props, KeyModifiers.None));
+    }
+
+    private static void RaisePointerReleased(SpectrumTraceControl control, TopLevel root, Point position)
+    {
+        var pointer = new Avalonia.Input.Pointer(Avalonia.Input.Pointer.GetNextFreeId(), PointerType.Mouse, isPrimary: true);
+        var props = new PointerPointProperties(RawInputModifiers.None, PointerUpdateKind.LeftButtonReleased);
+        control.RaiseEvent(new PointerReleasedEventArgs(control, pointer, root, position, timestamp: 0, props, KeyModifiers.None, MouseButton.Left));
+    }
+
+    [AvaloniaFact]
+    public void PointerPressed_LeftButton_InvokesNotchTuneCommandWithTheClickedFrequency()
+    {
+        // Un-stub-RX-tab Piece A3: StartHz=1000/SpanHz=1600/width=400 -> MapXToFrequency(100, ...) =
+        // 1000 + 100/400*1600 = 1400Hz (SpectrumTraceMathTests.cs already covers the pure math itself,
+        // this proves the control wires a real pointer press to it).
+        var command = new RecordingCommand();
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600, NotchTuneRequestedCommand = command };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        RaisePointerPressed(control, window, new Point(100, 50));
+
+        Assert.Equal([1400.0], command.InvokedFrequenciesHz);
+    }
+
+    [AvaloniaFact]
+    public void PointerMoved_WhileHeldAfterAPress_ContinuesRetuning()
+    {
+        var command = new RecordingCommand();
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600, NotchTuneRequestedCommand = command };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        RaisePointerPressed(control, window, new Point(100, 50));
+        RaisePointerMoved(control, window, new Point(200, 50));
+
+        Assert.Equal([1400.0, 1800.0], command.InvokedFrequenciesHz);
+    }
+
+    [AvaloniaFact]
+    public void PointerMoved_WithNoPriorPress_DoesNotInvokeTheCommand()
+    {
+        // The drag-retune behavior is gated on an actual press first -- a bare hover must not tune.
+        var command = new RecordingCommand();
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600, NotchTuneRequestedCommand = command };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        RaisePointerMoved(control, window, new Point(200, 50));
+
+        Assert.Empty(command.InvokedFrequenciesHz);
+    }
+
+    [AvaloniaFact]
+    public void PointerMoved_AfterRelease_NoLongerRetunes()
+    {
+        var command = new RecordingCommand();
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600, NotchTuneRequestedCommand = command };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        RaisePointerPressed(control, window, new Point(100, 50));
+        RaisePointerReleased(control, window, new Point(100, 50));
+        RaisePointerMoved(control, window, new Point(200, 50));
+
+        Assert.Equal([1400.0], command.InvokedFrequenciesHz);
+    }
+
+    [AvaloniaFact]
+    public void PointerPressed_WithNoCommandBound_DoesNotThrow()
+    {
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600 };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        RaisePointerPressed(control, window, new Point(100, 50));
+    }
+
+    [AvaloniaFact]
+    public void Render_WithNotchEnabledAndAFrame_DoesNotThrow()
+    {
+        // No pixel-level assertion (WaterfallControlTests' own doc comment on
+        // GetColorHistoryPixel already documents this environment's headless-renderer pixel-readback
+        // quirk) -- just proves the new NotchEnabled/NotchFrequencyHz draw path added to Render()
+        // doesn't throw, in and out of the visible span.
+        var control = new SpectrumTraceControl { Width = 400, Height = 200, StartHz = 1000, SpanHz = 1600, NotchEnabled = true, NotchFrequencyHz = 1800 };
+        var window = new Window { Content = control, Width = 400, Height = 200 };
+        window.Show();
+        control.Frame = new WaterfallFrame([-50f, -20f, -5f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
+        Dispatcher.UIThread.RunJobs();
+
+        control.NotchFrequencyHz = 5000; // outside [StartHz, StartHz+SpanHz) -- must skip drawing, not throw
+        Dispatcher.UIThread.RunJobs();
     }
 }

@@ -339,7 +339,20 @@
                                              ISstvDecoder.RxBpfPreset's own doc comment). Reuses the
                                              Options window's own real preset names. -->
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RxBpfDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Notch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NotchValue}" /></Grid></Border>
+                                        <!-- Un-stub-RX-tab Piece A3: canonical state lives on WaterfallPaneViewModel
+                                             (see its own NotchEnabled doc comment for why), reached from this
+                                             row's own RxImage-scoped DataContext via $parent[Window].DataContext,
+                                             same precedent as the RxFrameMeta card's own Frequency row reaching
+                                             RadioStatus. Toggle chip mirrors PeakHold's own IndustryMiniToggleTheme
+                                             two-way IsChecked binding. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Notch}" />
+                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding $parent[Window].DataContext.Waterfall.NotchStatusDisplay}" />
+                                            <ToggleButton Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="4,0,0,0"
+                                                          IsChecked="{Binding $parent[Window].DataContext.Waterfall.NotchEnabled}"
+                                                          Content="{loc:Translate Panes.RxInput.NotchToggle}"
+                                                          ToolTip.Tip="{loc:Translate Panes.RxInput.NotchTooltip}" />
+                                        </Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Agc}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AgcGainDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Buffer}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding BufferedSampleCountDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Clipping}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClippingDisplay}" /></Grid></Border>
@@ -454,6 +467,9 @@
                                                                         SpanHz="{Binding Waterfall.SpanHz}"
                                                                         PeakHoldEnabled="{Binding Waterfall.PeakHoldEnabled}"
                                                                         CurrentMode="{Binding Waterfall.CurrentMode}"
+                                                                        NotchEnabled="{Binding Waterfall.NotchEnabled}"
+                                                                        NotchFrequencyHz="{Binding Waterfall.NotchFrequencyHz}"
+                                                                        NotchTuneRequestedCommand="{Binding Waterfall.TuneNotchCommand}"
                                                                         BinsPerPixel="{Binding Waterfall.BinsPerPixel, Mode=OneWayToSource}" />
                                     </Border>
                                     <ContentControl Grid.Column="1" Content="{Binding Waterfall}" />
