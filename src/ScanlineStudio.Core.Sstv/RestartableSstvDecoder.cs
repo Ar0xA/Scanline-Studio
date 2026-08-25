@@ -79,6 +79,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     // CreateInner under _gate.
     private bool _stationIdDecodeEnabled;
 
+    // Un-stub-RX-tab Piece A: NOT readonly, same reasoning as _stationIdDecodeEnabled immediately
+    // above -- unlike RequestReSync's own genuinely one-shot request (silently dropped if a restart
+    // races it, see that method's own doc comment), the notch is persistent STATE that must survive
+    // a restart, so it needs storing here too, not just forwarding to whichever inner is current.
+    private bool _notchEnabled;
+    private double _notchFrequencyHz = 2400.0; // matches CNotch::CNotch's own default (fir.cpp:271)
+
     private AnalogFmSstvDecoder _inner;
     private bool _warningRaised;
 
@@ -267,6 +274,36 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.AutoSyncEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.NotchEnabledForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerAfcEnabledForTests"/> above -- Un-stub-RX-tab Piece A code-review finding:
+    /// without this, a dropped <c>RequestNotch</c> re-seed in <see cref="CreateInner"/> would
+    /// silently turn the notch off after a periodic restart rebuild, with no test able to catch it.</summary>
+    internal bool InnerNotchEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.NotchEnabledForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.NotchFrequencyForTests"/> directly. Same reasoning/shape as
+    /// <see cref="InnerNotchEnabledForTests"/> above.</summary>
+    internal double? InnerNotchFrequencyForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.NotchFrequencyForTests;
             }
         }
     }
@@ -508,6 +545,29 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
 
         current.RequestReSync();
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.RequestNotch"/>. Unlike <see cref="RequestReSync"/>
+    /// immediately above, this is persistent state, not a one-shot request that can be silently
+    /// dropped by a racing restart -- stored under <see cref="_gate"/> (same pattern as
+    /// <see cref="StationIdDecodeEnabled"/>'s setter) so <see cref="CreateInner"/> can re-apply it to
+    /// a freshly-built inner decoder, in addition to forwarding to whichever inner is current right
+    /// now.</summary>
+    public void RequestNotch(bool enabled, double? frequencyHz)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            _notchEnabled = enabled;
+            if (frequencyHz is { } hz)
+            {
+                _notchFrequencyHz = hz;
+            }
+
+            current = _inner;
+        }
+
+        current.RequestNotch(enabled, frequencyHz);
     }
 
     /// <summary>Forwards to whichever inner instance is current. A request racing a restart is
@@ -777,6 +837,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
 
         decoder.StationIdDecodeEnabled = _stationIdDecodeEnabled;
+        if (_notchEnabled)
+        {
+            // A fresh decoder has nothing locked yet, so ApplyPendingNotchRequest's own group-delay
+            // compensation correctly no-ops (same _mode/_slantTracker gate PerformReSync uses) --
+            // this just seeds the enabled/frequency state itself, matching StationIdDecodeEnabled's
+            // own re-seed immediately above.
+            decoder.RequestNotch(true, _notchFrequencyHz);
+        }
+
         decoder.LineDecoded += OnLineDecoded;
         decoder.ModeDetected += OnModeDetected;
         decoder.DecodeRestarted += OnDecodeRestarted;

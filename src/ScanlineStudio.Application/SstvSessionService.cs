@@ -1170,6 +1170,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestReSync();
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestNotch"/>.</summary>
+    public void RequestNotch(bool enabled, double? frequencyHz)
+    {
+        Log.NotchRequested(_logger, enabled, frequencyHz);
+        _decoder.RequestNotch(enabled, frequencyHz);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.RequestCorrectSlant"/>.</summary>
     public void RequestCorrectSlant()
     {
@@ -3537,6 +3544,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual ReSync requested")]
         public static partial void ReSyncRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX notch {Enabled} (frequency {FrequencyHz} Hz)")]
+        public static partial void NotchRequested(ILogger logger, bool enabled, double? frequencyHz);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);

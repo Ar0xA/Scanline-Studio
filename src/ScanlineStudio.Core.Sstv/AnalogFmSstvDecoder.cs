@@ -136,6 +136,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // the null-coalesce keeps the buffer-trim cursor (_bandpassFilteredProcessedUpTo) advancing under
     // Off exactly like every other preset.
     private readonly SearchBandpassFilter? _searchBandpassFilter;
+    // Un-stub-RX-tab Piece A: null means off, matching _searchBandpassFilter's own null-for-bypass
+    // shape -- but NOT readonly, since (unlike the BPF preset, fixed for the decoder's whole
+    // lifetime) the notch is toggled at runtime via RequestNotch. Only ever mutated inside
+    // PushSamplesCore's own single-caller-thread section (draining _pendingNotchRequest), never
+    // from RequestNotch itself -- see that method's own doc comment.
+    private NotchFilter? _notchFilter;
+    // Un-stub-RX-tab Piece A (code-review finding): legacy's own CNotch::m_freq (fir.h:131) is a
+    // persistent member that survives a disable -- a right-click toggle-on with no explicit
+    // frequency (Main.cpp:14364-14371) resumes at whatever was last tuned, never a hardcoded
+    // default. _notchFilter itself is destroyed on disable (see ApplyPendingNotchRequest), so the
+    // last-tuned frequency has to live somewhere that outlives that -- this field is it.
+    private double _notchFrequencyHz = 2400.0;
     // RX BPF subsystem Phase 3: stored separately from _searchBandpassFilter (which is null for Off,
     // so it can't itself answer "which preset was selected") -- exists solely for RxBpfPresetForTests,
     // mirroring _demodType/DemodTypeForTests' own shape below.
@@ -486,6 +498,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private double? _lastLineSyncPeakPosition; // port-equivalent of m_SyncRPos (see ApplySlantTracking's capture point for why one field also stands in for m_SyncPos at this port's granularity)
     private bool _suppressNextSlantProcessLine;
     private bool _slantCorrectionsDisabledForRestOfImage; // port of m_AutoSyncCount's gate on AutoStopJob's correction branch
+
+    // Un-stub-RX-tab Piece A: RequestNotch's own deferred-request payload -- a reference type (not a
+    // plain bool/nullable-struct pair) specifically so Interlocked.Exchange can atomically hand off
+    // BOTH the enabled flag and the frequency together, matching _forcedMode's own established
+    // shape/reasoning immediately above (a bare bool + separate double field would let a caller's
+    // two writes race and get split across two different PushSamplesCore drains).
+    private sealed record NotchRequest(bool Enabled, double? FrequencyHz);
+    private NotchRequest? _pendingNotchRequest;
 
     // RX buffer subsystem Phase 6d: deferred replay trigger. Plain (not volatile/Interlocked, unlike
     // _reSyncRequested) -- both set sites and the drain site all run on the same thread, inside the
@@ -1333,6 +1353,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// actually calls that (matching this class's own established single-caller-thread contract).</summary>
     public void RequestReSync() => _reSyncRequested = true;
 
+    /// <summary>See <see cref="ISstvDecoder.RequestNotch"/>. A single atomic exchange, safe from any
+    /// thread -- consumed at the top of the next <see cref="PushSamples"/> call, same shape and same
+    /// consumption point as <see cref="_reSyncRequested"/> immediately above (unlike ReSync, this is
+    /// persistent STATE, not a one-shot command -- see <see cref="ApplyPendingNotchRequest"/>'s own
+    /// doc comment for how the enabled/frequency state itself, as opposed to just this request latch,
+    /// survives across calls).</summary>
+    public void RequestNotch(bool enabled, double? frequencyHz) => Interlocked.Exchange(ref _pendingNotchRequest, new NotchRequest(enabled, frequencyHz));
+
     /// <summary>See <see cref="ISstvDecoder.RequestCorrectSlant"/>. A single volatile write, safe from
     /// any thread -- consumed inside <see cref="TryProcessBuffer"/>'s own per-line loop on whichever
     /// thread next calls <see cref="PushSamples"/>, NOT at the top of that call (see
@@ -1573,10 +1601,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             PerformReSync();
         }
 
+        // Consumed after _reSyncRequested, before the raw-sample append loop below -- the group-
+        // delay compensation this can trigger (ApplySyncCorrection/ApplyNotchDisableShift) needs
+        // _consumedSamples/TotalSamplesReceived/etc. as they stand BEFORE this batch's samples are
+        // appended, and the append loop right below needs _notchFilter to already reflect this
+        // batch's toggle state for every sample in it.
+        ApplyPendingNotchRequest();
+
         var span = samples.Span;
         for (var i = 0; i < span.Length; i++)
         {
-            _rawSamples.Add(span[i]);
+            // sstv.cpp:342-347's own notch.Do(*lp) mutates the raw sample in place, upstream of
+            // EVERYTHING else (the 2-tap average, the bandpass filter, the FFT) -- _rawSamples has
+            // exactly one other consumer in this whole file (FilteredRawSampleAt), so storing the
+            // notched value here needs no separate buffer/cache. Only feeds the filter's own delay
+            // line while enabled, matching legacy (the notch isn't fed while m_notch=0 either).
+            _rawSamples.Add(_notchFilter is null ? span[i] : (float)_notchFilter.ProcessSample(span[i]));
         }
 
         DrainPendingSkip(); // must run AFTER the append loop above, BEFORE TryProcessBuffer() below --
@@ -1709,6 +1749,121 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private void ApplySyncCorrection(int skip)
     {
         _pendingSkipSamples = skip; // do NOT apply it here -- see DrainPendingSkip's own doc comment
+        _lastLineSyncPeakPosition = null;
+        _suppressNextSlantProcessLine = true;
+        _slantCorrectionsDisabledForRestOfImage = true;
+        _autoSyncReferencePosition = null;
+        _autoSyncCooldown = 6;
+    }
+
+    // Un-stub-RX-tab Piece A: consumes _pendingNotchRequest, applying the on/off/frequency change
+    // itself plus legacy's own group-delay compensation for a toggle mid-sync (Main.cpp:14375-14379,
+    // sstv.cpp:2271-2283). Two genuinely asymmetric directions, NOT one signed value with a shared
+    // apply path -- see NotchFilter's own class doc comment and ApplyNotchDisableShift below for why
+    // "insert N duplicated samples" has no representation in this port's absolute-index
+    // architecture the way it does in legacy's write-pointer one.
+    private void ApplyPendingNotchRequest()
+    {
+        var request = Interlocked.Exchange(ref _pendingNotchRequest, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        var wasEnabled = _notchFilter is not null;
+        var tapForCompensation = wasEnabled ? _notchFilter!.Tap : 0;
+
+        if (request.FrequencyHz is { } requestedHz)
+        {
+            _notchFrequencyHz = requestedHz; // persists across a disable, matching legacy's own CNotch::m_freq
+        }
+
+        if (request.Enabled)
+        {
+            if (_notchFilter is null)
+            {
+                _notchFilter = new NotchFilter(_sampleRate, _notchFrequencyHz);
+                tapForCompensation = _notchFilter.Tap;
+            }
+            else if (request.FrequencyHz is not null)
+            {
+                _notchFilter.SetFrequency(_notchFrequencyHz); // in-place -- does NOT reset the delay line, see NotchFilter.SetFrequency's own doc comment
+            }
+        }
+        else
+        {
+            _notchFilter = null;
+        }
+
+        // Main.cpp:14375: `(notch != pSound->m_notch) && pDem->m_Sync` -- only compensate for a REAL
+        // toggle (not a same-state re-request or a retune-while-already-on/off), and only while
+        // genuinely locked, matching PerformReSync's own gate.
+        if (request.Enabled == wasEnabled || _mode is null || _slantTracker is null)
+        {
+            return;
+        }
+
+        // `notch` in Main.cpp:14363 is the OLD state, captured before the toggle; `if(notch) delay =
+        // -delay;` -- enabling (old=false) leaves delay POSITIVE, disabling (old=true) makes it
+        // NEGATIVE. Verify against the literal legacy source directly if this ever looks backwards,
+        // don't trust a paraphrase (an earlier draft of this port's own plan had the two directions
+        // swapped).
+        var halfTap = tapForCompensation / 2;
+        if (request.Enabled)
+        {
+            ApplySyncCorrection(halfTap); // reuses the EXISTING forward-drain mechanism verbatim -- see DrainPendingSkip
+        }
+        else
+        {
+            ApplyNotchDisableShift(halfTap);
+        }
+    }
+
+    // Un-stub-RX-tab Piece A: the disable-direction's own instantaneous cursor rewind -- NOT an
+    // extension of DrainPendingSkip/_pendingSkipSamples (plan-review finding: "insert N duplicated
+    // samples into the demod stream" is unrepresentable in this port's absolute-index architecture;
+    // the correct equivalent is the mapping-shift side effect legacy's own duplicate-insert achieves
+    // -- for a fixed pixel, the input landing there becomes EARLIER by N). A single instantaneous
+    // adjustment, no loop, no deferral -- unlike the forward direction, nothing needs to wait for
+    // future samples to arrive, since the samples being "un-consumed" already exist.
+    private void ApplyNotchDisableShift(int n)
+    {
+        if (n <= 0 || _mode is null || _slantTracker is null)
+        {
+            return;
+        }
+
+        if (_consumedSamples - n < _bufferBase)
+        {
+            // Rel() safety net -- n is capped at NotchFilter's own 256-tap-max/2=128, and
+            // TrimBuffers' own locked watermark keeps at least AnchorWarmupSamples (2000) of margin
+            // behind _consumedSamples, so this should never actually trip in practice; kept as an
+            // explicit guard rather than relying on that margin alone.
+            return;
+        }
+
+        _consumedSamples -= n;
+        _idealLineStartSample -= n; // LOCKSTEP with _consumedSamples -- moving only one would stretch exactly one line by n instead of shifting the whole timeline uniformly
+        _rxBufferAnchorSample -= n; // mirror of DrainPendingSkip's own ++ for the forward direction
+
+        // _slantProcessedUpTo is DELIBERATELY NOT moved -- rewinding it would re-feed the stateful
+        // _syncEnvelopeDetector a second time over the same span and re-append into
+        // RxLineStagingBuffer, duplicating already-staged content. Legacy has this same asymmetry
+        // for the same reason: its own filters (m_iir12/m_iir19/PLL/etc.) run BEFORE the m_Skip
+        // check, so the duplicate-insert branch never re-runs them either.
+        _slantIdealSamplesSoFarInLine += n; // mirror of DrainPendingSkip's own "deliberately not advanced" trick, opposite direction
+        if (_slantIdealSamplesSoFarInLine >= _effectiveSamplesPerLine)
+        {
+            _slantIdealSamplesSoFarInLine -= _effectiveSamplesPerLine;
+        }
+
+        // Same shared-tail bookkeeping ApplySyncCorrection performs for the forward direction, minus
+        // _pendingSkipSamples itself (this direction is instantaneous, nothing to defer). Deliberately
+        // CLEARS any not-yet-drained forward skip rather than netting the two together -- every other
+        // m_Skip-setting site in this file (ApplySyncCorrection, called by both PerformReSync and
+        // TryAutoSync's triggers) already uses last-command-wins overwrite semantics for this exact
+        // field, matching legacy's own per-trigger m_Skip assignment.
+        _pendingSkipSamples = 0;
         _lastLineSyncPeakPosition = null;
         _suppressNextSlantProcessLine = true;
         _slantCorrectionsDisabledForRestOfImage = true;
@@ -5358,6 +5513,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>Test-only visibility into the in-progress manual-ReSync skip still left to drain --
     /// reaches 0 exactly when <see cref="DrainPendingSkip"/> has fully applied a correction.</summary>
     internal int PendingSkipSamplesForTests => _pendingSkipSamples;
+
+    /// <summary>Un-stub-RX-tab Piece A: test-only visibility into the absolute sample index the
+    /// current line's timing is anchored to -- must stay in LOCKSTEP with
+    /// <see cref="ConsumedSamplesForTests"/> around a notch toggle's disable-direction cursor
+    /// rewind, or the current line's own width would silently stretch/shrink.</summary>
+    internal double IdealLineStartSampleForTests => _idealLineStartSample;
+
+    /// <summary>Un-stub-RX-tab Piece A: test-only visibility into the absolute sample index Auto
+    /// Slant's own tracking has processed up to -- a notch toggle's disable-direction cursor rewind
+    /// must NOT move this (see <c>ApplyNotchDisableShift</c>'s own doc comment for why re-feeding
+    /// <see cref="_syncEnvelopeDetector"/>/<see cref="RxLineStagingBuffer"/> over the same span would
+    /// be wrong).</summary>
+    internal int SlantProcessedUpToForTests => _slantProcessedUpTo;
+
+    /// <summary>Un-stub-RX-tab Piece A: test-only visibility into whether the notch is currently
+    /// enabled, without needing a decoded-output side effect to infer it.</summary>
+    internal bool NotchEnabledForTests => _notchFilter is not null;
+
+    /// <summary>Un-stub-RX-tab Piece A: test-only visibility into the notch's current center
+    /// frequency -- <see langword="null"/> while disabled.</summary>
+    internal double? NotchFrequencyForTests => _notchFilter?.Frequency;
 
     /// <summary>Test-only: how many times <see cref="TryAutoSync"/> itself has applied a correction
     /// (distinct from a manual <see cref="RequestReSync"/> call, which shares the same underlying
