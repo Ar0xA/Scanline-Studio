@@ -49,6 +49,7 @@ public partial class MainViewModel : ViewModelBase
         RxHistoryPaneViewModel rxHistory,
         TxControlsPaneViewModel txControls,
         LogbookPaneViewModel logbook,
+        DecoderTracePaneViewModel decoderTrace,
         IRadioSessionService radioSession,
         ISstvSessionService sstvSession,
         ILocalizationService localization,
@@ -66,6 +67,7 @@ public partial class MainViewModel : ViewModelBase
         RxHistory = rxHistory;
         TxControls = txControls;
         Logbook = logbook;
+        DecoderTrace = decoderTrace;
 
         // Replaces AppDockFactory.OpenTxImageEditor/CloseTxImageEditor's AddDockable/CloseDockable
         // pair -- a plain nullable property swapped via a ContentControl in the Transmit tab.
@@ -129,6 +131,8 @@ public partial class MainViewModel : ViewModelBase
 
     public LogbookPaneViewModel Logbook { get; }
 
+    public DecoderTracePaneViewModel DecoderTrace { get; }
+
     public RadioStatusViewModel RadioStatus { get; }
 
     /// <summary>What the menu-row chip actually displays -- "N0CALL" (the standard ham-radio
@@ -172,6 +176,22 @@ public partial class MainViewModel : ViewModelBase
         Log.OpenOptionsInvoked(_logger);
         var optionsViewModel = _services.GetRequiredService<OptionsWindowViewModel>();
         optionsViewModel.SelectedTabIndex = OptionsWindowViewModel.TxTabIndex;
+        OptionsRequested?.Invoke(optionsViewModel);
+    }
+
+    /// <summary>The radio-connection give-up popup's own "Config" button jump target (user request)
+    /// -- rig/CAT connection settings live on the Radio tab, so this jumps straight there instead
+    /// of opening on whatever tab happened to be selected last time. Same shape as
+    /// <see cref="OpenOptionsToTxTab"/> above; invoked from <c>MainWindow.axaml.cs</c>'s own
+    /// give-up-popup handler (that popup's view-model has no DI access of its own, see
+    /// <see cref="RadioConnectionGaveUpWindowViewModel"/>'s own doc comment), not bound directly
+    /// to a XAML Command the way <see cref="OpenOptionsToTxTab"/> is.</summary>
+    [RelayCommand]
+    private void OpenOptionsToRadioTab()
+    {
+        Log.OpenOptionsInvoked(_logger);
+        var optionsViewModel = _services.GetRequiredService<OptionsWindowViewModel>();
+        optionsViewModel.SelectedTabIndex = OptionsWindowViewModel.RadioTabIndex;
         OptionsRequested?.Invoke(optionsViewModel);
     }
 

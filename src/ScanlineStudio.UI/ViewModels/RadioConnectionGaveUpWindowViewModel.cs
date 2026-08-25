@@ -24,6 +24,25 @@ public sealed partial class RadioConnectionGaveUpWindowViewModel : ObservableObj
     /// code-behind subscribes <c>vm.RequestClose += Close;</c>.</summary>
     public event Action? RequestClose;
 
+    /// <summary>User request: a "Config" button next to Close, jumping straight to the Radio (CAT)
+    /// tab of Options -- this VM has no DI access of its own (see this class's own doc comment), so
+    /// it can't resolve/show <c>OptionsWindowViewModel</c> itself; <c>MainWindow.axaml.cs</c>'s own
+    /// give-up-popup handler (which already owns this window's lifecycle) subscribes to this event
+    /// and calls <c>MainViewModel.OpenOptionsToRadioTabCommand</c> in response, same
+    /// view-model-never-touches-a-Window reasoning as every other cross-window request in this
+    /// app.</summary>
+    public event Action? ConfigRequested;
+
     [RelayCommand]
     private void Close() => RequestClose?.Invoke();
+
+    [RelayCommand]
+    private void OpenConfig()
+    {
+        // Close first, then request Options: MainWindow.axaml.cs's own ConfigRequested handler
+        // opens a SECOND modal (Options) owned by the same MainWindow -- closing this one first
+        // avoids two ShowDialog calls against the same owner briefly overlapping mid-transition.
+        RequestClose?.Invoke();
+        ConfigRequested?.Invoke();
+    }
 }
