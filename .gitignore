@@ -22,6 +22,10 @@ flrig/
 CLAUDE.md
 PROJECT_BRIEF.md
 
+# Codex CLI's equivalent local files — same reasoning as CLAUDE.md above.
+.codex/
+AGENTS.md
+
 # .NET build output
 bin/
 obj/
