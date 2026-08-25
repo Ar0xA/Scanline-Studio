@@ -538,7 +538,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     /// are fixed Latin protocol abbreviations, never user data, so <c>ToUpperInvariant</c> is a safe
     /// display-side transform, not a rename of <see cref="SstvModeDefinition.DisplayName"/> itself.</summary>
     public string SendMetaText => _localization.GetString(
-        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName.ToUpperInvariant(), _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
+        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName.ToUpperInvariant(), TxControlsPaneViewModel.GetFrameSeconds(_targetMode));
 
     /// <summary>Snapshot of the current template-variable value map, for a host
     /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>
@@ -572,14 +572,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         "Panes.TxImageEditor.DimensionsChipFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
 
     /// <summary>EditWindow redesign, design-fidelity Phase B (mockups/Editwindow) -- the new context
-    /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses the
-    /// SAME <c>LineDurationMs * ImageHeight / 1000.0</c> formula <c>TxControlsPaneViewModel</c>'s own
-    /// Mode Timing Reference table already computes per mode (<see cref="SstvModeDefinition.LineDurationMs"/>)
-    /// -- not a new computation, just applied to THIS editor's own fixed <see cref="_targetMode"/>.</summary>
+    /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses
+    /// <see cref="TxControlsPaneViewModel.GetFrameSeconds"/>, not a new computation, just applied to
+    /// THIS editor's own fixed <see cref="_targetMode"/> -- a naive <c>LineDurationMs * ImageHeight
+    /// / 1000.0</c> here would double-count for <see cref="ColorEncoding.YCbCrLinePaired"/>/
+    /// <see cref="ColorEncoding.MonoAveragedPaired"/> modes (the exact PD90-family bug that method's
+    /// own doc comment documents fixing on the TX Controls card; this editor was left using the
+    /// naive formula when that fix landed, a real bug caught and fixed later the same day).</summary>
     public string FrameReadoutText => _localization.GetString(
         "Panes.TxImageEditor.FrameReadoutFormat",
         _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName.ToUpperInvariant(),
-        _targetMode.LineDurationMs * _targetMode.ImageHeight / 1000.0);
+        TxControlsPaneViewModel.GetFrameSeconds(_targetMode));
 
     /// <summary>EditWindow redesign, design-fidelity Phase B -- backs the context bar's "UNSAVED
     /// EDITS" chip. A free proxy over the EXISTING undo stack (no new dirty-tracking mechanism):
