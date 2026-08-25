@@ -46,6 +46,19 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public void RequestReSync() => RequestReSyncCallCount++;
 
+    public int RequestNotchCallCount { get; private set; }
+
+    public bool LastNotchEnabled { get; private set; }
+
+    public double? LastNotchFrequencyHz { get; private set; }
+
+    public void RequestNotch(bool enabled, double? frequencyHz)
+    {
+        RequestNotchCallCount++;
+        LastNotchEnabled = enabled;
+        LastNotchFrequencyHz = frequencyHz;
+    }
+
     public int ForceModeCallCount { get; private set; }
 
     public SstvModeDefinition? LastForcedMode { get; private set; }

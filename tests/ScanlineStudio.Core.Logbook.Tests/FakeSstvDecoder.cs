@@ -22,6 +22,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void RequestNotch(bool enabled, double? frequencyHz)
+    {
+    }
+
     public void ForceMode(SstvModeDefinition mode)
     {
     }
