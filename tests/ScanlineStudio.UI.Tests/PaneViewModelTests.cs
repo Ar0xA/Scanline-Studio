@@ -1603,6 +1603,162 @@ public sealed class PaneViewModelTests
         Assert.Contains(nameof(vm.ToneMapText), raisedProperties);
     }
 
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_NoModeSelected_GeometryAndDurationAndVisHeaderAndVoxToneAreNull()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        Assert.Null(vm.SelectedMode);
+        Assert.Null(vm.GeometryText);
+        Assert.Null(vm.DurationText);
+        Assert.Null(vm.VisHeaderText);
+        Assert.Null(vm.VoxToneText);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_ModeSelected_GeometryTextUsesModeWidthAndHeight()
+    {
+        var mode = TestMode with { ImageWidth = 320, ImageHeight = 256 };
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [mode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), localization, new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        _ = vm.GeometryText;
+
+        Assert.Equal("Panes.TxControls.GeometryFormat", localization.LastKey);
+        Assert.Equal(new object[] { 320, 256 }, localization.LastArgs);
+    }
+
+    /// <summary>Plan-review blocker (un-stub-TX-tab piece 4): <c>ImageHeight</c> is the image's
+    /// pixel height, not the transmitted-line count -- <see cref="ColorEncoding.YCbCrLinePaired"/>
+    /// modes transmit one line per 2 image rows, so a naive <c>LineDurationMs * ImageHeight</c>
+    /// double-counts. This mode's real numbers: 100ms/line x 4 rows / 2 rows-per-line / 1000 = 0.2s,
+    /// NOT the 0.4s a naive formula would produce.</summary>
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_LinePairedMode_DurationTextDividesByRowsPerTransmissionLine()
+    {
+        var mode = TestMode with
+        {
+            ImageHeight = 4,
+            ColorEncoding = ColorEncoding.YCbCrLinePaired,
+            LineSegments = [new ScanSegment("Y", 100)],
+        };
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [mode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), localization, new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        _ = vm.DurationText;
+
+        Assert.Equal("Panes.TxControls.DurationFormat", localization.LastKey);
+        Assert.Equal(0.2, Assert.IsType<double>(localization.LastArgs[0]), precision: 10);
+        // ModeTimingRows (a different, already-live card) must agree exactly -- these two cards
+        // showing different numbers for the same mode was the actual bug plan-review caught.
+        Assert.Equal(0.2, vm.ModeTimingRows.Single(r => r.ModeName == mode.DisplayName).FrameSeconds, precision: 10);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_AutoFollowOff_AutoPicksTextShowsManual()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), localization, new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AutoFollowRxMode = false;
+
+        Assert.Equal("Panes.TxControls.AutoPicksValue.Manual", vm.AutoPicksText);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_AutoFollowOn_AutoPicksTextShowsTheSelectedModesName()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AutoFollowRxMode = true;
+
+        Assert.Equal(TestMode.DisplayName, vm.AutoPicksText);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(VisHeaderKind.Standard, "Panes.TxControls.VisHeaderValue.Standard")]
+    [InlineData(VisHeaderKind.Extended, "Panes.TxControls.VisHeaderValue.Extended")]
+    [InlineData(VisHeaderKind.Narrow, "Panes.TxControls.VisHeaderValue.Narrow")]
+    [InlineData(VisHeaderKind.Avt, "Panes.TxControls.VisHeaderValue.Avt")]
+    public void TxControlsPaneViewModel_ModeSelected_VisHeaderTextPicksTheKeyMatchingTheSessionServicesReportedKind(VisHeaderKind kind, string expectedKey)
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], VisHeaderInfoToReturn = (kind, 0x86) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), localization, new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        _ = vm.VisHeaderText;
+
+        Assert.Equal(expectedKey, localization.LastKey);
+        Assert.Equal(new object[] { 0x86 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_ModeSelected_VoxToneTextUsesTheSessionServicesLeaderToneDuration()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], LeaderToneDurationMsToReturn = 400 };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), localization, new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        _ = vm.VoxToneText;
+
+        Assert.Equal("Panes.TxControls.VoxToneFormat", localization.LastKey);
+        Assert.Equal(new object[] { 400.0 }, localization.LastArgs);
+    }
+
+    /// <summary>Same bug/fix, same header-callsign-chip precedent
+    /// (<c>MainWindow.axaml.cs</c>'s <c>OptionsRequested</c> handler) as
+    /// <see cref="TxControlsPaneViewModel_Constructed_LoadsTheConfiguredOutputDeviceName"/> above --
+    /// re-running the now-public loader methods directly (this test doesn't exercise the
+    /// window-code-behind wiring, only that re-invoking picks up a changed value).</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ReloadIdentificationAndOutputDeviceAfterChange_PicksUpTheNewValues()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            ConfiguredPlaybackDeviceName = "USB Audio CODEC",
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None,
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("USB Audio CODEC", vm.OutputDeviceName);
+        Assert.Equal("Panes.TxId.Off", vm.FskIdDisplay);
+
+        sstvSession.ConfiguredPlaybackDeviceName = "Focusrite Scarlett";
+        sstvSession.StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with { FskIdEnabled = true, Callsign = "W1AW" };
+        await vm.LoadOutputDeviceNameAsync();
+        await vm.LoadIdentificationSummaryAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Focusrite Scarlett", vm.OutputDeviceName);
+        Assert.Equal("W1AW", vm.FskIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_LivePowerAndAlcSet_MeterFillPercentsReflectThem()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        Assert.Equal(0, vm.PowerMeterFillPercent);
+        Assert.Equal(0, vm.AlcMeterFillPercent);
+        Assert.Null(vm.LiveAlcPercentDisplay);
+
+        vm.LivePowerPercent = 42f;
+        vm.LiveAlcLevel = 0.75f; // RadioState.AlcLevel is a 0.0-1.0 fraction, not 0-100 -- plan-review finding
+
+        Assert.Equal(42, vm.PowerMeterFillPercent);
+        Assert.Equal(75, vm.AlcMeterFillPercent, precision: 5);
+        Assert.Equal(75f, vm.LiveAlcPercentDisplay);
+    }
+
     [Fact]
     public void ToneMapFormat_MatchesMock2sDisplayConvention_ForBothTheDefaultAndANarrowModesRange()
     {

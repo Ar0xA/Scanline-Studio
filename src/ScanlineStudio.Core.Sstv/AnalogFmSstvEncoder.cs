@@ -84,6 +84,44 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         return (long)idealSamplesSoFar;
     }
 
+    /// <summary>Duration of the fixed leader-tone burst <see cref="GenerateFrequencySegments"/>
+    /// unconditionally sends before every mode's VIS header (legacy's <c>TMmsstv::OutHEAD</c>,
+    /// <c>m_VOX==0</c> case only -- legacy's real VOX feature, <c>m_VOX==1</c>, a user-configured
+    /// sound file with an optional FSK ID, is a different thing this port doesn't implement; see
+    /// <c>Main.cpp:7274-7304</c>). Named for what it actually is, not "VOX tone" -- this is the
+    /// always-on leader burst, not the configurable VOX feature.</summary>
+    public static double GetLeaderToneDurationMs(SstvModeDefinition mode) =>
+        VisHeader.GenerateOutHeadSegments(mode.NarrowModeCode is not null).Sum(s => s.DurationMs);
+
+    /// <summary>Which VIS-header shape <paramref name="mode"/> actually transmits, and the real
+    /// on-air value -- see <see cref="VisHeaderKind"/>'s own doc comment. Mirrors
+    /// <see cref="GenerateFrequencySegments"/>'s own branch order and precedence (AVT checked
+    /// first) exactly, so this can never disagree with what TX actually sends.</summary>
+    public static (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode)
+    {
+        if (mode == SstvModeRegistry.Avt)
+        {
+            // AVT's own VIS block uses a normal (non-forced-parity) computed byte -- same call as
+            // the Standard arm below, not the bare VisCode, so both arms answer "what byte is
+            // actually on the air" the same way (code-review nit: they coincided today only
+            // because AVT's own VisCode happens to need parity bit 0).
+            return (VisHeaderKind.Avt, VisHeader.GetTransmittedByte(mode.VisCode));
+        }
+
+        if (mode.NarrowModeCode is { } narrowCode)
+        {
+            return (VisHeaderKind.Narrow, narrowCode);
+        }
+
+        if (mode.ExtendedVisCode is { } extendedCode)
+        {
+            return (VisHeaderKind.Extended, extendedCode);
+        }
+
+        var forcedParityBit = mode == SstvModeRegistry.Rm12 ? VisHeader.Rm12ForcedParityBit : (int?)null;
+        return (VisHeaderKind.Standard, VisHeader.GetTransmittedByte(mode.VisCode, forcedParityBit));
+    }
+
     private static void ValidateImageDimensions(SstvModeDefinition mode, IImageSource image)
     {
         if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)

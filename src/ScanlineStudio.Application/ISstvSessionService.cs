@@ -28,6 +28,19 @@ public interface ISstvSessionService : IAsyncDisposable
     /// rule, enforced by the architecture test).</summary>
     IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
 
+    /// <summary>Duration of the fixed leader-tone burst TX always sends before <paramref name="mode"/>'s
+    /// VIS header -- exposed here (not <c>ScanlineStudio.Core.Sstv.AnalogFmSstvEncoder</c> directly) for
+    /// the same layering reason as <see cref="AvailableModes"/> above. See
+    /// <c>AnalogFmSstvEncoder.GetLeaderToneDurationMs</c>'s own doc comment for why this isn't called
+    /// "VOX tone" despite backing the TX pane's "VOX tone" display field (that field's name predates
+    /// this piece; legacy's real VOX feature is a different, unported thing).</summary>
+    double GetLeaderToneDurationMs(SstvModeDefinition mode);
+
+    /// <summary>Which VIS-header shape <paramref name="mode"/> transmits and its real on-air value --
+    /// see <see cref="VisHeaderKind"/>'s own doc comment. Same layering reason as
+    /// <see cref="AvailableModes"/> above.</summary>
+    (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode);
+
     /// <summary>Whether capture is currently running -- reflects the same internal state
     /// <see cref="StartReceivingAsync"/>/<see cref="StopReceivingAsync"/> already track, so it's
     /// accurate for the header's Receiving/Halt toggle including the case where a startup

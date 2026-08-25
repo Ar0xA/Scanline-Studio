@@ -160,6 +160,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ToneMapText))]
+    [NotifyPropertyChangedFor(nameof(GeometryText))]
+    [NotifyPropertyChangedFor(nameof(AutoPicksText))]
+    [NotifyPropertyChangedFor(nameof(DurationText))]
+    [NotifyPropertyChangedFor(nameof(VisHeaderText))]
+    [NotifyPropertyChangedFor(nameof(VoxToneText))]
     private SstvModeDefinition? _selectedMode;
 
     /// <summary>The selected mode's own baseband tone range -- backs mock2's Transmit tab "Tone
@@ -175,6 +180,40 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         ? _localization.GetString("Panes.TxControls.Telemetry.ToneMapFormat", mode.LuminanceMinHz, mode.LuminanceMaxHz)
         : null;
 
+    /// <summary>The selected mode's raw image dimensions -- backs mock2's Transmit tab "Geometry"
+    /// field. Static per-mode data (<see cref="SstvModeDefinition.ImageWidth"/>/<c>ImageHeight</c>),
+    /// no calculation needed.</summary>
+    public string? GeometryText => SelectedMode is { } mode
+        ? _localization.GetString("Panes.TxControls.GeometryFormat", mode.ImageWidth, mode.ImageHeight)
+        : null;
+
+    /// <summary>The selected mode's total transmit duration -- backs mock2's Transmit tab
+    /// "Duration" field. Same <see cref="GetFrameSeconds"/> formula as <see cref="ModeTimingRows"/>,
+    /// so the two cards can never disagree with each other.</summary>
+    public string? DurationText => SelectedMode is { } mode
+        ? _localization.GetString("Panes.TxControls.DurationFormat", GetFrameSeconds(mode))
+        : null;
+
+    /// <summary>The selected mode's real VIS-header shape and on-air value -- backs mock2's
+    /// Transmit tab "VIS header" field. See <see cref="ISstvSessionService.GetVisHeaderInfo"/>'s own
+    /// doc comment.</summary>
+    public string? VisHeaderText => SelectedMode is { } mode
+        ? _sstvSession.GetVisHeaderInfo(mode) switch
+        {
+            (VisHeaderKind.Avt, var value) => _localization.GetString("Panes.TxControls.VisHeaderValue.Avt", value),
+            (VisHeaderKind.Extended, var value) => _localization.GetString("Panes.TxControls.VisHeaderValue.Extended", value),
+            (VisHeaderKind.Narrow, var value) => _localization.GetString("Panes.TxControls.VisHeaderValue.Narrow", value),
+            (_, var value) => _localization.GetString("Panes.TxControls.VisHeaderValue.Standard", value),
+        }
+        : null;
+
+    /// <summary>The selected mode's fixed pre-VIS leader-tone burst duration -- backs mock2's
+    /// Transmit tab "VOX tone" field. See <see cref="ISstvSessionService.GetLeaderToneDurationMs"/>'s
+    /// own doc comment for why this isn't legacy's actual (unported) VOX feature.</summary>
+    public string? VoxToneText => SelectedMode is { } mode
+        ? _localization.GetString("Panes.TxControls.VoxToneFormat", _sstvSession.GetLeaderToneDurationMs(mode))
+        : null;
+
     [ObservableProperty]
     private Bitmap? _previewImage;
 
@@ -182,6 +221,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private string? _selectedFileName;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TxClockText))]
     private bool _isTransmitting;
 
     /// <summary>spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during
@@ -192,6 +232,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <c>finally</c>, alongside the existing telemetry resets there.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TransmitProgressText))]
+    [NotifyPropertyChangedFor(nameof(TxClockText))]
     private double? _transmitProgress;
 
     /// <summary>Backing value for <see cref="TransmitProgressText"/> only -- deliberately not an
@@ -202,9 +243,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// redundant.</summary>
     private TimeSpan _transmitRemaining;
 
+    /// <summary>Backing value for <see cref="TxClockText"/> only -- same non-<c>[ObservableProperty]</c>
+    /// pattern as <see cref="_transmitRemaining"/> above, set immediately before <see cref="TransmitProgress"/>
+    /// in <see cref="OnTransmitProgressChanged"/>, whose own setter raises the notification.</summary>
+    private TimeSpan _transmitElapsed;
+
     public string TransmitProgressText => TransmitProgress is { } progress
         ? _localization.GetString("Panes.TxControls.TransmitProgressFormat", (int)Math.Round(progress * 100), FormatRemaining(_transmitRemaining))
         : string.Empty;
+
+    /// <summary>Elapsed transmit time -- backs mock2's Transmit tab "TX clock" field. Idle text
+    /// while not transmitting, otherwise <see cref="_transmitElapsed"/> formatted the same way as
+    /// <see cref="TransmitProgressText"/>'s own remaining-time figure.</summary>
+    public string TxClockText => IsTransmitting
+        ? FormatRemaining(_transmitElapsed)
+        : _localization.GetString("Panes.TxControls.Telemetry.TxClockIdle");
 
     private static string FormatRemaining(TimeSpan remaining) => remaining.TotalHours >= 1
         ? $"{(int)remaining.TotalHours}:{remaining.Minutes:D2}:{remaining.Seconds:D2}"
@@ -214,7 +267,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private string? _errorMessage;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutoPicksText))]
     private bool _autoFollowRxMode;
+
+    /// <summary>Backs mock2's Transmit tab "Auto picks" field. Not just a restatement of the
+    /// Auto/Manual segmented control above it (<see cref="AutoFollowRxMode"/>'s own toggle) --
+    /// while Auto is on, shows the mode that toggle actually picked last (<see cref="OnModeDetected"/>
+    /// already assigns <see cref="SelectedMode"/>), so the row carries real information instead of
+    /// duplicating the control two rows up.</summary>
+    public string AutoPicksText => AutoFollowRxMode
+        ? SelectedMode?.DisplayName ?? _localization.GetString("Panes.TxControls.AutoPicksValue.None")
+        : _localization.GetString("Panes.TxControls.AutoPicksValue.Manual");
 
     /// <summary>TX-only telemetry (see <see cref="RadioState"/>'s own doc comment) -- populated only
     /// while this pane's own <see cref="IsTransmitting"/> AND the rig's own PTT readback both agree
@@ -224,10 +287,29 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private float? _liveSwrRatio;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LiveAlcPercentDisplay))]
+    [NotifyPropertyChangedFor(nameof(AlcMeterFillPercent))]
     private float? _liveAlcLevel;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(PowerMeterFillPercent))]
     private float? _livePowerPercent;
+
+    /// <summary>Plan-review finding: <see cref="LiveAlcLevel"/> (<see cref="RadioState.AlcLevel"/>)
+    /// is a 0.0-1.0 fraction, NOT 0-100 like <see cref="LivePowerPercent"/> -- displaying it raw
+    /// (this row's pre-fix binding) rendered "0.42" instead of a percentage. <see langword="null"/>
+    /// passes through unchanged, same convention as every other TX-only telemetry field.</summary>
+    public float? LiveAlcPercentDisplay => LiveAlcLevel is { } alc ? alc * 100 : null;
+
+    /// <summary>Fill-bar percent for the POWER meter (<see cref="Atoms.axaml"/>'s <c>IndustryMeter</c>
+    /// atom) -- clamped to [0,100], 0 (empty bar) rather than null while idle/ungated, since a
+    /// <see langword="double"/>-typed grid-length converter has no meaningful "no value" rendering.</summary>
+    public double PowerMeterFillPercent => Math.Clamp(LivePowerPercent ?? 0, 0, 100);
+
+    /// <summary>Same as <see cref="PowerMeterFillPercent"/>, for ALC -- built off
+    /// <see cref="LiveAlcPercentDisplay"/> (already 0-100-scaled), not the raw 0.0-1.0
+    /// <see cref="LiveAlcLevel"/>.</summary>
+    public double AlcMeterFillPercent => Math.Clamp(LiveAlcPercentDisplay ?? 0, 0, 100);
 
     /// <summary>Bounded (<see cref="TelemetryHistoryCapacity"/>-sample, oldest-evicted-first) history
     /// of the same TX-only telemetry as <see cref="LiveSwrRatio"/>/<see cref="LiveAlcLevel"/>/
@@ -254,10 +336,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private bool _showSwrMeter;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowAnyMeter))]
     private bool _showAlcMeter;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowAnyMeter))]
     private bool _showPowerMeter;
+
+    /// <summary>Gates the POWER/ALC meter section's shared kicker caption -- true when at least one
+    /// of the two meter rows it captions is actually showing (a rig can report Power without ALC, or
+    /// vice versa).</summary>
+    public bool ShowAnyMeter => ShowPowerMeter || ShowAlcMeter;
 
     [ObservableProperty]
     private bool _swrCutoffEnabled;
@@ -275,10 +364,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// load below completes, or if a configured device is no longer present, or (now the rare case)
     /// nothing is configured AND the backend reports no default either (same non-throwing contract
     /// the service method itself has -- this is a passive display field, not something that should
-    /// surface an error banner). Loaded once at construction, same convention as
-    /// <see cref="AutoFollowRxMode"/>/<see cref="SwrCutoffEnabled"/> above -- not re-fetched on a
-    /// live settings change while this pane stays open; a future pass can add that if it turns out
-    /// to matter in practice.</summary>
+    /// surface an error banner). Loaded at construction and re-loaded whenever the Options dialog
+    /// closes (<c>MainWindow.axaml.cs</c>'s <c>OptionsRequested</c> handler, same fix as
+    /// <c>MainViewModel.LoadCallsignAsync</c>'s own header-callsign-chip bug) -- <see cref="LoadOutputDeviceNameAsync"/>
+    /// is <see langword="public"/> for exactly that call site.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(OutputDeviceNameDisplay))]
     private string? _outputDeviceName;
@@ -287,10 +376,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>Frame-metadata-style read-only summary of what <see cref="ISstvSessionService.TransmitAsync"/>
     /// would actually resolve right now (CW-ID/FSK station-ID subsystem Phase 6) -- backs the
-    /// Transmit tab's "Identification" card. Loaded once at construction via
-    /// <see cref="ISstvSessionService.GetStationIdTransmitOptionsAsync"/>, same "not re-fetched on a
-    /// live settings change while this pane stays open" convention as <see cref="OutputDeviceName"/>
-    /// above.</summary>
+    /// Transmit tab's "Identification" card. Loaded via <see cref="ISstvSessionService.GetStationIdTransmitOptionsAsync"/>
+    /// at construction and re-loaded whenever the Options dialog closes, same fix/convention as
+    /// <see cref="OutputDeviceName"/> above.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FskIdDisplay))]
     [NotifyPropertyChangedFor(nameof(TailDisplay))]
@@ -380,7 +468,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         AvailableModes = sstvSession.AvailableModes;
         _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
         ModeTimingRows = AvailableModes
-            .Select(m => new ModeTimingRowViewModel(m.DisplayName, m.ImageHeight, m.LineDurationMs, m.LineDurationMs * m.ImageHeight / 1000.0))
+            .Select(m => new ModeTimingRowViewModel(m.DisplayName, m.ImageHeight, m.LineDurationMs, GetFrameSeconds(m)))
             .ToList();
 
         sstvSession.ModeDetected += OnModeDetected;
@@ -428,13 +516,23 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; }
 
     /// <summary>Mode-timing-reference table (mock2's own card) -- fully real, zero new data:
-    /// computed once from <see cref="AvailableModes"/>'s own <c>LineDurationMs</c>/<c>ImageHeight</c>.
-    /// "Frame" is an approximation (<c>LineDurationMs * ImageHeight</c>) -- some color families
-    /// transmit 2 scan lines per image row (see <c>SstvModeDefinition.ImageHeight</c>'s own doc
-    /// history), so the true total transmitted-line count can differ slightly from
-    /// <c>ImageHeight</c> for those modes; not exact for every family, close enough for a
-    /// reference table.</summary>
+    /// computed once from <see cref="AvailableModes"/>'s own <c>LineDurationMs</c>/<c>ImageHeight</c>,
+    /// via <see cref="GetFrameSeconds"/>.</summary>
     public IReadOnlyList<ModeTimingRowViewModel> ModeTimingRows { get; }
+
+    /// <summary>Total transmit duration for <paramref name="mode"/>. <c>ImageHeight</c> is the
+    /// image's pixel height, not the transmitted-line count -- <see cref="ColorEncoding.YCbCrLinePaired"/>
+    /// and <see cref="ColorEncoding.MonoAveragedPaired"/> modes transmit one line per 2 image rows
+    /// (<c>AnalogFmSstvEncoder</c>'s <c>RowsPerTransmissionLine</c> = 2 for those families;
+    /// <c>SstvModeRegistry</c> sets <c>ImageHeight = transmissionUnits * 2</c> for them), so dividing
+    /// them back out here is required, not optional -- plan-review caught this double-counting PD90
+    /// (703.04 ms/line x 256 rows / 1000 = 180.0 s displayed for an actual 90.0 s mode) before it
+    /// shipped.</summary>
+    internal static double GetFrameSeconds(SstvModeDefinition mode)
+    {
+        var rowsPerLine = mode.ColorEncoding is ColorEncoding.YCbCrLinePaired or ColorEncoding.MonoAveragedPaired ? 2 : 1;
+        return mode.LineDurationMs * mode.ImageHeight / rowsPerLine / 1000.0;
+    }
 
     public ObservableCollection<StockEntryViewModel> StockEntries { get; } = [];
 
@@ -477,7 +575,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task LoadOutputDeviceNameAsync()
+    public async Task LoadOutputDeviceNameAsync()
     {
         try
         {
@@ -491,7 +589,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private async Task LoadIdentificationSummaryAsync()
+    public async Task LoadIdentificationSummaryAsync()
     {
         try
         {
@@ -694,6 +792,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
             var remaining = info.EstimatedTotal - info.Elapsed;
             _transmitRemaining = remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
+            _transmitElapsed = info.Elapsed;
             TransmitProgress = info.Fraction;
         });
     }
@@ -1317,6 +1416,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // show a stale "remaining" figure in TransmitProgressText for the brief window between TX
         // start and the first real progress report.
         _transmitRemaining = TimeSpan.Zero;
+        _transmitElapsed = TimeSpan.Zero;
         TransmitProgress = 0;
         TransmitCommand.NotifyCanExecuteChanged();
         StopTransmitCommand.NotifyCanExecuteChanged();
