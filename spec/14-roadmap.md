@@ -187,7 +187,6 @@ Full detail: `spec/14-roadmap-archive.md`.
   6 new unit tests. Full plan `/home/artien/.claude/plans/export-frame-jpeg-quality.md`, commit
   `90e2881`. Real-window verified end-to-end (seeded test data, real GTK save dialog, confirmed
   extension-normalization empirically necessary and working, verified the saved JPEG via PIL).
-- Transmit tab Queue/TX-log/Recently-sent — 100% stub, no such feature exists yet.
 - Receive tab Sync&Slant/Input-chain/Signal-quality cards — real new DSP work (no live audio-chain
   measurement exists for most of these), long-term counterpart to Tier 1's short-term grey-out.
 - Localization completion — remaining unlocalized views + community-translation workflow.
@@ -215,7 +214,12 @@ dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itse
 `RadioStatusViewModel.RxLevelDb`, via rigctld's `l STRENGTH`/Hamlib; this item is specifically about
 a waterfall-native meter, not "no S-meter exists at all"); legacy debug "digital scope" tool); **flrig client backend** and
 **OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
-real post-launch user demand shows up, not a design-now item).
+real post-launch user demand shows up, not a design-now item). **Added 2026-08-25**: Transmit tab
+Queue/TX-log/Recently-sent cards — user decision "maybe one day," moved out of Tier 2. No queueing,
+sent-frame-log, or send-history concept exists anywhere in `TxControlsPaneViewModel`; each needs a
+new subsystem (persistence + UI), not a wiring fix. **Added 2026-08-25 (second pass)**: the Transmit
+tab's Monitor audio row, same "maybe one day" decision — zero legacy precedent and no tappable
+signal in the TX audio path. See the "Explicitly deferred beyond v1" list below for the per-item detail.
 
 ~~`.ini` legacy settings importer + migration chain~~ — **PARKED 2026-08-15, user redirect** ("not
 important, put it on the maybe one day"). Still a stated CLAUDE.md §2 backward-compatibility
@@ -2053,6 +2057,10 @@ verb for it.
 - Stereo L/R input-chain level meters — user decision 2026-08-25: "maybe one day." This port's demod path is deliberately mono-only (same as legacy), so a real stereo meter needs an architecture decision on whether stereo capture belongs in this port at all, not just a wiring fix. The Input Chain card's placeholder L/R meter rows were removed 2026-08-25, not left as a stub with no defined target.
 - Unattended RX (scan/watch list, dwell time, alert-on-decode) — user decision 2026-08-25: "maybe one day." No scanning/watch feature exists in `IRadioSessionService`/`ISstvSessionService`, and no product design exists for what "watching" or "scanning" should mean here — this needs a design pass before it's buildable, not just implementation. Formerly tracked as an active Large gap under "Must-implement backlog"; the Gallery tab's placeholder Unattended RX card was removed 2026-08-25.
 - Session Frames (per-session received-frame list) — user decision 2026-08-25: "maybe one day." No per-session frame log concept has ever been designed (distinct from the real `ReceiveHistoryStore`, which persists across sessions). The Gallery tab's placeholder Session Frames card — previously a 15-row hand-written literal list with zero backing `ItemsSource`, then an honest empty state — was removed entirely 2026-08-25.
+- Transmit tab Queue card — user decision 2026-08-25: "maybe one day." No queue concept exists in `TxControlsPaneViewModel`; the card shows a fixed "No queued frames" empty state (`MainWindow.axaml:915-920`, `Panes.TxQueue.NoQueueYet`). Building it needs a real queue model (add/remove/reorder frames, persistence across app restart), not just a data hookup.
+- Transmit tab TX Log table — user decision 2026-08-25: "maybe one day." No logging-of-sent-frames feature exists; the table is header-only (`UTC/Mode/Dur/Drive/SWR/Result`, `MainWindow.axaml:969-1000`) with no `ItemsSource`, and its "TX time today"/"Duty cycle" rows are static placeholder text. Needs a new sent-frame log subsystem with persistence.
+- Transmit tab Recently Sent card — user decision 2026-08-25: "maybe one day." No send-history feature exists; the card shows a fixed "Nothing sent this session" empty state (`MainWindow.axaml:1008-1019`). Its "Refill & queue"/"Open in editor" buttons are already correctly `IsEnabled="False"` with a "not yet implemented" tooltip, so this one doesn't mislead the user — but building it needs history tracking plus real refill/open-in-editor logic, not just enabling the buttons.
+- Transmit tab Monitor audio row — user decision 2026-08-25: "maybe one day." Zero legacy precedent (verified: no "monitor" hits anywhere in `yoniq-old/YONIQ-main/Main.cpp` or `Sound.cpp`) and no tappable signal exists in the TX audio path (`IAudioEngine` has no playback-side event, only `SamplesCaptured` for RX). No product design exists for what this row should show — needs a design pass before it's buildable, not just implementation. The row stays a static `"—"` placeholder (`TxControlsPaneView.axaml:269-272`, `Panes.TxControls.Telemetry.MonitorAudioValue`).
 
 ## Verify later with human — items neither the agent nor the auditor could resolve alone
 
