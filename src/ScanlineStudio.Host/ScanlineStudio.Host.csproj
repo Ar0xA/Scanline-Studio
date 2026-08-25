@@ -16,7 +16,7 @@
        RuntimeIdentifier) are completely unaffected. SelfContained bundles the .NET runtime itself
        into the publish output, so the target machine needs no .NET install at all; PublishSingleFile
        collapses the managed assemblies into one executable. The native audio shim
-       (yoniqaudio.dll/libyoniqaudio.so/libyoniqaudio.dylib, see PublishNativeShim* below) and a
+       (scanlineaudio.dll/libscanlineaudio.so/libscanlineaudio.dylib, see PublishNativeShim* below) and a
        handful of Avalonia's own native (Skia/ANGLE) libraries still ship as loose files alongside
        that executable, not embedded into it: IncludeNativeLibrariesForSelfExtract would fold those
        in too, but that self-extract-to-temp-on-every-launch path is unverified for this app on any
@@ -120,7 +120,7 @@
   -->
   <Target Name="CopyNativeShimLinux" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.so" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libscanlineaudio.so" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
@@ -129,14 +129,14 @@
        build target doc comment. -->
   <Target Name="CopyNativeShimWindows" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\yoniqaudio.dll" />
+      <NativeShim Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\scanlineaudio.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
 
   <Target Name="CopyNativeShimMacOS" AfterTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <ItemGroup>
-      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.dylib" />
+      <NativeShim Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libscanlineaudio.dylib" />
     </ItemGroup>
     <Copy SourceFiles="@(NativeShim)" DestinationFolder="$(OutDir)" />
   </Target>
@@ -176,7 +176,7 @@
     itself copies from, also wrong, corrected here.) This is the earliest, and therefore
     strictly safest, of the four hook points tried, not a lucky guess among equals.
     Verified end to end, not just "file present": ran a real self-contained Release publish for
-    linux-x64, confirmed libyoniqaudio.so present and byte-identical to the source project's own
+    linux-x64, confirmed libscanlineaudio.so present and byte-identical to the source project's own
     build output, then ACTUALLY RAN the published binary and confirmed via its own log output that
     IAudioEngine resolved a real default capture/playback device (proof the native P/Invoke calls
     succeeded, no DllNotFoundException) before the process was cleanly stopped. See
@@ -191,8 +191,8 @@
   -->
   <Target Name="PublishNativeShimLinux" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('Linux'))">
     <ItemGroup>
-      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.so">
-        <RelativePath>libyoniqaudio.so</RelativePath>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libscanlineaudio.so">
+        <RelativePath>libscanlineaudio.so</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </ResolvedFileToPublish>
     </ItemGroup>
@@ -201,8 +201,8 @@
   <!-- Unverified in this project's own dev sandbox (Linux-only); see PublishNativeShimLinux's own doc comment above for the reasoning this mirrors. -->
   <Target Name="PublishNativeShimWindows" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
     <ItemGroup>
-      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\yoniqaudio.dll">
-        <RelativePath>yoniqaudio.dll</RelativePath>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)\..\ScanlineStudio.Core.Audio.MiniAudio\bin\$(Configuration)\$(TargetFramework)\scanlineaudio.dll">
+        <RelativePath>scanlineaudio.dll</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </ResolvedFileToPublish>
     </ItemGroup>
@@ -210,8 +210,8 @@
 
   <Target Name="PublishNativeShimMacOS" BeforeTargets="ComputeResolvedFilesToPublishList" Condition="$([MSBuild]::IsOSPlatform('OSX'))">
     <ItemGroup>
-      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libyoniqaudio.dylib">
-        <RelativePath>libyoniqaudio.dylib</RelativePath>
+      <ResolvedFileToPublish Include="$(MSBuildProjectDirectory)/../ScanlineStudio.Core.Audio.MiniAudio/bin/$(Configuration)/$(TargetFramework)/libscanlineaudio.dylib">
+        <RelativePath>libscanlineaudio.dylib</RelativePath>
         <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
       </ResolvedFileToPublish>
     </ItemGroup>

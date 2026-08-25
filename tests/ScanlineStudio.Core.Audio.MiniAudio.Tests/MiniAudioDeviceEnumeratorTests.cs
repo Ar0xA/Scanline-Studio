@@ -40,7 +40,7 @@ public class MiniAudioDeviceEnumeratorTests
             Assert.Equal(0, monitor.MaxOutputChannels); // an input-only entry must not claim output channels
 
             // Honest reporting, not asserted to any specific value: SupportedSampleRates may
-            // legitimately be empty (this shim's own doc comment on yoniq_audio_get_native_formats
+            // legitimately be empty (this shim's own doc comment on scanline_audio_get_native_formats
             // says probing can report "any" via a 0 entry, or fail outright on some devices) --
             // the only thing that must never happen is a negative/garbage value sneaking through.
             Assert.All(sink.SupportedSampleRates, rate => Assert.True(rate > 0));

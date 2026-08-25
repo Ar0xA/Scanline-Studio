@@ -37,12 +37,12 @@ your very first build. This is exactly what this project's own CI does on `windo
 for the same reason (see `.github/workflows/ci.yml`).
 
 The native audio shim is built automatically as part of this — `BuildNativeShimWindows` runs before
-the managed build and produces `yoniqaudio.dll` alongside the managed output (via `cl.exe /LD`,
+the managed build and produces `scanlineaudio.dll` alongside the managed output (via `cl.exe /LD`,
 linked against `Ole32.lib` — added 2026-08-24 for a real OS device-mute-state query the shim now
 makes via direct WASAPI `IAudioEndpointVolume` COM calls). Ole32.lib ships with the MSVC Build
 Tools' "Desktop development with C++" workload already required above — no extra install needed.
 The three GUID symbols that query needs (`CLSID_MMDeviceEnumerator`/`IID_IMMDeviceEnumerator`/
-`IID_IAudioEndpointVolume`) are defined directly in `yoniq_audio.c` itself via `DEFINE_GUID` — an
+`IID_IAudioEndpointVolume`) are defined directly in `scanline_audio.c` itself via `DEFINE_GUID` — an
 earlier revision tried linking `Uuid.lib` for these instead, which a real `dotnet publish` showed
 does not actually provide their storage (LNK2019). You do not need to build the shim separately.
 
@@ -79,7 +79,7 @@ no `/p:Platform` is needed either, since this targets the single project, not th
 
 This produces one `ScanlineStudio.Host.exe` (self-contained: the .NET runtime itself is bundled in,
 not just the app) in `publish\win-x64\`, plus a handful of loose native `.dll`s alongside it
-(`yoniqaudio.dll` — this project's own audio shim — and Avalonia's own Skia/HarfBuzz rendering
+(`scanlineaudio.dll` — this project's own audio shim — and Avalonia's own Skia/HarfBuzz rendering
 libraries) that are **not** folded into the `.exe` and must ship with it. **Copy the whole
 `publish\win-x64\` folder**, not just the `.exe`, if moving the build elsewhere.
 

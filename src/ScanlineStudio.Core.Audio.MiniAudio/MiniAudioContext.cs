@@ -1,7 +1,7 @@
 namespace ScanlineStudio.Core.Audio.MiniAudio;
 
 /// <summary>
-/// The native shim's audio context (`yoniq_audio_context_init`/`_uninit`) is a process-wide
+/// The native shim's audio context (`scanline_audio_context_init`/`_uninit`) is a process-wide
 /// singleton -- calling init twice without an uninit in between fails. But
 /// <see cref="MiniAudioDeviceEnumerator"/>, <see cref="MiniAudioCaptureSession"/>, and
 /// <see cref="MiniAudioPlaybackSession"/> each need it independently, and neither should have to
@@ -50,7 +50,7 @@ internal static class MiniAudioContext
             if (_refCount == 0)
             {
                 var backendNameBuffer = new byte[NativeAudio.BackendNameSize];
-                var result = NativeAudio.yoniq_audio_context_init(backendNameBuffer);
+                var result = NativeAudio.scanline_audio_context_init(backendNameBuffer);
                 if (result != 0)
                 {
                     throw new InvalidOperationException($"Failed to initialize the miniaudio context (error {result}).");
@@ -78,7 +78,7 @@ internal static class MiniAudioContext
             _refCount--;
             if (_refCount == 0)
             {
-                NativeAudio.yoniq_audio_context_uninit();
+                NativeAudio.scanline_audio_context_uninit();
                 _backendName = null;
             }
         }

@@ -59,21 +59,21 @@ public class MiniAudioSpikeGateTests
                 Assert.Equal("PulseAudio", backendName);
 
                 var playbackDevices = new NativeAudio.DeviceInfo[64];
-                var playbackCount = NativeAudio.yoniq_audio_enumerate_devices(isCapture: 0, playbackDevices, playbackDevices.Length);
+                var playbackCount = NativeAudio.scanline_audio_enumerate_devices(isCapture: 0, playbackDevices, playbackDevices.Length);
                 Assert.True(playbackCount > 0, "No playback devices enumerated at all.");
 
                 var sinkFound = FindDeviceContaining(playbackDevices, playbackCount, sinkName);
                 Assert.True(sinkFound is not null, $"Virtual sink '{sinkName}' was not found among {playbackCount} enumerated playback devices.");
 
                 var captureDevices = new NativeAudio.DeviceInfo[64];
-                var captureCount = NativeAudio.yoniq_audio_enumerate_devices(isCapture: 1, captureDevices, captureDevices.Length);
+                var captureCount = NativeAudio.scanline_audio_enumerate_devices(isCapture: 1, captureDevices, captureDevices.Length);
                 Assert.True(captureCount > 0, "No capture devices enumerated at all.");
 
                 var monitorFound = FindDeviceContaining(captureDevices, captureCount, $"{sinkName}.monitor");
                 Assert.True(monitorFound is not null, $"Virtual sink's monitor was not found among {captureCount} enumerated capture devices.");
 
                 var monitorIdBytes = NativeAudio.EncodeFixedString(monitorFound!, NativeAudio.IdSize);
-                var captureResult = NativeAudio.yoniq_audio_spike_capture_test(monitorIdBytes, durationMs: 2000, out var peak);
+                var captureResult = NativeAudio.scanline_audio_spike_capture_test(monitorIdBytes, durationMs: 2000, out var peak);
                 Assert.Equal(0, captureResult);
                 Assert.True(peak > 0.0f, $"Captured audio from the virtual cable's monitor was silent (peak={peak}) -- device opened but no real audio flowed.");
             }

@@ -7,7 +7,7 @@ namespace ScanlineStudio.Abstractions.Audio;
 /// default) reproduces the exact pre-existing behavior: the device opens with 1 channel and
 /// miniaudio's own data converter handles whatever downmix its real native format needs, unchanged.
 /// <see cref="Left"/>/<see cref="Right"/> open the device with 2 channels instead and take only the
-/// named channel -- see <c>native/yoniq_audio.c</c>'s <c>capture_session_data_callback</c> for the
+/// named channel -- see <c>native/scanline_audio.c</c>'s <c>capture_session_data_callback</c> for the
 /// exact extraction. <see cref="IAudioEngine.SamplesCaptured"/> is unaffected either way -- always
 /// mono, per that event's own documented contract.</summary>
 public enum AudioChannelSource

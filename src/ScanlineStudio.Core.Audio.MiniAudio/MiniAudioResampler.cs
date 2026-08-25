@@ -49,7 +49,7 @@ internal static class MiniAudioResampler
         fixed (float* inputPtr = input)
         fixed (float* outputPtr = output)
         {
-            written = NativeAudio.yoniq_audio_resample_f32(inputPtr, input.Length, sampleRateIn, sampleRateOut, lpfOrder, outputPtr, capacity);
+            written = NativeAudio.scanline_audio_resample_f32(inputPtr, input.Length, sampleRateIn, sampleRateOut, lpfOrder, outputPtr, capacity);
         }
 
         if (written < 0)
