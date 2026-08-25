@@ -587,6 +587,42 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void OnConnectionEvent_GiveUpFlavoredDisconnected_SetsConnectRadioErrorMessage()
+    {
+        // Give-up-after-5 feature: RadioController's own give-up branch publishes Disconnected with
+        // a non-null Reason -- distinct from a real Disconnect click, which always publishes
+        // reason: null (see the next test). This dialog surfaces it via the existing
+        // ConnectRadioErrorMessage row, no new UI needed.
+        var radioSession = new FakeRadioSessionService { RigId = "elecraft-k3" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.ConnectRadioErrorMessage);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(
+            RadioConnectionState.Disconnected, "Gave up after 5 attempts: simulated", null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.ConnectRadioErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void OnConnectionEvent_NormalDisconnected_DoesNotSetConnectRadioErrorMessage()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "elecraft-k3" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.ConnectRadioErrorMessage);
+    }
+
+    [AvaloniaFact]
     public void RadioLinkStatusMessage_NeverShownForNoneBackend()
     {
         // Defense-in-depth (round-3 nit): the "None" backend's own poll never returns, so
