@@ -26,6 +26,14 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void ArmScopeCapture(int size)
+    {
+    }
+
+    public double[]? TryGetScopeCaptureChannel0() => null;
+
+    public double[]? TryGetScopeCaptureChannel1() => null;
+
     public void ForceMode(SstvModeDefinition mode)
     {
     }

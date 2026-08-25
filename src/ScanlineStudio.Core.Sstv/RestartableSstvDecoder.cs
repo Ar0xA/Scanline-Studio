@@ -86,6 +86,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private bool _notchEnabled;
     private double _notchFrequencyHz = 2400.0; // matches CNotch::CNotch's own default (fir.cpp:271)
 
+    // Un-stub-RX-tab Piece B: unlike notch state above, these two are NOT re-seeded per rebuild --
+    // owned here for this wrapper's WHOLE lifetime and passed as the SAME instances into every
+    // CreateInner call, so an in-progress capture survives a periodic restart instead of resetting.
+    // See AnalogFmSstvDecoder's own constructor doc comment for the full reasoning (legacy's CScope
+    // has no rebuild concept to begin with -- it just lives on CSSTVDEM for that object's whole
+    // lifetime).
+    private readonly ScopeCaptureBuffer _scopeCaptureChannel0 = new();
+    private readonly ScopeCaptureBuffer _scopeCaptureChannel1 = new();
+
     private AnalogFmSstvDecoder _inner;
     private bool _warningRaised;
 
@@ -570,6 +579,36 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.RequestNotch(enabled, frequencyHz);
     }
 
+    /// <summary>See <see cref="ISstvDecoder.ArmScopeCapture"/>. Fire-and-forget, same shape as
+    /// <see cref="RequestReSync"/> above -- unlike notch, there is no wrapper-level "re-seed on
+    /// rebuild" step needed here: the STATE that must survive a restart is the capture's own fill
+    /// progress, which already lives on <see cref="_scopeCaptureChannel0"/>/
+    /// <see cref="_scopeCaptureChannel1"/> (the SAME instances every <see cref="CreateInner"/> call
+    /// hands to the fresh inner decoder), not on this wrapper's own request-latch field. A request
+    /// racing a restart is silently dropped if the swap wins, same accepted gap as
+    /// <see cref="RequestReSync"/>'s own -- the caller can simply re-arm.</summary>
+    public void ArmScopeCapture(int size)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            current = _inner;
+        }
+
+        current.ArmScopeCapture(size);
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.TryGetScopeCaptureChannel0"/>. Reads
+    /// <see cref="_scopeCaptureChannel0"/> directly rather than forwarding through <c>_inner</c> --
+    /// safe and equivalent, since it's the SAME instance the current (and every past/future) inner
+    /// decoder writes into; <see cref="ScopeCaptureBuffer.TrySnapshot"/> is already safe from any
+    /// thread, at any time, so no <see cref="_gate"/> is needed here either.</summary>
+    public double[]? TryGetScopeCaptureChannel0() => _scopeCaptureChannel0.TrySnapshot();
+
+    /// <summary>See <see cref="ISstvDecoder.TryGetScopeCaptureChannel1"/>. Same reasoning as
+    /// <see cref="TryGetScopeCaptureChannel0"/> immediately above.</summary>
+    public double[]? TryGetScopeCaptureChannel1() => _scopeCaptureChannel1.TrySnapshot();
+
     /// <summary>Forwards to whichever inner instance is current. A request racing a restart is
     /// silently dropped if the swap wins (the fresh inner has no in-progress reception to search yet,
     /// matching legacy's own reception-start reset) -- same fire-and-forget contract
@@ -828,8 +867,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private AnalogFmSstvDecoder CreateInner()
     {
+        // Auditor code-review note: a decoder produced via _decoderFactoryForTests (test-only seam)
+        // does NOT receive _scopeCaptureChannel0/_scopeCaptureChannel1 -- that factory decides its
+        // own AnalogFmSstvDecoder construction entirely, so a test using it gets a decoder with its
+        // own private, unshared buffers, and this wrapper's own TryGetScopeCaptureChannel0/1 would
+        // never observe anything it writes. Test-only, never reachable in production
+        // (_decoderFactoryForTests is never set outside this project's own tests) -- documented here
+        // so a future test using this seam doesn't chase a phantom capture stall.
         var decoder = _decoderFactoryForTests?.Invoke(_sampleRate)
-            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode, loggerFactory: _loggerFactory);
+            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode, loggerFactory: _loggerFactory, scopeCaptureChannel0: _scopeCaptureChannel0, scopeCaptureChannel1: _scopeCaptureChannel1);
         if (decoder.SampleRate != _sampleRate)
         {
             decoder.Dispose();
