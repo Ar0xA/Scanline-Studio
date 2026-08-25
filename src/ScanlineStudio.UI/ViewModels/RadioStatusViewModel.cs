@@ -68,6 +68,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string? _maintenanceMessage;
 
+    /// <summary>Give-up-after-5 feature: persistent (singleton-lifetime, unlike
+    /// <see cref="OptionsWindowViewModel.ConnectRadioErrorMessage"/>, which only reaches an open
+    /// dialog) counterpart to <see cref="ConnectionGaveUp"/> below -- set on the same give-up
+    /// <see cref="RadioConnectionState.Disconnected"/>-with-non-null-<c>Reason</c> event, so the
+    /// dominant give-up scenario (a dead saved backend, startup auto-connect, no dialog open) still
+    /// leaves a lasting visible signal in the main header. Cleared on the NEXT
+    /// <see cref="RadioConnectionState.Connecting"/> -- the earliest event a fresh connect attempt
+    /// (automatic retry from the operator, or a Connect click) publishes, so a stale give-up message
+    /// never survives into a new attempt that might succeed.</summary>
+    [ObservableProperty]
+    private string? _connectionErrorMessage;
+
     [ObservableProperty]
     private RadioMode _selectedRadioMode = RadioMode.Usb;
 
@@ -308,6 +320,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private void UpdateUtcClock() => UtcClockDisplay = _localization.GetString("RadioStatus.UtcValueFormat", DateTimeOffset.UtcNow);
 
+    /// <summary>Give-up-after-5 feature: fired once per give-up (the same event that sets
+    /// <see cref="ConnectionErrorMessage"/>), carrying the already-localized message text -- the
+    /// dismissible-toast half of the user's own request ("a notification"), on top of the persistent
+    /// status line. Raised from the same <see cref="Dispatcher.UIThread.Post"/> callback as every
+    /// other cross-thread signal in this class.</summary>
+    public event Action<string>? ConnectionGaveUp;
+
     public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
 
     public ObservableCollection<FrequencyPresetButtonViewModel> Presets { get; } = [];
@@ -384,6 +403,29 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         Dispatcher.UIThread.Post(() =>
         {
+            // Give-up-after-5 feature: a Disconnected event with a non-null Reason means
+            // RadioController's own poll loop gave up automatically, not a real Disconnect click
+            // (always reason: null) -- see ConnectionErrorMessage's own doc comment for why this is
+            // kept separate from ErrorMessage. giveUpMessage's own ConnectionGaveUp?.Invoke is
+            // deferred to the END of this callback (code-review finding) -- ConnectionGaveUp's
+            // subscriber is arbitrary external code (MainWindow.axaml.cs's toast handler) that this
+            // class cannot guarantee won't throw; invoking it before the CatLinked/IsKeyed/
+            // RigMetersDisplay staleness resets below would let such a throw abort this whole
+            // callback, leaving the header claiming a live link with stale keyed/meter readings
+            // right after the very give-up this feature exists to surface.
+            string? giveUpMessage = null;
+            if (evt.State == RadioConnectionState.Disconnected && evt.Reason is not null)
+            {
+                giveUpMessage = _localization.GetString("Options.Radio.Connect.GaveUp", evt.Reason);
+                ConnectionErrorMessage = giveUpMessage;
+            }
+            else if (evt.State == RadioConnectionState.Connecting)
+            {
+                // Cleared on the earliest signal of a fresh attempt -- see ConnectionErrorMessage's
+                // own doc comment for why Connecting (not Connected) is the right moment.
+                ConnectionErrorMessage = null;
+            }
+
             // Reads the live latch, not evt.State directly -- Connected can now fire twice for one
             // real connection (see CatLinked's own doc comment), and this is what lets CatLinked go
             // dark for the first, optimistic one and relight only for the genuinely-confirmed second.
@@ -408,6 +450,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             {
                 IsKeyed = false;
                 RigMetersDisplay = "—";
+            }
+
+            if (giveUpMessage is not null)
+            {
+                ConnectionGaveUp?.Invoke(giveUpMessage);
             }
         });
     }

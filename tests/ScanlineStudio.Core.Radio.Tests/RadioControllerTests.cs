@@ -465,6 +465,156 @@ public class RadioControllerTests
         Assert.True(pollCount >= 3);
     }
 
+    [Fact]
+    public async Task GivesUpAfter5ConsecutiveTransportFailures_PublishesDisconnectedWithReason_ResetsAllSessionState()
+    {
+        // Give-up-after-5 feature: a saved backend config pointing at nothing (the user's own
+        // reported scenario) used to retry forever. 5 consecutive transport failures with no
+        // intervening success/CommandFailed now gives up -- a full Disconnected, not another
+        // Reconnecting, and every session field reset the same way an explicit Disconnect would.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
+            _ => throw new IOException("simulated: dead backend")));
+
+        var events = new List<RadioConnectionEvent>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+
+        await WaitUntilAsync(
+            () => events.Any(e => e.State == RadioConnectionState.Disconnected),
+            TimeSpan.FromSeconds(5));
+        await Task.Delay(TimeSpan.FromMilliseconds(100)); // let any (unexpected) straggler event land
+
+        // 4 Reconnecting -- the 5th failure gives up instead of publishing a 5th one (Design point 1:
+        // "skipping that final Reconnecting is safe -- nothing counts them").
+        Assert.Equal(4, events.Count(e => e.State == RadioConnectionState.Reconnecting));
+        var giveUp = Assert.Single(events, e => e.State == RadioConnectionState.Disconnected);
+        Assert.NotNull(giveUp.Reason);
+        Assert.Equal(RadioConnectionState.Disconnected, events[^1].State); // terminal
+
+        Assert.Equal("none", controller.RigId);
+        Assert.False(controller.IsGenuinelyConnected);
+        Assert.Null(controller.LastKnownState);
+
+        await controller.DisconnectAsync(); // must complete promptly -- session already torn down
+    }
+
+    [Fact]
+    public async Task CommandFailedBetweenTransportFailures_ResetsTheCounter_NeverGivesUp()
+    {
+        // A connection that's mostly working (one flaky command between transport drops) must never
+        // give up, no matter how many TOTAL transport failures accumulate -- CommandFailed resets
+        // attempt to 0 (RadioController.cs's own catch block), so only 5 CONSECUTIVE transport
+        // failures with no intervening CommandFailed/success ever trigger a give-up.
+        var pollCount = 0;
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(_ =>
+        {
+            var count = Interlocked.Increment(ref pollCount);
+            if (count % 2 == 1)
+            {
+                throw new IOException("simulated transport failure");
+            }
+
+            throw new RadioProtocolException("simulated command failure");
+        }));
+
+        var events = new List<RadioConnectionEvent>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => events.Count(e => e.State == RadioConnectionState.Reconnecting) >= 8, TimeSpan.FromSeconds(5));
+        await controller.DisconnectAsync();
+
+        Assert.DoesNotContain(events, e => e.State == RadioConnectionState.Disconnected && e.Reason is not null);
+    }
+
+    [Fact]
+    public async Task RecoversBeforeReachingMaxAttempts_NeverGivesUp()
+    {
+        var createCount = 0;
+        var factory = new FakeProtocolFactory(_ => true, _ =>
+        {
+            createCount++;
+            var failThisInstance = createCount <= 3; // fails attempts 1-3, succeeds from the 4th on
+            return new FakeProtocol(
+                _ => failThisInstance
+                    ? throw new IOException("simulated transport failure")
+                    : Task.FromResult(FixedStateValue));
+        });
+
+        var events = new List<RadioConnectionEvent>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => controller.IsGenuinelyConnected, TimeSpan.FromSeconds(5));
+        await controller.DisconnectAsync();
+
+        Assert.DoesNotContain(events, e => e.State == RadioConnectionState.Disconnected && e.Reason is not null);
+    }
+
+    [Fact]
+    public async Task GiveUp_PublishesDisconnectedBeforeItsOwnUnboundedDispose_NotAfter()
+    {
+        // Round-2 blocker regression: SafeDisposeProtocolAsync (reused for the give-up path's own
+        // dispose) is unbounded. Round 1's ordering (field resets -> dispose -> publish) meant a
+        // hung dispose left NOBODY having published Disconnected -- a racing DisconnectAsync would
+        // time out its own bounded wait, see _sessionActive already false (the give-up path's own
+        // reset), and skip its whole teardown too: the button stuck on "Disconnect" permanently.
+        // The fix reorders to publish immediately after the field resets, with no await before it,
+        // then dispose last. Two INDEPENDENT gates, not one shared gate plus an assumed order:
+        // gating the dispose keyed to any earlier call would block the loop from ever reaching
+        // give-up at all, since SafeDisposeProtocolAsync also fires for every backoff-episode
+        // dispose along the way -- only the 5th (the give-up path's own) is gated here.
+        var disposeCount = 0;
+        var giveUpDisposeEntered = new ManualResetEventSlim(initialState: false);
+        var giveUpDisposeGate = new ManualResetEventSlim(initialState: false);
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
+            _ => throw new IOException("simulated: dead backend"),
+            onDispose: () =>
+            {
+                if (Interlocked.Increment(ref disposeCount) == 5)
+                {
+                    giveUpDisposeEntered.Set();
+                    giveUpDisposeGate.Wait(TimeSpan.FromSeconds(5));
+                }
+            }));
+
+        var events = new List<RadioConnectionEvent>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+
+        try
+        {
+            var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+            await controller.ConnectAsync(spec, CancellationToken.None);
+
+            Assert.True(giveUpDisposeEntered.Wait(TimeSpan.FromSeconds(5)),
+                "the give-up branch's own dispose call was never reached");
+
+            // The give-up Disconnected event must already be observable HERE -- while the dispose
+            // above is still blocked on the gate. If publish happened after dispose (round 1's
+            // order), this would time out instead.
+            await WaitUntilAsync(
+                () => events.Any(e => e.State == RadioConnectionState.Disconnected && e.Reason is not null),
+                TimeSpan.FromSeconds(2));
+
+            Assert.Equal("none", controller.RigId);
+            Assert.False(controller.IsGenuinelyConnected);
+        }
+        finally
+        {
+            giveUpDisposeGate.Set();
+        }
+
+        await controller.DisconnectAsync(); // must complete promptly now that the dispose is unblocked
+    }
+
     private static readonly RadioState FixedStateValue =
         new(14074000, RadioMode.Usb, false, null, DateTimeOffset.UtcNow);
 

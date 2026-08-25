@@ -365,6 +365,15 @@
                        Foreground="{StaticResource IndustryDanger}"
                        FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        IsVisible="{Binding MaintenanceMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            <!-- Give-up-after-5 feature: persistent counterpart to the Options dialog's own
+                 ConnectRadioErrorMessage — visible even with that dialog closed, the dominant case
+                 for a give-up (a dead saved backend, startup auto-connect). Same shape as
+                 MaintenanceMessage directly above, deliberately a separate binding — see
+                 RadioStatusViewModel.ConnectionErrorMessage's own doc comment. -->
+            <TextBlock Text="{Binding ConnectionErrorMessage}"
+                       Foreground="{StaticResource IndustryDanger}"
+                       FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                       IsVisible="{Binding ConnectionErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </StackPanel>
     </Grid>
 </UserControl>
