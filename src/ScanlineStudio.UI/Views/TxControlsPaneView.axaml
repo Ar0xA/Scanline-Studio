@@ -3,6 +3,7 @@
              xmlns:loc="using:ScanlineStudio.UI.Localization"
              xmlns:vm="using:ScanlineStudio.UI.ViewModels"
              xmlns:sstv="using:ScanlineStudio.Abstractions.Sstv"
+             xmlns:conv="using:ScanlineStudio.UI.Converters"
              x:Class="ScanlineStudio.UI.Views.TxControlsPaneView"
              x:DataType="vm:TxControlsPaneViewModel">
 
@@ -46,15 +47,9 @@
                     <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualAuto}" />
                     <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="TxModeAutoManual" IsChecked="{Binding !AutoFollowRxMode}" Content="{loc:Translate Panes.TxControls.AutoManualManual}" />
                 </Grid>
-                <!-- Visual scaffolding only below this point (spec/14-roadmap.md backlog): "Auto
-                     picks" caption, Duration/Geometry/VOX-tone rows have no real data source;
-                     values shown as neutral "—" placeholders, not fake-live literals (0.9 beta
-                     bar: no fake-live items, mock/disabled is fine). The quick-mode pill grid
-                     immediately below is NO LONGER scaffolding: spec/18-path-to-1.0.md High item
-                     7 wired it to QuickSelectModeCommand. -->
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.AutoPicksLabel}" />
-                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.AutoPicksValue}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AutoPicksText}" />
                 </Grid></Border>
                 <!-- Order matches mock2: seg -> Auto picks -> 4x4 quick-mode grid -> select ->
                      Selected/Duration/... rows (design-fidelity-agent-caught fix: the ComboBox
@@ -105,19 +100,19 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.DurationValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DurationText}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.GeometryValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GeometryText}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VoxToneValue}" />
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" ToolTip.Tip="{loc:Translate Panes.TxControls.VoxToneLabel.Help}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VoxToneText}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VisHeaderLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.VisHeaderValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VisHeaderText}" />
                     </Grid></Border>
                 </StackPanel>
                 <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.FavoritesLabel}" />
@@ -155,8 +150,8 @@
 
         <!-- Identification: real (CW-ID/FSK station-ID subsystem, Phase 6). Reflects the CURRENT
              effective Options-dialog configuration (ISstvSessionService.GetStationIdTransmitOptionsAsync),
-             loaded once at construction, not live-refreshed while this pane stays open (same
-             convention as the Output card's Device row below). -->
+             loaded at construction and re-loaded whenever the Options dialog closes (same fix as
+             the Output card's Device row below). -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxId.CardHeader}" />
@@ -215,7 +210,7 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowAlcMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveAlcLevel}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveAlcPercentDisplay}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowSwrMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
@@ -242,21 +237,20 @@
                     <TextBox Classes="Industry IndustryInput" Margin="0,0,0,4" Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
                 </WrapPanel>
 
-                <!-- Tone map is real (static per-mode SstvModeDefinition.LuminanceMinHz/MaxHz
-                     lookup, ToneMapText below). Tune drive/TX clock/Monitor audio/Occupied BW below
-                     it are still visual scaffolding only, shown as neutral "—" placeholders (0.9
-                     beta bar: no fake-live items): none of these are exposed anywhere in
-                     ScanlineStudio.Core.Audio today (spec/14-roadmap.md backlog); Occupied BW
-                     specifically was researched and deliberately deferred, not just not yet done,
-                     see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR values themselves
-                     are NOT duplicated here; the real conditional rows above already cover that. -->
+                <!-- Tune drive, ToneMap, and TX clock are all real (un-stub-TX-tab pieces 1/2/7).
+                     Monitor audio and Occupied BW remain neutral "—" placeholders: Monitor audio has
+                     no legacy precedent and no tappable TX audio signal (spec/14-roadmap.md "maybe
+                     one day" list); Occupied BW was researched and deliberately deferred, not just
+                     not yet done, see ~/.claude/plans/wandering-glowing-otter.md. ALC/Power/SWR
+                     values themselves are NOT duplicated here as text; the real conditional rows
+                     above already cover that (the fill-bar meters below DO reuse Power/ALC, as
+                     meters, which is a different presentation, not a duplicate). -->
                 <StackPanel Classes="Industry IndustryRows">
-                    <!-- Literal, same scaffolding class as ToneMap's siblings below (design-
-                         fidelity-agent-caught addition — mock2 has this row, the port previously
-                         dropped it). -->
+                    <!-- design-fidelity-agent-caught addition — mock2 has this row, the port
+                         previously dropped it; real binding since un-stub-TX-tab piece 1. -->
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.TuneDriveLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.TuneDriveValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RadioStatus.TxVolumeDisplay}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
@@ -264,7 +258,7 @@
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.TxClock}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.TxClockValue}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding TxClockText}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.MonitorAudio}" />
@@ -275,8 +269,33 @@
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxControls.Telemetry.OccupiedBwValue}" />
                     </Grid></Border>
                 </StackPanel>
-                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}" />
-                <Border Classes="IndustryHatchPanel" MinHeight="20" />
+                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}"
+                           IsVisible="{Binding ShowAnyMeter}" />
+                <!-- Fill-bar meters (Atoms.axaml's IndustryMeter atom, same technique
+                     RadioHeaderView.axaml's RX level meter uses) over the already-real, capability-
+                     gated LivePowerPercent/LiveAlcPercentDisplay — no new audio-engine data, this
+                     replaces the previously-empty hatch-pattern placeholder box. Power and ALC gate
+                     independently (a rig can report one without the other). -->
+                <Grid Classes="IndustryMeter" Margin="0,2,0,0" VerticalAlignment="Center" IsVisible="{Binding ShowPowerMeter}">
+                    <Border Classes="IndustryMeterTrack" Height="8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding PowerMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
+                            <ColumnDefinition Width="{Binding PowerMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
+                    </Grid>
+                </Grid>
+                <Grid Classes="IndustryMeter" Margin="0,2,0,0" VerticalAlignment="Center" IsVisible="{Binding ShowAlcMeter}">
+                    <Border Classes="IndustryMeterTrack" Height="8" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="{Binding AlcMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
+                            <ColumnDefinition Width="{Binding AlcMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
+                    </Grid>
+                </Grid>
             </StackPanel>
         </HeaderedContentControl>
 

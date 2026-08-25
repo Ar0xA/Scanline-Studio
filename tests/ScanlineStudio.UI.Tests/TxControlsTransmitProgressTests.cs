@@ -156,6 +156,53 @@ public sealed class TxControlsTransmitProgressTests
     }
 
     [AvaloniaFact]
+    public async Task TxClockText_ShowsIdleTextBeforeTransmitting_ThenElapsedWhileTransmitting_ThenIdleAgainAfter()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(sstvSession, localization);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxControls.Telemetry.TxClockIdle", vm.TxClockText);
+
+        await StartBlockingTransmitAsync(vm);
+        // Elapsed (30s) deliberately != the implied remaining (180-30=150s) so this test can't pass
+        // by accident if TxClockText were wired to the wrong field.
+        sstvSession.RaiseTransmitProgress(new TransmitProgressInfo(0.5, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(180)));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("0:30", vm.TxClockText);
+
+        vm.StopTransmitCommand.Execute(null);
+        await WaitUntilNotTransmittingAsync(vm);
+
+        Assert.Equal("Panes.TxControls.Telemetry.TxClockIdle", vm.TxClockText);
+    }
+
+    [AvaloniaFact]
+    public async Task TxClockText_DoesNotShowAPreviousTransmissionsStaleElapsedTime_AtTheStartOfTheNextOne()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await StartBlockingTransmitAsync(vm);
+        sstvSession.RaiseTransmitProgress(new TransmitProgressInfo(0.5, TimeSpan.FromSeconds(90), TimeSpan.FromSeconds(180)));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("1:30", vm.TxClockText);
+
+        vm.StopTransmitCommand.Execute(null);
+        await WaitUntilNotTransmittingAsync(vm);
+
+        await StartBlockingTransmitAsync(vm);
+
+        Assert.Equal("0:00", vm.TxClockText);
+
+        vm.StopTransmitCommand.Execute(null);
+        await WaitUntilNotTransmittingAsync(vm);
+    }
+
+    [AvaloniaFact]
     public void TransmitProgressChanged_RaisedWhileNotTransmitting_IsIgnored()
     {
         // A late-arriving report from a PREVIOUS transmission (or any report firing before this

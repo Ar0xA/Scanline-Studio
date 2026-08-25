@@ -227,6 +227,23 @@ internal static class VisHeader
         yield return (StartStopFrequencyHz, BitDurationMs);
     }
 
+    /// <summary>The full 8-bit byte <see cref="GenerateSegments"/> actually transmits for
+    /// <paramref name="visCode"/> -- same parity formula as that method (even parity over the low 7
+    /// bits, or <paramref name="forcedParityBit"/> when given, <see cref="Rm12ForcedParityBit"/>'s
+    /// own doc comment for why RM12 needs the override), computed directly rather than derived from
+    /// <see cref="GenerateSegments"/>'s frequency stream so a caller that only wants the byte value
+    /// (e.g. a UI display field) doesn't need to reverse-map tones back to bits.</summary>
+    public static int GetTransmittedByte(int visCode, int? forcedParityBit = null)
+    {
+        var parity = 0;
+        for (var bitIndex = 0; bitIndex < DataBitCount; bitIndex++)
+        {
+            parity ^= (visCode >> bitIndex) & 1;
+        }
+
+        return (visCode & 0x7F) | ((forcedParityBit ?? parity) << 7);
+    }
+
     /// <summary>
     /// "Extended VIS" for the MR/MP/ML families: after the normal leader/break/leader/start-bit
     /// prefix, transmits 16 raw bits back-to-back (LSB first) — low byte is
