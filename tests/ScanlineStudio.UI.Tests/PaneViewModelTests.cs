@@ -272,6 +272,36 @@ public sealed class PaneViewModelTests
         Assert.Equal(192 * 138.24 / 1000.0, (double)localization.LastArgs[1], precision: 9);
     }
 
+    /// <summary>Regression test (found during the TX image editor's own duration-fix code-review,
+    /// 2026-08-25): the OLD formula was <c>linesRemaining * mode.LineDurationMs</c> --
+    /// <c>LineDurationMs</c> is per TRANSMISSION line, not per image row, so a
+    /// <see cref="ColorEncoding.YCbCrLinePaired"/>/<see cref="ColorEncoding.MonoAveragedPaired"/>
+    /// mode (2 image rows per transmission line) got ~2x the real remaining time. This mode: 4 rows,
+    /// 100ms/line, 2 rows/line -&gt; 0.2s total. At 50% progress the OLD formula gives 0.2s remaining
+    /// (the entire duration, wrong); the correct value is 0.1s.</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RemainingText_LinePairedMode_DividesByRowsPerTransmissionLine()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var mode = new SstvModeDefinition(
+            Id: "line-paired", DisplayName: "Line Paired", VisCode: 0, ImageWidth: 4, ImageHeight: 4,
+            ColorEncoding: ColorEncoding.YCbCrLinePaired,
+            LineSegments: [new ScanSegment("Y", 100)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.5;
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxImage.RemainingValueFormat", vm.RemainingText);
+        Assert.Equal(2, localization.LastArgs[0]);
+        Assert.Equal(0.1, (double)localization.LastArgs[1], precision: 9);
+    }
+
     /// <summary>Logging-coverage audit (2026-08-15): <see cref="ISstvSessionService.DecodeRestarted"/>
     /// previously had no reachable subscriber anywhere in <c>ScanlineStudio.UI</c>. This VM now
     /// subscribes purely to log it -- deliberately no bound state changes -- so this asserts both
