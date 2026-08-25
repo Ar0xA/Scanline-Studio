@@ -17,7 +17,16 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// them during RX both wastes a poll cycle and risks a stale/meaningless value -- see
 /// <c>RigctldClientProtocol.PollAsync</c>/<c>HamlibRadioProtocol.PollAsync</c>). <see langword="null"/>
 /// means "not read this poll" (RX, capability absent, or the read itself failed) -- never a
-/// meaningful zero.</para>
+/// meaningful zero.
+///
+/// <b><see cref="AlcLevel"/>'s unit</b> (plan-review finding, un-stub-TX-tab piece 8): a 0.0-1.0
+/// normalized fraction, NOT 0-100 like <see cref="PowerPercent"/> -- hamlib's own <c>RIG_LEVEL_ALC</c>
+/// (<c>rig.h</c>) documents no range, but every backend checked (Icom/Yaesu/Kenwood) calibrates or
+/// scales its raw reading into [0.0, 1.0] before this port's own poll code
+/// (<c>RigctldClientProtocol.PollAsync</c>/<c>HamlibRadioProtocol.PollAsync</c>) reads it -- those two
+/// methods multiply <see cref="PowerPercent"/> by 100 to reach its 0-100 scale but pass
+/// <see cref="AlcLevel"/> through raw, so a consumer must multiply by 100 itself to get a
+/// percentage.</para>
 ///
 /// <para><see cref="SignalStrengthDb"/> -- opposite gating from <see cref="SwrRatio"/>/
 /// <see cref="AlcLevel"/>/<see cref="PowerPercent"/> above: an S-meter reading is only meaningful

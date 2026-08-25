@@ -377,6 +377,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes => SstvModeRegistry.All;
 
+    public double GetLeaderToneDurationMs(SstvModeDefinition mode) => AnalogFmSstvEncoder.GetLeaderToneDurationMs(mode);
+
+    public (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode) => AnalogFmSstvEncoder.GetVisHeaderInfo(mode);
+
     public bool IsReceiving => _isReceiving;
 
     /// <summary>See <see cref="ISstvSessionService.IsAutoDetectPaused"/>.</summary>

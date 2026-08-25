@@ -221,7 +221,14 @@ public partial class MainWindow : Window
                         // restart. Re-running LoadCallsignAsync unconditionally on close (Save AND
                         // Cancel) is safe -- Cancel never touched disk, so this is a no-op reload of
                         // the same value in that case, same as re-running it costs nothing extra.
-                        window.Closed += (_, _) => _ = vm.LoadCallsignAsync();
+                        // Same bug, same fix, for the Transmit tab's Output-device and Identification
+                        // fields (TxControlsPaneViewModel.LoadOutputDeviceNameAsync/LoadIdentificationSummaryAsync).
+                        window.Closed += (_, _) =>
+                        {
+                            _ = vm.LoadCallsignAsync();
+                            _ = vm.TxControls.LoadOutputDeviceNameAsync();
+                            _ = vm.TxControls.LoadIdentificationSummaryAsync();
+                        };
                         window.ShowDialog(this);
                         if (logger is not null)
                         {

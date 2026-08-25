@@ -160,6 +160,14 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public IReadOnlyList<SstvModeDefinition> AvailableModes { get; set; } = [];
 
+    public double LeaderToneDurationMsToReturn { get; set; }
+
+    public double GetLeaderToneDurationMs(SstvModeDefinition mode) => LeaderToneDurationMsToReturn;
+
+    public (VisHeaderKind Kind, int Value) VisHeaderInfoToReturn { get; set; } = (VisHeaderKind.Standard, 0);
+
+    public (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode) => VisHeaderInfoToReturn;
+
     public bool IsReceiving { get; set; }
 
     public bool IsAutoDetectPaused { get; set; }
