@@ -133,10 +133,15 @@ namespace ScanlineStudio.Core.Sstv;
 /// </summary>
 internal sealed class HilbertFmDemodulator
 {
-    private const double NormalCenterHz = 1900.0;
-    private const double NormalBandwidthHz = 800.0;
-    private const double NarrowCenterHz = 2172.0; // NARROW_CENTER = (NARROW_HIGH+NARROW_LOW)/2, sstv.h:441-443
-    private const double NarrowBandwidthHz = 256.0; // NARROW_BW = NARROW_HIGH-NARROW_LOW, sstv.h:441/442/444
+    // Un-stub-RX-tab Piece B: promoted from private to internal so AnalogFmSstvDecoder's Decoder
+    // Trace channel-1 capture can invert DemodulatedFrequencyAt's Hz value back to legacy's raw
+    // ±16384-domain scope value (CHILL::Do's own return domain, sstv.cpp:3086) using the SAME
+    // center/bandwidth pair this class itself uses -- a single source of truth, not a duplicated
+    // literal that could silently drift out of sync with this class's own values.
+    internal const double NormalCenterHz = 1900.0;
+    internal const double NormalBandwidthHz = 800.0;
+    internal const double NarrowCenterHz = 2172.0; // NARROW_CENTER = (NARROW_HIGH+NARROW_LOW)/2, sstv.h:441-443
+    internal const double NarrowBandwidthHz = 256.0; // NARROW_BW = NARROW_HIGH-NARROW_LOW, sstv.h:441/442/444
 
     private readonly int _tap;
     private readonly int _htap;

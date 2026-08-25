@@ -153,6 +153,37 @@ public interface ISstvDecoder
     /// next calls <see cref="PushSamples"/>.</summary>
     void RequestNotch(bool enabled, double? frequencyHz);
 
+    /// <summary>Arms a one-shot Decoder Trace capture — the port of legacy's real oscilloscope
+    /// trigger (<c>TTScope</c>/<c>CScope</c>, <c>TrigNext</c>/<c>SBTrigClick</c>). Two independent
+    /// channels: channel 0 (the VIS/sync-envelope detector, d12 or d19 depending on the currently
+    /// locked mode's narrow/wide-ness — latched once at arm time, not re-evaluated per sample)
+    /// writes on every sample regardless of lock state, matching legacy's own unconditional write;
+    /// channel 1 (the demodulated picture-frequency stream, post-AFC-correction when AFC applies)
+    /// only writes while genuinely locked — a capture armed with no active reception fills channel
+    /// 0 to <paramref name="size"/> samples but leaves channel 1 permanently empty (a real,
+    /// legacy-accurate gap, not a bug: legacy's own channel-1 write sits inside its own
+    /// <c>if(m_Sync)</c> block too). AVT is the one exception where this port's own gap is WIDER
+    /// than legacy's: AVT training is genuinely locked, but this port's channel-1 write is gated on
+    /// a tracker that stays null for AVT by construction, so channel 1 never fills during AVT even
+    /// though legacy's own channel-1 write is not AVT-gated. Re-arming discards any capture already in progress or
+    /// complete-but-unread, matching legacy's own re-trigger semantics. Safe to call from any
+    /// thread; applied on whichever thread next calls <see cref="PushSamples"/>. See
+    /// <see cref="TryGetScopeCaptureChannel0"/>/<see cref="TryGetScopeCaptureChannel1"/> for
+    /// reading a completed capture back.</summary>
+    void ArmScopeCapture(int size);
+
+    /// <summary>Returns the completed channel-0 capture from the most recent
+    /// <see cref="ArmScopeCapture"/> call, or <see langword="null"/> if that capture hasn't filled
+    /// yet. Safe to call from any thread, at any time — this is a plain cross-thread read of an
+    /// already-published, immutable snapshot, not a blocking wait.</summary>
+    double[]? TryGetScopeCaptureChannel0();
+
+    /// <summary>Returns the completed channel-1 capture from the most recent
+    /// <see cref="ArmScopeCapture"/> call, or <see langword="null"/> if that capture hasn't filled
+    /// yet (including "never will," if no reception is/was active since the arm — see
+    /// <see cref="ArmScopeCapture"/>'s own doc comment). Safe to call from any thread, at any time.</summary>
+    double[]? TryGetScopeCaptureChannel1();
+
     /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
     /// header detection — the port of legacy's real RX quick-mode-button click
     /// (<c>TMmsstv::SBMClick</c>, `Main.cpp:6096-6122`, calling <c>CSSTVDEM::Start(mode, TRUE)</c>,

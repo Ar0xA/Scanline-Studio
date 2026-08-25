@@ -172,6 +172,22 @@ public interface ISstvSessionService : IAsyncDisposable
     /// this is persistent state, not a one-shot command. Safe to call from any thread.</summary>
     void RequestNotch(bool enabled, double? frequencyHz);
 
+    /// <summary>Arms a one-shot Decoder Trace capture from the decoder — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ArmScopeCapture"/> for the full
+    /// contract (the port of legacy's real oscilloscope trigger). Safe to call from any thread.</summary>
+    void ArmScopeCapture(int size);
+
+    /// <summary>Returns the completed channel-0 Decoder Trace capture, or <see langword="null"/> if
+    /// not yet complete — see <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.TryGetScopeCaptureChannel0"/>
+    /// for the full contract. Safe to call from any thread, at any time.</summary>
+    double[]? TryGetScopeCaptureChannel0();
+
+    /// <summary>Returns the completed channel-1 Decoder Trace capture, or <see langword="null"/> if
+    /// not yet complete (including "never will," if no reception was active since the arm) — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.TryGetScopeCaptureChannel1"/> for the
+    /// full contract. Safe to call from any thread, at any time.</summary>
+    double[]? TryGetScopeCaptureChannel1();
+
     /// <summary>Requests a one-time "Correct Slant" search from the decoder — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestCorrectSlant"/> for the full
     /// contract (the port of legacy's real "Correct Slant" popup-menu item, `KRCS`/`KRCSClick`,

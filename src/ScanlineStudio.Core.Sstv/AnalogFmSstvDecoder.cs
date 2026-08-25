@@ -265,6 +265,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// advancing this cursor is exactly the property a revert to a separate detector would break.</summary>
     internal int VisDataD19ProcessedUpTo => _visDataD19ProcessedUpTo;
 
+    /// <summary>Diagnostic-only: how far the persistent D12 tone-detector cache's forward-fill
+    /// cursor has advanced. Un-stub-RX-tab Piece B code-review regression test: proves an armed
+    /// Decoder Trace capture's backlog-drain step actually caught this cursor up to
+    /// <see cref="_levelAgcProcessedUpTo"/> at arm time, rather than dumping a stale backlog into
+    /// the freshly-armed buffer on the next push.</summary>
+    internal int VisDataD12ProcessedUpTo => _visDataD12ProcessedUpTo;
+
+    /// <summary>Diagnostic-only: how far AGC's own forward-fill cursor has advanced -- the same
+    /// bound <see cref="ForceScopeCaptureChannel0Progress"/>/<see cref="ApplyPendingScopeCaptureArm"/>
+    /// use for their own D12/D19 catch-up calls.</summary>
+    internal int LevelAgcProcessedUpToForTests => _levelAgcProcessedUpTo;
+
     /// <summary>Diagnostic-only: how far the persistent FSK-space tone-detector cache's forward-fill
     /// cursor has advanced. Band-2 item S14 -- same fidelity gap <see cref="VisDataD11ProcessedUpTo"/>
     /// closes for S5, applied to the new detector this item adds.</summary>
@@ -506,6 +518,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // two writes race and get split across two different PushSamplesCore drains).
     private sealed record NotchRequest(bool Enabled, double? FrequencyHz);
     private NotchRequest? _pendingNotchRequest;
+
+    // Un-stub-RX-tab Piece B: RX Decoder Trace capture buffers -- see the constructor's own doc
+    // comment for why these are externally-owned (unlike _notchFilter), and D12At/D19At's own doc
+    // comments for the channel-0 write hook, ApplySlantTracking's for channel-1's. The d12-vs-d19
+    // narrow/wide latch for channel 0 lives on _scopeCaptureChannel0.UsesD19 itself, not as a field
+    // here -- see that property's own doc comment for why (must survive a RestartableSstvDecoder
+    // rebuild, which a field on THIS class would not).
+    private readonly ScopeCaptureBuffer _scopeCaptureChannel0;
+    private readonly ScopeCaptureBuffer _scopeCaptureChannel1;
+
+    private sealed record ScopeCaptureArmRequest(int Size);
+    private ScopeCaptureArmRequest? _pendingScopeCaptureArm;
 
     // RX buffer subsystem Phase 6d: deferred replay trigger. Plain (not volatile/Interlocked, unlike
     // _reSyncRequested) -- both set sites and the drain site all run on the same thread, inside the
@@ -872,9 +896,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). Gates real decode-path
     /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
     /// Restart-only, same reasoning/limitation as every other parameter here.</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, ILoggerFactory? loggerFactory = null)
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
+
+        // Un-stub-RX-tab Piece B: unlike every other constructor-injected field above/below, these
+        // two are OPTIONALLY externally-owned -- RestartableSstvDecoder passes the SAME two
+        // instances into every CreateInner call across a periodic rebuild (an in-progress capture
+        // must survive a restart, unlike notch state's fresh-reapply-per-rebuild shape; legacy's own
+        // CScope has no rebuild concept to begin with, it just lives on CSSTVDEM for that object's
+        // whole lifetime). Defaults to fresh instances for direct/test construction.
+        _scopeCaptureChannel0 = scopeCaptureChannel0 ?? new ScopeCaptureBuffer();
+        _scopeCaptureChannel1 = scopeCaptureChannel1 ?? new ScopeCaptureBuffer();
 
         _sampleRate = sampleRate;
         _afcEnabled = afcEnabled;
@@ -1281,7 +1314,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     {
         for (; _visDataD12ProcessedUpTo <= index; _visDataD12ProcessedUpTo++)
         {
-            _visDataD12Samples.Add(_visDataD12Detector.ProcessSample(AgcSampleAt(_visDataD12ProcessedUpTo)));
+            var value = _visDataD12Detector.ProcessSample(AgcSampleAt(_visDataD12ProcessedUpTo));
+            _visDataD12Samples.Add(value);
+
+            // Un-stub-RX-tab Piece B: Decoder Trace channel-0 write, this port's counterpart to
+            // legacy's m_Scope[0].WriteData(d12) (sstv.cpp:1871-1882, unconditional -- every
+            // sample, synced or not). No Hz conversion needed here (unlike channel 1) -- AgcSampleAt
+            // already returns legacy's own ±16384-domain d/d12/d19 values. Only the LATCHED source
+            // writes (_scopeCaptureChannel0.UsesD19's own doc comment) -- exactly-once/monotonic/
+            // gap-free by construction, this loop only ever advances forward past each index once.
+            if (!_scopeCaptureChannel0.UsesD19)
+            {
+                _scopeCaptureChannel0.Write(value);
+            }
         }
 
         return _visDataD12Samples[Rel(index)];
@@ -1291,7 +1336,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     {
         for (; _visDataD19ProcessedUpTo <= index; _visDataD19ProcessedUpTo++)
         {
-            _visDataD19Samples.Add(_visDataD19Detector.ProcessSample(AgcSampleAt(_visDataD19ProcessedUpTo)));
+            var value = _visDataD19Detector.ProcessSample(AgcSampleAt(_visDataD19ProcessedUpTo));
+            _visDataD19Samples.Add(value);
+
+            // See D12At's own comment immediately above -- same hook, the narrow-mode counterpart.
+            if (_scopeCaptureChannel0.UsesD19)
+            {
+                _scopeCaptureChannel0.Write(value);
+            }
         }
 
         return _visDataD19Samples[Rel(index)];
@@ -1360,6 +1412,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// doc comment for how the enabled/frequency state itself, as opposed to just this request latch,
     /// survives across calls).</summary>
     public void RequestNotch(bool enabled, double? frequencyHz) => Interlocked.Exchange(ref _pendingNotchRequest, new NotchRequest(enabled, frequencyHz));
+
+    /// <summary>See <see cref="ISstvDecoder.ArmScopeCapture"/>. A single atomic exchange, safe from
+    /// any thread -- consumed at the top of the next <see cref="PushSamples"/> call, same shape as
+    /// <see cref="RequestNotch"/> immediately above. Re-arming while a previous capture is still
+    /// in progress or already complete-but-unread discards it, matching legacy's own
+    /// <c>TrigNext</c> re-trigger semantics (see <see cref="ScopeCaptureBuffer.Arm"/>'s own doc
+    /// comment). Auditor code-review finding: validated at the call boundary, not left to throw
+    /// on the decode thread inside a later <see cref="PushSamples"/> call (a negative
+    /// <paramref name="size"/> would otherwise reach <c>new double[size]</c> deep inside
+    /// <see cref="ScopeCaptureBuffer.Arm"/>) -- same synchronous-guard convention
+    /// <see cref="RestartableSstvDecoder"/>'s own chunk-size check already uses.</summary>
+    public void ArmScopeCapture(int size)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(size);
+        Interlocked.Exchange(ref _pendingScopeCaptureArm, new ScopeCaptureArmRequest(size));
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.TryGetScopeCaptureChannel0"/>. Safe from any thread, at
+    /// any time -- see <see cref="ScopeCaptureBuffer.TrySnapshot"/>'s own doc comment.</summary>
+    public double[]? TryGetScopeCaptureChannel0() => _scopeCaptureChannel0.TrySnapshot();
+
+    /// <summary>See <see cref="ISstvDecoder.TryGetScopeCaptureChannel1"/>. Safe from any thread, at
+    /// any time -- see <see cref="ScopeCaptureBuffer.TrySnapshot"/>'s own doc comment.</summary>
+    public double[]? TryGetScopeCaptureChannel1() => _scopeCaptureChannel1.TrySnapshot();
 
     /// <summary>See <see cref="ISstvDecoder.RequestCorrectSlant"/>. A single volatile write, safe from
     /// any thread -- consumed inside <see cref="TryProcessBuffer"/>'s own per-line loop on whichever
@@ -1607,6 +1683,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // appended, and the append loop right below needs _notchFilter to already reflect this
         // batch's toggle state for every sample in it.
         ApplyPendingNotchRequest();
+        ApplyPendingScopeCaptureArm();
 
         var span = samples.Span;
         for (var i = 0; i < span.Length; i++)
@@ -1631,6 +1708,82 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         TryProcessBuffer();
         AdvanceAgcThroughDeadZone();
         TrimBuffers();
+        ForceScopeCaptureChannel0Progress();
+    }
+
+    // Un-stub-RX-tab Piece B (plan-review round 2 finding): TrimBuffers' own D12/D19 catch-up alone
+    // (see D12At/D19At's own doc comments) only advances in ~44100-sample bursts from a position
+    // seconds behind the stream head -- an armed capture relying on that alone would fill in one
+    // late lump instead of tracking the live stream the way legacy's real per-sample write does.
+    // Bounded by _levelAgcProcessedUpTo, NEVER TotalSamplesReceived -- keeps every AgcSampleAt call
+    // inside D12At/D19At's own fill loop a pure cache read (every index it asks for is already
+    // &lt;= watermark-derived bounds already &lt;= _levelAgcProcessedUpTo, so never a NEW AGC fill),
+    // matching the invariant TrimBuffers' own D12/D19 catch-up already relies on. Auditor code-review
+    // correction: the earlier version of this comment claimed watermark &lt;= _levelAgcProcessedUpTo
+    // alone was sufficient -- it covers the pure-cache-read half, but D12At(_levelAgcProcessedUpTo-1)
+    // ALSO needs _levelAgcProcessedUpTo-1 &gt;= _bufferBase or Rel() throws; that currently holds only
+    // via TrimBuffers' own separate watermark chain (Math.Min against _bandpassFilteredProcessedUpTo,
+    // itself &gt;= _levelAgcProcessedUpTo per AgcSampleAt), not via anything stated here -- the explicit
+    // guard below is real insurance, not decoration.
+    private void ForceScopeCaptureChannel0Progress()
+    {
+        if (!_scopeCaptureChannel0.IsCapturing || _levelAgcProcessedUpTo - 1 < _bufferBase)
+        {
+            return;
+        }
+
+        if (_scopeCaptureChannel0.UsesD19)
+        {
+            D19At(_levelAgcProcessedUpTo - 1);
+        }
+        else
+        {
+            D12At(_levelAgcProcessedUpTo - 1);
+        }
+    }
+
+    // Un-stub-RX-tab Piece B: consumes _pendingScopeCaptureArm, matching ApplyPendingNotchRequest's
+    // own shape/consumption point exactly.
+    //
+    // Auditor code-review finding (real bug, not a nit): while genuinely locked, the ONLY thing that
+    // ever advances _visDataD12ProcessedUpTo/_visDataD19ProcessedUpTo forward is TrimBuffers' own
+    // catch-up (TryInterleavedHeaderScan's per-sample D12At call is unreachable once _mode is set) --
+    // that catch-up only fires once the pending trim reaches MinTrimSamples (44100) and even then only
+    // reaches watermark-AnchorWarmupSamples (2000), so between trims these cursors can trail
+    // _levelAgcProcessedUpTo by up to ~46,100 samples (~4.2s @ 11025Hz). Arming without first
+    // discarding that backlog meant ForceScopeCaptureChannel0Progress's FIRST call after an arm would
+    // walk the whole stale gap in one shot and fill the fresh buffer with historical, not
+    // trigger-instant, samples -- exactly the "one late lump" failure this whole mechanism exists to
+    // avoid, just moved to arm time instead of gone. Fixed: drain the backlog into the OLD (about to
+    // be replaced) buffer BEFORE arming, so Arm() starts both channels genuinely empty and the very
+    // next real write is at-or-after the trigger.
+    private void ApplyPendingScopeCaptureArm()
+    {
+        var request = Interlocked.Exchange(ref _pendingScopeCaptureArm, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        var usesD19 = _mode is not null && _mode.NarrowModeCode is not null;
+        if (_levelAgcProcessedUpTo - 1 >= _bufferBase)
+        {
+            if (usesD19)
+            {
+                D19At(_levelAgcProcessedUpTo - 1);
+            }
+            else
+            {
+                D12At(_levelAgcProcessedUpTo - 1);
+            }
+        }
+
+        _scopeCaptureChannel0.Arm(request.Size);
+        _scopeCaptureChannel1.Arm(request.Size);
+        // Latched here, held for the whole capture -- see _scopeCaptureChannel0.UsesD19's own doc
+        // comment for why. _mode is null before any lock; that correctly defaults to d12 (wide),
+        // matching legacy's own m_fNarrow default of false.
+        _scopeCaptureChannel0.UsesD19 = usesD19;
     }
 
     private void ExecuteWithDeferredSubscriberFailures(Action action)
@@ -5535,6 +5688,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// frequency -- <see langword="null"/> while disabled.</summary>
     internal double? NotchFrequencyForTests => _notchFilter?.Frequency;
 
+    /// <summary>Un-stub-RX-tab Piece B: test-only visibility into which VIS/sync-envelope source
+    /// channel 0's current (or most recent) capture latched at arm time.</summary>
+    internal bool ScopeCaptureChannel0UsesD19ForTests => _scopeCaptureChannel0.UsesD19;
+
     /// <summary>Test-only: how many times <see cref="TryAutoSync"/> itself has applied a correction
     /// (distinct from a manual <see cref="RequestReSync"/> call, which shares the same underlying
     /// <see cref="ApplySyncCorrection"/> tail but is not counted here) -- the regression check for
@@ -5887,10 +6044,44 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // capture-append, and the capture-flush below, deliberately stay OUTSIDE
             // ProcessSlantTrackingSample's own extracted core -- replaying already-staged data must
             // NEVER re-stage it, so both steps are live-decode-only, never shared with the replay path.
+            // Un-stub-RX-tab Piece B: hoisted so the Decoder Trace channel-1 write below can reuse
+            // this exact value instead of calling DemodulatedFrequencyAt(_slantProcessedUpTo) a
+            // second time for the same index (harmless but wasteful -- see this method's own doc
+            // comment above for why this index is already, by this point, either genuinely
+            // post-AFC-corrected or legitimately still raw, matching legacy's own "always applied,
+            // possibly a no-op" m_AFCDiff semantics either way).
+            var demodulatedHz = DemodulatedFrequencyAt(_slantProcessedUpTo);
+
             if (_rxLineStagingBuffer is not null)
             {
-                _rxBufferLineDemod.Add(DemodulatedFrequencyAt(_slantProcessedUpTo));
+                _rxBufferLineDemod.Add(demodulatedHz);
                 _rxBufferLineSync.Add(envelope);
+            }
+
+            // Un-stub-RX-tab Piece B: Decoder Trace channel-1 write, this port's counterpart to
+            // legacy's m_Scope[1].WriteData(d) (sstv.cpp:2286, inside if(m_Sync){...} -- this whole
+            // loop only runs while _slantTracker is non-null. NOT AVT-gated in legacy, but IS here --
+            // InitializeSlant nulls _slantTracker for AVT, same accepted gap RX buffer's own capture
+            // hook already documents above -- channel 1 never fills during AVT training). Units
+            // conversion required (unlike channel 0): DemodulatedFrequencyAt returns Hz, but legacy's
+            // `d` here is CHILL::Do's raw, never-Hz-converted ±16384-domain scaled value
+            // (sstv.cpp:3086) -- invert HilbertFmDemodulator's own Hz descale
+            // (`centerHz - scaled*bandwidthHz/32768.0`) using the SAME center/bandwidth pair it
+            // itself uses for this exact index. Recomputed here, not cached -- auditor code-review
+            // correction: "guaranteed to match" overclaimed this for an earlier version of this
+            // comment. The _bandpassLockedFromSample half is genuinely safe (Commit sets both it and
+            // _slantProcessedUpTo's own anchor from the SAME _consumedSamples snapshot, so this loop
+            // can never sit below it) -- but _mode itself is not: _demodulatedFrequenciesProcessedUpTo
+            // is never rewound, so a re-lock whose anchor lands behind already-Hz-cached indices would
+            // re-walk them here under the NEW _mode while DemodulatedFrequencyAt originally filled them
+            // under the OLD one. Only observable across a narrowness-CHANGING re-lock (same gap this
+            // port's own narrow-mode coverage already leaves untested elsewhere) -- flagged, not fixed.
+            if (_scopeCaptureChannel1.IsCapturing)
+            {
+                var isNarrow = _mode is not null && _mode.NarrowModeCode is not null && _slantProcessedUpTo >= _bandpassLockedFromSample;
+                var centerHz = isNarrow ? HilbertFmDemodulator.NarrowCenterHz : HilbertFmDemodulator.NormalCenterHz;
+                var bandwidthHz = isNarrow ? HilbertFmDemodulator.NarrowBandwidthHz : HilbertFmDemodulator.NormalBandwidthHz;
+                _scopeCaptureChannel1.Write((centerHz - demodulatedHz) * 32768.0 / bandwidthHz);
             }
 
             var lineCompleted = ProcessSlantTrackingSample(envelope, isReplay: false);
