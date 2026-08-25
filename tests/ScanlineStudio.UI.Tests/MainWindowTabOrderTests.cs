@@ -46,6 +46,24 @@ public sealed partial class MainWindowTabOrderTests
         Assert.Equal("Options.Tx.Tab", headers[ViewModels.OptionsWindowViewModel.TxTabIndex]);
     }
 
+    /// <summary>Same reasoning as <see cref="OptionsTabControl_TxTabIndex_PointsAtTheActualTxTab"/>
+    /// above, for the radio-connection give-up popup's own "Config" button jump target: see
+    /// <see cref="ViewModels.OptionsWindowViewModel.RadioTabIndex"/>.</summary>
+    [Fact]
+    public void OptionsTabControl_RadioTabIndex_PointsAtTheActualRadioTab()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var optionsWindowPath = Path.Combine(uiSourceDirectory, "Views", "OptionsWindowView.axaml");
+        var text = File.ReadAllText(optionsWindowPath);
+
+        var headers = TabItemHeaderRegex().Matches(text).Select(m => m.Groups[1].Value).ToList();
+
+        Assert.True(
+            ViewModels.OptionsWindowViewModel.RadioTabIndex < headers.Count,
+            $"OptionsWindowViewModel.RadioTabIndex ({ViewModels.OptionsWindowViewModel.RadioTabIndex}) is out of range for the {headers.Count} top-level TabItems found in OptionsWindowView.axaml.");
+        Assert.Equal("Options.Radio.Tab", headers[ViewModels.OptionsWindowViewModel.RadioTabIndex]);
+    }
+
     private static string FindUiSourceDirectory()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

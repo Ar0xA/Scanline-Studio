@@ -69,6 +69,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel.LogbookTabIndex"/>.</summary>
     public const int TxTabIndex = 3;
 
+    /// <summary>Index of the Radio (CAT) tab -- named so the radio-connection give-up popup's own
+    /// "Config" button (which jumps straight here, since rig/CAT connection settings live on this
+    /// tab) can request it without a magic number, same pattern as <see cref="TxTabIndex"/>
+    /// above.</summary>
+    public const int RadioTabIndex = 2;
+
     /// <summary>Backs this dialog's own `TabControl`'s `SelectedIndex` (`Mode=TwoWay` -- both
     /// directions matter: the user's own manual tab clicks flow back here, and
     /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel"/>'s callsign chip needs to jump straight
