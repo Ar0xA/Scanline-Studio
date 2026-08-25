@@ -503,17 +503,16 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
-    public void GiveUpFlavoredDisconnected_SetsConnectionErrorMessage_AndRaisesConnectionGaveUp()
+    public void GiveUpFlavoredDisconnected_RaisesConnectionGaveUpWithTheLocalizedMessage()
     {
         // Give-up-after-5 feature: a Disconnected event with a non-null Reason means
         // RadioController's own give-up branch fired, not a real Disconnect click (always
-        // reason: null -- see the next test). This is the persistent, always-reachable half of the
-        // signal (RadioHeaderView.axaml, visible even with Options closed) plus the must-acknowledge
-        // popup (ConnectionGaveUp, wired by MainWindow.axaml.cs -- RadioConnectionGaveUpWindowView).
+        // reason: null -- see the next test). Surfaced as the must-acknowledge popup
+        // (ConnectionGaveUp, wired by MainWindow.axaml.cs -- RadioConnectionGaveUpWindowView); an
+        // earlier persistent header text line covering the same signal was removed as redundant.
         var radioSession = new FakeRadioSessionService();
         var vm = CreateViewModel(radioSession);
         Dispatcher.UIThread.RunJobs();
-        Assert.Null(vm.ConnectionErrorMessage);
 
         string? raised = null;
         vm.ConnectionGaveUp += message => raised = message;
@@ -522,12 +521,13 @@ public sealed class RadioStatusViewModelTests
             RadioConnectionState.Disconnected, "Gave up after 5 attempts: simulated", null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.NotNull(vm.ConnectionErrorMessage);
-        Assert.Equal(vm.ConnectionErrorMessage, raised);
+        // FakeLocalizationService.GetString echoes the raw key -- this proves the VM actually
+        // localized the reason through Options.Radio.Connect.GaveUp, not just forwarded evt.Reason.
+        Assert.Equal("Options.Radio.Connect.GaveUp", raised);
     }
 
     [AvaloniaFact]
-    public void NormalDisconnected_DoesNotSetConnectionErrorMessage_OrRaiseConnectionGaveUp()
+    public void NormalDisconnected_DoesNotRaiseConnectionGaveUp()
     {
         var radioSession = new FakeRadioSessionService();
         var vm = CreateViewModel(radioSession);
@@ -539,26 +539,7 @@ public sealed class RadioStatusViewModelTests
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Null(vm.ConnectionErrorMessage);
         Assert.False(raised);
-    }
-
-    [AvaloniaFact]
-    public void ConnectionErrorMessage_ClearedOnNextConnecting()
-    {
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession);
-        Dispatcher.UIThread.RunJobs();
-
-        radioSession.PushConnectionEvent(new RadioConnectionEvent(
-            RadioConnectionState.Disconnected, "Gave up after 5 attempts: simulated", null, DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-        Assert.NotNull(vm.ConnectionErrorMessage);
-
-        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connecting, null, null, DateTimeOffset.UtcNow));
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Null(vm.ConnectionErrorMessage);
     }
 
     [AvaloniaFact]
