@@ -83,8 +83,9 @@ control, with the verification that justifies the grouping stated inline.
 ## Receive tab
 
 `MainWindow.axaml:153-761`. Three columns (`:156`, `ColumnDefinitions="236,*,312"`) — Mode/Sync/
-Input/Signal cards (left), Waterfall + Incoming-frame + Decode-activity (centre), Frame-metadata/
-Unattended-RX/Session-frames (right). Left, centre-top and right columns bind `DataContext="{Binding
+Input/Signal cards (left), Waterfall + Incoming-frame + Decode-activity (centre), Frame-metadata
+(right — Unattended-RX/Session-frames cards removed 2026-08-25, see below). Left, centre-top and
+right columns bind `DataContext="{Binding
 RxImage}"` per card; the Incoming-frame card's own action row deliberately stays on `MainViewModel`
 and qualifies each binding (`MainWindow.axaml:486-490`).
 
@@ -99,47 +100,46 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | Quick-mode pill grid (16 buttons, SC1…SC2180) | REAL | `:209-226` | Each `Command="{Binding QuickSelectModeCommand}"` (`RxImagePaneViewModel.cs:568`) with a real `SstvModeDefinition.Id` as `CommandParameter` (`scottie-s1`, `martin-m1`, `r24`, `pd240`, …). Forces the *next* decode's mode; not a persistent lock. |
 | Line time | REAL | `:228` | `LineTimeText` (`.cs:353`), derived from the real `DetectedMode`. |
 | Lines | REAL | `:229` | `LinesText` (`.cs:355`). |
-| Remaining | PLACEHOLDER | `:230` | `Panes.RxImage.RemainingValue` = `"—"` (`en.json:93`). No remaining-time computation exists. |
+| Remaining | REAL — **wired 2026-08-25** | `:230` | `RemainingText` (`RxImagePaneViewModel.cs:381`), same `Progress` x `DetectedMode.ImageHeight`/`LineDurationMs` source as `LineProgressText`. |
 
-**Sync & slant card** (`MainWindow.axaml:238-278`)
+**Sync & slant card** (`MainWindow.axaml:238-273`)
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| Source | PLACEHOLDER | `:244` | `Panes.RxSync.SourceValue` = `"—"` (`en.json:143`). No product decision on what "Source" means here. |
-| Slant ppm | REAL | `:245` | `SlantPpmDisplay` (`RxImagePaneViewModel.cs:392`) — read-only formatted readout, not an editable stepper. |
-| Sync offset | REAL | `:246` | `SyncOffsetSamplesDisplay` (`.cs:405`). |
-| Auto-correct | REAL | `:247` | `AutoCorrectDisplay` (`.cs:443`), 4-way AVT/Off/Locked/on-not-locked readout gated by `SstvDecoderSettings.AutoSlantEnabled`. |
-| Re-sync button | REAL | `:266` | `RequestReSyncCommand` (`.cs:535-536`) → `ISstvSessionService.RequestReSync`. |
-| Correct slant button | REAL | `:267` | `RequestCorrectSlantCommand` (`.cs:538-539`) — port of legacy's `KRCS` popup item, sibling to Re-sync. |
-| Reset button | STUB (disabled) | `:268` | `IsEnabled="False"`, `Options.NotImplemented.Help`. No legacy-verified semantics decided; the file's own comment (`:249-256`) explicitly warns against guessing a mapping. |
-| Advanced timing disclosure toggle | STUB (disabled) | `:270` | `IsEnabled="False"` + tooltip. |
-| — Sample clock / Sync window / VIS threshold / Drop-line | **unreachable** | `:272-275` | Gated `IsVisible="{Binding #AdvancedTimingToggle.IsChecked}"` on a permanently-disabled toggle, so they can never render. Their loc values are still real-looking literals — `"47 999.66 Hz"` / `"±4.8 ms"` / `"−26 dB"` / `"interpolate"` (`en.json:144-147`) — a **latent FAKE-LIVE** the moment that toggle is ever enabled. Flagged in the Summary. |
+| Source | REAL — **wired 2026-08-25** | `:251` | `SyncSourceDisplay` (`RxImagePaneViewModel.cs`), live-polled `SstvSyncSource` (`Idle`/`Locked`/`AvtTraining`) from `ISstvDecoder.SyncSource` — a 3-value classification, not the originally-considered 4-way Search/VisLock/Forced/AvtTraining split (see `SstvSyncSource`'s own doc comment for why that split isn't honestly derivable from existing decoder state). |
+| Slant ppm | REAL | `:249` | `SlantPpmDisplay` (`RxImagePaneViewModel.cs:392`) — read-only formatted readout, not an editable stepper. |
+| Sync offset | REAL | `:250` | `SyncOffsetSamplesDisplay` (`.cs:405`). |
+| Auto-correct | REAL | `:251` | `AutoCorrectDisplay` (`.cs:443`), 4-way AVT/Off/Locked/on-not-locked readout gated by `SstvDecoderSettings.AutoSlantEnabled`. |
+| VIS threshold | REAL — **wired 2026-08-25** | `:266` | `VisThresholdDisplay` (`RxImagePaneViewModel.cs`), restart-only construction-time read of `ISstvDecoder.SenseLevel` (previously only test-only exposed as `SenseLevelForTests`, now a real public member). New plain row, not behind the removed Advanced Timing disclosure. Preset NAME only (Very low/Low/High/Very high) — the underlying threshold is a raw AGC-domain amplitude, not dB; the old stub's "−26 dB" placeholder was a fake literal. |
+| Re-sync button | REAL | `:275` | `RequestReSyncCommand` (`.cs:535-536`) → `ISstvSessionService.RequestReSync`. |
+| Correct slant button | REAL | `:276` | `RequestCorrectSlantCommand` (`.cs:538-539`) — port of legacy's `KRCS` popup item, sibling to Re-sync. |
+| ~~Reset button~~ | **REMOVED 2026-08-25** | — | Legacy does have a real Slant-Reset (`Main.cpp:13186-13193`), but this port rebuilds its slant tracker per lock and tears it down at end-of-image, making a reset structurally inert against this port's own architecture — not a missing port, a structural mismatch. |
+| ~~Advanced timing disclosure toggle~~ / ~~Sample clock~~ / ~~Sync window~~ / ~~Drop-line~~ | **REMOVED 2026-08-25** | — | Sample clock's legacy equivalent is a manual calibration dialog (`ClockAdj.cpp`), not a passive readout, and this port's own Slant ppm row above is already the modern automatic equivalent; Sync window is static across a decoder instance's lifetime and its old placeholder value matched no real ported constant; Drop-line has zero legacy grounding, same class as the already-removed Frame Metadata "Dropped lines" row. VIS threshold survives — planned to return as a real plain row, not behind this disclosure (same plan, item 6). |
 
-**Input chain card** (`MainWindow.axaml:284-324`)
+**Input chain card** (`MainWindow.axaml:280-315`)
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
 | Device | REAL | `:290` | `CaptureDeviceNameDisplay` (`.cs:179`), `CaptureDeviceName ?? "—"`. |
-| Squelch | PLACEHOLDER | `:291` | `"—"` (`en.json:166`). |
-| BPF | PLACEHOLDER | `:292` | `"—"` (`en.json:167`). **Nit:** RX BPF sharpness *is* a real, wired setting now (Options → Decode), but this readout is not bound to it — a cheap follow-up, not a hard gap. |
+| ~~Squelch~~ / ~~Noise floor~~ | **REMOVED 2026-08-25** | — | Legacy's only "squelch"-labeled control is a mistranslation of the VIS-lock sensitivity threshold (`Option.cpp`'s Spanish "Nivel de Squelch" binds to `m_SenseLvl`, the same quantity as the Sync & Slant card's planned "VIS threshold" row), not a real RF squelch. Noise floor has zero legacy equivalent anywhere, same undefined-measurement class as the already-removed Signal Quality SNR rows. |
+| BPF | REAL — **wired 2026-08-25** | `:315` | `RxBpfDisplay` (`RxImagePaneViewModel.cs`), restart-only construction-time read of `ISstvDecoder.RxBpfPreset` (previously only test-only exposed as `RxBpfPresetForTests`, now a real public member). Preset NAME only, not a cutoff figure — the locked-filter cutoff differs from the search/pre-lock cutoff, so a single number would be wrong whenever this reads while unlocked. |
 | Notch | PLACEHOLDER | `:293` | `"—"` (`en.json:168`). No notch filter exists in `Core.Sstv`. |
 | AGC | REAL | `:294` | `AgcGainDisplay` (`.cs:525`). |
 | Buffer | REAL | `:295` | `BufferedSampleCountDisplay` (`.cs:505`), "N samples · M XRUN". |
 | Clipping | REAL | `:296` | `ClippingDisplay` (`.cs:513`). |
 | Noise floor | PLACEHOLDER | `:297` | `"—"` (`en.json:173`). |
-| Level L / Level R values | PLACEHOLDER | `:306`, `:316` | `"—"` (`en.json:164-165`). |
-| Level L / Level R meters | PLACEHOLDER | `:312-315`, `:317-320` | Fill columns hardwired `0*,100*` (empty track), deliberately *not* a fake percentage — this port's demod path is mono-only. |
+| ~~Level L / Level R values / meters~~ | **REMOVED 2026-08-25** | — | Blocked on a real architecture decision (does stereo capture belong in this mono-only-demod port at all), not just wiring. Moved to `spec/14-roadmap.md`'s "Explicitly deferred beyond v1" list. |
 
 **Signal quality card** (`MainWindow.axaml:330-347`)
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| SNR-per-line plot | STUB (empty) | `:335-336` | Kicker label + empty `Border Classes="IndustryHatchPanel"`. No per-line SNR exists anywhere in the decode pipeline. |
-| Min/Max | PLACEHOLDER | `:337` | `"—"` (`en.json:182`). |
-| Luminance histogram plot | STUB (empty) | `:338-339` | Same empty-hatch pattern. |
+| ~~SNR-per-line plot~~ | **REMOVED 2026-08-25** | — | No per-line SNR exists anywhere in the decode pipeline, and no defined concept of what it should mean (`spec/17-rx-telemetry-feasibility.md`). Row and locale keys deleted, not just unwired. |
+| ~~Min/Max~~ | **REMOVED 2026-08-25** | — | Depended on the same undefined SNR concept above. |
+| ~~Luminance histogram plot~~ | **REMOVED 2026-08-25** | — | No histogram computation exists; same undefined-concept category. |
 | Clip Lo/Hi | REAL | `:341` | `ClipLoHiDisplay` (`.cs:372`) — image-domain pixel-luminance statistic, not audio DSP. |
 | Sync tone | REAL | `:342` | `SyncToneDisplay` (`.cs:495`). |
-| Black tone / White tone | PLACEHOLDER | `:343-344` | `"—"` (`en.json:185-186`). |
+| ~~Black tone / White tone~~ | **REMOVED 2026-08-25** | — | Not a well-defined measurement even in principle, unlike Sync tone. Row and locale keys deleted, not just unwired. |
 
 ### Centre column
 
@@ -190,13 +190,13 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | Callsign | REAL | `:680` | `CallsignDisplay` (`.cs:276`) — mirrors `OverrideCallsign`, which is auto-filled by the real FSK station-ID decode path (`OnStationIdDecoded`, `.cs:735`). The old "· OCR" label suffix was dropped; the value no longer claims an OCR source. |
 | Name | REAL | `:685` | `NameDisplay` (`.cs:297`), from the real QRZ lookup. |
 | QTH | REAL | `:686` | `QthDisplay` (`.cs:303`). |
-| Grid / dist | **PARTIAL** | `:687` | `GridDisplay` (`.cs:314`) is `$"{LookupGrid ?? "—"} / --"` — the grid half is real, the distance half is a hardcoded `"--"` inside the property itself. Needs the operator's own grid + a distance calc (a real `MaidenheadLocator` now exists in the TX editor's `{dist}`/`{bearing}` chips; wiring it here is unblocked). |
-| Frequency | PLACEHOLDER | `:688` | `"—"` (`en.json:221`). |
-| Mode / VIS | PLACEHOLDER | `:689` | `"—"` (`en.json:222`). |
+| Grid / dist | REAL — **wired 2026-08-25** | `:687` | `GridDisplay` (`.cs:326`) computes the distance half via `MaidenheadLocator.TryComputeDistanceBearing(OperatorGrid, LookupGrid)` + `FormatDistance`; `OperatorGrid` loaded once at construction via `ISstvSessionService.GetOperatorGridAsync` (new). Falls back to `"--"` if either grid is missing/malformed, never throws. |
+| Frequency | REAL — **wired 2026-08-25** | `:722` | Ancestor-relative binding to `RadioStatus.FrequencyDisplayOrPlaceholder` (`RadioStatusViewModel.cs`, new) — a second, narrower property than the status bar's own `FrequencyDisplay`, since that one deliberately shows a `"000.000.000"` idle readout unsuitable for this card's `"—"` convention. Live VFO, not latched to the displayed frame's own receive frequency (documented tradeoff — `ReceiveHistoryEntry` carries no frequency field to latch from). |
+| Mode / VIS | REAL — **wired 2026-08-25** | `:743` | Binds `DetectedModeDisplay` (`.cs:351`), same `"{DisplayName} — VIS {VisCode}"` property already used by the Mode panel's own ComboBox. For a forced-mode reception this shows the locked mode's expected VIS code, not a raw decoded byte (none is captured anywhere in the RX pipeline). |
 | Started | REAL | `:690` | `StartedDisplay` (`.cs:379`). |
-| SNR / slant | PLACEHOLDER | `:691` | `"—"` (`en.json:224`). |
-| OCR confidence | PLACEHOLDER | `:692` | `"—"` (`en.json:225`). No OCR exists. |
-| Dropped lines | PLACEHOLDER | `:693` | `"—"` (`en.json:226`). |
+| ~~SNR / slant~~ | **REMOVED 2026-08-25** | — | No defined concept for SNR on an FM-demodulated signal (same open question as the Signal Quality card's SNR row); slant half was redundant with the real Sync & Slant card. Row and locale keys deleted, not just unwired. |
+| ~~OCR confidence~~ | **REMOVED 2026-08-25** | — | OCR has no legacy precedent and is user-deferred to "maybe one day" (`spec/14-roadmap.md`'s "Explicitly deferred beyond v1"); row, locale keys, and the decode-log "· OCR" label suffix all removed, not just unwired. |
+| ~~Dropped lines~~ | **REMOVED 2026-08-25** | — | `spec/17-rx-telemetry-feasibility.md` classifies this as likely not a clean concept given the port's per-pixel decode approach; no counter exists anywhere in the decoder. Row and locale keys deleted, not just unwired. |
 | File size | REAL | `:694` | `FileSizeDisplay` (`.cs:385`); only populates once the frame's own save completes, otherwise `"—"`. |
 | Note `TextBox` | REAL | `:709` | `Text="{Binding Note}"` (`.cs:102`), `IsEnabled="{Binding CanEditFrameMetadata}"` (`.cs:95` — true once `_currentEntryId` is correlated via `OnHistoryRecorded`, `.cs:921`); debounce-persists through the real `IReceiveHistoryStore.SetNoteAsync` (`PersistNoteDebouncedAsync`, `.cs:963`). **This closes the previous revision's only remaining PARTIAL finding.** |
 | Override callsign `TextBox` | REAL | `:711` | `Text="{Binding OverrideCallsign}"` (`.cs:270`). **Nit:** its `Watermark` is `Panes.RxFrameMeta.CallsignValue` = `"EA7KDT"` (`en.json:220`) — a real-looking callsign as watermark text; low severity (watermarks are visually distinct) but it is the last surviving instance of that literal. |
@@ -205,13 +205,13 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | Frame-metadata error banner | REAL | `:722-725` | `FrameMetadataErrorMessage` (`.cs:116`). |
 | QRZ-lookup error banner | REAL | `:726-729` | `QrzLookupErrorMessage` (`.cs:317`) — this is where the "QRZ disabled/unconfigured" case surfaces, rather than graying out the button. |
 
-**Unattended RX card** (`MainWindow.axaml:733-743`) — Watch / Scan dwell / Alert / Session, all four
-PLACEHOLDER `"—"` (`:738-741`, `en.json:238-241`). No scan/watch feature exists.
+**Unattended RX card** — **REMOVED 2026-08-25.** No design exists for what "watching" or "scanning"
+should mean here; moved to `spec/14-roadmap.md`'s "Explicitly deferred beyond v1" list instead of
+left as a placeholder with no defined target.
 
-**Session frames card** (`MainWindow.axaml:753-758`) — PLACEHOLDER. One honest empty-state line
-(`Panes.RxSessionFrames.NoSessionYet` = *"No frames received this session"*, `en.json:243`). The prior
-revision's "15 hand-written literal rows / 45 `TextBlock`s" is gone — collapsed by the UI-honesty pass
-(see the file's own comment at `:745-752`).
+**Session frames card** — **REMOVED 2026-08-25.** No per-session frame-log concept has ever been
+designed (distinct from the real `ReceiveHistoryStore`, which persists across sessions). Moved to
+`spec/14-roadmap.md`'s "Explicitly deferred beyond v1" list.
 
 ---
 
@@ -695,10 +695,10 @@ figure below as ±10, not exact.
 |---|---|---|
 | **REAL** | ~275 | TX image editor (~130, 100 %), Logbook tab (~25, 100 %), Options General/Audio/Radio/Tx/Decode/Identification/QRZ/Forwarding cores (~50), Receive tab telemetry (~30), Radio header (~12), status bar + tab strip (~13), Gallery (~20), About/QSO-link dialogs (~12). |
 | **PLACEHOLDER** (honest) | ~60 | Receive Input-chain/Signal-quality/Frame-metadata/Unattended-RX unbacked rows, TX Outgoing-metadata card (9), TX mode/output scaffolding rows (8), Gallery per-entry SNR/freq/grid + Sidecar/Disk, status-bar Memory/SNR/Disk, TX Queue/Recently-sent/Session-frames empty states. |
-| **STUB** (disabled + tooltip) | ~56 | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options Decode Auto-start (1), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode/Reset/Advanced-timing (4), Gallery Re-decode + 14MHz filter (2), TX Recently-sent buttons (2), Decode-activity + TX-log header-only tables (2), 4 empty hatch plots. |
+| **STUB** (disabled + tooltip) | ~52, **updated 2026-08-25** | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options Decode Auto-start (1), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode (2, Reset/Advanced-timing removed 2026-08-25, see the Sync & Slant card table above), Gallery Re-decode + 14MHz filter (2), TX Recently-sent buttons (2), Decode-activity + TX-log header-only tables (2), 4 empty hatch plots. |
 | **STUB (dead-interactive)** | **0**, **closed 2026-08-22** | Was 4 (Gallery Search `TextBox`, 14MHz/Unlogged/Flagged `ToggleButton`s). Search and Unlogged/Flagged are now real (client-side `FilteredEntries`, `RxHistoryPaneViewModel`); 14MHz is now an honest disabled stub instead (see the STUB row above) — no frequency field exists on `ReceiveHistoryEntry` to filter by, and adding one is a schema change out of scope for a dead-control fix. No dead-interactive controls remain anywhere in the app. |
-| **FAKE-LIVE** | **4** | Gallery Sort chip `"SORT NEWEST"` (`:983`), Gallery Size chip `"SIZE M"` (`:984`), VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`), and the AUTOSAVE-ON chip's wording (`MainWindow.axaml:1495`, mitigated by being disabled+dimmed). Gallery Storage Naming (`:1168`) is fixed as of 2026-08-22 — see its own PLACEHOLDER row above. Plus **4 latent** — the Advanced-timing values (`:272-275`), currently unreachable behind a permanently-disabled toggle but still real-looking literals if it's ever enabled. |
-| **PARTIAL** | **1** | Receive Frame-metadata "Grid / dist" (`:687`) — grid half real, distance half a hardcoded `"--"` inside `GridDisplay` itself (`RxImagePaneViewModel.cs:314`). |
+| **FAKE-LIVE** | **4**, **latent risk closed 2026-08-25** | Gallery Sort chip `"SORT NEWEST"` (`:983`), Gallery Size chip `"SIZE M"` (`:984`), VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`), and the AUTOSAVE-ON chip's wording (`MainWindow.axaml:1495`, mitigated by being disabled+dimmed). Gallery Storage Naming (`:1168`) is fixed as of 2026-08-22 — see its own PLACEHOLDER row above. The previously-flagged "4 latent" Advanced-timing values are moot — that whole disclosure (Sample clock/Sync window/Drop-line) was removed 2026-08-25, not left reachable, so the risk closed rather than materialized. |
+| ~~**PARTIAL**~~ | **0**, **closed 2026-08-25** | Was 1 (Receive Frame-metadata "Grid / dist") — now REAL, see that card's own table above. |
 
 **Fully real screens:** TX image editor (100 %, zero disabled/unbacked controls). Logbook tab (100 %).
 About dialog. QSO-link dialog. Options Forwarding tab. Options QRZ.com tab. Spectrum & waterfall card.

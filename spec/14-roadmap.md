@@ -204,7 +204,10 @@ beyond same-process isolation, legacy `.MDT` log import, legacy `.mtm` template 
 (**narrowed 2026-08-22**: this used to read "the full QSL/template designer (`.mtm` import)" — the
 modern template designer itself shipped 2026-08-18, [[15-template-designer]]; only importing
 legacy's own `.mtm` files remains parked), SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
-(no legacy precedent — verified zero OCR anywhere in `yoniq-old/`). Adding, same tier: **Phase 5
+(no legacy precedent — verified zero OCR anywhere in `yoniq-old/`), stereo L/R input-chain level
+meters (blocked on a mono-vs-stereo architecture decision, not just wiring), Unattended RX
+(scan/watch/dwell/alert — no design exists for what "watching" or "scanning" means here), Session
+Frames (no per-session frame-log concept has ever been designed). Adding, same tier: **Phase 5
 plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in `src/` yet); waterfall's
 3 deferred sub-items (interactive notch-filter marker — no notch DSP block exists to back it; a
 dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itself (narrowed
@@ -1482,8 +1485,7 @@ table is a grouping/leverage view of the same gaps below, not a new inventory:
   2044/2300) exposed as `TxControlsPaneViewModel.ToneMapText`, zero new DSP, zero new wiring beyond
   a `[NotifyPropertyChangedFor]` computed property. Also skipped the plan+auditor cycle (same
   low-risk-UI-plumbing reasoning as device name). | `ISstvSessionService.GetConfiguredPlaybackDeviceNameAsync`, `TxControlsPaneViewModel.OutputDeviceName`/`ToneMapText` | TX telemetry readouts row (device name + tone map done; sample-clock/occupied-bandwidth/monitor remain blocked — occupied bandwidth now abandoned, not just unbuilt) |
-| **OCR** | Nothing | Frame metadata card's callsign-OCR field |
-| **QRZ lookup** | **Shipped 2026-08-11/12** (`QrzCallsignLookup`, `ScanlineStudio.Core.Logbook`), corrected 2026-08-22 — this row used to lump QRZ in with OCR as fully unbuilt | Frame metadata card's grid field, gallery search on it (both still gated on OCR above for the callsign that would drive a lookup) |
+| **QRZ lookup** | **Shipped 2026-08-11/12** (`QrzCallsignLookup`, `ScanlineStudio.Core.Logbook`), corrected 2026-08-22 — this row used to lump QRZ in with OCR as fully unbuilt; OCR itself moved to "Explicitly deferred beyond v1" (Tier 3), not tracked as an active gap here | Frame metadata card's grid field, gallery search on it |
 
 Already covered, not gaps: TX power/ALC/SWR history (`TxControlsPaneViewModel.TelemetryHistory`, real
 data via `RadioState` polling), decode progress (`IReceivedImageBuffer.Progress`), PTT lock,
@@ -1540,18 +1542,16 @@ data behind them today):
   remain fully unbacked — no such computation exists in the decode pipeline, and SNR specifically
   needs a product decision (see the root-cause map's Tier B note above), not a lookup. Medium
   remaining.
-- Structured "Decode activity" log (freq/mode/callsign-OCR/grid/SNR/slant/lines/state per decode)
+- Structured "Decode activity" log (freq/mode/callsign/grid/SNR/slant/lines/state per decode)
   and its decoder-trace pane — no such structured event log exists; would need a new decode-
   history recorder distinct from `ReceiveHistoryStore`. Medium-large.
-- Frame metadata card (callsign OCR, grid/QRZ, VIS/frequency stamp, OCR confidence, dropped
-  lines, file size, note, flag) — **partially done, corrected 2026-08-22**: this line used to say
-  none of these fields exist on `ReceiveHistoryEntry` — `Note`/`IsFlagged`/`DecodeState`/
-  `LinkedQsoId` all shipped since (2026-08-08 and later, see [[07-image-pipeline]]'s "RX history"
-  section), and file size shipped via `IReceivedImageBuffer.Saved` ([[18-path-to-1.0]] High item 5's
-  packaging cluster). Callsign OCR, grid/QRZ auto-fill, VIS/frequency stamp, OCR confidence, and
+- Frame metadata card (grid/QRZ, VIS/frequency stamp, dropped lines, file size, note, flag) —
+  **partially done, corrected 2026-08-22**: this line used to say none of these fields exist on
+  `ReceiveHistoryEntry` — `Note`/`IsFlagged`/`DecodeState`/`LinkedQsoId` all shipped since
+  (2026-08-08 and later, see [[07-image-pipeline]]'s "RX history" section), and file size shipped
+  via `IReceivedImageBuffer.Saved` ([[18-path-to-1.0]] High item 5's packaging cluster). Callsign
+  itself is real (FSK-decoded, not OCR — see below). Grid/QRZ auto-fill, VIS/frequency stamp, and
   dropped-line count remain wholly unbuilt. Medium remaining, down from Large.
-- Unattended RX (scan/watch list, dwell time, alert-on-decode) — no scanning/watch feature
-  exists in `IRadioSessionService`/`ISstvSessionService`. Large.
 - "Decode rows colored by state" (yellow=decoding/green=saved+logged/red=partial) — the flat
   WSJT-X-style chrome pass added the color classes and LED-indicator convention this would use,
   but there's no decode-state field on any list row to drive it (same gap as the Decode-activity
@@ -1696,8 +1696,9 @@ gaps found while doing this pass, not previously tracked anywhere:
   `PlayWithPttAsync` — deliberately not reusing the PTT-lock's own field, so `IsPttLocked` never
   lies about what's actually holding PTT keyed.
 - QRZ.com lookup enable — **shipped 2026-08-11/12** (corrected 2026-08-22), narrower than the
-  already-tracked "OCR/QRZ lookup" gap under Frame metadata above (that one still covers OCR, which
-  QRZ lookup itself doesn't resolve). Legacy's own QRZ integration hardcoded a personal account
+  formerly-combined "OCR/QRZ lookup" gap under Frame metadata above — OCR itself is now tracked
+  only under "Explicitly deferred beyond v1" (Tier 3), not as an active gap. Legacy's own QRZ
+  integration hardcoded a personal account
   password; this port did not resurrect that — `QrzLookupSettings` takes user-supplied credentials
   (currently stored in plain JSON, see [[12-settings]]'s "Secrets" section for that separate gap).
 - ~~JPEG save quality (0-100)~~ — **DONE 2026-08-15**, see the Tier 2 entry above. Automatic
@@ -1906,13 +1907,6 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   still open: where do Name/QTH land in this port's architecture (no "current session His Call"
   concept exists yet the way legacy's `HisName`/`HisQTH` `TEdit`s do) — needs a plan pass, not a
   straight port of the naive parsing.
-- [ ] **OCR (callsign-from-image recognition)** — moved to "Explicitly deferred beyond v1" below,
-  2026-08-11: verified against `yoniq-old/YONIQ-main` directly (not assumed) that legacy has **zero**
-  OCR anywhere — the only "OCR" hits in the whole tree are `#ifndef OCRH`/`#define OCRH` include
-  guards in a few unrelated `About.h` files, coincidental naming. This was previously bundled with
-  the QRZ item above under one "OCR/QRZ lookup" line; split out because QRZ lookup is a real,
-  scoped legacy port and OCR is a wholly invented feature with no legacy precedent to port — user
-  confirmed OCR stays low-priority/someday, QRZ lookup is active.
 - [x] **CW-ID / FSK station-ID subsystem** — **shipped 2026-08-12** (6 phases, `PROJECT_BRIEF.md`).
   Real residuals (NR/RST Options UI, `MacroTextResolver` token gaps, half-built callsign auto-fill,
   VOX/Sound-file ID not built) tracked in Tier 2 above, corrected 2026-08-13 — an earlier
@@ -2055,7 +2049,10 @@ verb for it.
 - **Stale as of 2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer deferred — it was the active 1.1 target (redesigned, not a legacy `.mtm` port; see [[19-path-to-1.1]]) and is now **implemented** (2026-08-18). Legacy `.mtm` *import* specifically remains deferred, until after 1.1's modern core ships (it has — this is the remaining open item, see [[15-template-designer]]'s own Status section).
 - SSTV repeater/beacon mode ([[06-sstv-dsp]], legacy `RepSet.cpp`).
 - Contest logging (JASTA application, `MMCG.DEF` JARL area database) — out of scope entirely, not just deferred; see [docs/removed-features.md](../docs/removed-features.md).
-- OCR (callsign-from-image recognition on the Gallery Frame-metadata card's "Callsign · OCR"/"OCR confidence" fields) — user decision 2026-08-11: "eh, maybe one day." No legacy precedent (verified against `yoniq-old/YONIQ-main`, zero OCR anywhere — see the Must-implement backlog's own entry above for the false-positive that once suggested otherwise), so this is wholly new work with no port to lean on; QRZ.com lookup was split out of the same former backlog line and stays active (see above) since that part *is* a real legacy feature.
+- OCR (callsign-from-image recognition) — user decision 2026-08-11: "eh, maybe one day." No legacy precedent (verified against `yoniq-old/YONIQ-main` directly, zero OCR anywhere — the only "OCR" hits in the whole tree are `#ifndef OCRH`/`#define OCRH` include guards in a few unrelated `About.h` files, coincidental naming), so this is wholly new work with no port to lean on; QRZ.com lookup was split out of the same former backlog line and stays active (see above) since that part *is* a real legacy feature. The Frame-metadata card's former "Callsign · OCR" label and "OCR confidence" row were removed 2026-08-25 — no code or data stub for either remains anywhere in the UI.
+- Stereo L/R input-chain level meters — user decision 2026-08-25: "maybe one day." This port's demod path is deliberately mono-only (same as legacy), so a real stereo meter needs an architecture decision on whether stereo capture belongs in this port at all, not just a wiring fix. The Input Chain card's placeholder L/R meter rows were removed 2026-08-25, not left as a stub with no defined target.
+- Unattended RX (scan/watch list, dwell time, alert-on-decode) — user decision 2026-08-25: "maybe one day." No scanning/watch feature exists in `IRadioSessionService`/`ISstvSessionService`, and no product design exists for what "watching" or "scanning" should mean here — this needs a design pass before it's buildable, not just implementation. Formerly tracked as an active Large gap under "Must-implement backlog"; the Gallery tab's placeholder Unattended RX card was removed 2026-08-25.
+- Session Frames (per-session received-frame list) — user decision 2026-08-25: "maybe one day." No per-session frame log concept has ever been designed (distinct from the real `ReceiveHistoryStore`, which persists across sessions). The Gallery tab's placeholder Session Frames card — previously a 15-row hand-written literal list with zero backing `ItemsSource`, then an honest empty state — was removed entirely 2026-08-25.
 
 ## Verify later with human — items neither the agent nor the auditor could resolve alone
 

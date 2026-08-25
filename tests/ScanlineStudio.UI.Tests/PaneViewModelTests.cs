@@ -241,6 +241,37 @@ public sealed class PaneViewModelTests
         Assert.Equal("256", vm.LinesText);
     }
 
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RemainingText_NoLockShowsPlaceholder_ThenReflectsProgress()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal("—", vm.RemainingText);
+
+        var mode = new SstvModeDefinition(
+            Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 138.24)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // 25% through a 256-line mode: 192 lines remaining, times the mode's own 138.24ms line
+        // duration -- same progress*ImageHeight term LineProgressText already uses, so the two
+        // readouts can never disagree (auditor-verified 2026-08-25).
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.25;
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
+        Dispatcher.UIThread.RunJobs();
+
+        // FakeLocalizationService.GetString returns the raw key, not a formatted string (same
+        // convention as the QRZ-lookup-failure test above) -- asserting the key proves the real
+        // format key was used, and LastArgs proves the caller passed the correctly-computed numbers.
+        Assert.Equal("Panes.RxImage.RemainingValueFormat", vm.RemainingText);
+        Assert.Equal(192, localization.LastArgs[0]);
+        Assert.Equal(192 * 138.24 / 1000.0, (double)localization.LastArgs[1], precision: 9);
+    }
+
     /// <summary>Logging-coverage audit (2026-08-15): <see cref="ISstvSessionService.DecodeRestarted"/>
     /// previously had no reachable subscriber anywhere in <c>ScanlineStudio.UI</c>. This VM now
     /// subscribes purely to log it -- deliberately no bound state changes -- so this asserts both
@@ -878,6 +909,7 @@ public sealed class PaneViewModelTests
         var sstvSession = new FakeSstvSessionService
         {
             SlantPpm = 3.4,
+            SyncSource = SstvSyncSource.Locked,
             SyncOffsetSamples = -12,
             SyncFrequencyCorrectionHz = -0.18,
             IsLevelOverdriven = true,
@@ -892,6 +924,48 @@ public sealed class PaneViewModelTests
         Assert.NotEqual("—", vm.SyncToneDisplay);
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay);
         Assert.Equal("Panes.RxInput.ClippingValue.Overdriven", vm.ClippingDisplay);
+        Assert.Equal("Panes.RxSync.SourceValue.Locked", vm.SyncSourceDisplay);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(SstvSyncSource.Idle, "Panes.RxSync.SourceValue.Idle")]
+    [InlineData(SstvSyncSource.Locked, "Panes.RxSync.SourceValue.Locked")]
+    [InlineData(SstvSyncSource.AvtTraining, "Panes.RxSync.SourceValue.AvtTraining")]
+    public void RxImagePaneViewModel_PollTelemetry_SyncSourceDisplay_ReflectsAllThreeStates(SstvSyncSource source, string expectedKey)
+    {
+        var sstvSession = new FakeSstvSessionService { SyncSource = source };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.PollTelemetry();
+
+        Assert.Equal(expectedKey, vm.SyncSourceDisplay);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(0, "Options.Decode.SenseLevel.VeryLow")]
+    [InlineData(1, "Options.Decode.SenseLevel.Low")]
+    [InlineData(2, "Options.Decode.SenseLevel.High")]
+    [InlineData(3, "Options.Decode.SenseLevel.VeryHigh")]
+    [InlineData(99, "Options.Decode.SenseLevel.VeryLow")]
+    public void RxImagePaneViewModel_VisThresholdDisplay_ReflectsSenseLevel_ConstructionTimeRead(int senseLevel, string expectedKey)
+    {
+        var sstvSession = new FakeSstvSessionService { SenseLevel = senseLevel };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal(expectedKey, vm.VisThresholdDisplay);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(RxBpfPreset.Off, "Options.Decode.RxBpf.Normal")]
+    [InlineData(RxBpfPreset.Wide, "Options.Decode.RxBpf.Wide")]
+    [InlineData(RxBpfPreset.Narrow, "Options.Decode.RxBpf.Sharp")]
+    [InlineData(RxBpfPreset.VeryNarrow, "Options.Decode.RxBpf.VerySharp")]
+    public void RxImagePaneViewModel_RxBpfDisplay_ReflectsRxBpfPreset_ConstructionTimeRead(RxBpfPreset preset, string expectedKey)
+    {
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = preset };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal(expectedKey, vm.RxBpfDisplay);
     }
 
     [AvaloniaFact]
@@ -1286,10 +1360,36 @@ public sealed class PaneViewModelTests
         Assert.Equal("Newington (United States)", vm.LookupQth);
         Assert.Equal("Newington (United States)", vm.QthDisplay);
         Assert.Equal("FN31pr", vm.LookupGrid);
+        // OperatorGrid is unset here (FakeSstvSessionService.OperatorGrid defaults to null), so the
+        // distance half falls back to "--" -- see the sibling _WithOperatorGrid_ test below for the
+        // real-distance happy path.
         Assert.Equal("FN31pr / --", vm.GridDisplay);
         Assert.Null(vm.QrzLookupErrorMessage);
         // Trimmed before being passed on, same convention as QsoLinkWindowViewModel's own callsign handling.
         Assert.Equal("W1AW", logbookSession.LastLookupCallsign);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_LookupQrzAsync_Success_WithOperatorGrid_ComputesRealDistance()
+    {
+        var logbookSession = new FakeLogbookSessionService
+        {
+            LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
+        };
+        var sstvSession = new FakeSstvSessionService { OperatorGrid = "EM12" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        // OperatorGrid is loaded via a construction-time fire-and-forget (LoadOperatorGridAsync) --
+        // give it a turn to complete before asserting, same reasoning as any other async-in-ctor field.
+        await Task.Yield();
+        vm.OverrideCallsign = "W1AW";
+
+        await vm.LookupQrzCommand.ExecuteAsync(null);
+
+        // Real MaidenheadLocator.TryComputeDistanceBearing/FormatDistance output for EM12 -> FN31pr
+        // (FormatDistance's own format: Math.Round to whole km, no thousands separator), not a
+        // placeholder -- proves the distance half is actually wired end to end, not just that the
+        // fallback path (asserted above) still works.
+        Assert.Matches(@"^FN31pr / \d+ km$", vm.GridDisplay);
     }
 
     [AvaloniaFact]
@@ -1324,8 +1424,10 @@ public sealed class PaneViewModelTests
         var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         // "—" matches this pane's own established placeholder convention (StartedDisplay/
-        // FileSizeDisplay); the trailing "-- / --" distance half is unrelated, still-unwired
-        // literal text, not this property's own fallback.
+        // FileSizeDisplay). The distance half ("--") is GridDisplay's own real fallback for
+        // MaidenheadLocator.TryComputeDistanceBearing returning false -- correct here because both
+        // LookupGrid and OperatorGrid are null with no lookup performed, not unwired literal text
+        // (see the _WithOperatorGrid_ test above for the real-distance path).
         Assert.Equal("—", vm.NameDisplay);
         Assert.Equal("—", vm.QthDisplay);
         Assert.Equal("— / --", vm.GridDisplay);

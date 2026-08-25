@@ -228,57 +228,70 @@
                                     <StackPanel Classes="Industry IndustryRows">
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.LineTime}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LineTimeText}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Lines}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LinesText}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Remaining}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxImage.RemainingValue}" /></Grid></Border>
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxImage.Remaining}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RemainingText}" /></Grid></Border>
                                     </StackPanel>
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <!-- Sync & slant: Slant ppm/Sync offset/Auto-correct/Re-sync are real,
-                                 wired to RxImagePaneViewModel (spec/17-rx-telemetry-feasibility.md).
-                                 Source/Reset/Advanced-timing remain unwired. -->
+                            <!-- Sync & slant: Slant ppm/Sync offset/Auto-correct/Re-sync/Correct-slant/
+                                 Source are real, wired to RxImagePaneViewModel
+                                 (spec/17-rx-telemetry-feasibility.md). VIS threshold has no row here
+                                 yet at all (elegant-wondering-hinton.md item 6, a later batch). Reset
+                                 and Advanced Timing (Sample clock/Sync window/Drop-line) were removed
+                                 2026-08-25 — see the removal comment further down this card. -->
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSync.CardHeader}" />
                                 </HeaderedContentControl.Header>
                                 <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                                     <StackPanel Classes="Industry IndustryRows">
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.Source}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SourceValue}" /></Grid></Border>
+                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 5):
+                                             SyncSourceDisplay, a live-polled 3-value classification
+                                             (Idle/Locked/AvtTraining), not the originally-planned
+                                             4-way Search/VisLock/Forced/AvtTraining split — see
+                                             SstvSyncSource's own doc comment for why that split isn't
+                                             honestly derivable from existing decoder state. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.Source}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncSourceDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SlantPpm}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SlantPpmDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncOffset}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncOffsetSamplesDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
+                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 6): a
+                                             plain row, not behind the removed Advanced Timing
+                                             disclosure — VisThresholdDisplay shows the preset NAME
+                                             (Very low/Low/High/Very high), not a raw number; see that
+                                             property's own doc comment for why a raw value or the
+                                             original stub's fake "−26 dB" would both be dishonest. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.VisThreshold}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VisThresholdDisplay}" /></Grid></Border>
                                     </StackPanel>
-                                    <!-- RX buffer subsystem: Correct-Slant UI trigger added as a THIRD
-                                         column here, not by repurposing "Reset": spec/17-rx-telemetry-
-                                         feasibility.md's own "Unverified" section explicitly warns "Reset"
-                                         has no confirmed legacy mapping and "don't guess and wire it to
-                                         the wrong command"; legacy's real KRCS ("Correct Slant") is a
-                                         DIFFERENT popup-menu item from whatever "Reset" turns out to map
-                                         to, in the SAME right-click context menu as KRFS (this port's
-                                         already-shipped Re-sync button, to its left). -->
-                                    <!-- Unequal column widths (not "*,*,*"): "Correct slant" is
-                                         measurably wider than "Re-sync"/"Reset", and an equal 3-way split
-                                         truncated it to "Correct slan" (design-fidelity check, real-window
-                                         screenshot). Widening the middle column instead of shortening the
-                                         label to something less clear. -->
-                                    <Grid ColumnDefinitions="0.8*,1.4*,0.8*" ColumnSpacing="3">
+                                    <!-- "Reset" button removed 2026-08-25: legacy DOES have a real
+                                         Slant-Reset (Main.cpp:13186-13193, cited in ISstvDecoder.cs's
+                                         own SlantPpm doc comment), but this port rebuilds its slant
+                                         tracker per lock and tears it down at end-of-image, making a
+                                         reset structurally inert against this port's own architecture
+                                         — not a missing port, a structural mismatch. "Advanced Timing"
+                                         disclosure (Sample clock/Sync window/Drop-line children) also
+                                         removed same date: Sample clock's legacy equivalent is a manual
+                                         calibration dialog (ClockAdj.cpp), not a passive readout, and
+                                         this port's own Slant ppm row above is already the modern
+                                         automatic equivalent; Sync window is static across a decoder
+                                         instance's lifetime and its old placeholder value ("±4.8 ms")
+                                         matched none of the real ported lock-timing constants; Drop-line
+                                         has zero legacy grounding, identical to the already-removed
+                                         Frame Metadata "Dropped lines" row. All per
+                                         spec/17-rx-telemetry-feasibility.md. VIS threshold survives as
+                                         a real value — see its own plain row below, not behind a
+                                         disclosure. -->
+                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="3">
                                         <!-- Padding="6,0" (design-fidelity-caught fix): IndustryBtn22's
                                              fixed 22px box was clipping the label's descenders/baseline
                                              against Fluent's own default Button padding. -->
                                         <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
                                         <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.CorrectSlant}" Command="{Binding RequestCorrectSlantCommand}" />
-                                        <Button Grid.Column="2" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Reset}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </Grid>
-                                    <ToggleButton x:Name="AdvancedTimingToggle" Classes="Industry IndustryDisclosure" Theme="{StaticResource IndustryDisclosureToggleTheme}" Content="{loc:Translate Panes.RxSync.AdvancedTiming}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Classes="Industry IndustryRows" IsVisible="{Binding #AdvancedTimingToggle.IsChecked}">
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SampleClock}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SampleClockValue}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncWindow}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.SyncWindowValue}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.VisThreshold}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.VisThresholdValue}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.DropLine}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSync.DropLineValue}" /></Grid></Border>
-                                    </StackPanel>
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <!-- Input chain: Device/Buffer/Clipping/AGC gain are real. Row SET
+                            <!-- Input chain: Device/BPF/Buffer/Clipping/AGC gain are real. Row SET
                                  preserved as this app's real telemetry (not the mockup's own
                                  "SNR est./DC offset" example rows, which this app doesn't compute -
                                  see block comment above). -->
@@ -289,61 +302,49 @@
                                 <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                                     <StackPanel Classes="Industry IndustryRows">
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Device}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CaptureDeviceNameDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Squelch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.SquelchValue}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.BpfValue}" /></Grid></Border>
+                                        <!-- "Squelch"/"Noise floor" removed 2026-08-25: legacy's only
+                                             "squelch"-labeled control is a mistranslation of the VIS-lock
+                                             sensitivity threshold (Option.cpp's Spanish "Nivel de
+                                             Squelch" binds to m_SenseLvl, the same quantity as the Sync
+                                             & Slant card's own "VIS threshold" row) — not a real RF
+                                             squelch, so this row had no honest concept behind it distinct
+                                             from that other row. Noise floor has zero legacy equivalent
+                                             anywhere, same undefined-measurement class as the SNR rows
+                                             already removed from Signal Quality. -->
+                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 7):
+                                             RxBpfDisplay shows the preset NAME only, not a cutoff
+                                             figure — the locked-filter cutoff differs from the
+                                             search/pre-lock cutoff, so a single number would be wrong
+                                             whenever this reads while unlocked (see
+                                             ISstvDecoder.RxBpfPreset's own doc comment). Reuses the
+                                             Options window's own real preset names. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RxBpfDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Notch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NotchValue}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Agc}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AgcGainDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Buffer}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding BufferedSampleCountDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Clipping}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClippingDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.NoiseFloor}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.NoiseFloorValue}" /></Grid></Border>
                                     </StackPanel>
-                                    <!-- Border top-rule + fill as star-column percentages (design-fidelity-caught
-                                         fixes): matches IndustryRows' own automatic top-rule-between-blocks
-                                         convention, and the literal Width="149"/"142" only matched the
-                                         mockup's 63%/60% example by coincidence at one specific card width
-                                         (same bug class fixed in the header row's RX-level meter). -->
-                                    <Border BorderThickness="0,1,0,0" BorderBrush="{StaticResource IndustryRowRule6}" Padding="0,4,0,0">
-                                        <StackPanel Spacing="3">
-                                            <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelL}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelLValue}" /></Grid>
-                                            <!-- No real stereo levels exist (this port's demod path is
-                                                 mono-only) — fill left at 0*/100* (empty track), not a
-                                                 fake percentage, matching this pane's own "no fake-live
-                                                 data" convention rather than IsEnabled=False (Border/Grid
-                                                 have no visual disabled state to react to). -->
-                                            <Grid Classes="IndustryMeter">
-                                                <Border Classes="IndustryMeterTrack" Height="6" />
-                                                <Grid ColumnDefinitions="0*,100*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
-                                            </Grid>
-                                            <Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.LevelR}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxInput.LevelRValue}" /></Grid>
-                                            <Grid Classes="IndustryMeter">
-                                                <Border Classes="IndustryMeterTrack" Height="6" />
-                                                <Grid ColumnDefinitions="0*,100*"><Border Grid.Column="0" Classes="IndustryMeterFill" Height="6" HorizontalAlignment="Stretch" /></Grid>
-                                            </Grid>
-                                        </StackPanel>
-                                    </Border>
+                                    <!-- Stereo L/R level meters removed 2026-08-25: this port's demod
+                                         path is deliberately mono-only, so a stereo meter needs a real
+                                         architecture decision (does stereo capture belong in this port
+                                         at all) before any code, not just wiring. Moved to
+                                         spec/14-roadmap.md's "Explicitly deferred beyond v1" list. -->
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <!-- Signal quality: Sync tone and Clip lo/hi are real. SNR/Min-Max/
-                                 histogram/Black·White tone remain unwired (no per-line SNR or
-                                 histogram computation exists; Black/White tone isn't a well-defined
-                                 measurement even in principle, unlike Sync tone). -->
+                            <!-- Signal quality: only Sync tone and Clip lo/hi are backed by real
+                                 measurements. The SNR-per-line plot, Min/Max, luminance histogram,
+                                 and Black/White tone rows were removed 2026-08-25 — no per-line SNR
+                                 or histogram computation exists, and Black/White tone isn't a
+                                 well-defined measurement even in principle (spec/17-rx-telemetry-
+                                 feasibility.md). -->
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" VerticalAlignment="Stretch" ClipToBounds="False">
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSignal.CardHeader}" />
                                 </HeaderedContentControl.Header>
-                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                    <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxSignal.SnrPerLine}" />
-                                    <Border Classes="IndustryHatchPanel" MinHeight="26" />
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.MinMax}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.MinMaxValue}" /></Grid></Border>
-                                    <TextBlock Classes="Industry IndustryKicker" Text="{loc:Translate Panes.RxSignal.LuminanceHistogram}" />
-                                    <Border Classes="IndustryHatchPanel" MinHeight="26" />
-                                    <StackPanel Classes="Industry IndustryRows">
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClipLoHiDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.SyncTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncToneDisplay}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.BlackTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.BlackToneValue}" /></Grid></Border>
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.WhiteTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSignal.WhiteToneValue}" /></Grid></Border>
-                                    </StackPanel>
+                                <StackPanel Classes="Industry IndustryRows">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClipLoHiDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.SyncTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncToneDisplay}" /></Grid></Border>
                                 </StackPanel>
                             </HeaderedContentControl>
                         </StackPanel>
@@ -679,10 +680,11 @@
                          (spec/17-rx-telemetry-feasibility.md), wired to RxImagePaneViewModel (file
                          size only populates once the frame's own save completes; see
                          FileSizeBytes' own doc comment; a still-in-progress or abandoned/partial
-                         frame reads "—"). Its other fields (Callsign/OCR, QRZ lookup, Frequency/
-                         Mode/VIS, SNR/slant, dropped-lines, note/override-callsign) and Unattended
-                         RX's scan/watch state have no backing data or feature at all yet
-                         (spec/14-roadmap.md backlog: "Frame metadata card"/"Unattended RX"). Row
+                         frame reads "—"). Callsign, QRZ lookup, and note/override-callsign are also
+                         real now (see their own row comments below); Frequency, Mode/VIS, and grid/
+                         dist's distance half remain unwired, and Unattended RX's scan/watch state
+                         has no backing data or feature at all yet (spec/14-roadmap.md backlog:
+                         "Frame metadata card"/"Unattended RX"). Row
                          SET (both cards) deliberately kept as this app's EXISTING real+literal
                          field inventory, not the mockup's own row set (which shows extra "File"/
                          "Sidecar"/"Disk" rows this app doesn't compute) — same preserve-real-
@@ -730,12 +732,40 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NameLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding NameDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.QthLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding QthDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GridDisplay}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.FrequencyValue}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.ModeVisValue}" /></Grid></Border>
+                                    <!-- Ancestor-relative binding, not a new RxImagePaneViewModel
+                                         dependency: RadioStatus lives on the root MainViewModel (this
+                                         card's own DataContext is scoped to RxImage). This project
+                                         does not enable Avalonia compiled bindings (no
+                                         x:CompileBindings/AvaloniaUseCompiledBindingsByDefault
+                                         anywhere) — this is a reflection binding, so a typo here
+                                         would NOT fail the build, only log a binding error at
+                                         runtime and render blank. Verify by running the app, not by
+                                         trusting a green build alone (auditor-caught, 2026-08-25).
+                                         FrequencyDisplayOrPlaceholder, not FrequencyDisplay: the
+                                         status bar's own {Binding RadioStatus.FrequencyDisplay}
+                                         (further down this file) deliberately shows a
+                                         "000.000.000" idle readout with no rig connected — correct
+                                         for a 7-segment-style status pill, but a fake-live literal
+                                         if reused in this card of otherwise-honest "—" placeholder
+                                         rows. Also live-VFO, not latched to the displayed frame's
+                                         own receive frequency — ReceiveHistoryEntry carries no
+                                         frequency field to latch from, so retuning after a decode
+                                         will change what this row shows for an already-completed
+                                         frame. Documented tradeoff, not an oversight. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding $parent[Window].DataContext.RadioStatus.FrequencyDisplayOrPlaceholder}" /></Grid></Border>
+                                    <!-- DetectedModeDisplay is the same "{DisplayName} — VIS {VisCode}"
+                                         property already used by the Mode panel's ComboBox. For a
+                                         forced-mode reception there was no real VIS decode — this
+                                         shows the locked mode's own expected VIS code, not a raw
+                                         decoded byte (no raw byte is captured anywhere in the RX
+                                         decode pipeline; VisLockStateMachine discards it after the
+                                         registry lookup that resolves the mode). -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.ModeVis}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DetectedModeDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Started}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding StartedDisplay}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.SnrSlant}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.SnrSlantValue}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidence}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.OcrConfidenceValue}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.DroppedLines}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.DroppedLinesValue}" /></Grid></Border>
+                                    <!-- OCR row removed 2026-08-25: OCR itself is user-deferred to
+                                         "maybe one day" (spec/14-roadmap.md's "Explicitly deferred
+                                         beyond v1", Tier 3), not an active goal — no code or data
+                                         stub for it remains in this card. -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.FileSize}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding FileSizeDisplay}" /></Grid></Border>
                                 </StackPanel>
                                 <!-- Plain 11px label, not a kicker (design-fidelity-caught fix
@@ -775,32 +805,10 @@
                             </StackPanel>
                         </HeaderedContentControl>
 
-                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxUnattended.CardHeader}" />
-                            </HeaderedContentControl.Header>
-                            <StackPanel Classes="Industry IndustryRows">
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Watch}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.WatchValue}" /></Grid></Border>
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.ScanDwell}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.ScanDwellValue}" /></Grid></Border>
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Alert}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.AlertValue}" /></Grid></Border>
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxUnattended.Session}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxUnattended.SessionValue}" /></Grid></Border>
-                            </StackPanel>
-                        </HeaderedContentControl>
-
-                        <!-- Session frames: was a 15-row hand-written literal list (45 TextBlocks,
-                             Row1Callsign..Row15Meta) with zero backing ItemsSource — the worst
-                             fake-live offender in this file, reading as a populated session history
-                             that never existed. No real per-session frame log exists anywhere in the
-                             app (spec/14-roadmap.md backlog); collapsed to one honest empty state
-                             instead (0.9-beta UI-honesty pass), matching this pane's own
-                             NoHistoryYet convention, rather than placeholder-ing 45 individual
-                             TextBlocks — the wrong shape for what was actually a fake list. -->
-                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxSessionFrames.CardHeader}" />
-                            </HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxSessionFrames.NoSessionYet}" />
-                        </HeaderedContentControl>
+                        <!-- Unattended RX and Session Frames cards removed 2026-08-25: neither had
+                             a defined concept behind it — no scan/watch feature spec, no per-session
+                             frame log design. Moved to spec/14-roadmap.md's "Explicitly deferred
+                             beyond v1" list rather than left as UI stubs with no backing design. -->
                     </Grid>
                     </ScrollViewer>
                 </Grid>
