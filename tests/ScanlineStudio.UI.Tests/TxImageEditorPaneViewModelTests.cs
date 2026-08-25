@@ -37,6 +37,19 @@ public sealed class TxImageEditorPaneViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential,
         LineSegments: []);
 
+    // Regression fixture for FrameReadoutText/SendMetaText's own PD90-family double-counting bug:
+    // ImageHeight 4 with a paired encoding means only 2 transmission lines, not 4 -- a naive
+    // LineDurationMs * ImageHeight formula would compute 100ms * 4 = 0.4s; the real value is
+    // 100ms * 4 / 2 (rows-per-transmission-line) / 1000 = 0.2s.
+    private static readonly SstvModeDefinition LinePairedMode = new(
+        Id: "line-paired",
+        DisplayName: "Line Paired",
+        VisCode: 0,
+        ImageWidth: 4,
+        ImageHeight: 4,
+        ColorEncoding: ColorEncoding.YCbCrLinePaired,
+        LineSegments: [new ScanSegment("Y", 100)]);
+
     // Real MacroTextResolver + blank OperatorSettings -- none of these tests exercise macro
     // resolution itself (that's MacroTextResolverTests' job), so a real-but-inert resolver is
     // simpler than a fake with nothing to configure.
@@ -687,8 +700,9 @@ public sealed class TxImageEditorPaneViewModelTests
         // above -- verifies the CALLER passes the right computed args, not the real interpolated
         // string (that's HeaderAndDimensionsChipLocaleFormats_MatchEnJsonsRealValues's own job,
         // extended below for this new key). WideMode's LineSegments is empty ([]) so the expected
-        // duration is exactly 0 -- a real, if degenerate, value from the SAME LineDurationMs *
-        // ImageHeight / 1000.0 formula TxControlsPaneViewModel's own Mode Timing Reference table uses.
+        // duration is exactly 0 -- a real, if degenerate, value from
+        // TxControlsPaneViewModel.GetFrameSeconds, same formula the TX Controls card's own Duration
+        // row uses (see the paired-family regression test below for the non-degenerate case).
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 4), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
@@ -702,6 +716,23 @@ public sealed class TxImageEditorPaneViewModelTests
         // Mode name uppercased for display (design-fidelity Phase I nit) -- the mock's own readouts
         // are all-caps mono chrome text.
         Assert.Equal(new object[] { 8, 4, "WIDE", 0.0 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void FrameReadoutText_LinePairedMode_DividesByRowsPerTransmissionLine()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), LinePairedMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        _ = vm.FrameReadoutText;
+
+        Assert.Equal("Panes.TxImageEditor.FrameReadoutFormat", localization.LastKey);
+        var duration = Assert.IsType<double>(localization.LastArgs[3]);
+        Assert.Equal(0.2, duration, precision: 10);
     }
 
     [AvaloniaFact]
@@ -4714,9 +4745,26 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal("Panes.TxImageEditor.SendMetaFormat", localization.LastKey);
         // Mode name uppercased for display (design-fidelity Phase I nit) -- the mock's own readouts
         // are all-caps mono chrome text.
-        Assert.Equal(
-            new object[] { SmallMode.DisplayName.ToUpperInvariant(), SmallMode.LineDurationMs * SmallMode.ImageHeight / 1000.0 },
-            localization.LastArgs);
+        // 0.0 either way (SmallMode.LineSegments is empty) -- see the LinePairedMode-based test
+        // below for the non-degenerate case that actually distinguishes the fixed formula.
+        Assert.Equal(new object[] { SmallMode.DisplayName.ToUpperInvariant(), 0.0 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public void SendMetaText_LinePairedMode_DividesByRowsPerTransmissionLine()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), LinePairedMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        _ = vm.SendMetaText;
+
+        Assert.Equal("Panes.TxImageEditor.SendMetaFormat", localization.LastKey);
+        var duration = Assert.IsType<double>(localization.LastArgs[1]);
+        Assert.Equal(0.2, duration, precision: 10);
     }
 
     [AvaloniaFact]
