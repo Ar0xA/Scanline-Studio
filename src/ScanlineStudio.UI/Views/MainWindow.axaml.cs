@@ -135,18 +135,15 @@ public partial class MainWindow : Window
         {
             if (DataContext is MainViewModel vm)
             {
-                // Give-up-after-5 feature: the must-acknowledge-popup half of the user's own request
-                // (direct feedback: "should be a popup window, not a tiny text under the VFO" --
-                // replaces this feature's earlier dismissible-toast half entirely, per that
-                // decision). RadioStatusViewModel.ConnectionErrorMessage (RadioHeaderView.axaml) is
-                // the persistent half and already covers the same information on its own, unaffected
-                // by this change.
+                // Give-up-after-5 feature: the must-acknowledge popup (direct feedback: "should be a
+                // popup window, not a tiny text under the VFO" -- replaces this feature's earlier
+                // dismissible-toast, and later a persistent header text line that was tried alongside
+                // this popup then removed as redundant, per user decision).
                 //
                 // Dedup-guarded by _connectionGaveUpWindow: ConnectionGaveUp is system-triggered and
                 // can in principle fire again (e.g. a user-initiated retry via Options also exhausts
                 // its own 5 attempts) before an already-open popup from a previous give-up has been
-                // dismissed -- skip opening a second one rather than stacking dialogs; the header's
-                // persistent ConnectionErrorMessage line already reflects the latest reason either way.
+                // dismissed -- skip opening a second one rather than stacking dialogs.
                 //
                 // Code-review finding (carried over from the toast this replaces): wrapped in
                 // try/catch, same reasoning as OptionsRequested/AboutRequested/QsoLinkRequested's own

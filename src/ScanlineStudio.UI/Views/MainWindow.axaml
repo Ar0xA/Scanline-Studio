@@ -834,10 +834,13 @@
                 </Grid>
             </TabItem>
             <TabItem Classes="Industry" Header="{loc:Translate MainWindow.Tabs.Transmit}">
-                <!-- 236,*,312 columns, gap 9, padding 9,11,9,8 (LAYOUT-SPEC §5 Band 4a /
+                <!-- 236,* columns, gap 9, padding 9,11,9,8 (LAYOUT-SPEC §5 Band 4a /
                      PADDING-NORMALIZATION.md), same fix as the Receive tab (Phase 3) — this tab's
-                     own outer Grid never got the token update, design-fidelity-agent-caught. -->
-                <Grid ColumnDefinitions="236,*,312" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8">
+                     own outer Grid never got the token update, design-fidelity-agent-caught. Was
+                     236,*,312 (a third, right-hand column) until the Mode-timing-reference card
+                     that lived there was removed 2026-08-25 (user decision) — the editor column
+                     absorbs the freed width automatically since it was already the "*" column. -->
+                <Grid ColumnDefinitions="236,*" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="9,11,9,8">
 
                     <!-- Left: TxControlsPaneView's own restyled Mode/Identification/Output/Stock
                          cards. The TX volume slider now lives inside its Output card, ancestor-bound
@@ -862,163 +865,12 @@
                          host gives it, so pinning the height here keeps every nested "*" row
                          inside the editor computing against the same fixed total it always has,
                          rather than shrinking (and rescaling the TX canvas) when the window does. -->
+                    <!-- Centre column now takes the full remaining width — was 236,*,312 (a
+                         Mode-timing-reference card sat in the third, 312px column) until that card
+                         was removed 2026-08-25 (user decision), so the editor gets that space
+                         instead of leaving it empty. -->
                     <ScrollViewer Grid.Column="1">
                     <ContentControl Height="834" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
-                    </ScrollViewer>
-
-                    <!-- Right: Queue (new placeholder) / Mode-timing-reference (real, untouched) /
-                         TX log (new placeholder) / Recently sent (new placeholder), ported to
-                         Industry atoms (was old Cards.axaml "card"/"cardHeader"/"kv"/"label"/
-                         "value"/"caption"/"small"/"readoutSmall"/"thumb"/"plot"/"pill" styling).
-                         Grid RowDefinitions="Auto,Auto,Auto,*" with no outer ScrollViewer, same
-                         structure as the Receive tab's right column (Phase 3): the last card
-                         alone takes the "*" row and owns its own internal ScrollViewer for
-                         overflow, rather than one big ScrollViewer around all 4 cards.
-
-                         Queue/TX log/Recently sent are placeholder cards (no queueing/TX-logging/
-                         send-history feature exists anywhere in this app yet — same precedent as
-                         the Receive tab's Frame metadata/Unattended RX cards), so their row set
-                         literally mirrors mock2's own text (2a, "SSTV Console.dc.html" ~L510-558),
-                         including 2 new locale keys (Panes.TxLog.TxTimeToday/DutyCycle) the old
-                         design never had — same literal-parity precedent as Queue's "Between
-                         frames" row and Recently sent's 3 items, which already fully mirrored the
-                         mockup's own literal text before this port. Mode timing reference is the
-                         one real card here (computed from SstvModeDefinition's own
-                         LineDurationMs/ImageHeight, zero new data; untouched bindings), ported to
-                         the IndustryTable* atoms (established by Decode activity, Phase 3, whose
-                         own comment names "TX log (Phase 4)" as this atom set's next consumer);
-                         TX log's own table stays header-only (no ItemsSource — no structured
-                         TX-log event exists), same DataGrid-removal precedent as Decode activity.
-                         Row/header cells are each wrapped in their own IndustryTableHeaderRule/
-                         IndustryTableRowRule Border (not one Border around the whole Grid) — same
-                         Border-per-cell fix Decode activity's header needed, since mock2's own
-                         th/td padding is per-cell, not just the row's outer edges. -->
-                    <!-- Same ScrollViewer + pinned-Height + top-headroom fix as this tab's own
-                         middle column above. -->
-                    <ScrollViewer Grid.Column="2">
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
-
-                        <!-- New: queue of frames waiting to transmit. Literal rows matching
-                             mock2's own QueueItem shape (no queueing feature exists yet). Row1/2's
-                             filename TextBlocks are deliberately NOT IndustryRowValue: mock2's own
-                             unclassed <span> (no .v2) inherits plain body-font/full-opacity text,
-                             not the mono/right-aligned .v2 styling — composed inline per the
-                             Thumbnail atom's own "markup authors compose it per-site" precedent
-                             rather than fighting IndustryRowValue's HorizontalAlignment="Right" in
-                             a "*" (not Auto) column. -->
-                        <!-- Combined-batch auditor review, 2026-08-14: no queueing feature exists at
-                             all (TxControlsPaneViewModel has no queue concept) — this card previously
-                             showed 2 fabricated queued-file rows with invented filenames, the exact
-                             fake-populated-list pattern the Receive tab's Session-frames card was
-                             already collapsed for. Same fix here: one honest empty state, not 2 fake
-                             rows. -->
-                        <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxQueue.Header}" />
-                            </HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxQueue.NoQueueYet}" />
-                        </HeaderedContentControl>
-
-                        <!-- Mode-timing-reference table, fully real; computed from
-                             SstvModeDefinition's own LineDurationMs/ImageHeight, zero new data.
-                             Real list is ~40 modes (mock2's own table shows only 5 as a static
-                             sample) — the ItemsControl's own ScrollViewer/MaxHeight (not a bare
-                             DockPanel.Dock="Top") is load-bearing, not cosmetic: this card sits in
-                             an EARLY "Auto" grid row (not the column's own last/"*" row), so an
-                             unbounded real list here would consume the whole column's height and
-                             push TX log/Recently sent off-screen with no way to reach them —
-                             containment (this project's #1 priority) over an exact mockup-height
-                             match. -->
-                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.ModeTimingHeader}" />
-                            </HeaderedContentControl.Header>
-                            <DockPanel LastChildFill="True">
-                                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,46,60,56" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                                    <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingMode}" /></Border>
-                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingLines}" /></Border>
-                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingLineMs}" /></Border>
-                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxControls.ModeTimingFrame}" /></Border>
-                                </Grid>
-                                <!-- MaxHeight lowered from 150 (design-fidelity-agent-caught fix:
-                                     150 landed mid-row on the 9th row, clipping it in half with no
-                                     scrollbar affordance visible at that exact height). 145 clears a
-                                     clean 8-row boundary; re-verify against a real screenshot if row
-                                     height ever changes (font/padding tweak). -->
-                                <ScrollViewer MaxHeight="145">
-                                    <ItemsControl ItemsSource="{Binding TxControls.ModeTimingRows}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:ModeTimingRowViewModel">
-                                                <Grid ColumnDefinitions="*,46,60,56" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                                                    <Border Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding ModeName}" /></Border>
-                                                    <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding Lines}" /></Border>
-                                                    <Border Grid.Column="2" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding LineMs, StringFormat={}{0:0.0}}" /></Border>
-                                                    <Border Grid.Column="3" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding FrameSeconds, StringFormat={}{0:0.0} s}" /></Border>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </ScrollViewer>
-                            </DockPanel>
-                        </HeaderedContentControl>
-
-                        <!-- New: sent-frame log (no logging-of-sent-frames feature exists yet;
-                             header-only table, no ItemsSource — same DataGrid-removal precedent
-                             as Decode activity, Phase 3). TX time today/Duty cycle rows are
-                             literal, matching mock2's own row set (no such feature exists yet). -->
-                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxLog.Header}" />
-                            </HeaderedContentControl.Header>
-                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                                    <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Utc}" /></Border>
-                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Mode}" /></Border>
-                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Dur}" /></Border>
-                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Drive}" /></Border>
-                                    <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Swr}" /></Border>
-                                    <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.TxLog.Result}" /></Border>
-                                </Grid>
-                                <!-- Combined-batch auditor review, 2026-08-14: both values were
-                                     fabricated literals — placeholder'd, matching the empty table
-                                     above (no logging-of-sent-frames feature exists). -->
-                                <StackPanel Classes="Industry IndustryRows" Margin="0,3,0,0">
-                                    <Border Classes="IndustryRow">
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxLog.TxTimeToday}" />
-                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxLog.TxTimeTodayValue}" />
-                                        </Grid>
-                                    </Border>
-                                    <Border Classes="IndustryRow">
-                                        <Grid ColumnDefinitions="Auto,*">
-                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxLog.DutyCycle}" />
-                                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.TxLog.DutyCycleValue}" />
-                                        </Grid>
-                                    </Border>
-                                </StackPanel>
-                            </StackPanel>
-                        </HeaderedContentControl>
-
-                        <!-- Combined-batch auditor review, 2026-08-14: no send-history feature exists
-                             (this comment's own prior claim that the buttons were "no-ops, same
-                             convention as every other placeholder this pass" was false — they were
-                             fully clickable). 3 fabricated thumbnail items collapsed to one honest
-                             empty state, same fix as the Receive tab's Session-frames card; both
-                             buttons disabled + tooltipped. -->
-                        <HeaderedContentControl Grid.Row="3" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxRecentlySent.Header}" />
-                            </HeaderedContentControl.Header>
-                            <DockPanel LastChildFill="True">
-                                <Grid DockPanel.Dock="Bottom" ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,4,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.RefillAndQueue}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.TxRecentlySent.OpenInEditor}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                </Grid>
-                                <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.TxRecentlySent.NoneYet}" />
-                            </DockPanel>
-                        </HeaderedContentControl>
-
-                    </Grid>
                     </ScrollViewer>
                 </Grid>
             </TabItem>
@@ -1144,8 +996,9 @@
                          "IM76 · 1,842 km"/"linked #4412" literal data, since this row has a REAL
                          selected entry with
                          some real fields mixed with genuinely-absent ones; showing fabricated data
-                         next to real data would be misleading, unlike the fully-placeholder Queue/
-                         TX-log cards elsewhere) + Storage card (real ImagesDirectory, resolved via
+                         next to real data would be misleading, unlike the TX tab's now-removed
+                         Queue/TX-log cards, which had no real data mixed in at all) + Storage card
+                         (real ImagesDirectory, resolved via
                          IReceiveHistoryStore.GetImagesDirectoryAsync). Sidecar-format and disk-free
                          rows ARE rendered below, as literals, since neither is tracked anywhere
                          today; they are not omitted, contrary to what an earlier pass's comment
