@@ -162,6 +162,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public bool IsReceiving { get; set; }
 
+    public bool IsAutoDetectPaused { get; set; }
+
+    public int SetAutoDetectPausedCallCount { get; private set; }
+
+    public void SetAutoDetectPaused(bool paused)
+    {
+        SetAutoDetectPausedCallCount++;
+        IsAutoDetectPaused = paused;
+    }
+
     public bool ThrowOnStartReceiving { get; set; }
 
     public bool ThrowOnStopReceiving { get; set; }

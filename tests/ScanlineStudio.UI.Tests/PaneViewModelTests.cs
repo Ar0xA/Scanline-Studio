@@ -1265,6 +1265,44 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_IsAutoDetectPaused_Toggle_CallsSetAutoDetectPausedOnSession()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.False(vm.IsAutoDetectPaused); // defaults to "Listening", matching legacy's own default
+
+        vm.IsAutoDetectPaused = true;
+
+        Assert.Equal(1, sstvSession.SetAutoDetectPausedCallCount);
+        Assert.True(sstvSession.IsAutoDetectPaused);
+
+        vm.IsAutoDetectPaused = false;
+
+        Assert.Equal(2, sstvSession.SetAutoDetectPausedCallCount);
+        Assert.False(sstvSession.IsAutoDetectPaused);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickSelectMode_WhilePaused_ClearsIsAutoDetectPaused()
+    {
+        // Matches legacy's Start()/Start(mode,f) sharing SBAuto's own variable -- forcing a mode
+        // always resumes auto-detect. The decoder-side ordering is safe regardless (see
+        // ISstvDecoder.RequestAbandonReception's own doc comment); this is purely so the UI toggle
+        // visibly flips back to "Listening" too.
+        var mode = TestMode;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.IsAutoDetectPaused = true;
+
+        vm.QuickSelectModeCommand.Execute(mode.Id);
+
+        Assert.False(vm.IsAutoDetectPaused);
+        Assert.False(sstvSession.IsAutoDetectPaused);
+        Assert.Equal(1, sstvSession.ForceModeCallCount);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_SyncToneDisplay_MeasuredIsNominalMinusCorrectionMinusCalibrationOffset()
     {
         // Regression test for two real bugs an auditor round caught before this shipped:
