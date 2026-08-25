@@ -55,6 +55,15 @@ public interface IFilePickerService
     /// format value here is the source of truth.</summary>
     Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName);
 
+    /// <summary>Piece C2 (RX tab Re-decode port): returns the picked WAV file's local path, or
+    /// <c>null</c> if the user cancelled.</summary>
+    Task<string?> PickOpenWavFileAsync();
+
+    /// <summary>Piece C1 (RX tab Re-decode port): prompts for a save location pre-filled with
+    /// <paramref name="suggestedFileName"/>; returns the chosen local path, or <c>null</c> if the
+    /// user cancelled.</summary>
+    Task<string?> PickSaveWavFileAsync(string suggestedFileName);
+
     /// <summary>Options dialog's Radio/CAT tab, "linked Hamlib" section -- lets the user browse
     /// directly to a Hamlib shared library file (<c>.dll</c>/<c>.dylib</c>/<c>.so</c>/<c>.so.N</c>),
     /// rather than typing a path by hand. Returns the picked file's local path, or <c>null</c> if the

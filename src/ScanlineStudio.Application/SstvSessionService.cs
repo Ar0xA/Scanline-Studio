@@ -26,6 +26,33 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly Action<ReadOnlyMemory<float>> _decoderHandler;
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     private readonly Action<ReadOnlyMemory<float>> _levelMeterHandler;
+    private readonly Action<ReadOnlyMemory<float>> _recordingHandler;
+
+    // Piece C1 (RX tab Re-decode port): guards _recordingChunks/_recordingPath, contended by the
+    // single audio-capture drain thread (inside _recordingHandler, once per captured chunk) and
+    // whatever thread calls StartRecordingAsync/StopRecordingAsync/DisposeAsync. Never held across
+    // an await -- StopRecordingAsync/FinalizeRecordingAsync grab-and-null the list reference under
+    // the lock, then concatenate/write it OUTSIDE the lock, so the drain thread is never blocked for
+    // the duration of a file write, only for the O(1) reference swap.
+    private readonly object _recordingLock = new();
+
+    // Non-null exactly while a recording is armed; the chunk list itself (not a single growing
+    // array) since IAudioEngine.SamplesCaptured hands each invocation a fresh, independently-owned
+    // array (IAudioEngine.cs's own contract) -- retaining the ReadOnlyMemory<float> chunk directly
+    // needs no copy, unlike a List<float>.AddRange, which would do doubling-copy work inline on the
+    // capture drain thread (the same "slow handler delays RX processing" hazard _decoderHandler's
+    // own isolation exists to avoid).
+    private List<ReadOnlyMemory<float>>? _recordingChunks;
+    private string? _recordingPath;
+    private int _recordingExceptionCount;
+
+    // Piece C2: single-flight guard for DecodeFromFileAsync, same CompareExchange shape as
+    // _transmitInFlight (0 = idle, 1 = a call owns it) -- see that field's own doc comment for the
+    // failure class this pattern closes. A separate field, not a reuse of _transmitInFlight: the two
+    // are cross-checked against each other (PlayWithPttAsync's own entry guard below, and
+    // DecodeFromFileAsync's own) rather than sharing one flag, so a file decode and a transmit each
+    // reject the OTHER cleanly instead of silently overlapping.
+    private int _fileDecodeInFlight;
 
     /// <summary>Backs <see cref="RawInputPeakLevel"/> -- see that property's own doc comment for why
     /// this exists as a THIRD fan-out target alongside <see cref="_decoderHandler"/>/
@@ -357,6 +384,30 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
 
             _rawInputPeakLevel = peak;
+        };
+
+        // Piece C1: a 4th, INDEPENDENT fan-out target -- deliberately not subscribed/unsubscribed
+        // alongside _decoderHandler/_waterfallHandler/_levelMeterHandler in
+        // StartReceivingLockedAsync/StopReceivingLockedAsync (see StartRecordingAsync's own doc
+        // comment for why: recording must survive a Stop/Start RX cycle while armed). Same isolated-
+        // fan-out shape as the other three: a throwing subscriber here must never affect the others.
+        _recordingHandler = samples =>
+        {
+            try
+            {
+                lock (_recordingLock)
+                {
+                    _recordingChunks?.Add(samples);
+                }
+            }
+            catch (Exception ex)
+            {
+                var count = Interlocked.Increment(ref _recordingExceptionCount);
+                if (count == 1 || count % ExceptionLogEveryN == 0)
+                {
+                    SafeLog(() => Log.RecordingPushSamplesFailed(_logger, count, ex));
+                }
+            }
         };
 
         // Ultracode audit finding #34: ISstvDecoderMaintenance is an optional side-channel only
@@ -1622,6 +1673,214 @@ public sealed partial class SstvSessionService : ISstvSessionService
         SafeLog(() => Log.RxStopped(_logger));
     }
 
+    public Task StartRecordingAsync(string path)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!_isReceiving)
+        {
+            throw new InvalidOperationException("Cannot start recording while not receiving.");
+        }
+
+        lock (_recordingLock)
+        {
+            if (_recordingChunks is not null)
+            {
+                throw new InvalidOperationException("A recording is already in progress.");
+            }
+
+            _recordingChunks = [];
+            _recordingPath = path;
+            // Code-review finding: subscribing here, INSIDE the same lock acquisition that
+            // publishes _recordingChunks, not after releasing it -- a concurrent
+            // FinalizeRecordingAsync landing in the gap between unlock and a subscribe-after-unlock
+            // could otherwise grab-and-null the just-published state before this ever subscribes,
+            // making its own unsubscribe a no-op and leaving this subscription permanently
+            // dangling (double-subscribed, duplicated audio, on the next StartRecordingAsync).
+            _audioEngine.SamplesCaptured += _recordingHandler;
+        }
+
+        SafeLog(() => Log.RecordingStarted(_logger, path));
+        return Task.CompletedTask;
+    }
+
+    public Task StopRecordingAsync()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return FinalizeRecordingAsync();
+    }
+
+    /// <summary>Grabs and clears the in-progress recording's buffered chunks under
+    /// <see cref="_recordingLock"/>, then concatenates and writes them OUTSIDE the lock so the audio
+    /// drain thread is never blocked for the duration of the file write. A no-op if no recording is
+    /// in progress -- both <see cref="StopRecordingAsync"/> and <see cref="DisposeAsync"/> call this,
+    /// and an in-progress recording must be finalized before <see cref="DisposeAsync"/> returns or
+    /// the whole in-RAM buffer is silently discarded with no file written.</summary>
+    private async Task FinalizeRecordingAsync()
+    {
+        List<ReadOnlyMemory<float>>? chunks;
+        string? path;
+        lock (_recordingLock)
+        {
+            chunks = _recordingChunks;
+            path = _recordingPath;
+            _recordingChunks = null;
+            _recordingPath = null;
+
+            // Code-review finding: unsubscribing here, INSIDE the same lock acquisition that clears
+            // _recordingChunks -- see StartRecordingAsync's own subscribe-inside-the-lock comment
+            // for the dangling-subscription race this closes. A no-op if chunks is about to come
+            // back null below (nothing was ever subscribed).
+            if (chunks is not null)
+            {
+                _audioEngine.SamplesCaptured -= _recordingHandler;
+            }
+        }
+
+        if (chunks is null)
+        {
+            return;
+        }
+
+        var totalLength = 0;
+        foreach (var chunk in chunks)
+        {
+            totalLength += chunk.Length;
+        }
+
+        var combined = new float[totalLength];
+        var offset = 0;
+        foreach (var chunk in chunks)
+        {
+            chunk.Span.CopyTo(combined.AsSpan(offset));
+            offset += chunk.Length;
+        }
+
+        await Task.Run(() => WavFile.Write(path!, combined, _decoder.SampleRate)).ConfigureAwait(false);
+        SafeLog(() => Log.RecordingSaved(_logger, path!, combined.Length));
+    }
+
+    public async Task DecodeFromFileAsync(string path, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // Piece C2 single-flight guard, checked before anything else -- same shape/reasoning as
+        // PlayWithPttAsync's own _transmitInFlight guard.
+        if (Interlocked.CompareExchange(ref _fileDecodeInFlight, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("A file decode is already in progress.");
+        }
+
+        try
+        {
+            // Cross-check against a concurrent transmit -- see PlayWithPttAsync's own mirrored check
+            // for why this needs to be bidirectional, not just this direction.
+            if (Volatile.Read(ref _transmitInFlight) != 0)
+            {
+                throw new InvalidOperationException("Cannot decode a file while a transmit or tune is in progress.");
+            }
+
+            // _autoDetectPaused lives in this session's own handler, not the decoder -- legacy's
+            // equivalent pause (pDem->m_SyncMode = -1) lives INSIDE CSSTVDEM itself, so legacy file
+            // playback is genuinely suppressed by it too (Sound.cpp:334's WaveFile.ReadWrite feeds
+            // the same demod loop the pause affects). Reject rather than silently bypassing it.
+            if (_autoDetectPaused)
+            {
+                throw new InvalidOperationException("Cannot decode a file while auto-detect is paused.");
+            }
+
+            var (samples, sampleRate) = await Task.Run(() => WavFile.Read(path), ct).ConfigureAwait(false);
+
+            if (sampleRate != _decoder.SampleRate)
+            {
+                throw new InvalidOperationException(
+                    $"File sample rate ({sampleRate} Hz) does not match the configured decode rate ({_decoder.SampleRate} Hz).");
+            }
+
+            if (samples.Length == 0)
+            {
+                throw new InvalidOperationException("File contains no audio samples.");
+            }
+
+            // Round-2 plan-review blocker fix: acquire _rxTransitionGate directly and use the PRIVATE
+            // *Locked variants, not the public StartReceivingAsync/StopReceivingAsync pair -- the
+            // public StopReceivingAsync has a real early-return-without-detaching path (its own
+            // rxTransitionGate wait can time out), so calling it and assuming detachment would race
+            // the live drain thread's PushSamples calls against this method's own, tripping
+            // RestartableSstvDecoder's _pushActive CAS. Holding the gate for the WHOLE decode
+            // serializes this against every other RX transition by construction.
+            if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false))
+            {
+                throw new TimeoutException("Timed out waiting to start file decode -- a concurrent RX transition did not finish in time.");
+            }
+
+            var wasReceiving = _isReceiving;
+            try
+            {
+                await StopReceivingLockedAsync().ConfigureAwait(false);
+
+                // Round-2 plan-review blocker fix: reuse the SAME DI-singleton _decoder rather than a
+                // "fresh instance" (not implementable -- ReceivedImageBuffer/ReceiveHistoryRecorder
+                // subscribe directly to this singleton, and RestartableSstvDecoder has no public
+                // force-restart hook). StopReceivingLockedAsync above already called _decoder.ResetAgc()
+                // as part of its own RX-stop transition; RequestAbandonReception here clears any
+                // in-progress reception state before the first file-sourced chunk arrives. Residual
+                // AGC/filter-delay-line carry-over across this seam is legacy-faithful, not a
+                // compromise -- Sound.cpp:334-364 swaps only the buffer source on the same CSSTVDEM
+                // instance, so its own state runs straight through the identical seam.
+                _decoder.RequestAbandonReception();
+
+                // Runs on a background thread -- PushSamples/decode events are synchronous, so without
+                // this the whole loop would run on whatever thread called this method (the UI thread,
+                // in practice) and block it for the file's full decode duration.
+                await Task.Run(
+                    () =>
+                    {
+                        const int ChunkSize = 4096;
+                        for (var chunkOffset = 0; chunkOffset < samples.Length; chunkOffset += ChunkSize)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            ObjectDisposedException.ThrowIf(_disposed, this);
+
+                            var length = Math.Min(ChunkSize, samples.Length - chunkOffset);
+                            var chunk = new ReadOnlyMemory<float>(samples, chunkOffset, length);
+
+                            // Same three fan-out targets live capture feeds (matching legacy's own
+                            // fftIN.CollectFFT reading from the same buffer WaveFile.ReadWrite fills,
+                            // Sound.cpp:368) -- reusing these exact delegate instances, not
+                            // reimplementing their isolation logic. _decoder.PushSamples is
+                            // deliberately NOT wrapped here (unlike the live _decoderHandler) -- a
+                            // decode failure on this explicit, single-shot, user-initiated call should
+                            // propagate, not be silently swallowed the way an ambient hot-path capture
+                            // callback's failure is.
+                            _decoder.PushSamples(chunk);
+                            _waterfallHandler(chunk);
+                            _levelMeterHandler(chunk);
+                        }
+                    },
+                    ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                try
+                {
+                    if (wasReceiving)
+                    {
+                        await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    _rxTransitionGate.Release();
+                }
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _fileDecodeInFlight, 0);
+        }
+    }
+
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
@@ -1917,6 +2176,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
         if (Interlocked.CompareExchange(ref _transmitInFlight, 1, 0) != 0)
         {
             throw new InvalidOperationException("A transmit or tune is already in progress.");
+        }
+
+        // Piece C2 cross-check: DecodeFromFileAsync's own entry checks _transmitInFlight the same
+        // way, in the other direction -- without this, a file decode reads _isReceiving == false
+        // (RX is genuinely paused for it) and this call would see wasReceiving == false, skip its
+        // own RX-pause step below, and key PTT mid-re-decode. Released by CompareExchange back to 0
+        // in this method's own finally below, same as _transmitInFlight itself.
+        if (Volatile.Read(ref _fileDecodeInFlight) != 0)
+        {
+            Volatile.Write(ref _transmitInFlight, 0);
+            throw new InvalidOperationException("Cannot transmit or tune while a file decode is in progress.");
         }
 
         try
@@ -3183,6 +3453,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
         }
 
+        // Piece C1: an in-progress recording must be finalized (its buffered chunks written to disk)
+        // before this method returns, or the whole in-RAM buffer is silently discarded with no file
+        // ever written -- best-effort/swallowed here, same as every other step in this method,
+        // matching StopRecordingAsync's own doc comment for why THAT call propagates instead. Placed
+        // AFTER the _disposed=true/MemoryBarrier fence above (does not read _disposed, so ordering
+        // relative to it doesn't matter) and does not need to run before the PTT backstop above --
+        // recording touches no PTT/radio state.
+        try
+        {
+            await FinalizeRecordingAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "FinalizeRecording (dispose)", ex));
+        }
+
         // Round-17 finding: these three teardown steps used to run with no guard at all -- a throw
         // from any one (e.g. StopReceivingAsync's own _decoder.ResetAgc() call, which sits outside
         // its own internal try, or a throwing Waterfall.Dispose()) aborted DisposeAsync mid-way,
@@ -3190,6 +3476,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // own established fix for the identical shape (its own comment: "each lifecycle now gets its
         // own try/finally so a failure in one never prevents the other") -- each step here now gets
         // its own try/catch instead, logged and swallowed, so teardown always reaches every step.
+        //
+        // Piece C2 note: DecodeFromFileAsync holds _rxTransitionGate for its whole decode, so a
+        // Dispose racing an in-progress file decode will burn this call's full _cleanupTimeout (5s)
+        // waiting on that gate -- bounded and expected, not a bug: the file-decode loop's own
+        // per-chunk _disposed check (set true at this method's very first line) makes it bail out and
+        // release the gate well within that budget.
         try
         {
             await StopReceivingAsync().ConfigureAwait(false);
@@ -3556,6 +3848,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Waterfall PushSamples threw ({Count} occurrences so far)")]
         public static partial void WaterfallPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Recording sink threw ({Count} occurrences so far)")]
+        public static partial void RecordingPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Recording started: {Path}")]
+        public static partial void RecordingStarted(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Recording saved: {Path} ({SampleCount} samples)")]
+        public static partial void RecordingSaved(ILogger logger, string path, int sampleCount);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual ReSync requested")]
         public static partial void ReSyncRequested(ILogger logger);

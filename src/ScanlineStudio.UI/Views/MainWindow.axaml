@@ -97,7 +97,9 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.SlantReference}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.Menu.Tools}">
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Piece C2 (RX tab Re-decode port): same command RxImage's own "Re-decode" button
+                     uses (MainWindow.axaml's action bar below) — one feature, two entry points. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" Command="{Binding RxImage.RedecodeCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
@@ -535,13 +537,15 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.CardHeader}" />
                             </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
-                                <!-- Bottom action bar: Save/Abort/Re-decode/Copy-to-TX are still
-                                     literal/no-op (spec/14-roadmap.md backlog); Log QSO is real
-                                     (wired 2026-08-15, see the inner comment below). Progress
-                                     bar/count are real too (spec/18-path-to-1.0.md High item 9):
-                                     RxImage.Progress/LineProgressText, the same properties already
-                                     bound in the status bar (:1483-ish). DockPanel (not StackPanel):
-                                     buttons left, count
+                                <!-- Bottom action bar: Abort is still literal/no-op (no legacy
+                                     precedent, spec/14-roadmap.md backlog, explicitly excluded from
+                                     the Piece C RX-tab port — see that plan's Context section). Log
+                                     QSO is real (wired 2026-08-15, see the inner comment below).
+                                     Record/Re-decode wired as Piece C1/C2 (RX tab Re-decode port).
+                                     Progress bar/count are real too (spec/18-path-to-1.0.md High
+                                     item 9): RxImage.Progress/LineProgressText, the same properties
+                                     already bound in the status bar (:1483-ish). DockPanel (not
+                                     StackPanel): buttons left, count
                                      pinned far right (no "Ln" prefix - just the raw x/y count),
                                      progress bar fills the middle gap between them - matches
                                      mock2's own bar-fills-the-row shape while keeping the frame
@@ -552,14 +556,15 @@
                                         <!-- Save Frame/Copy-to-TX wired 2026-08-18 (RxImagePaneViewModel.
                                              SaveFrameCommand / TxControlsPaneViewModel.CopyReceivedImageToTxCommand
                                              — see their own doc comments; Copy-to-TX has a real legacy
-                                             precedent, fileview.cpp's CopyRectBitmap(pBitmapTXM)). Abort/
-                                             Re-decode still have no backing command on RxImagePaneViewModel —
-                                             left disabled rather than clickable-but-dead. This DockPanel's
+                                             precedent, fileview.cpp's CopyRectBitmap(pBitmapTXM)). Abort
+                                             still has no backing command (no legacy precedent) — left
+                                             disabled rather than clickable-but-dead. This DockPanel's
                                              own DataContext is MainViewModel, not RxImage/TxControls, so
                                              every binding here is explicitly qualified. -->
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" Command="{Binding RxImage.SaveFrameCommand}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{Binding RxImage.RecordButtonLabel}" Command="{Binding RxImage.ToggleRecordingCommand}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" Command="{Binding RxImage.RedecodeCommand}" />
                                         <!-- Round-1 code-review finding: without this, a genuine
                                              in-progress edit (CanChangeSourceOrMode false) left the
                                              button looking live while TryClaimEditorSlotForNewSource
@@ -578,6 +583,15 @@
                                            Foreground="{StaticResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding RxImage.SaveFrameErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <!-- Piece C1/C2: same IsNotNull-gated error-text pattern. -->
+                                <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.RecordErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding RxImage.RecordErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.RedecodeErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding RxImage.RedecodeErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
                                      card, beside the image); still the same real
