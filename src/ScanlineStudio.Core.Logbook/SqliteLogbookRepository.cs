@@ -9,9 +9,9 @@ namespace ScanlineStudio.Core.Logbook;
 /// section. Deliberately shares the same <c>history.db</c> file (and default path) as
 /// <see cref="SqliteReceiveHistoryStore"/>, per that section's own note that a QSO row can
 /// foreign-key to a received-image row directly; <see cref="Abstractions.Imaging.ReceiveHistoryEntry.LinkedQsoId"/>
-/// already anticipates this table's <c>Id</c> column. No retention/trimming here, unlike RX
-/// history — a QSO log is a durable record a ham operator relies on, never a bounded ring
-/// buffer.</summary>
+/// already anticipates this table's <c>Id</c> column. No retention/trimming here -- a QSO log is
+/// a durable record a ham operator relies on, never a bounded ring buffer; RX history itself no
+/// longer trims either, as of the 2026-08-26 removal (`docs/removed-features.md`).</summary>
 public sealed partial class SqliteLogbookRepository : ILogbookRepository
 {
     private readonly string _connectionString;

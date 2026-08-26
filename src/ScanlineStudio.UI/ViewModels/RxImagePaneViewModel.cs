@@ -1123,8 +1123,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         if (!succeeded)
         {
-            // Reachable, not defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: the
-            // retention-trim ring buffer can delete this row between load and edit.
+            // Defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: no automatic
+            // deletion path exists in this port's production store today (docs/removed-features.md,
+            // 2026-08-26), but a missing row is still a reachable state worth handling explicitly.
             Log.SetNoteEntryMissing(_logger, entryId);
             Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.EntryNoLongerExists"));
         }
