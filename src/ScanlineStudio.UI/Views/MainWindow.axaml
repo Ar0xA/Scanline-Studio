@@ -107,6 +107,7 @@
                  as the sole trailing item. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenOnGitHub}" Command="{Binding OpenOnGitHubCommand}" />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenApplicationLog}" Command="{Binding OpenApplicationLogCommand}" />
                 <!-- About stays the last item, per direct user request (2026-08-26). -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.About}" Command="{Binding OpenAboutCommand}" />
             </MenuItem>

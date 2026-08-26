@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -218,6 +219,13 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenApplicationLog()
+    {
+        Log.OpenApplicationLogInvoked(_logger);
+        _urlLauncher.Open(AppLogPaths.LogDirectory);
+    }
+
+    [RelayCommand]
     private void Exit()
     {
         Log.ExitInvoked(_logger);
@@ -255,6 +263,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOnGitHub command invoked")]
         public static partial void OpenOnGitHubInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenApplicationLog command invoked")]
+        public static partial void OpenApplicationLogInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);

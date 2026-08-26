@@ -118,6 +118,29 @@ public sealed class SstvCompositionRootTests
     }
 
     [Fact]
+    public async Task MainViewModel_OpenApplicationLogCommand_OpensTheSameDirectoryTheLoggerWritesTo()
+    {
+        // Pins that this opens AppLogPaths.LogDirectory specifically -- the single source of truth
+        // Program.cs's own logger configuration also reads from, not a second, independently
+        // hand-typed path that could silently drift from where the log file actually lands.
+        var urlLauncher = new FakeUrlLauncher();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        Program.RegisterServices(services);
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
+        services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        services.AddSingleton<ScanlineStudio.UI.Services.IUrlLauncher>(urlLauncher);
+        await using var provider = services.BuildServiceProvider();
+        var mainViewModel = provider.GetRequiredService<MainViewModel>();
+
+        mainViewModel.OpenApplicationLogCommand.Execute(null);
+
+        Assert.Equal([AppLogPaths.LogDirectory], urlLauncher.OpenedUrls);
+    }
+
+    [Fact]
     public void CreateSstvDecoder_CorruptAudioDeviceSettingsSection_FallsBackToDefaultsInsteadOfThrowing()
     {
         // Tier C audit finding (risk): GetSection's own Deserialize call throws JsonException for a
