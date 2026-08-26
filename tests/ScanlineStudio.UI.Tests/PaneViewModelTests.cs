@@ -677,6 +677,122 @@ public sealed class PaneViewModelTests
         Assert.False(vm.CanEditFrameMetadata);
     }
 
+    // Previous-frames strip (user decision, 2026-08-26): a session-only rolling list of the last 2
+    // COMPLETED receptions, independent of RxHistoryPaneViewModel.Entries/the Gallery tab's own
+    // ShowTodayOnly toggle.
+
+    [AvaloniaFact]
+    public void PreviousFrames_CompletedEntryRecorded_IsAdded()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.Empty(vm.PreviousFrames);
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+
+        var frame = Assert.Single(vm.PreviousFrames);
+        Assert.Equal("entry1", frame.Entry.Id);
+        Assert.NotNull(frame.Thumbnail);
+    }
+
+    [AvaloniaFact]
+    public void PreviousFrames_AbandonedEntryRecorded_IsNotAdded()
+    {
+        // An aborted/partial attempt isn't what an operator means by "a previous frame."
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Abandoned));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(vm.PreviousFrames);
+    }
+
+    [AvaloniaFact]
+    public void PreviousFrames_MoreThanCapacityRecorded_KeepsOnlyTheNewestTwo()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var now = DateTimeOffset.UtcNow;
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", now, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry2", now.AddSeconds(1), "sc1", "/tmp/frame2.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry3", now.AddSeconds(2), "sc1", "/tmp/frame3.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.PreviousFrames.Count);
+        Assert.Equal(["entry3", "entry2"], vm.PreviousFrames.Select(f => f.Entry.Id));
+    }
+
+    [AvaloniaFact]
+    public void PreviousFrames_ThumbnailLoadFails_EntryStillAddedWithoutAThumbnail()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore(); // ThumbnailToReturn left null -> throws
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+
+        var frame = Assert.Single(vm.PreviousFrames);
+        Assert.Equal("entry1", frame.Entry.Id);
+        Assert.Null(frame.Thumbnail);
+    }
+
+    [AvaloniaFact]
+    public async Task PreviousFrames_SecondEntrysThumbnailResolvesBeforeTheFirsts_StillEndsUpNewestFirst()
+    {
+        // Regression coverage for the sort-on-insert logic: IReceiveHistoryStore.Recorded can fire
+        // back-to-back during a bulk-decoded WAV import (same interleaving several sibling methods on
+        // this class already guard against), and the thumbnail load is a real async gap -- a naive
+        // "insert at index 0" would put the OLDER entry on top if its own thumbnail happens to resolve
+        // second.
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var now = DateTimeOffset.UtcNow;
+
+        var gateOlder = new TaskCompletionSource<IImageSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var gateNewer = new TaskCompletionSource<IImageSource>(TaskCreationOptions.RunContinuationsAsynchronously);
+        historyStore.ThumbnailLoadGates["older"] = gateOlder;
+        historyStore.ThumbnailLoadGates["newer"] = gateNewer;
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("older", now, "sc1", "/tmp/older.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("newer", now.AddSeconds(1), "sc1", "/tmp/newer.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(vm.PreviousFrames); // both loads still pending
+
+        // The NEWER entry's thumbnail resolves first -- pumped deterministically (not a single
+        // Task.Yield/RunJobs pair, which races the thread-pool hop under load) and checked with an
+        // intermediate assertion, which is what actually pins the intended interleaving rather than
+        // passing coincidentally against a naive Insert(0, ...) too.
+        var thumbnail = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]);
+        gateNewer.SetResult(thumbnail);
+        await PumpUntilAsync(() => vm.PreviousFrames.Count == 1);
+        Assert.Equal(["newer"], vm.PreviousFrames.Select(f => f.Entry.Id));
+
+        gateOlder.SetResult(thumbnail);
+        await PumpUntilAsync(() => vm.PreviousFrames.Count == 2);
+
+        Assert.Equal(["newer", "older"], vm.PreviousFrames.Select(f => f.Entry.Id));
+    }
+
+    private static async Task PumpUntilAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 50 && !condition(); i++)
+        {
+            await Task.Delay(10);
+            Dispatcher.UIThread.RunJobs();
+        }
+    }
+
     [AvaloniaFact]
     public async Task NoteChanged_PersistsDebounced_ToTheCorrelatedEntry()
     {
@@ -4047,6 +4163,73 @@ public sealed class PaneViewModelTests
             new FakeSstvSessionService { AvailableModes = [TestMode] },
             new FakeLocalizationService(),
             NullLogger<LogbookPaneViewModel>.Instance);
+
+    // Disk/DB reconciliation (user-reported gap, 2026-08-26): ReconcileDiskThenRefreshAsync is the
+    // Gallery-tab-selection trigger's own target -- see MainWindowTabOrderTests' GalleryTabIndex
+    // guard for the wiring half of this feature.
+
+    [AvaloniaFact]
+    public async Task ReconcileDiskThenRefreshAsync_EntriesImported_RefreshesTheList()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            ReconcileResultCount = 1,
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+        historyStore.QueryFilters.Clear(); // drop the constructor's own initial RefreshAsync call
+
+        await vm.ReconcileDiskThenRefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, historyStore.ReconcileCallCount);
+        Assert.Single(historyStore.QueryFilters); // RefreshAsync ran again, picking up the import
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task ReconcileDiskThenRefreshAsync_NothingImported_DoesNotRefresh()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ReconcileResultCount = 0 };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+        historyStore.QueryFilters.Clear();
+
+        await vm.ReconcileDiskThenRefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, historyStore.ReconcileCallCount);
+        Assert.Empty(historyStore.QueryFilters); // no need to re-query when nothing changed
+    }
+
+    [AvaloniaFact]
+    public async Task ReconcileDiskThenRefreshAsync_CalledTwice_OnlyReconcilesOnceThisSession()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ReconcileDiskThenRefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+        await vm.ReconcileDiskThenRefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, historyStore.ReconcileCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task ReconcileDiskThenRefreshAsync_Throws_SetsErrorMessage_DoesNotPropagate()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ThrowOnReconcile = new IOException("Simulated disk-scan failure.") };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ReconcileDiskThenRefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.Error.ReconcileFailed", vm.ErrorMessage);
+    }
 
     private static RxHistoryPaneViewModel CreateRxHistoryPaneViewModel(
         FakeReceiveHistoryStore historyStore,

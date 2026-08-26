@@ -635,10 +635,13 @@
                                            IsVisible="{Binding RxImage.RedecodeErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Previous-frames strip relocated here from its own right-column
                                      card, matching mock2's own placement (inside the Incoming-frame
-                                     card, beside the image); still the same real
-                                     RxHistoryPaneViewModel.Entries binding, just repositioned and
-                                     widened 160->266 to match mock2. Mode-pill badge overlay and
-                                     callsign line are literal: ReceiveHistoryEntry has no
+                                     card, beside the image), widened 160->266 to match mock2.
+                                     Rebound 2026-08-26 (user decision) from RxHistoryPaneViewModel.
+                                     Entries (DB-backed, filtered by the Gallery tab's own
+                                     ShowTodayOnly toggle) to RxImagePaneViewModel.PreviousFrames
+                                     (session-only, capped at 2, independent of any Gallery UI state
+                                     — see that property's own doc comment). Mode-pill badge overlay
+                                     and callsign line are literal: ReceiveHistoryEntry has no
                                      callsign field (see RxHistoryPaneViewModel.cs's own doc
                                      comment), same precedent as Frame metadata's static text. -->
                                 <!-- Frame column is Auto, not a fixed/star width: a plain Border/
@@ -666,7 +669,7 @@
                                         <DockPanel LastChildFill="True">
                                             <TextBlock DockPanel.Dock="Top" Classes="IndustryRowValue"
                                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
-                                                       IsVisible="{Binding !RxHistory.Entries.Count}" />
+                                                       IsVisible="{Binding !RxImage.PreviousFrames.Count}" />
                                             <ScrollViewer>
                                                 <!-- UniformGrid Columns=2, not WrapPanel/fixed-Width
                                                      thumbs (design-fidelity-agent-caught fix): the
@@ -675,7 +678,7 @@
                                                      120px-per-item wrap; the old literal Width="120"
                                                      was ~2.9x smaller than the mockup's real fluid
                                                      cell size. -->
-                                                <ItemsControl ItemsSource="{Binding RxHistory.Entries}">
+                                                <ItemsControl ItemsSource="{Binding RxImage.PreviousFrames}">
                                                     <ItemsControl.ItemsPanel>
                                                         <ItemsPanelTemplate>
                                                             <UniformGrid Columns="2" />
@@ -1160,6 +1163,16 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ModeId}" />
+                                    </Grid></Border>
+                                    <!-- Date row added 2026-08-26 (user decision), above Time — same
+                                         real Entry.ReceivedAt value as the Time row below, just the
+                                         date half. ISO 8601 (yyyy-MM-dd), matching this app's own
+                                         file-naming convention (yyyyMMdd-HHmmssfff_MODE_ID8.png,
+                                         ReceiveHistoryRecorder.cs) rather than a locale-ambiguous
+                                         MM/dd vs dd/MM format. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.DateLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=yyyy-MM-dd}" />
                                     </Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />

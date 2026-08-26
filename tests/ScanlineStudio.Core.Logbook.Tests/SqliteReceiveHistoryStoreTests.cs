@@ -662,6 +662,232 @@ public sealed class SqliteReceiveHistoryStoreTests
         }
     }
 
+    // Disk/DB reconciliation (user-reported gap, 2026-08-26): files can exist on disk with no
+    // matching history row. ReconcileWithDiskAsync scans the configured images directory and
+    // backfills entries for files matching ReceiveHistoryRecorder's own naming convention.
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_CompletedAndAbandonedFiles_ImportsBothWithCorrectMetadata()
+    {
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+
+            var completedPath = Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png");
+            var abandonedPath = Path.Combine(imagesDirectory, "20260826-150000000_martin-m1_partial_e5f6a7b8.png");
+            File.WriteAllBytes(completedPath, []);
+            File.WriteAllBytes(abandonedPath, []);
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(2, imported);
+            var entries = (await store.QueryAsync(new ReceiveHistoryFilter())).OrderBy(e => e.ReceivedAt).ToList();
+            Assert.Equal(2, entries.Count);
+
+            var completed = entries.Single(e => e.FilePath == completedPath);
+            Assert.Equal("robot36", completed.ModeId);
+            Assert.Equal(ReceiveDecodeState.Completed, completed.DecodeState);
+            var expectedCompletedLocal = new DateTime(2026, 8, 26, 14, 30, 52, 123);
+            Assert.Equal(expectedCompletedLocal, completed.ReceivedAt.LocalDateTime);
+            // Auditor-caught: asserting LocalDateTime alone passes identically for a UTC-reconstructed
+            // (TimeSpan.Zero) offset on a UTC-configured CI leg -- this is what actually discriminates
+            // local-vs-UTC reconstruction, not just the wall-clock display value.
+            Assert.Equal(TimeZoneInfo.Local.GetUtcOffset(expectedCompletedLocal), completed.ReceivedAt.Offset);
+
+            var abandoned = entries.Single(e => e.FilePath == abandonedPath);
+            Assert.Equal("martin-m1", abandoned.ModeId);
+            Assert.Equal(ReceiveDecodeState.Abandoned, abandoned.DecodeState);
+            Assert.Equal(new DateTime(2026, 8, 26, 15, 0, 0, 0), abandoned.ReceivedAt.LocalDateTime);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_PreFixCompletedFile_NoMillisecondsNoIdToken_IsStillImported()
+    {
+        // Auditor-caught (2026-08-26): ReceiveHistoryRecorder's completed-image filename scheme used
+        // to be second-granularity with no uniqueness token at all (docs/functional-audit-playbook.md's
+        // own record of the later collision fix) before becoming the current ms+id8 scheme -- any
+        // install that predates that fix has files in exactly this older shape, and recovering them
+        // is this whole feature's actual point.
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+
+            var oldShapePath = Path.Combine(imagesDirectory, "20260826-143052_robot36.png");
+            File.WriteAllBytes(oldShapePath, []);
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(1, imported);
+            var entry = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("robot36", entry.ModeId);
+            Assert.Equal(ReceiveDecodeState.Completed, entry.DecodeState);
+            Assert.Equal(new DateTime(2026, 8, 26, 14, 30, 52), entry.ReceivedAt.LocalDateTime);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_FilenameMatchesPatternButDateIsInvalid_IsSkipped()
+    {
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+            // Month 13 -- matches the regex shape exactly (8 digits, 6 digits, mode, .png) but isn't
+            // a real calendar date.
+            File.WriteAllBytes(Path.Combine(imagesDirectory, "20261345-120000_robot36.png"), []);
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(0, imported);
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_FileAlreadyInDatabase_IsNotDuplicated()
+    {
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+
+            var filePath = Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png");
+            File.WriteAllBytes(filePath, []);
+            await store.RecordAsync(new ReceiveHistoryEntry("existing-id", DateTimeOffset.Now, "robot36", filePath, null, ReceiveDecodeState.Completed));
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(0, imported);
+            var entry = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("existing-id", entry.Id); // the ORIGINAL row, not a reconciled duplicate
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_FileNotMatchingNamingConvention_IsSkipped()
+    {
+        // A manual copy, a different app's export, or a genuinely foreign file -- inventing
+        // ReceivedAt/ModeId for it would be fabricated data, not a real reconciliation.
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+            File.WriteAllBytes(Path.Combine(imagesDirectory, "vacation-photo.png"), []);
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(0, imported);
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_ImagesDirectoryDoesNotExist_ReturnsZero_DoesNotThrow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var settingsStore = new FakeSettingsStore
+            {
+                Settings = new AppSettings().WithSection(
+                    ReceiveHistorySettings.SectionKey,
+                    new ReceiveHistorySettings { ImagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-never-created-{Guid.NewGuid()}") },
+                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
+            };
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            Assert.Equal(0, await store.ReconcileWithDiskAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_ImportedEntries_DoNotRaiseRecorded()
+    {
+        // Load-bearing, not a style choice: Recorded means "a frame just landed" -- a historical
+        // backfill firing it would pollute RxImagePaneViewModel.PreviousFrames (a SESSION-only list)
+        // with old, already-on-disk frames. See ReconcileWithDiskAsync's own interface doc comment.
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+            File.WriteAllBytes(Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png"), []);
+
+            var raisedCount = 0;
+            store.Recorded += _ => raisedCount++;
+
+            await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(0, raisedCount);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
     private static async Task<List<string>> ReadColumnNamesAsync(string dbPath)
     {
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());

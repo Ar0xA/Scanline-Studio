@@ -67,6 +67,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // instead of applying them.
     private int _refreshGeneration;
 
+    /// <summary>Guards <see cref="ReconcileDiskThenRefreshAsync"/> so a disk scan only runs once per
+    /// app session (repeatedly flipping back to the Gallery tab must not re-scan the whole images
+    /// folder every time) -- see that method's own doc comment for the full reasoning.</summary>
+    private bool _hasReconciledDiskThisSession;
+
     // Auditor-caught UX issue (batch 7): every RefreshAsync call builds brand-new
     // RxHistoryEntryViewModel instances, so even after re-selecting the SAME logical entry by
     // Entry.Id, OnSelectedEntryChanged still sees a different object reference and (without this
@@ -469,6 +474,45 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             DiskFreeGigabytes = null;
             Log.GetDiskFreeSpaceFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>User-reported gap, 2026-08-26: files can exist in <see cref="ImagesDirectory"/> with
+    /// no matching history row (e.g. the DB was lost/reset independently of the images folder --
+    /// real report was ~85 images on disk against 1 DB row). Called when the Gallery tab is selected
+    /// (<see cref="MainViewModel.OnSelectedTabIndexChanged"/>) -- matches the user's own stated
+    /// trigger point exactly, not app startup, so this scan never runs for a session that never
+    /// visits Gallery. Runs at most once per session (<see cref="_hasReconciledDiskThisSession"/>):
+    /// the folder's own contents don't change from outside this app mid-session in any way a repeat
+    /// scan would need to catch, and a large history folder makes repeated re-scans a real, avoidable
+    /// cost. <see cref="IReceiveHistoryStore.ReconcileWithDiskAsync"/> deliberately does not raise
+    /// <see cref="IReceiveHistoryStore.Recorded"/> for backfilled entries (see that method's own doc
+    /// comment), so <see cref="RefreshAsync"/> is called explicitly here to make newly-imported rows
+    /// actually visible -- nothing else would pick them up.</summary>
+    public async Task ReconcileDiskThenRefreshAsync()
+    {
+        if (_hasReconciledDiskThisSession)
+        {
+            return;
+        }
+
+        _hasReconciledDiskThisSession = true;
+
+        try
+        {
+            var imported = await _historyStore.ReconcileWithDiskAsync().ConfigureAwait(true);
+            if (imported > 0)
+            {
+                Log.ReconcileImported(_logger, imported);
+                await RefreshAsync().ConfigureAwait(true);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as RefreshAsync's own failure handling -- Gallery just
+            // keeps showing whatever it already had.
+            Log.ReconcileFailed(_logger, ex);
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.ReconcileFailed");
         }
     }
 
@@ -1006,6 +1050,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: showTodayOnly={ShowTodayOnly}")]
         public static partial void RefreshInvoked(ILogger logger, bool showTodayOnly);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Disk/DB reconcile imported {Count} entries; refreshing")]
+        public static partial void ReconcileImported(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Disk/DB reconcile failed")]
+        public static partial void ReconcileFailed(ILogger logger, Exception ex);
 
         // Tier B audit finding: was "history list stays empty" -- false, since the return happens
         // BEFORE Entries.Clear() runs, so the list stays at whatever it last successfully loaded,
