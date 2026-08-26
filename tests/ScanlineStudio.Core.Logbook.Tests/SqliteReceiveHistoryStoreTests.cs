@@ -749,6 +749,42 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task ReconcileWithDiskAsync_RealUserReportedFile_IsImported()
+    {
+        // Regression fixture from a real user-reported install, 2026-08-27:
+        // "20260825-004916556_martin-m2_1a081cf8.png". An earlier report of this same filename had a
+        // transcription typo dropping one hex character from the id token; the user corrected it, and
+        // the real id ("1a081cf8") is a normal 8-character entryId[..8] fragment -- no pattern change
+        // was needed. Kept as a real-sample regression guard rather than deleted as pure duplication.
+        var dbPath = TempDbPath();
+        var imagesDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-reconcile-test-{Guid.NewGuid()}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(imagesDirectory);
+
+            var realPath = Path.Combine(imagesDirectory, "20260825-004916556_martin-m2_1a081cf8.png");
+            File.WriteAllBytes(realPath, []);
+
+            var imported = await store.ReconcileWithDiskAsync();
+
+            Assert.Equal(1, imported);
+            var entry = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("martin-m2", entry.ModeId);
+            Assert.Equal(ReceiveDecodeState.Completed, entry.DecodeState);
+            Assert.Equal(new DateTime(2026, 8, 25, 0, 49, 16, 556), entry.ReceivedAt.LocalDateTime);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(imagesDirectory))
+            {
+                Directory.Delete(imagesDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task ReconcileWithDiskAsync_FilenameMatchesPatternButDateIsInvalid_IsSkipped()
     {
         var dbPath = TempDbPath();
