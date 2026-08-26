@@ -350,7 +350,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     // marker -- unreachable on the pre-fix shape, which never had an abandoned-path counterpart with
     // this problem), id (the entry-id fragment -- NOT reused as the reconciled entry's own Id, since
     // only the first 8 hex chars of the original GUID survive in the filename; a fresh GUID is
-    // generated instead, same as every other RecordAsync caller).
+    // generated instead, same as every other RecordAsync caller). `id` is a hard `{8}`, matching
+    // `entryId[..8]` (this class's own write path, the only variant ever found in this repo's git
+    // history): Guid.ToString()'s default format always has exactly 8 hex digits before its first
+    // hyphen. A real production filename (`20260825-004916556_martin-m2_1a081cf8.png`) was checked
+    // against this pattern, 2026-08-27 -- id token `1a081cf8` is 8 characters and matches cleanly; an
+    // earlier report of a 7-character id from the same file turned out to be a transcription typo,
+    // corrected by the user, not a real filename shape.
     [GeneratedRegex(@"^(?<timestamp>\d{8}-\d{6}(?<ms>\d{3})?)_(?<mode>[^_]+)(?:_(?:(?<partial>partial)_)?(?<id>[0-9a-f]{8}))?\.png$", RegexOptions.IgnoreCase)]
     private static partial Regex FilenamePattern();
 
