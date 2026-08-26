@@ -35,10 +35,10 @@
             <!-- VFO card: one of this design's 3 real blueprint-corner sites (design doc §2).
                  Frequency readout, CAT-link status, sideband segment (Tier 4, 2026-08-26 — see
                  IsSidebandUsb/Lsb/Fm's own doc comment), and the rig-meters pill (2026-08-18) are
-                 real; BW·SPLIT·STEP·RIT pills are still literal — bandwidth/split/RIT need real new
-                 CAT-layer plumbing this port doesn't have yet (Hamlib's own frozen P/Invoke table has
-                 no split/RIT binding at all), and Step may not be a CAT concept at all (legacy's own
-                 CAT header has no trace of it) — see spec/14-roadmap.md backlog, still open. Preserved
+                 real; BW·SPLIT·RIT pills are still literal — need real new CAT-layer plumbing this
+                 port doesn't have yet (Hamlib's own frozen P/Invoke table has no split/RIT binding
+                 at all) — see spec/14-roadmap.md backlog, still open. Step removed outright
+                 2026-08-26 (see the pill's own comment below). Preserved
                  product decision (design doc §2): no vertical divider between columns B/C, per prior
                  direct user feedback — LAYOUT-SPEC's own Column C has a 1px left border; deliberately
                  not resurrected here. -->
@@ -122,15 +122,16 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- STUB (spec/16-gui-wiring-survey.md:346): no step/RIT concept exists on
+                        <!-- STUB (spec/16-gui-wiring-survey.md:346): no RIT concept exists on
                              IRadioSessionService today. Same disabled+tooltip treatment as the
-                             BW/Split pills above. -->
+                             BW/Split pills above. Step removed outright 2026-08-26 (Tier 4 scoping
+                             pass, user decision "maybe one day") — legacy's own CAT header
+                             (cradio.h) has zero mentions of it; almost certainly a local UI
+                             frequency-nudge increment, not a CAT concept at all, so there was
+                             nothing to scope as CAT-layer work. See spec/14-roadmap.md's backlog. -->
                         <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="3"
                                     IsEnabled="False" Opacity="0.45"
                                     ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                            <Border Classes="Industry IndustryMini" BorderThickness="1">
-                                <TextBlock Text="{loc:Translate RadioStatus.StepValue}" />
-                            </Border>
                             <Border Classes="Industry IndustryMini" BorderThickness="1">
                                 <TextBlock Text="{loc:Translate RadioStatus.RitValue}" />
                             </Border>
