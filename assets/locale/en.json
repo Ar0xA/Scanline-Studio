@@ -249,7 +249,6 @@
   "Panes.RxHistory.Status.Exported": "Exported to {0}.",
   "Panes.RxHistory.OpenInLog": "Open in log",
   "Panes.RxHistory.ExportFrame": "Export",
-  "Panes.RxHistory.Redecode": "Re-decode",
   "Panes.RxHistory.NamingLabel": "Naming",
   "Panes.RxHistory.NamingValue": "yyyyMMdd-HHmmssfff_MODE_ID8.png",
   "Panes.RxHistory.SidecarLabel": "Sidecar",
