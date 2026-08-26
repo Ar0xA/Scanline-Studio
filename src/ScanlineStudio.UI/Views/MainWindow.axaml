@@ -103,7 +103,14 @@
                  PTT both have real equivalents elsewhere already (the header's own M1-M7 favourites;
                  Options' Radio/CAT tab Test PTT), so nothing here still lacks a home if implemented. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration}">
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ClockCalibration}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Clock calibration (legacy ClockAdj.cpp, a live master-clock wizard) removed
+                     2026-08-26 (user decision, "maybe one day") after investigation: Auto Slant
+                     already auto-corrects per-line clock drift on every reception, tested to a 1%
+                     mismatch (spec/06-sstv-dsp.md, SlantTests.cs) — well past real-world sound-card
+                     clock error. The manual wizard's only edge (faster initial-line lock) didn't
+                     justify the build cost once a live-port plan-review surfaced real defects
+                     (wrong scroll geometry, a click-anchor bug, a missing intensity mapping). See
+                     spec/14-roadmap.md's backlog. -->
                 <!-- Stub survey Tier 3 (2026-08-26): one-shot software preview — encode the TX
                      pane's currently loaded image/mode, decode it back in-process, show the result
                      in a dedicated dialog. NOT legacy's RGLoopBack hardware loopback (see
