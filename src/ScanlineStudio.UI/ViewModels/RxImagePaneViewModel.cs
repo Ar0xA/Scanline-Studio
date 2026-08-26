@@ -303,15 +303,19 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     /// <summary>Legacy's real <c>MyRST</c> equivalent (<c>Main.cpp:3648</c>,
     /// <c>sprintf("595%s", pDem-&gt;m_fskNRS)</c>) -- the decoded NR/RST exchange from a station-ID's
-    /// optional sub-packet, auto-filled by <see cref="OnStationIdDecoded"/>. No card row binds this
-    /// yet (the RxFrameMeta card's mockup has no RST field at all, unlike "Override callsign" which
-    /// already had one to wire into) -- real, tested backing state ahead of its own UI exposure,
-    /// same incremental pattern several sibling still-literal rows on this same card already follow
-    /// (Frequency/ModeVis/OcrConfidence). Deliberately not named <c>MyRst</c>
-    /// (a literal legacy-field-name port) -- follows <see cref="OverrideCallsign"/>'s own precedent
-    /// of an English, descriptive name instead.</summary>
+    /// optional sub-packet, auto-filled by <see cref="OnStationIdDecoded"/>. Deliberately not named
+    /// <c>MyRst</c> (a literal legacy-field-name port) -- follows <see cref="OverrideCallsign"/>'s
+    /// own precedent of an English, descriptive name instead. Wired to a real card row 2026-08-26 --
+    /// see <see cref="DecodedNrRstDisplay"/>.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DecodedNrRstDisplay))]
     private string? _decodedNrRst;
+
+    /// <summary>Read-only "NR / RST" row on the RxFrameMeta card, right after Callsign -- both come
+    /// from the same FSK station-ID decode event (<see cref="OnStationIdDecoded"/>), unlike Name/QTH
+    /// below (a separate QRZ lookup). Same "—" empty-state convention as <see cref="NameDisplay"/>/
+    /// <see cref="QthDisplay"/>.</summary>
+    public string DecodedNrRstDisplay => DecodedNrRst ?? "—";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NameDisplay))]
@@ -811,10 +815,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             LookupGrid = null;
             // Tier B audit finding: DecodedNrRst is the same per-RECEPTION "who is this station"
             // category as the four fields above (also decoded from station A's FSK sub-packet, see
-            // ApplyStationIdDecodedAsync) but was the one left out of this reset -- latent only
-            // because no view currently binds it (OptionsWindowView.axaml notes it as a separate,
-            // still-unbound gap); fixed now so it doesn't become a live wrong-value bug the moment it
-            // is bound.
+            // ApplyStationIdDecodedAsync) but was the one left out of this reset. Now bound to a real
+            // card row (2026-08-26, see DecodedNrRstDisplay's own doc comment) -- this reset is
+            // load-bearing, not just future-proofing.
             DecodedNrRst = null;
             // Tier B audit finding: these three are per-RECEPTION error/status text, same category as
             // Note/IsFlagged above, but weren't cleared here -- a QRZ lookup failure or a stale
