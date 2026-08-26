@@ -1,0 +1,56 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.MacrosReferenceWindowView"
+        x:DataType="vm:MacrosReferenceWindowViewModel"
+        Title="{loc:Translate Macros.Title}"
+        Width="480" Height="520"
+        MinWidth="420" MinHeight="420"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Stub survey Tier 3 (2026-08-26). Read-only token reference + live preview, not an editor —
+         see this dialog's own view-model doc comment for why. Modeled on QsoLinkWindowView.axaml
+         (Industry atoms, Grid RowDefinitions="*,Auto" content/footer split). -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <ScrollViewer Grid.Row="0">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Macros.TokensHeader}" />
+                        </HeaderedContentControl.Header>
+                        <ItemsControl ItemsSource="{Binding Tokens}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="vm:MacroTokenReference">
+                                    <Grid ColumnDefinitions="70,*" Margin="0,0,0,3">
+                                        <TextBlock Classes="IndustryTableCell" FontFamily="{StaticResource IndustryMonoFontFamily}" Text="{Binding Token}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryTableCell" TextWrapping="Wrap" Text="{Binding Description}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </HeaderedContentControl>
+
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Macros.PreviewHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                            <TextBox Classes="Industry IndustryInput" Text="{Binding SampleText}" />
+                            <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding PreviewText}" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate Macros.CloseButton}" Command="{Binding CloseCommand}" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
