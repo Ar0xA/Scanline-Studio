@@ -36,10 +36,13 @@
                  Frequency readout, CAT-link status, sideband segment (Tier 4, 2026-08-26 — see
                  IsSidebandUsb/Lsb/Fm's own doc comment), the rig-meters pill (2026-08-18), and now
                  Bandwidth (Tier 4, 2026-08-26 — capability-gated, see CanReadBandwidth/
-                 CanSetBandwidth's own doc comment) are real; SPLIT·RIT pills are still literal —
-                 need real new CAT-layer plumbing this port doesn't have yet (Hamlib's own frozen
-                 P/Invoke table has no split/RIT binding at all) — see spec/14-roadmap.md backlog,
-                 still open. Step removed outright 2026-08-26 (see the pill's own comment below). Preserved
+                 CanSetBandwidth's own doc comment) are real. Step, Split, and RIT pills all removed
+                 outright 2026-08-26 (user decision, "maybe one day" — see spec/14-roadmap.md's
+                 backlog) — legacy's own CAT source (cradio.h/cradio.cpp/Main.cpp/Option.cpp) has
+                 zero mentions of any of the three; Split/RIT's only trace anywhere in legacy is an
+                 unused property on OmniRig's auto-generated COM binding, never read/written by
+                 YONIQ's own code (see the BW pill's own comment below, and the row-2 comment below
+                 it, for the full reasoning). Preserved
                  product decision (design doc §2): no vertical divider between columns B/C, per prior
                  direct user feedback — LAYOUT-SPEC's own Column C has a 1px left border; deliberately
                  not resurrected here. -->
@@ -99,9 +102,12 @@
                              doesn't (unreliable Hz readback, see FlrigClientProtocol.
                              SetBandwidthAsync). Falls back to the old disabled/tooltipped stub pill
                              (spec/16-gui-wiring-survey.md:344) when neither capability is present.
-                             Split stays a SEPARATE, still-stubbed pill, unchanged — it raises a
-                             real, unresolved design question (how a second TX frequency fits this
-                             port's single-FrequencyHz model), out of scope for this item; see
+                             Split's own pill removed outright 2026-08-26 (user decision, "maybe one
+                             day") — legacy's own CAT source (cradio.h/cradio.cpp/Main.cpp/Option.cpp)
+                             has zero mentions of Split; the only place it existed at all was an
+                             unused property on OmniRig's auto-generated COM binding
+                             (OmniRig_OCX.h) — never read/written by any of YONIQ's own code, and
+                             OmniRig itself is a removed feature in this port. See
                              spec/14-roadmap.md's backlog. -->
                         <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="3">
                             <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding CanReadBandwidth}">
@@ -120,11 +126,6 @@
                                     ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                                 <TextBlock Text="{loc:Translate RadioStatus.BwValue}" />
                             </Border>
-                            <Border Classes="Industry IndustryMini" BorderThickness="1"
-                                    IsEnabled="False" Opacity="0.45"
-                                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                <TextBlock Text="{loc:Translate RadioStatus.SplitValue}" />
-                            </Border>
                         </StackPanel>
                         <!-- CAT link: real, one-way binding (confirmed one-way, not two-way, per
                              design doc §2's own correction). 2026-08-14: now the real LED+lozenge
@@ -142,20 +143,15 @@
                             </StackPanel>
                         </Border>
 
-                        <!-- STUB (spec/16-gui-wiring-survey.md:346): no RIT concept exists on
-                             IRadioSessionService today. Same disabled+tooltip treatment as the
-                             BW/Split pills above. Step removed outright 2026-08-26 (Tier 4 scoping
-                             pass, user decision "maybe one day") — legacy's own CAT header
-                             (cradio.h) has zero mentions of it; almost certainly a local UI
-                             frequency-nudge increment, not a CAT concept at all, so there was
-                             nothing to scope as CAT-layer work. See spec/14-roadmap.md's backlog. -->
-                        <StackPanel Grid.Row="2" Grid.Column="0" Orientation="Horizontal" Spacing="3"
-                                    IsEnabled="False" Opacity="0.45"
-                                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                            <Border Classes="Industry IndustryMini" BorderThickness="1">
-                                <TextBlock Text="{loc:Translate RadioStatus.RitValue}" />
-                            </Border>
-                        </StackPanel>
+                        <!-- Step removed outright 2026-08-26 (Tier 4 scoping pass, user decision
+                             "maybe one day") — legacy's own CAT header (cradio.h) has zero mentions
+                             of it. RIT removed outright 2026-08-26, same decision — legacy's own CAT
+                             source (cradio.h/cradio.cpp/Main.cpp/Option.cpp) has zero mentions of
+                             RIT either; the only place it existed at all was an unused property on
+                             OmniRig's auto-generated COM binding (OmniRig_OCX.h), never read/written
+                             by YONIQ's own code, and OmniRig is a removed feature in this port. Grid
+                             row 2 column 0 is now empty (no replacement control) — see
+                             spec/14-roadmap.md's backlog for both. -->
                         <!-- Auditor usability review follow-up (2026-08-18): real now — the "no
                              rig-meters concept exists" premise this stub was built on was checked
                              directly against RigctldClientProtocol/HamlibRadioProtocol and found
