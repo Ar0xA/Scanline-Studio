@@ -238,15 +238,20 @@
                              request — but that request was about not wiring the Command, not about
                              leaving the button interactive with no effect; disabled here like its
                              Import/Scan siblings (neither of which has any backend at all) to meet the
-                             "no fake-live/dead controls" bar. -->
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3"
-                                    IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                             "no fake-live/dead controls" bar. Stub survey Tier 2 (2026-08-26): user
+                             lifted that decision (AskUserQuestion) — "Edit list" now wired and split
+                             out of this disabled group; Import/Scan stay disabled (still genuinely no
+                             backend at all, Tier 3). -->
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                    Content="{loc:Translate RadioStatus.EditFavouritesList}" />
-                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                    Content="{loc:Translate RadioStatus.ImportFavourites}" />
-                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                    Content="{loc:Translate RadioStatus.ScanFavourites}" />
+                                    Content="{loc:Translate RadioStatus.EditFavouritesList}"
+                                    Command="{Binding OpenFavouritesEditorCommand}" />
+                            <StackPanel Orientation="Horizontal" Spacing="3" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate RadioStatus.ImportFavourites}" />
+                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                        Content="{loc:Translate RadioStatus.ScanFavourites}" />
+                            </StackPanel>
                         </StackPanel>
                         <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
                                    Foreground="{StaticResource IndustryLabel}" Margin="0,0,5,0"

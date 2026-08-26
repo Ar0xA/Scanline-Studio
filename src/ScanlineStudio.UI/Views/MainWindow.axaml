@@ -96,7 +96,11 @@
             <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ClockCalibration}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ToneGenerator}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Stub survey Tier 2 (2026-08-26): opens the new general-purpose Tone Generator
+                     dialog, reusing RadioStatusViewModel.TuneCommand (already real, previously
+                     unexposed) — see FavouritesEditorWindowView/ToneGeneratorWindowView's own
+                     comments for why the header's own RadioStatusViewModel is the DataContext. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ToneGenerator}" Command="{Binding RadioStatus.OpenToneGeneratorCommand}" />
                 <!-- Slant reference removed 2026-08-26 (user decision, "maybe one day") — no legacy
                      precedent found at all (grep across yoniq-old/YONIQ-main turned up nothing), no
                      documented intent for what it would even do. See spec/14-roadmap.md's backlog

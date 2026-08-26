@@ -1,0 +1,64 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.FavouritesEditorWindowView"
+        x:DataType="vm:RadioStatusViewModel"
+        Title="{loc:Translate FavouritesEditor.Title}"
+        Width="420" Height="480"
+        MinWidth="360" MinHeight="320"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Stub survey Tier 2 (2026-08-26). Modeled on QsoLinkWindowView.axaml (Industry atoms, Grid
+         RowDefinitions="*,Auto" content/footer split). DataContext is the SAME live
+         RadioStatusViewModel the header binds (MainViewModel.RadioStatus), not a fresh child
+         view-model — EditorRows/AddPresetRowCommand/SavePresetsCommand already live there. "Close",
+         not "Cancel": EditorRows is live shared state with no rollback (Add/Remove/field edits
+         mutate it immediately, same as the header's own "Store current" button already does) — a
+         "Cancel" label would falsely promise a discard this data model doesn't support. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <ScrollViewer Grid.Row="0">
+                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+
+                    <ItemsControl ItemsSource="{Binding EditorRows}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FrequencyPresetEditorRowViewModel">
+                                <Grid ColumnDefinitions="*,90,80,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,0,0,3">
+                                    <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate FavouritesEditor.LabelWatermark}" Text="{Binding Label}" />
+                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FrequencyMhzText}" />
+                                    <ComboBox Grid.Column="2" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedMode}" HorizontalAlignment="Stretch" />
+                                    <!-- CommandParameter="{Binding}" (plan-review-caught fix): RemoveCommand is
+                                         IRelayCommand<FrequencyPresetEditorRowViewModel> — without this it
+                                         receives null, EditorRows.Remove(null) returns false, and the button
+                                         silently does nothing. -->
+                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                            Content="{loc:Translate FavouritesEditor.RemoveButton}"
+                                            Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+
+                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                            Content="{loc:Translate FavouritesEditor.AddButton}" Command="{Binding AddPresetRowCommand}"
+                            HorizontalAlignment="Left" />
+
+                    <TextBlock Text="{Binding ErrorMessage}"
+                               Foreground="{StaticResource IndustryDanger}"
+                               TextWrapping="Wrap"
+                               IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate FavouritesEditor.SaveButton}" Command="{Binding SavePresetsCommand}" />
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate FavouritesEditor.CloseButton}" Click="CloseButton_OnClick" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
