@@ -175,6 +175,18 @@ public partial class MainViewModel : ViewModelBase
         OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
     }
 
+    /// <summary>Configurations &gt; Storage (stub survey Tier 2) -- same
+    /// view-model-never-touches-a-Window/DI-resolved-via-IServiceProvider shape as
+    /// <see cref="OpenOptions"/> above.</summary>
+    public event Action<StorageSettingsWindowViewModel>? StorageSettingsRequested;
+
+    [RelayCommand]
+    private void OpenStorageSettings()
+    {
+        Log.OpenStorageSettingsInvoked(_logger);
+        StorageSettingsRequested?.Invoke(_services.GetRequiredService<StorageSettingsWindowViewModel>());
+    }
+
     /// <summary>The header-row callsign chip's click target -- previously a static, non-interactive
     /// chip with nothing wired to it at all. Callsign/OperatorName/OperatorGrid live on the TX tab
     /// (<see cref="OptionsWindowViewModel.TxTabIndex"/>), so this jumps straight there instead of
@@ -257,6 +269,9 @@ public partial class MainViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
         public static partial void OpenOptionsInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenStorageSettings command invoked")]
+        public static partial void OpenStorageSettingsInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenAbout command invoked")]
         public static partial void OpenAboutInvoked(ILogger logger);

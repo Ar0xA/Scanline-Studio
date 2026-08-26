@@ -283,6 +283,45 @@ public sealed partial class FilePickerService : IFilePickerService
         return files.Count > 0 ? files[0].TryGetLocalPath() : null;
     }
 
+    public async Task<string?> PickFolderAsync(string? suggestedStartDirectory)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        // Best-effort only -- a missing/inaccessible suggested directory (e.g. never-yet-created)
+        // just means the OS picker opens at its own default location instead, same "degrade, don't
+        // fail" shape as every other picker here. Auditor-caught (2026-08-26): guard AND try/catch,
+        // not just the null check -- an empty/whitespace string (a cleared TextBox, or this method's
+        // own caller's pre-load-complete default) reaching TryGetFolderFromPathAsync has
+        // undocumented behavior for that input (Avalonia's own XML docs only cover the Uri
+        // overload's null-if-missing contract, not the string overload's empty/relative-path
+        // behavior), and an uncaught throw here would escape an AsyncRelayCommand and crash the
+        // process -- a failure class this app has already been careful to guard against elsewhere.
+        IStorageFolder? suggestedStartLocation = null;
+        if (!string.IsNullOrWhiteSpace(suggestedStartDirectory))
+        {
+            try
+            {
+                suggestedStartLocation = await mainWindow.StorageProvider.TryGetFolderFromPathAsync(suggestedStartDirectory);
+            }
+            catch (Exception ex)
+            {
+                Log.SuggestedFolderResolveFailed(_logger, suggestedStartDirectory, ex);
+            }
+        }
+
+        var folders = await mainWindow.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            AllowMultiple = false,
+            SuggestedStartLocation = suggestedStartLocation,
+        });
+
+        return folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+    }
+
     private static partial class Log
     {
         // [CallerMemberName] resolves to whichever Pick*Async method called this, NOT the
@@ -293,5 +332,8 @@ public sealed partial class FilePickerService : IFilePickerService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "PickClipboardImageAsync: failed to read/save the clipboard image")]
         public static partial void ClipboardImageReadFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "PickFolderAsync: resolving the suggested start directory {Directory} failed; opening at the OS default instead")]
+        public static partial void SuggestedFolderResolveFailed(ILogger logger, string directory, Exception exception);
     }
 }
