@@ -228,20 +228,19 @@
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.ModeCardHeader}" />
                                 </HeaderedContentControl.Header>
                                 <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                    <!-- Segmented control needs BOTH Classes (for the item-0b marker
-                                       + IndustrySeg's Padding/interaction-state Style selectors)
-                                       AND an explicit Theme= (a ControlTheme is not applied by
-                                       Classes alone — same rule as every other named ControlTheme
-                                       atom in this file); missing Theme= here silently fell back to
-                                       Fluent's default RadioButton bullet-dot look, caught via a
-                                       real-window screenshot. Also needs a horizontal 2-column
-                                       Grid, not bare StackPanel children (StackPanel's default
-                                       Orientation is Vertical, which stacked the segments instead
-                                       of placing them side by side). -->
-                                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,2">
-                                        <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" IsChecked="True" Content="{loc:Translate Panes.RxImage.AutoLockedAuto}" />
-                                        <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="RxModeAutoLocked" Content="{loc:Translate Panes.RxImage.AutoLockedLocked}" IsEnabled="False" ToolTip.Tip="{loc:Translate Panes.RxImage.LockedMode.Help}" />
-                                    </Grid>
+                                    <!-- Auto/Lock segmented control removed outright 2026-08-26 (user
+                                       decision): "Lock" was permanently IsEnabled="False" and "Auto"
+                                       was hardcoded IsChecked="True" with no second real state —
+                                       legacy has no persistent RX MODE lock concept (auditor-checked,
+                                       2026-08-26: sys.m_FixedTxMode is a real fixed-mode lock but
+                                       TX-side, not this RX card; SBLK/Main.cpp:10898 locks
+                                       auto-stop/auto-sync/sync-restart, a different concept from
+                                       locking which SSTV mode is selected), and this
+                                       port's real substitute (QuickSelectModeCommand, a one-shot force
+                                       into the next decode, see the quick-mode-grid comment below) was
+                                       already built and working. No replacement control — the absence
+                                       of a lock option already says there isn't one; the ComboBox
+                                       below still shows the real detected mode. -->
                                     <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" SelectedIndex="0" ToolTip.Tip="{loc:Translate Panes.RxImage.ModeOverride.Help}">
                                         <ComboBoxItem Content="{Binding DetectedModeDisplay}" />
                                     </ComboBox>
@@ -271,11 +270,11 @@
                                     </UniformGrid>
                                     <!-- Wired 2026-08-25 (elegant-wondering-hinton.md): port of legacy's
                                          RX-page SBAuto toggle (TMmsstv::RxAutoPush, Main.cpp:6042-6060)
-                                         — a SEPARATE, distinct control from the Auto/Locked segment
-                                         above (that one is about mode-selection persistence, a
-                                         different concept, still an unresolved stub from an earlier
-                                         audit — not repurposed here). Pausing stops the decoder from
-                                         searching for/decoding pictures; the waterfall keeps running,
+                                         — a SEPARATE concept from mode-selection persistence (the
+                                         Auto/Locked segment that used to sit above this, removed
+                                         outright 2026-08-26, see the ComboBox's own comment above for
+                                         why). Pausing stops the decoder from searching for/decoding
+                                         pictures; the waterfall keeps running,
                                          but the signal-level meter and station-ID decode pause too
                                          (session-layer design, not decoder-owned — see
                                          ISstvSessionService.SetAutoDetectPaused's own doc comment for

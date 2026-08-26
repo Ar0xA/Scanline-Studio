@@ -88,8 +88,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="SelectedRadioMode"/> itself was already real (<see cref="SetModeSafeAsync"/> keys
     /// PTT-adjacent CAT mode changes), just never bound to this specific control. Three plain
     /// get/set booleans, not a generic enum-to-bool converter -- matches this class's own established
-    /// pattern for a bound 2/3-way segment (see the Receive tab's Auto/Locked segment, bound directly
-    /// to a plain bool with Avalonia's <c>!</c> negation operator, no converter). <see
+    /// pattern for a bound 2/3-way segment (see the Receive tab's Listening/Paused segment, bound
+    /// directly to a plain bool with Avalonia's <c>!</c> negation operator, no converter). <see
     /// cref="RadioMode"/> has 12 members total; only these 3 are exposed here since they're the only
     /// ones this segment offers -- selecting any of them while the rig is actually in, say, CW or
     /// RTTY is a real, silent mode change, same as any other <see cref="SelectedRadioMode"/> write.</summary>
