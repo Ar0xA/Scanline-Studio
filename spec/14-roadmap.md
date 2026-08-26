@@ -1389,18 +1389,14 @@ filter — those are a known exclusion, not rediscovered here):
   (singleton, `readonly` field). Auditor-reviewed (`Core.Sstv` touch, CLAUDE.md §7) — verdict
   EQUIVALENT-WITH-RISKS, no blockers; the two cheap risk fixes (settings-default test coverage,
   restart-only doc note) applied.
-- ~~RX history retention limit (legacy default 32)~~ — **done** (2026-08-06): verified against
-  actual legacy source (`Main.cpp:898`'s `sys.m_HistMax = 32`, applied unconditionally to
-  `CBitmapHist::m_Head.m_Max` on every `Open()`, `ComLib.cpp:2658-2686` — the class's own
-  constructor default of 64 never survives to be the effective default). `ReceiveHistorySettings`
-  gained a nullable `MaxEntries` (STJ-property-default-loss-safe, same pattern as
-  `AudioDeviceSettings.TxVolumePercent`) and `SqliteReceiveHistoryStore.RecordAsync` now trims the
-  queryable index to the newest N after every insert. Deliberately does **not** delete the
-  underlying image files on disk (legacy's single fixed-size ring buffer has no equivalent to this
-  port's separate real files; unsupervised automatic file deletion is a materially different risk
-  than trimming a DB index) — orphaned files beyond the retention window are a real, tracked
-  follow-up, not a silent gap. Window position/size memory across restarts and the "jump to
-  latest" history-browser nav button remain open, trivial.
+- ~~RX history retention limit (legacy default 32)~~ — **done** (2026-08-06), **then reversed by
+  user decision (2026-08-26)**: see `docs/removed-features.md`'s own entry for the full account.
+  Originally verified against actual legacy source (`Main.cpp:898`'s `sys.m_HistMax = 32`) and
+  ported as an automatic trim-to-newest-N after every insert; removed outright once the Gallery
+  tab's "All" filter shipped and the user found it didn't actually show every entry — legacy's own
+  ring buffer has no "show everything" concept to preserve, so this wasn't a legacy-fidelity
+  question. `history.db` now grows unbounded; no pruning mechanism exists. Window position/size
+  memory across restarts and the "jump to latest" history-browser nav button remain open, trivial.
 - RX buffer mode + "high-precision" slant/sync replay actions — medium, DSP-adjacent (a rolling
   raw-audio buffer replayed through sync/slant correction); flag carefully, don't treat as a
   plain UI toggle.
@@ -1622,8 +1618,10 @@ data behind them today):
   `QsoRecord.ReceivedImageId` was already the matching reverse FK (logbook backend shipped
   2026-08-07); the real, narrower gap was `IReceiveHistoryStore` having no update-after-the-fact
   method. `SetLinkedQsoIdAsync`/`SetFlaggedAsync` now exist — see the root-cause map's Frame-action-
-  primitives/field-set entries above. Flagged filter can run client-side over the current ≤32-row
-  retention scale, no new query field needed. Backend-only, no UI binding yet.
+  primitives/field-set entries above. Flagged filter ran client-side at the time this was written,
+  when the store was still capped at ≤32 rows (see the "RX history retention limit" entry above —
+  that cap is gone as of 2026-08-26, worth revisiting if the row count grows large enough to
+  matter). Backend-only, no UI binding yet.
 - Gallery sort by callsign/SNR, and per-frame Export/Re-decode actions — no callsign/SNR data
   exists on entries, so that sort remains blocked. **Export shipped 2026-08-15** (corrected
   2026-08-22, commit `90e2881`) — only the per-frame Re-decode action still has no operation to call.
@@ -2066,7 +2064,7 @@ verb for it.
 - Transmit tab Recently Sent card — user decision 2026-08-25: "maybe one day." No send-history feature exists; building it needs history tracking plus real refill/open-in-editor logic, not just enabling the buttons (which were already correctly `IsEnabled="False"` with a "not yet implemented" tooltip). **Removed from the UI 2026-08-25** — card and `Panes.TxRecentlySent.*` locale keys deleted.
 - Transmit tab Monitor audio row — user decision 2026-08-25: "maybe one day." Zero legacy precedent (verified: no "monitor" hits anywhere in `yoniq-old/YONIQ-main/Main.cpp` or `Sound.cpp`) and no tappable signal exists in the TX audio path (`IAudioEngine` has no playback-side event, only `SamplesCaptured` for RX). No product design exists for what this row should show — needs a design pass before it's buildable, not just implementation. **Removed from the UI 2026-08-25** — row and `Panes.TxControls.Telemetry.MonitorAudio`/`MonitorAudioValue` locale keys deleted.
 - Transmit tab Occupied BW row — user decision 2026-08-25: "maybe one day," moved here from its own standalone deferral. Researched with a full implementation plan (`~/.claude/plans/wandering-glowing-otter.md`) then deliberately abandoned after design review (commit `c8b99ad`), not just not yet done — a real per-transmission spectral-union estimate, likely not meaningfully variable by content per that research. **Removed from the UI 2026-08-25** — row and `Panes.TxControls.Telemetry.OccupiedBw`/`OccupiedBwValue` locale keys deleted.
-- Gallery tab RX History pane's own per-entry Re-decode button — user decision 2026-08-26: "maybe one day." No legacy precedent at all (verified: legacy's `RecentAdd`/manual record-play "recent files" list, `Main.cpp:5108-5186`, is entirely separate from `WriteHistory`'s image-history save, `Main.cpp:4880-4934` — legacy never attaches audio to a specific received-image history entry), so this is wholly new work with no port to lean on, distinct from the Receive tab's own real record/play-a-file Re-decode (`ISstvSessionService.StartRecordingAsync`/`DecodeFromFileAsync`, 2026-08-26). `ReceiveHistoryEntry` (`Core.Logbook`) has no audio field today, and `ReceiveHistoryRecorder` is wired directly to `ISstvDecoder`'s line/mode events with no access to raw audio samples — building this needs a real design pass (where continuous per-reception audio buffering lives, how it crosses the `Core.Logbook`/`Application` layering boundary, and a retention/storage-growth policy alongside the existing image-only retention-trim ring buffer), not just a wiring fix. **Removed from the UI 2026-08-26** — button and the `Panes.RxHistory.Redecode` locale key deleted.
+- Gallery tab RX History pane's own per-entry Re-decode button — user decision 2026-08-26: "maybe one day." No legacy precedent at all (verified: legacy's `RecentAdd`/manual record-play "recent files" list, `Main.cpp:5108-5186`, is entirely separate from `WriteHistory`'s image-history save, `Main.cpp:4880-4934` — legacy never attaches audio to a specific received-image history entry), so this is wholly new work with no port to lean on, distinct from the Receive tab's own real record/play-a-file Re-decode (`ISstvSessionService.StartRecordingAsync`/`DecodeFromFileAsync`, 2026-08-26). `ReceiveHistoryEntry` (`Core.Logbook`) has no audio field today, and `ReceiveHistoryRecorder` is wired directly to `ISstvDecoder`'s line/mode events with no access to raw audio samples — building this needs a real design pass (where continuous per-reception audio buffering lives, how it crosses the `Core.Logbook`/`Application` layering boundary, and a storage-growth policy — the store itself now keeps every entry indefinitely with no automatic retention cap at all, see the "RX history retention limit" entry above), not just a wiring fix. **Removed from the UI 2026-08-26** — button and the `Panes.RxHistory.Redecode` locale key deleted.
 - Gallery tab RX History pane's own "14 MHz" frequency filter toggle — user decision 2026-08-26: "maybe one day." `ReceiveHistoryEntry` (`Core.Logbook`) has no frequency field to filter by at all — the entry only records mode/timestamp/file path, not the VFO frequency active at receive time. Adding one needs a real design/schema decision (does it record the dial frequency, does it matter across band-plan changes, does an existing entry backfill or stay unfiltered), not just a UI wiring fix. **Removed from the UI 2026-08-26** — toggle and the `Panes.RxHistory.Filter14Mhz` locale key deleted.
 
 ## Verify later with human — items neither the agent nor the auditor could resolve alone

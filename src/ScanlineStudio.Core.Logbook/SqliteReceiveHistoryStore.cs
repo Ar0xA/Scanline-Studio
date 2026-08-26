@@ -137,11 +137,17 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
-        await TrimToRetentionLimitAsync(connection, ct).ConfigureAwait(false);
+        // Round-2 user decision (2026-08-26): no automatic retention trim -- the Gallery tab's own
+        // "All" filter must show every entry ever recorded, not the newest N. Legacy's own fixed-size
+        // ring buffer (sys.m_HistMax = 32, see docs/removed-features.md) has no "show everything"
+        // concept to preserve either -- this is new UI this port added, and its meaning is this
+        // project's own call, not a legacy-fidelity question. See that doc entry for the full
+        // reasoning and citations; do not reintroduce a silent row-deletion pass without raising it
+        // with the user first.
 
         // Isolated deliberately, same reasoning as IReceivedImageBuffer.SaveAsync's own Saved-event
         // fix: a subscriber's own exception must not surface as if THIS write had failed -- the
-        // insert (and trim) above already fully succeeded by this point.
+        // insert above already fully succeeded by this point.
         try
         {
             Recorded?.Invoke(entry);
@@ -150,43 +156,6 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         {
             Log.RecordedSubscriberFailed(_logger, entry.Id, ex);
         }
-    }
-
-    /// <summary>Legacy's real retention behavior (verified: see <see cref="ReceiveHistorySettings.DefaultMaxEntries"/>'s
-    /// own doc comment for the exact source citations) is a fixed-size ring buffer — the oldest
-    /// image's on-disk slot is physically overwritten once the buffer is full. This keeps the same
-    /// "newest N survive" semantics for the queryable index (oldest rows beyond the limit are
-    /// deleted here), but deliberately does <b>not</b> delete the corresponding image files from
-    /// disk — legacy's single fixed-size history.bin blob has no equivalent to this port's
-    /// separate real image files, and unsupervised automatic file deletion is a materially
-    /// different risk than trimming a database index. Orphaned files beyond the retention window
-    /// are a real, known follow-up (not a silent gap), not a bug in this method.
-    ///
-    /// <b>Deliberate behavior change (added alongside `Note`/`IsFlagged`/`LinkedQsoId`'s update
-    /// methods)</b>: a row carrying any user-authored data (a note, the flagged toggle, or a linked
-    /// QSO) is exempted from this trim regardless of age — the ring buffer's "newest N survive"
-    /// semantics now apply only to untouched rows. Before this exemption, a background RX arriving
-    /// after the entry limit would silently delete a user's note/flag/QSO-link along with the
-    /// index row (the entry limit defaults to 32, roughly one afternoon of activity) with no
-    /// cleanup of the now-dangling reverse FK on the logbook side (`QsoRecord.ReceivedImageId`).
-    /// An exempted row's total count is therefore no longer capped at
-    /// <see cref="ReceiveHistorySettings.DefaultMaxEntries"/> — it grows as user-touched rows
-    /// accumulate, which is the intended tradeoff, not an oversight.</summary>
-    private async Task TrimToRetentionLimitAsync(SqliteConnection connection, CancellationToken ct)
-    {
-        var maxEntries = await ReceiveHistorySettings.ResolveMaxEntriesAsync(_settingsStore, ct).ConfigureAwait(false);
-
-        var command = connection.CreateCommand();
-        command.CommandText = """
-            DELETE FROM ReceiveHistory
-            WHERE Id NOT IN (
-                SELECT Id FROM ReceiveHistory ORDER BY ReceivedAt DESC LIMIT $maxEntries
-            )
-            AND Note IS NULL AND IsFlagged = 0 AND LinkedQsoId IS NULL
-            """;
-        command.Parameters.AddWithValue("$maxEntries", maxEntries);
-
-        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore, ct);
@@ -207,9 +176,10 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// than one generic "patch" method, which would need its own which-fields-to-touch ambiguity
     /// this doesn't have. Returns whether a row was actually updated (`sqlite3_changes()` via
     /// `ExecuteNonQueryAsync`'s return value) -- <see langword="false"/> means `entryId` no longer
-    /// exists (the retention-trim ring buffer can delete an untouched row between a Gallery load
-    /// and a user's edit), not an exception -- callers are expected to surface that to the
-    /// user.</summary>
+    /// exists (no automatic deletion path exists in production as of 2026-08-26, see
+    /// `docs/removed-features.md`, but a missing row is still a reachable state -- a different
+    /// process editing the same `history.db` file, for one), not an exception -- callers are
+    /// expected to surface that to the user.</summary>
     private async Task<bool> ExecuteUpdateAsync(string commandText, string entryId, string valueParameterName, object valueParameter, CancellationToken ct)
     {
         await using var connection = new SqliteConnection(_connectionString);

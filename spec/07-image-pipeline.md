@@ -340,11 +340,11 @@ public sealed record ReceiveHistoryFilter(string? ModeId = null, DateTimeOffset?
 
 public interface IReceiveHistoryStore
 {
-    // Fires once RecordAsync's write (including its own retention-trim pass) completes -- the
-    // Gallery list and the Receive tab's "Previous frames" strip share one RxHistoryPaneViewModel
-    // singleton and both stay live off this event rather than only refreshing at
-    // construction/manual-refresh/filter-change. Raised on whatever thread the underlying write
-    // completes on; a subscriber marshals to the UI thread itself.
+    // Fires once RecordAsync's write completes -- the Gallery list and the Receive tab's
+    // "Previous frames" strip share one RxHistoryPaneViewModel singleton and both stay live off
+    // this event rather than only refreshing at construction/manual-refresh/filter-change. Raised
+    // on whatever thread the underlying write completes on; a subscriber marshals to the UI
+    // thread itself.
     event Action<ReceiveHistoryEntry>? Recorded;
 
     Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default);
@@ -361,8 +361,8 @@ public interface IReceiveHistoryStore
     Task<string> GetImagesDirectoryAsync(CancellationToken ct = default);
 
     // Sets/clears the Gallery frame metadata card's user-entered note. False (not an exception) if
-    // entryId no longer exists -- reachable, since the retention-trim ring buffer can delete an
-    // untouched row between the Gallery loading it and a user editing it.
+    // entryId no longer exists -- defensive; no automatic deletion path exists in production
+    // today (docs/removed-features.md's "RX history retention limit" entry, 2026-08-26).
     Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default);
 
     // Sets the Gallery "Flagged" filter/toggle. Same missing-entryId contract as SetNoteAsync.

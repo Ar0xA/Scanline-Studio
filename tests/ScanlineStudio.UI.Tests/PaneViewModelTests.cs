@@ -3470,7 +3470,8 @@ public sealed class PaneViewModelTests
         vm.SelectedEntry = vm.Entries[0];
         Dispatcher.UIThread.RunJobs();
 
-        // Simulates the documented race: the entry aged out of retention between load and edit.
+        // Simulates the documented race: the entry no longer exists in the store by the time the
+        // edit reaches it.
         historyStore.EntriesToReturn.Clear();
 
         vm.SelectedEntryNote = "too late";

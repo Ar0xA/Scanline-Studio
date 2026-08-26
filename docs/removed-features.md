@@ -236,6 +236,29 @@ and its resolution, verified directly against current source, not inferred from 
   or decode-correctness impact for the default case — this is a TX-side spectral-shaping option, not
   a core DSP-math difference — but it is a real, silently-dropped user-facing capability.
 
+## RX history retention limit (auto-delete beyond newest 32)
+
+- **Legacy**: `sys.m_HistMax = 32` (`Main.cpp:898`, read from ini `[Window]/HistMax`,
+  `Main.cpp:1811`), applied unconditionally to the ring buffer's `CBitmapHist::m_Head.m_Max` on
+  every `Open()` (`ComLib.cpp:2658-2686`, both the fresh-file and existing-file branches) — the
+  class's own constructor default of 64 (`ComLib.h:591`) never survives to be the effective
+  default. `HISTMAX 256` (`ComLib.h:561`) is a separate hard array-size cap, not this default.
+- **Ported, then reversed**: this WAS a faithful port (2026-08-06) — `SqliteReceiveHistoryStore`
+  deleted the oldest queryable rows beyond a configurable `MaxEntries` (default 32) after every
+  insert, exempting any row carrying a note/flag/QSO-link. Reversed by direct user decision
+  (2026-08-26): the Gallery tab's "All" filter is new UI with no legacy equivalent at all — legacy's
+  own ring buffer has no "show everything ever received" concept to preserve, so "All" showing
+  fewer than every recorded image read as broken, not as a faithful cap. `ReceiveHistorySettings.MaxEntries`/`DefaultMaxEntries`
+  and `SqliteReceiveHistoryStore.TrimToRetentionLimitAsync` are deleted outright, not just disabled
+  — every recorded entry now stays in `history.db` indefinitely.
+- **Replacement**: none (by design) — no retention/pruning mechanism of any kind exists today.
+- **Impact**: an installation's `history.db` and the RX-history-referenced PNG files under it now
+  grow unbounded over the app's lifetime instead of being capped at ~32 untouched entries. No
+  decode-correctness impact — this only affects the Gallery tab's browsable index, not any DSP/
+  decode path. A future manual "prune old entries" action, or a configurable/visible retention
+  setting, remains open if unbounded growth turns out to matter in practice — not designed here,
+  since it wasn't asked for.
+
 ## Macro %D/%T clock-offset correction
 
 - **Legacy**: `MacroText`'s `%D`/`%T` tokens (`Main.cpp:10762-10776`) call `GetUTC` (`ComLib.cpp:319-323`),

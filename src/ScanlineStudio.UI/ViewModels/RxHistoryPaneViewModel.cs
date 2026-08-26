@@ -139,11 +139,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private bool _selectedEntryIsFlagged;
 
     /// <summary>Surfaces a <see cref="IReceiveHistoryStore.SetNoteAsync"/>/<see cref="IReceiveHistoryStore.SetFlaggedAsync"/>
-    /// failure to the user -- both methods' own doc comments say a missing-entry return is "a
-    /// reachable case, not just defensive programming" (the retention-trim ring buffer can delete an
-    /// untouched row between load and edit) "the caller ... is expected to surface that to the user,
-    /// not silently ignore it." Same `ErrorMessage` convention as every other pane ViewModel in this
-    /// app.</summary>
+    /// failure to the user -- both methods' own doc comments say a missing-entry return "the caller
+    /// ... is expected to surface that to the user, not silently ignore it," even though no
+    /// automatic deletion path exists in production today (see `docs/removed-features.md`). Same
+    /// `ErrorMessage` convention as every other pane ViewModel in this app.</summary>
     [ObservableProperty]
     private string? _errorMessage;
 
@@ -179,16 +178,15 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// IS now set by real code (<c>QsoLinkWindowViewModel.LinkSelectedAsync</c>/
     /// <c>CreateAndLinkAsync</c>), unlike when this filter was first scoped out as unbuildable
     /// (spec/14-roadmap.md's own now-stale backlog note, corrected 2026-08-22). Client-side, not a
-    /// new <see cref="ReceiveHistoryFilter"/> field -- the retention-trimmed row count this queries
-    /// against is small enough (spec/14-roadmap.md's own reasoning for <see cref="FilterFlaggedOnly"/>
-    /// below applies equally here) that a new store-level query parameter isn't worth it yet.</summary>
+    /// new <see cref="ReceiveHistoryFilter"/> field -- worth revisiting for a server-side query
+    /// parameter if the row count grows large enough to matter now that the store has no automatic
+    /// retention cap (`docs/removed-features.md`, 2026-08-26); not a problem in practice yet.</summary>
     [ObservableProperty]
     private bool _filterUnloggedOnly;
 
     /// <summary>Gallery tab's "Flagged" filter toggle -- client-side over <see cref="Entries"/>' own
-    /// already-real <see cref="ReceiveHistoryEntry.IsFlagged"/>, per spec/14-roadmap.md's own note
-    /// that this can run client-side over the current retention-trimmed row count with no new query
-    /// field needed.</summary>
+    /// already-real <see cref="ReceiveHistoryEntry.IsFlagged"/>, same "revisit if the row count grows"
+    /// caveat as <see cref="FilterUnloggedOnly"/> above.</summary>
     [ObservableProperty]
     private bool _filterFlaggedOnly;
 
@@ -495,9 +493,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
             // Re-select by Entry.Id, not by object reference (every item above is a freshly-constructed
             // record) -- if the previously-selected frame no longer matches the current filter (e.g. it
-            // aged out of ShowTodayOnly's own window) or was trimmed by retention, SelectedEntry simply
-            // stays null, matching what already happens on a manual Refresh/filter-change today; this
-            // isn't a regression, only a preservation of the CASE that already worked.
+            // aged out of ShowTodayOnly's own window), SelectedEntry simply stays null, matching what
+            // already happens on a manual Refresh/filter-change today; this isn't a regression, only a
+            // preservation of the CASE that already worked.
             if (selectedEntryId is not null)
             {
                 SelectedEntry = Entries.FirstOrDefault(e => e.Entry.Id == selectedEntryId);
@@ -798,8 +796,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         if (!succeeded)
         {
-            // Reachable, not defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: the
-            // retention-trim ring buffer can delete this row between load and edit.
+            // Defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: no automatic
+            // deletion path exists in this port's production store today (docs/removed-features.md,
+            // 2026-08-26), but a missing row is still a reachable state worth handling explicitly.
             Log.SetNoteEntryMissing(_logger, entryId);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
             return;
@@ -872,8 +871,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <see cref="IReceiveHistoryStore.SetFlaggedAsync"/> call back into the in-memory list. Must run
     /// on the UI thread (mutates the bound <see cref="Entries"/> collection); every call site posts
     /// through <see cref="Dispatcher"/> first. A no-op if the entry was removed by a refresh that
-    /// raced this same persist (retention trim, or the store row genuinely no longer exists) --
-    /// same "quietly drop, the store is already the source of truth" reasoning as
+    /// raced this same persist -- same "quietly drop, the store is already the source of truth"
+    /// reasoning as
     /// <c>RxHistoryEntryViewModel</c> instances themselves being rebuilt wholesale on every
     /// refresh.
     ///

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using SixLabors.ImageSharp;
@@ -37,11 +36,11 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
-    public async Task RecordAsync_RaisesRecorded_WithTheEntry_AfterTheWriteAndRetentionTrimComplete()
+    public async Task RecordAsync_RaisesRecorded_WithTheEntry_AfterTheWriteCompletes()
     {
         // Regression test for the RX-history live-update feature (batch 7): the only hook a live UI
         // pane has for "a new frame just landed" -- Assert.Single below also proves it fires AFTER
-        // the row is genuinely queryable, not before the transaction/trim settles.
+        // the row is genuinely queryable, not before the insert settles.
         var dbPath = TempDbPath();
         try
         {
@@ -300,17 +299,18 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
-    public async Task RecordAsync_ExceedsDefaultRetentionLimit_DeletesOldestEntriesBeyond32()
+    public async Task RecordAsync_ManyEntries_KeepsEveryEntry_NoAutomaticRetentionTrim()
     {
+        // User decision (2026-08-26): the Gallery tab's "All" filter must show every entry ever
+        // recorded, not the newest N -- see docs/removed-features.md's "RX history retention limit"
+        // entry for the full reasoning. Pins the reversal directly: more than the OLD legacy-derived
+        // default of 32 survive.
         var dbPath = TempDbPath();
         try
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
 
-            // 33 entries, oldest to newest -- one more than the legacy-verified default of 32
-            // (ReceiveHistorySettings.DefaultMaxEntries's own doc comment has the exact legacy
-            // source citations).
             for (var i = 0; i < 33; i++)
             {
                 await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null, ReceiveDecodeState.Completed));
@@ -318,75 +318,9 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var results = await store.QueryAsync(new ReceiveHistoryFilter());
 
-            Assert.Equal(32, results.Count);
-            Assert.DoesNotContain(results, r => r.Id == "entry-0");
+            Assert.Equal(33, results.Count);
+            Assert.Contains(results, r => r.Id == "entry-0");
             Assert.Contains(results, r => r.Id == "entry-32");
-            Assert.Contains(results, r => r.Id == "entry-1");
-        }
-        finally
-        {
-            DeleteDb(dbPath);
-        }
-    }
-
-    [Fact]
-    public async Task RecordAsync_ConfiguredRetentionLimit_UsesTheConfiguredValueNotTheDefault()
-    {
-        var dbPath = TempDbPath();
-        try
-        {
-            var settingsStore = new FakeSettingsStore
-            {
-                Settings = new AppSettings().WithSection(
-                    ReceiveHistorySettings.SectionKey,
-                    new ReceiveHistorySettings { MaxEntries = 2 },
-                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
-            };
-            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
-            var now = DateTimeOffset.UtcNow;
-
-            await store.RecordAsync(new ReceiveHistoryEntry("first", now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
-            await store.RecordAsync(new ReceiveHistoryEntry("second", now.AddMinutes(1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
-            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null, ReceiveDecodeState.Completed));
-
-            var results = await store.QueryAsync(new ReceiveHistoryFilter());
-
-            Assert.Equal(["third", "second"], results.Select(r => r.Id));
-        }
-        finally
-        {
-            DeleteDb(dbPath);
-        }
-    }
-
-    [Fact]
-    public async Task RecordAsync_ExistingSectionPredatesTheMaxEntriesField_FallsBackTo32NotZero()
-    {
-        var dbPath = TempDbPath();
-        try
-        {
-            // Simulates a settings.json saved before MaxEntries existed on this section: the JSON
-            // object genuinely has no "MaxEntries" property at all (not even null) -- the exact
-            // shape System.Text.Json silently defaults to the CLR default (0) for, not the
-            // property initializer, per ReceiveHistorySettings.MaxEntries's own doc comment. A
-            // regression here would mean every existing installation's history gets truncated to
-            // zero the moment this field shipped.
-            var sections = new Dictionary<string, JsonElement>
-            {
-                [ReceiveHistorySettings.SectionKey] = JsonDocument.Parse("""{"ImagesDirectory":"/custom/rx/history"}""").RootElement,
-            };
-            var settingsStore = new FakeSettingsStore { Settings = new AppSettings { Sections = sections } };
-            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
-            var now = DateTimeOffset.UtcNow;
-
-            for (var i = 0; i < 33; i++)
-            {
-                await store.RecordAsync(new ReceiveHistoryEntry($"entry-{i}", now.AddMinutes(i), "robot36", $"/tmp/{i}.png", null, ReceiveDecodeState.Completed));
-            }
-
-            var results = await store.QueryAsync(new ReceiveHistoryFilter());
-
-            Assert.Equal(32, results.Count);
         }
         finally
         {
@@ -607,46 +541,6 @@ public sealed class SqliteReceiveHistoryStoreTests
             Assert.False(await store.SetNoteAsync("missing", "note"));
             Assert.False(await store.SetFlaggedAsync("missing", true));
             Assert.False(await store.SetLinkedQsoIdAsync("missing", "qso-1"));
-        }
-        finally
-        {
-            DeleteDb(dbPath);
-        }
-    }
-
-    [Fact]
-    public async Task TrimToRetentionLimit_ANotedFlaggedOrLoggedRowSurvivesPastTheWindow_ButAnUntouchedRowStillGetsTrimmed()
-    {
-        var dbPath = TempDbPath();
-        try
-        {
-            var settingsStore = new FakeSettingsStore
-            {
-                Settings = new AppSettings().WithSection(
-                    ReceiveHistorySettings.SectionKey,
-                    new ReceiveHistorySettings { MaxEntries = 2 },
-                    ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings),
-            };
-            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
-            var now = DateTimeOffset.UtcNow;
-
-            // "old-untouched" and "old-flagged" both start outside the newest-2 window once "third"
-            // and "fourth" are recorded below -- only "old-flagged" (via IsFlagged, set here before
-            // the trim-triggering pushes) should survive.
-            await store.RecordAsync(new ReceiveHistoryEntry("old-untouched", now, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
-            await store.RecordAsync(new ReceiveHistoryEntry("old-flagged", now.AddMinutes(1), "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed));
-            await store.SetFlaggedAsync("old-flagged", true);
-
-            await store.RecordAsync(new ReceiveHistoryEntry("third", now.AddMinutes(2), "robot36", "/tmp/c.png", null, ReceiveDecodeState.Completed));
-            await store.RecordAsync(new ReceiveHistoryEntry("fourth", now.AddMinutes(3), "robot36", "/tmp/d.png", null, ReceiveDecodeState.Completed));
-
-            var results = await store.QueryAsync(new ReceiveHistoryFilter());
-            var ids = results.Select(r => r.Id).ToHashSet();
-
-            Assert.DoesNotContain("old-untouched", ids);
-            Assert.Contains("old-flagged", ids);
-            Assert.Contains("third", ids);
-            Assert.Contains("fourth", ids);
         }
         finally
         {

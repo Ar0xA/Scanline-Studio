@@ -153,9 +153,9 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
     private bool CanLinkSelected() => SelectedQso is not null && !IsBusy;
 
     /// <summary>Links the frame to an ALREADY-LOGGED QSO. Order matters (auditor-caught, plan-review
-    /// fix): <see cref="IReceiveHistoryStore.SetLinkedQsoIdAsync"/> runs FIRST. If the entry has
-    /// aged out of retention (returns <see langword="false"/>), nothing has been written to the QSO
-    /// side either -- there's no partial state to clean up. Only once the entry-side link succeeds
+    /// fix): <see cref="IReceiveHistoryStore.SetLinkedQsoIdAsync"/> runs FIRST. If the entry no
+    /// longer exists (returns <see langword="false"/>), nothing has been written to the QSO side
+    /// either -- there's no partial state to clean up. Only once the entry-side link succeeds
     /// does this best-effort write the reverse FK via <see cref="ILogbookSessionService.UpdateQsoAsync"/>;
     /// a failure there is logged and swallowed (the Gallery UI reads <c>LinkedQsoId</c>, already
     /// correct at that point, not the reverse FK -- see this class's own doc comment).</summary>
@@ -187,9 +187,10 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
 
             if (!linked)
             {
-                // Reachable, not defensive -- IReceiveHistoryStore.SetLinkedQsoIdAsync's own doc
-                // comment: the retention-trim ring buffer can delete this row between the Gallery
-                // load and this click.
+                // Defensive -- IReceiveHistoryStore.SetLinkedQsoIdAsync's own doc comment: no
+                // automatic deletion path exists in this port's production store today
+                // (docs/removed-features.md, 2026-08-26), but a missing row is still a reachable
+                // state worth handling explicitly.
                 Log.LinkEntryMissing(_logger, _entry.Id);
                 ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists");
                 return;
