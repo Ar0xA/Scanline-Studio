@@ -1891,20 +1891,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
-        var stationId = await GetStationIdTransmitOptionsAsync(ct).ConfigureAwait(false);
+        var (stationId, sampleRateOffsetHz) = await ResolveTransmitSettingsAsync(ct).ConfigureAwait(false);
 
-        // Plan-review finding: MUST reuse this SAME resolved stationId for the estimate below, not
-        // re-resolve it -- MacroTextResolver's CW-ID text can be time-dependent (DateTime.UtcNow), so
-        // two independent resolutions aren't guaranteed to produce the same footer duration, which
-        // would make the estimate silently disagree with what EncodeAsync actually emits.
+        // Plan-review finding: MUST reuse this SAME resolved stationId/sampleRateOffsetHz for the
+        // estimate below, not re-resolve either independently -- MacroTextResolver's CW-ID text can
+        // be time-dependent (DateTime.UtcNow), so two independent resolutions aren't guaranteed to
+        // produce the same footer duration, which would make the estimate silently disagree with
+        // what EncodeAsync actually emits. Clock calibration plan-review (round 2): same requirement
+        // now applies to sampleRateOffsetHz -- a settings change mid-resolution must not let the
+        // estimate and the real encode see different effective rates.
         //
         // Code-review finding: EstimateSampleCount is a real traversal of every scanline segment
         // (its own doc comment says so), not O(1) metadata math -- Task.Run keeps it off whichever
         // thread called TransmitAsync (the caller's own await above may not have yielded at all, e.g.
         // JsonSettingsStore.LoadAsync returns synchronously when no settings file exists yet), so a
         // large image's estimate can't delay PTT keying/RX pause by running inline on the UI thread.
-        var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId), ct).ConfigureAwait(false);
-        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+        var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
+        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
     }
 
     /// <summary>Resolves the CW-ID/FSK station-ID settings + operator identity into one fully-formed
@@ -1918,6 +1921,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// exposes (see that member's own doc comment) -- <see cref="TransmitAsync"/> and that preview
     /// path share this exact same resolution, so they can never disagree with each other.</summary>
     public async Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default)
+        => (await ResolveTransmitSettingsAsync(ct).ConfigureAwait(false)).StationId;
+
+    /// <summary>Shared settings resolution for <see cref="TransmitAsync"/> and the read-only preview
+    /// <see cref="GetStationIdTransmitOptionsAsync"/> exposes -- one <see cref="_settingsStore"/>
+    /// load, not two, so both the station-ID text and the TX sample-rate offset always agree with
+    /// each other and with whatever a single settings.json snapshot actually held (round-2 Clock
+    /// calibration plan-review finding: an independent second load on this PTT-adjacent path would
+    /// re-introduce the same unbounded-hang class <see cref="_cleanupTimeout"/> below already
+    /// guards against once).</summary>
+    private async Task<(StationIdTransmitOptions StationId, double SampleRateOffsetHz)> ResolveTransmitSettingsAsync(CancellationToken ct)
     {
         // Round-15 finding (discovered while testing finding 3, not itself in the auditor's report):
         // same unbounded-external-read shape as ResolveDeviceAsync/GetTxVolumePercentAsync/
@@ -1942,6 +1955,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
         var appSettings = await Task.Run(() => _settingsStore.LoadAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
             ?? new StationIdSettings();
+        var audioSettings = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            ?? new AudioDeviceSettings();
         var operatorSettings = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
             ?? new OperatorSettings();
 
@@ -1988,7 +2003,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             cwResolvedText = cwResolvedText[..maxCwResolvedTextLength];
         }
 
-        return new StationIdTransmitOptions
+        var stationId = new StationIdTransmitOptions
         {
             CwEnabled = cwEnabled,
             CwResolvedText = cwResolvedText,
@@ -1998,6 +2013,19 @@ public sealed partial class SstvSessionService : ISstvSessionService
             Callsign = operatorSettings.Callsign ?? string.Empty,
             NrRstText = nrRstEnabled ? stationIdSettings.NrRstText : null,
         };
+
+        // Settings-boundary validation, same shape/precedent as CwToneFrequencyHz above: a
+        // corrupted/hand-edited settings.json outside legacy's own accepted +/-1500 Hz manual range
+        // (Option.cpp:1142-1146) falls back to 0.0 (no correction) rather than reaching the encoder.
+        // The `is >= x and <= y` pattern is NaN-safe by construction (a NaN comparison is always
+        // false in a range pattern, same as the `>` bug CwToneFrequencyHz's own history already
+        // found and fixed) -- catches the Clock calibration round-2 plan-review's NaN/Infinity
+        // finding without a separate double.IsFinite check here.
+        var sampleRateOffsetHz = audioSettings.TxSampleRateOffsetHz is >= -1500.0 and <= 1500.0
+            ? audioSettings.TxSampleRateOffsetHz
+            : 0.0;
+
+        return (stationId, sampleRateOffsetHz);
     }
 
     // Round-18 finding 3 (round-17's own deferral (b), now fixed): a generous backstop, not a UX

@@ -114,6 +114,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private int _sampleRate = 11025;
 
+    /// <summary>Stub survey Tier 3, "Clock calibration" piece 1 -- see
+    /// <c>AudioDeviceSettings.TxSampleRateOffsetHz</c>'s own doc comment. Lives next to
+    /// <see cref="SampleRate"/> in the Audio tab, matching legacy's own placement
+    /// (<c>Option.h:91/124/166</c>, <c>TxSampOff</c>/<c>UDTxSamp</c> sit beside <c>EditSamp</c> on
+    /// legacy's Options dialog -- this port has no separate Calibration-menu equivalent to that
+    /// specific control, a round-2 plan-review finding).</summary>
+    [ObservableProperty]
+    private double _txSampleRateOffsetHz;
+
     /// <summary>Which channel of a stereo capture device to decode -- real, already-wired backend
     /// field (<see cref="ScanlineStudio.Application.OptionsSnapshot.CaptureChannelSource"/> -&gt;
     /// <c>AudioDeviceSettings.CaptureChannelSource</c> -&gt; <c>SstvSessionService.StartReceivingAsync</c>
@@ -1891,6 +1900,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == snapshot.CultureCode) ?? _localization.CurrentCulture;
         SampleRate = snapshot.SampleRate;
+        TxSampleRateOffsetHz = snapshot.TxSampleRateOffsetHz;
         CaptureChannelSource = Enum.IsDefined(snapshot.CaptureChannelSource) ? snapshot.CaptureChannelSource : AudioChannelSource.Mono;
         StereoTxEnabled = snapshot.StereoTxEnabled;
         AppPriorityIsHigh = snapshot.AppPriorityIsHigh;
@@ -1997,6 +2007,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             CaptureDeviceName: SelectedCaptureDevice?.Name,
             PlaybackDeviceName: SelectedPlaybackDevice?.Name,
             SampleRate: SampleRate,
+            TxSampleRateOffsetHz: TxSampleRateOffsetHz,
             RadioBackendId: RadioBackendId,
             RigctldHost: RigctldHost,
             RigctldPort: RigctldPort,
@@ -2099,6 +2110,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         SelectedCaptureDevice = CaptureDevices.FirstOrDefault(d => d.Id == defaults.CaptureDeviceId);
         SelectedPlaybackDevice = PlaybackDevices.FirstOrDefault(d => d.Id == defaults.PlaybackDeviceId);
         SampleRate = defaults.SampleRate;
+        TxSampleRateOffsetHz = defaults.TxSampleRateOffsetHz;
         CaptureChannelSource = defaults.CaptureChannelSource;
         StereoTxEnabled = defaults.StereoTxEnabled;
         AppPriorityIsHigh = defaults.AppPriorityIsHigh;

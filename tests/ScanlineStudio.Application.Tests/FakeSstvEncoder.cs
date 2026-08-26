@@ -28,9 +28,19 @@ internal sealed class FakeSstvEncoder : ISstvEncoder
     /// mismatch (e.g. covering the total&lt;=0 guard).</summary>
     public long? EstimateSampleCountOverride { get; init; }
 
-    public long EstimateSampleCount(SstvModeDefinition mode, IImageSource image, StationIdTransmitOptions? stationId = null)
+    /// <summary>Clock calibration (stub survey Tier 3), same reasoning as
+    /// <see cref="LastEstimateStationIdOptions"/>/<see cref="LastStationIdOptions"/> above -- lets a
+    /// test assert both calls received the exact same resolved offset, pinning the round-2
+    /// plan-review requirement that <see cref="SstvSessionService.TransmitAsync"/> must reuse one
+    /// resolved value for both the estimate and the real encode.</summary>
+    public double? LastEstimateSampleRateOffsetHz { get; private set; }
+
+    public double? LastSampleRateOffsetHz { get; private set; }
+
+    public long EstimateSampleCount(SstvModeDefinition mode, IImageSource image, StationIdTransmitOptions? stationId = null, double sampleRateOffsetHz = 0.0)
     {
         LastEstimateStationIdOptions = stationId;
+        LastEstimateSampleRateOffsetHz = sampleRateOffsetHz;
         return EstimateSampleCountOverride ?? SamplesToYield.Length;
     }
 
@@ -38,9 +48,11 @@ internal sealed class FakeSstvEncoder : ISstvEncoder
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         LastStationIdOptions = stationId;
+        LastSampleRateOffsetHz = sampleRateOffsetHz;
         foreach (var sample in SamplesToYield)
         {
             ct.ThrowIfCancellationRequested();
