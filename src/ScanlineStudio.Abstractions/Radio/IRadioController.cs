@@ -98,4 +98,8 @@ public interface IRadioController
     Task SetFrequencyAsync(long hz, CancellationToken ct);
     Task SetModeAsync(RadioMode mode, CancellationToken ct);
     Task SetPttAsync(bool tx, CancellationToken ct);
+
+    /// <summary>Pass-through of the active protocol's <c>SetBandwidthAsync</c> -- see
+    /// <see cref="IRadioProtocol.SetBandwidthAsync"/> for the null/not-supported contract.</summary>
+    Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct);
 }

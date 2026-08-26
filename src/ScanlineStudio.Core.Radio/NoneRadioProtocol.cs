@@ -36,5 +36,8 @@ public sealed class NoneRadioProtocol : IRadioProtocol
     public Task SetPttAsync(bool tx, CancellationToken ct) =>
         throw new InvalidOperationException("No radio is connected -- nothing to key PTT on.");
 
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct) =>
+        throw new InvalidOperationException("No radio is connected -- nothing to set a bandwidth on.");
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

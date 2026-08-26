@@ -292,6 +292,47 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string _rigMetersDisplay = "—";
 
+    /// <summary>VFO card's "BW" pill -- Tier 4 stub-removal item (2026-08-26). This project's CAT
+    /// layer can't universally read/set filter bandwidth: Hamlib and rigctld both genuinely support
+    /// it (their `rig_get/set_mode`/`m`/`M` calls already carry a passband value), flrig deliberately
+    /// does not (see <c>FlrigClientProtocol.SetBandwidthAsync</c>'s own doc comment for why -- its
+    /// readback isn't reliably convertible to Hz). <see cref="CanReadBandwidth"/>/
+    /// <see cref="CanSetBandwidth"/> below gate the display/edit controls per-backend, refreshed from
+    /// <see cref="IRadioSessionService.Capabilities"/> on every successful poll (<see cref="OnStateChanged"/>)
+    /// AND seeded in the constructor -- <see cref="OnStateChanged"/> alone only fires on a successful
+    /// poll, which would otherwise leave these stuck at their constructor-time value for the whole
+    /// duration of a reconnect-backoff window (same staleness class <see cref="IsKeyed"/>/
+    /// <see cref="RigMetersDisplay"/> are already fixed for -- see the <c>!CatLinked</c> clearing arm
+    /// in <see cref="OnConnectionEvent"/>, which resets these two right alongside them).</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SetBandwidthCommand))]
+    private bool _canReadBandwidth;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SetBandwidthCommand))]
+    private bool _canSetBandwidth;
+
+    /// <summary>Read-only, populated ONLY from the next poll's <see cref="RadioState.BandwidthHz"/> --
+    /// never set optimistically from <see cref="BandwidthInputHz"/> on <see cref="SetBandwidthCommand"/>
+    /// (plan-review risk: a rig can silently snap an arbitrary requested Hz to its nearest real
+    /// filter -- e.g. several Icom models via Hamlib -- so echoing the user's raw request back would
+    /// lie about what the rig actually did). "BW —" when unsupported, not yet polled, or the rig
+    /// reports Hamlib's <c>RIG_PASSBAND_NORMAL</c> sentinel (<see cref="RadioState.BandwidthHz"/>'s
+    /// own null-vs-real-0 convention) -- carries its own "BW " label prefix (code-review finding: the
+    /// stub pill this replaces read "BW —", a bare value here read as unlabeled against the SPLIT/RIT
+    /// pills sharing the same row).</summary>
+    [ObservableProperty]
+    private string _bandwidthDisplay = "BW —";
+
+    /// <summary>Staged, NOT live two-way bound to the rig -- same "explicit apply" shape as
+    /// <see cref="TuneFrequencyHz"/>/<see cref="TuneCommand"/> above (plan-review finding: a
+    /// live-bound Hz field would fight this VM's own 250ms poll write-back the way a naively-bound
+    /// numeric field would, unlike a 3-way segment toggle where a poll write-back is idempotent).
+    /// 2400 Hz is a common SSB voice-bandwidth default -- not read from anywhere, purely a reasonable
+    /// starting point for the control.</summary>
+    [ObservableProperty]
+    private double _bandwidthInputHz = 2400;
+
     /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
     /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
     /// the last <see cref="RadioState.FrequencyHz"/> to build a <see cref="FrequencyPreset"/> from.</summary>
@@ -307,6 +348,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _modeDisplay = string.Empty;
         _isReceiving = sstvSession.IsReceiving;
         _catLinked = radioSession.IsGenuinelyConnected;
+        _canReadBandwidth = radioSession.Capabilities.HasFlag(RadioCapabilities.ReadBandwidth);
+        _canSetBandwidth = radioSession.Capabilities.HasFlag(RadioCapabilities.SetBandwidth);
 
         radioSession.StateChanges.Subscribe(OnStateChanged);
         radioSession.ConnectionEvents.Subscribe(OnConnectionEvent);
@@ -448,6 +491,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
             IsKeyed = state.IsTransmitting;
             RigMetersDisplay = FormatRigMeters(state);
+
+            CanReadBandwidth = _radioSession.Capabilities.HasFlag(RadioCapabilities.ReadBandwidth);
+            CanSetBandwidth = _radioSession.Capabilities.HasFlag(RadioCapabilities.SetBandwidth);
+            // "BW " prefix (code-review finding): the stub pill this replaces read "BW —", and its
+            // row-mates (SPLIT/RIT) keep their own label prefix -- a bare "2400 Hz" here read as an
+            // unlabeled value against those neighbors.
+            BandwidthDisplay = state.BandwidthHz is { } bandwidthHz ? $"BW {bandwidthHz} Hz" : "BW —";
         });
     }
 
@@ -528,6 +578,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             {
                 IsKeyed = false;
                 RigMetersDisplay = "—";
+
+                // Same staleness gap as IsKeyed/RigMetersDisplay above: Capabilities also drops to
+                // None during reconnect backoff (RadioController.Capabilities' own doc comment), and
+                // OnStateChanged (the only other place these are refreshed) doesn't fire again until
+                // a poll genuinely succeeds -- without this, a lost link would leave the BW pill
+                // showing its last live reading and an Apply button a user could still click into a
+                // dead connection.
+                CanReadBandwidth = false;
+                CanSetBandwidth = false;
+                BandwidthDisplay = "BW —";
             }
 
             if (giveUpMessage is not null)
@@ -627,6 +687,29 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.SetFrequencyFailed(_logger, mhz, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
+        }
+    }
+
+    /// <summary>Explicit-apply command backing the BW pill's staged <see cref="BandwidthInputHz"/>
+    /// edit control -- gated by <see cref="CanSetBandwidth"/>, same shape as
+    /// <see cref="SetFrequencyAsync"/> above. Sends the value as-typed; this port does not add its
+    /// own narrow-bandwidth floor/clamp (a rig that rejects an out-of-range value already surfaces
+    /// that as a real <see cref="RadioProtocolException"/> -&gt; <see cref="ErrorMessage"/>, same as any
+    /// other invalid CAT command).</summary>
+    [RelayCommand(CanExecute = nameof(CanSetBandwidth))]
+    private async Task SetBandwidthAsync()
+    {
+        var hz = (int)Math.Round(BandwidthInputHz);
+        Log.SetBandwidthInvoked(_logger, hz);
+        try
+        {
+            ErrorMessage = null;
+            await _radioSession.SetBandwidthAsync(hz).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.SetBandwidthFailed(_logger, hz, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
     }
@@ -997,6 +1080,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetFrequency failed: {Mhz} MHz")]
         public static partial void SetFrequencyFailed(ILogger logger, double mhz, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SetBandwidth invoked: {Hz} Hz")]
+        public static partial void SetBandwidthInvoked(ILogger logger, int hz);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetBandwidth failed: {Hz} Hz")]
+        public static partial void SetBandwidthFailed(ILogger logger, int hz, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "ApplyPreset invoked: {Label} ({FrequencyHz}Hz, {Mode})")]
         public static partial void ApplyPresetInvoked(ILogger logger, string label, long frequencyHz, RadioMode mode);

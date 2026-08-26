@@ -43,6 +43,14 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct) => Task.CompletedTask;
 
+    public List<int?> SetBandwidthCalls { get; } = [];
+
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct)
+    {
+        SetBandwidthCalls.Add(bandwidthHz);
+        return Task.CompletedTask;
+    }
+
     public List<bool> SetPttCalls { get; } = [];
 
     /// <summary>Scripts <see cref="SetPttAsync"/>'s next several calls, dequeued one per call --

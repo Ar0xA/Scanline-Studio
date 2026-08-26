@@ -31,4 +31,14 @@ public interface IRadioProtocol : IAsyncDisposable
     Task SetFrequencyAsync(long hz, CancellationToken ct);
     Task SetModeAsync(RadioMode mode, CancellationToken ct);
     Task SetPttAsync(bool tx, CancellationToken ct);
+
+    /// <summary>Sets the rig's filter passband/bandwidth. <paramref name="bandwidthHz"/>
+    /// <see langword="null"/> requests the rig's default passband for its current mode (Hamlib's
+    /// <c>RIG_PASSBAND_NORMAL</c> sentinel). When <see cref="RadioCapabilities.SetBandwidth"/> is
+    /// absent from <see cref="Capabilities"/>, an implementation either throws
+    /// <see cref="InvalidOperationException"/> up front (matching the "no radio"/"not supported by
+    /// this backend" pattern <see cref="SetFrequencyAsync"/> and friends already use) or lets the
+    /// underlying command fail on its own (surfacing as <see cref="RadioProtocolException"/>) -- never
+    /// a silent no-op.</summary>
+    Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct);
 }

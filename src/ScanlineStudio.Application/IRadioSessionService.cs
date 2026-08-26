@@ -70,6 +70,12 @@ public interface IRadioSessionService
 
     Task SetPttAsync(bool tx, CancellationToken ct = default);
 
+    /// <summary>Pass-through of <see cref="IRadioController.SetBandwidthAsync"/> -- see
+    /// <see cref="IRadioProtocol.SetBandwidthAsync"/> for the null/not-supported contract. Callers
+    /// should check <see cref="RadioCapabilities.SetBandwidth"/> against <see cref="Capabilities"/>
+    /// before calling, since an unsupported backend throws rather than no-op'ing.</summary>
+    Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct = default);
+
     /// <summary>User-defined quick-jump frequency/mode entries (the frequency strip's memory-button
     /// row) -- returns <see cref="FrequencyPreset"/> (Abstractions, not the
     /// <c>ScanlineStudio.Core.Radio.FrequencyPresetsSettings</c> section type that actually persists
