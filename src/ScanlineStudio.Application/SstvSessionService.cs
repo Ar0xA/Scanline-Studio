@@ -1250,6 +1250,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestCorrectSlant();
     }
 
+    /// <summary>See <see cref="ISstvSessionService.AbortReception"/>.</summary>
+    public void AbortReception()
+    {
+        Log.ReceptionAborted(_logger);
+        _decoder.RequestAbandonReception();
+    }
+
     /// <summary>See <see cref="ISstvSessionService.ForceMode"/>.</summary>
     public void ForceMode(SstvModeDefinition mode)
     {
@@ -3869,6 +3876,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Reception aborted by user")]
+        public static partial void ReceptionAborted(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Decode mode forced to {ModeId}")]
         public static partial void ModeForced(ILogger logger, string modeId);

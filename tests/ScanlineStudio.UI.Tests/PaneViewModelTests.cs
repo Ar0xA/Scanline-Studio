@@ -1444,6 +1444,28 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_AbortCommand_WhileReceiving_DelegatesToTheSessionService()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.AbortCommand.Execute(null);
+
+        Assert.Equal(1, sstvSession.AbortReceptionCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_AbortCommand_WhileNotReceiving_IsASafeNoOp()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = false };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.AbortCommand.Execute(null);
+
+        Assert.Equal(0, sstvSession.AbortReceptionCallCount);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_QuickSelectMode_WhileReceiving_CallsForceMode()
     {
         // spec/18-path-to-1.0.md High item 7.
