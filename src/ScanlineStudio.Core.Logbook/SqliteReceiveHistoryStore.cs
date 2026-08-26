@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
@@ -196,6 +197,163 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET LinkedQsoId = $linkedQsoId WHERE Id = $id", entryId, "$linkedQsoId", qsoId, ct);
 
+    /// <summary>See <see cref="IReceiveHistoryStore.ReconcileWithDiskAsync"/>. Matches
+    /// <c>ReceiveHistoryRecorder</c>'s CURRENT filename shapes (`RecordCompletedImageAsync` writes
+    /// <c>{yyyyMMdd-HHmmssfff}_{modeId}_{entryId8}.png</c>, `RecordAbandonedImageAsync` adds a
+    /// `_partial_` marker before the id token) AND its pre-fix completed-image shape,
+    /// <c>{yyyyMMdd-HHmmss}_{modeId}.png</c> (no milliseconds, no id token) -- auditor-caught,
+    /// 2026-08-26: `docs/functional-audit-playbook.md`'s own record of that filename fix confirms
+    /// files this old genuinely exist on disk for any install that predates it, and this feature's
+    /// whole point is recovering exactly those files. See <see cref="FilenamePattern"/>'s own
+    /// doc comment for the two-shape grammar.</summary>
+    public async Task<int> ReconcileWithDiskAsync(CancellationToken ct = default)
+    {
+        var directory = await GetImagesDirectoryAsync(ct).ConfigureAwait(false);
+        if (!Directory.Exists(directory))
+        {
+            // Nothing saved yet (or the configured folder was moved/deleted) -- not an error, just
+            // nothing to reconcile. Directory.GetFiles below would throw on a missing directory.
+            return 0;
+        }
+
+        var existingPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using (var connection = new SqliteConnection(_connectionString))
+        {
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            var query = connection.CreateCommand();
+            query.CommandText = "SELECT FilePath FROM ReceiveHistory";
+            await using var reader = await query.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                // Auditor-caught: a single malformed stored path (empty string, or Windows-invalid
+                // characters from a hand-edited settings.json) used to throw here and abort the WHOLE
+                // reconcile -- with _hasReconciledDiskThisSession already latched true by the caller,
+                // that meant no retry until the app restarted. Isolated per-row instead: one bad
+                // stored path just can't be matched against disk (never treated as "existing"),
+                // everything else still reconciles normally.
+                var storedPath = reader.GetString(0);
+                try
+                {
+                    existingPaths.Add(Path.GetFullPath(storedPath));
+                }
+                catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+                {
+                    Log.ReconcileSkippedUnrecognizedFile(_logger, storedPath);
+                }
+            }
+        }
+
+        var toImport = new List<ReceiveHistoryEntry>();
+        foreach (var filePath in Directory.GetFiles(directory, "*.png"))
+        {
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(filePath);
+            }
+            catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+            {
+                Log.ReconcileSkippedUnrecognizedFile(_logger, filePath);
+                continue;
+            }
+
+            if (existingPaths.Contains(fullPath))
+            {
+                continue;
+            }
+
+            var match = FilenamePattern().Match(Path.GetFileName(filePath));
+            if (!match.Success)
+            {
+                Log.ReconcileSkippedUnrecognizedFile(_logger, filePath);
+                continue;
+            }
+
+            // Two shapes share one pattern: ms (9-digit HHmmssfff) when present, else the pre-fix
+            // 6-digit HHmmss form -- see FilenamePattern's own doc comment for why both are real.
+            var hasMilliseconds = match.Groups["ms"].Success;
+            var format = hasMilliseconds ? "yyyyMMdd-HHmmssfff" : "yyyyMMdd-HHmmss";
+            if (!DateTime.TryParseExact(match.Groups["timestamp"].Value, format, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var localTimestamp))
+            {
+                Log.ReconcileSkippedUnrecognizedFile(_logger, filePath);
+                continue;
+            }
+
+            // The recorder's own filename timestamp is wall-clock local (ReceiveHistoryRecorder.cs
+            // stamps DateTimeOffset.Now) -- reconstruct the SAME kind here, not UTC, matching what
+            // every genuinely-recorded row already stores.
+            var receivedAt = new DateTimeOffset(localTimestamp, TimeZoneInfo.Local.GetUtcOffset(localTimestamp));
+            var decodeState = match.Groups["partial"].Success ? ReceiveDecodeState.Abandoned : ReceiveDecodeState.Completed;
+            toImport.Add(new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, match.Groups["mode"].Value, fullPath, LinkedQsoId: null, decodeState));
+        }
+
+        if (toImport.Count == 0)
+        {
+            return 0;
+        }
+
+        var importedCount = 0;
+        await using (var connection = new SqliteConnection(_connectionString))
+        {
+            await connection.OpenAsync(ct).ConfigureAwait(false);
+            await using var transaction = connection.BeginTransaction();
+            foreach (var entry in toImport)
+            {
+                var insert = connection.CreateCommand();
+                insert.Transaction = transaction;
+                // Auditor-caught TOCTOU: a frame ReceiveHistoryRecorder is actively saving writes its
+                // PNG (SaveSnapshotAsync) BEFORE its own RecordAsync call inserts the real row -- if
+                // the Gallery tab is selected inside that window, the SELECT above can see the file
+                // with no row yet, and a plain INSERT here would then race RecordAsync's own insert
+                // into a genuine duplicate row for the same FilePath (no UNIQUE constraint on that
+                // column to reject it). WHERE NOT EXISTS makes this insert a no-op instead, checked
+                // against the live table at INSERT time, not just the SELECT snapshot taken above.
+                // Untested defense-in-depth, honestly: no seam exists in this class to inject a real
+                // row landing between the SELECT above and this INSERT (would need a mid-transaction
+                // hook), so no test exercises this WHERE clause specifically -- the earlier, simpler
+                // "row already existed before reconcile ever ran" case (SqliteReceiveHistoryStoreTests'
+                // own ReconcileWithDiskAsync_FileAlreadyInDatabase_IsNotDuplicated) is covered by the
+                // SELECT-snapshot dedup above this loop instead, and is NOT the same code path as this
+                // guard. An earlier version of this test suite had a test CLAIMING to cover this race
+                // that didn't (auditor-caught) -- removed rather than left as false confidence.
+                insert.CommandText = """
+                    INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged)
+                    SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged
+                    WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistory WHERE FilePath = $filePath)
+                    """;
+                insert.Parameters.AddWithValue("$id", entry.Id);
+                insert.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
+                insert.Parameters.AddWithValue("$modeId", entry.ModeId);
+                insert.Parameters.AddWithValue("$filePath", entry.FilePath);
+                insert.Parameters.AddWithValue("$linkedQsoId", DBNull.Value);
+                insert.Parameters.AddWithValue("$decodeState", entry.DecodeState.ToString());
+                insert.Parameters.AddWithValue("$note", DBNull.Value);
+                insert.Parameters.AddWithValue("$isFlagged", 0);
+                importedCount += await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+        }
+
+        Log.ReconcileImported(_logger, importedCount, directory);
+        return importedCount;
+    }
+
+    // Two real filename shapes, one pattern: the CURRENT scheme has millisecond precision (captured
+    // by the inner `ms` group) and a mandatory id token; the PRE-FIX scheme (any install predating
+    // ReceiveHistoryRecorder's own collision fix, docs/functional-audit-playbook.md) has second-only
+    // precision and NO id token at all -- `(?<ms>\d{3})?` and the whole trailing `(?:_...)?` group
+    // are both optional for exactly that reason, not defensive over-generality. Named groups:
+    // timestamp (the whole `yyyyMMdd-HHmmss[fff]` span, parsed against one format or the other
+    // depending on whether `ms` matched), mode (ModeId -- never contains '_', confirmed against every
+    // SstvModeRegistry entry), partial (present only for RecordAbandonedImageAsync's own "_partial_"
+    // marker -- unreachable on the pre-fix shape, which never had an abandoned-path counterpart with
+    // this problem), id (the entry-id fragment -- NOT reused as the reconciled entry's own Id, since
+    // only the first 8 hex chars of the original GUID survive in the filename; a fresh GUID is
+    // generated instead, same as every other RecordAsync caller).
+    [GeneratedRegex(@"^(?<timestamp>\d{8}-\d{6}(?<ms>\d{3})?)_(?<mode>[^_]+)(?:_(?:(?<partial>partial)_)?(?<id>[0-9a-f]{8}))?\.png$", RegexOptions.IgnoreCase)]
+    private static partial Regex FilenamePattern();
+
     /// <summary>Shared single-column-`UPDATE` implementation for <see cref="SetNoteAsync"/>/
     /// <see cref="SetFlaggedAsync"/>/<see cref="SetLinkedQsoIdAsync"/> -- three narrow,
     /// single-purpose setters (one atomic `UPDATE` each, mapping to one of three distinct,
@@ -367,5 +525,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX images directory set to {Directory}")]
         public static partial void ImagesDirectorySet(ILogger logger, string? directory);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Disk/DB reconcile: skipped a file not matching the app's own naming convention: {FilePath}")]
+        public static partial void ReconcileSkippedUnrecognizedFile(ILogger logger, string filePath);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Disk/DB reconcile: imported {Count} entries from {Directory}")]
+        public static partial void ReconcileImported(ILogger logger, int count, string directory);
     }
 }

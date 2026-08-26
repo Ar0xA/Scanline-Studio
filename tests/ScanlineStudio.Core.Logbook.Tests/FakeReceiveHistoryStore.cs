@@ -38,6 +38,9 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
+    public Task<int> ReconcileWithDiskAsync(CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
     public Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
     {
         RecordedEntries.Add(entry);

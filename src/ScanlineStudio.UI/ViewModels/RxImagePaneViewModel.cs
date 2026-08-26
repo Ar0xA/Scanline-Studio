@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Globalization;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -80,6 +81,24 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// "suppress the persist-on-load echo" convention as
     /// <c>RxHistoryPaneViewModel._suppressSelectedEntryEdits</c>.</summary>
     private bool _suppressFrameMetadataEdits;
+
+    /// <summary>Receive tab's "Previous frames" strip -- a session-only rolling list of the last
+    /// <see cref="PreviousFramesCapacity"/> COMPLETED receptions, newest first. Deliberately NOT the
+    /// same collection/query as <c>RxHistoryPaneViewModel.Entries</c> (that one is DB-backed,
+    /// filtered by the Gallery tab's own <c>ShowTodayOnly</c> toggle, persists across restarts) --
+    /// user decision 2026-08-26: this strip must show only this session's own last two frames,
+    /// independent of any Gallery UI state. Lives only in memory for this pane's own lifetime;
+    /// starts empty on every app launch. See <see cref="AddPreviousFrameAsync"/> for how it's kept
+    /// sorted/capped.</summary>
+    public ObservableCollection<RxHistoryEntryViewModel> PreviousFrames { get; } = [];
+
+    private const int PreviousFramesCapacity = 2;
+
+    /// <summary>Same thumbnail size as <c>RxHistoryPaneViewModel.ThumbnailMaxDimension</c> -- kept as
+    /// its own constant rather than a shared one since the two view-models have no common base to
+    /// hang it on and this strip's thumbnails are a genuinely separate render (different card,
+    /// different collection).</summary>
+    private const int PreviousFramesThumbnailMaxDimension = 96;
 
     private CancellationTokenSource? _notePersistCts;
 
@@ -1066,6 +1085,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// pre-existing residual sliver above.</summary>
     private void OnHistoryRecorded(ReceiveHistoryEntry entry) => Dispatcher.UIThread.Post(() =>
     {
+        // Unconditional -- deliberately NOT gated on entry.FilePath == _lastSavedPath like the
+        // Note/Flag correlation below. That gate exists to find THIS card's own currently-displayed
+        // frame specifically; the Previous-frames strip wants every completed reception, whichever
+        // frame it belongs to.
+        _ = AddPreviousFrameAsync(entry);
+
         if (entry.FilePath != _lastSavedPath)
         {
             return;
@@ -1087,6 +1112,49 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         OnPropertyChanged(nameof(CanEditFrameMetadata));
     });
+
+    /// <summary>Builds <see cref="PreviousFrames"/>. Only <see cref="ReceiveDecodeState.Completed"/>
+    /// receptions are added -- an abandoned/partial attempt isn't what an operator means by
+    /// "a previous frame." Best-effort thumbnail load, same reasoning as every other thumbnail site
+    /// in this app: a failed load renders that one entry without an image rather than dropping it
+    /// from the list or blocking the others.
+    ///
+    /// Inserted by <see cref="ReceiveHistoryEntry.ReceivedAt"/>, not blindly at index 0: the
+    /// thumbnail load below is a real async gap, and <see cref="IReceiveHistoryStore.Recorded"/> can
+    /// fire back-to-back during a bulk-decoded WAV import (the same interleaving several sibling
+    /// methods on this class already guard against, e.g. <see cref="ApplyStationIdDecodedAsync"/>'s
+    /// own <see cref="IReceivedImageBuffer.Generation"/> check) -- sorting on insert keeps this list
+    /// correctly ordered even if a later-fired event's thumbnail happens to resolve first.</summary>
+    private async Task AddPreviousFrameAsync(ReceiveHistoryEntry entry)
+    {
+        if (entry.DecodeState != ReceiveDecodeState.Completed)
+        {
+            return;
+        }
+
+        Bitmap? thumbnail = null;
+        try
+        {
+            var image = await _historyStore.LoadThumbnailAsync(entry, PreviousFramesThumbnailMaxDimension).ConfigureAwait(true);
+            thumbnail = ImageSourceBitmapConverter.ToBitmap(image);
+        }
+        catch (Exception ex)
+        {
+            Log.LoadPreviousFrameThumbnailFailed(_logger, entry.Id, ex);
+        }
+
+        var insertAt = 0;
+        while (insertAt < PreviousFrames.Count && PreviousFrames[insertAt].Entry.ReceivedAt > entry.ReceivedAt)
+        {
+            insertAt++;
+        }
+
+        PreviousFrames.Insert(insertAt, new RxHistoryEntryViewModel(entry, thumbnail));
+        while (PreviousFrames.Count > PreviousFramesCapacity)
+        {
+            PreviousFrames.RemoveAt(PreviousFrames.Count - 1);
+        }
+    }
 
     /// <summary>Mirrors <c>RxHistoryPaneViewModel.OnSelectedEntryNoteChanged</c>/
     /// <c>PersistNoteDebouncedAsync</c> exactly -- same debounce/cancel-supersedes/error-surfacing
@@ -1475,6 +1543,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading operator's own grid square failed")]
         public static partial void LoadOperatorGridFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading Previous-frames strip thumbnail failed for entry {EntryId}")]
+        public static partial void LoadPreviousFrameThumbnailFailed(ILogger logger, string entryId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Mode detected: {ModeId}")]
         public static partial void ModeDetected(ILogger logger, string modeId);

@@ -1084,6 +1084,14 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     /// lets a test prove a preview was (or, for the flicker-fix regression, was NOT) re-decoded.</summary>
     public List<(string EntryId, int MaxDimension)> ThumbnailLoadCalls { get; } = [];
 
+    /// <summary>Keyed by <see cref="ReceiveHistoryEntry.Id"/> -- when set, that specific entry's
+    /// <see cref="LoadThumbnailAsync"/> call doesn't resolve until the test completes the matching
+    /// <see cref="TaskCompletionSource{TResult}"/> manually. Lets a test control which of two
+    /// overlapping loads resolves first, to provoke a specific out-of-order interleaving (e.g.
+    /// RxImagePaneViewModel's own PreviousFrames sort-on-insert regression coverage) -- entries with
+    /// no gate configured resolve immediately via <see cref="ThumbnailToReturn"/>, same as before.</summary>
+    public Dictionary<string, TaskCompletionSource<IImageSource>> ThumbnailLoadGates { get; } = [];
+
     public string ImagesDirectory { get; set; } = "/tmp/scanlinestudio-history";
 
     public event Action<ReceiveHistoryEntry>? Recorded;
@@ -1125,6 +1133,11 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
     {
         ThumbnailLoadCalls.Add((entry.Id, maxDimension));
+        if (ThumbnailLoadGates.TryGetValue(entry.Id, out var gate))
+        {
+            return gate.Task;
+        }
+
         return Task.FromResult(ThumbnailToReturn ?? throw new InvalidOperationException("No thumbnail configured."));
     }
 
@@ -1197,6 +1210,23 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         Task.FromResult(TryUpdateEntry(entryId, e => e with { LinkedQsoId = qsoId }));
+
+    public int ReconcileCallCount { get; private set; }
+
+    public int ReconcileResultCount { get; set; }
+
+    public Exception? ThrowOnReconcile { get; set; }
+
+    public Task<int> ReconcileWithDiskAsync(CancellationToken ct = default)
+    {
+        ReconcileCallCount++;
+        if (ThrowOnReconcile is not null)
+        {
+            throw ThrowOnReconcile;
+        }
+
+        return Task.FromResult(ReconcileResultCount);
+    }
 
     private bool TryUpdateEntry(string entryId, Func<ReceiveHistoryEntry, ReceiveHistoryEntry> update)
     {
