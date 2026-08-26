@@ -1577,8 +1577,10 @@
         <Setter Property="Fill" Value="{StaticResource IndustryTxLed}" />
         <Setter Property="Stroke" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
-    <!-- 2026-08-14: added for the TX-inhibit chip (mockups/colors/SSTV-Color-Scheme.md §6's own
-         "TX inhibited" row is amber, a distinct concept from the red "fault" row .alert covers). -->
+    <!-- 2026-08-14: added for the TX-error chip (mockups/colors/SSTV-Color-Scheme.md §6's own
+         "TX inhibited" row is amber, a distinct concept from the red "fault" row .alert covers).
+         Renamed "TX ERROR" 2026-08-26, direct user correction: this indicator never actually
+         inhibits/blocks a Transmit, it reports whether the last attempt errored. -->
     <Style Selector="Rectangle.IndustryLed.attention">
         <Setter Property="Fill" Value="{StaticResource IndustryAttention}" />
         <Setter Property="Stroke" Value="{StaticResource IndustryAttentionSolidBorder}" />
@@ -1638,7 +1640,8 @@
     </Style>
     <!-- spec/18-path-to-1.0.md High item 10: filled-lozenge red variant for the new TX-KEYED
          status chip, mockups/colors/SSTV-Color-Scheme.md's own "Transmitting" row (distinct from
-         the amber "TX inhibited" row .attentionTint already covers). Same two-rule shape as
+         the amber "TX error" row .attentionTint already covers, renamed from "TX inhibited"
+         2026-08-26). Same two-rule shape as
          .healthyTint/.attentionTint above, reusing the danger tokens .fault below already
          established (previously text-only, no filled-lozenge consumer existed until now). -->
     <Style Selector="Border.IndustryStatus.dangerTint">
