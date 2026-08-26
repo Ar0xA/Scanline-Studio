@@ -1032,11 +1032,16 @@
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterToday}" />
                                 <!-- "14 MHz" frequency filter removed 2026-08-26 (user decision, "maybe
                                      one day") — ReceiveHistoryEntry has no frequency field to filter by,
-                                     see spec/14-roadmap.md's backlog entry. -->
+                                     see spec/14-roadmap.md's backlog entry. Sort/Size chips removed
+                                     outright 2026-08-26, same decision — both were static Borders
+                                     (Panes.RxHistory.SortChip/SizeChip = "SORT NEWEST"/"SIZE M")
+                                     asserting an active sort order / thumbnail-size setting that never
+                                     existed (spec/16-gui-wiring-survey.md's own FAKE-LIVE finding,
+                                     never previously actioned); no sort/size-selection logic exists
+                                     anywhere in RxHistoryPaneViewModel. See spec/14-roadmap.md's
+                                     backlog entry. -->
                                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" IsChecked="{Binding FilterUnloggedOnly}" Content="{loc:Translate Panes.RxHistory.FilterUnlogged}" />
                                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" IsChecked="{Binding FilterFlaggedOnly}" Content="{loc:Translate Panes.RxHistory.FilterFlagged}" />
-                                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.RxHistory.SortChip}" /></Border>
-                                <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.RxHistory.SizeChip}" /></Border>
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.Latest}" Command="{Binding SelectLatestCommand}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,0,4" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
                             </WrapPanel>
@@ -1160,10 +1165,18 @@
                                             <TextBlock Classes="IndustryRowValue" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
                                         </StackPanel>
                                     </Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.GridDistLabel}" />
-                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.GridDistValue}" />
-                                    </Grid></Border>
+                                    <!-- Grid/dist row removed outright 2026-08-26 (user decision, "maybe
+                                         one day") — was a static two-dashes-both-sides placeholder
+                                         (spec/16-gui-wiring-survey.md's own PLACEHOLDER finding). The
+                                         Receive tab's OWN Grid/dist row is real (RxImagePaneViewModel.
+                                         GridDisplay, wired 2026-08-25) but its LookupGrid comes from a
+                                         live FSK station-ID decode at reception time, reset to null at
+                                         the start of the next reception — ReceiveHistoryEntry has no
+                                         grid field at all, so there is nothing to show for a past
+                                         entry without a real persistence change (either a new
+                                         ReceiveHistoryEntry field, or falling back to the logged QSO's
+                                         own GridSquare via LinkedQsoId for entries that have one). See
+                                         spec/14-roadmap.md's backlog entry. -->
                                     <!-- Wired 2026-08-11: ReceiveHistoryEntry.LinkedQsoId is a real field,
                                          backed by IReceiveHistoryStore.SetLinkedQsoIdAsync. "Open in Log"
                                          below is now wired too (OpenInLogCommand, via QsoLinkWindowView),
