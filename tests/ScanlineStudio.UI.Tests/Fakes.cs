@@ -815,6 +815,13 @@ internal sealed class FakeFilePickerService : IFilePickerService
     }
 }
 
+internal sealed class FakeUrlLauncher : IUrlLauncher
+{
+    public List<string> OpenedUrls { get; } = [];
+
+    public void Open(string url) => OpenedUrls.Add(url);
+}
+
 internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter
 {
     public List<(string SourcePath, string DestinationPath, int JpegQuality)> Calls { get; } = [];

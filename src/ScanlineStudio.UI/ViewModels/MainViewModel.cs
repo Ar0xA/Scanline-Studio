@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
+using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -23,7 +24,12 @@ public partial class MainViewModel : ViewModelBase
 
     private readonly IServiceProvider _services;
     private readonly OptionsSettingsService _optionsSettingsService;
+    private readonly IUrlLauncher _urlLauncher;
     private readonly ILogger<MainViewModel> _logger;
+
+    /// <summary>Repo's own GitHub URL (README.md's own citation, `git remote -v`) -- the Help
+    /// menu's "Open on GitHub" target.</summary>
+    private const string RepositoryUrl = "https://github.com/Ar0xA/Scanline-Studio";
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
@@ -54,12 +60,14 @@ public partial class MainViewModel : ViewModelBase
         ISstvSessionService sstvSession,
         ILocalizationService localization,
         OptionsSettingsService optionsSettingsService,
+        IUrlLauncher urlLauncher,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
         ILogger<RadioStatusViewModel> radioStatusLogger)
     {
         _services = services;
         _optionsSettingsService = optionsSettingsService;
+        _urlLauncher = urlLauncher;
         _logger = logger;
 
         Waterfall = waterfall;
@@ -203,6 +211,13 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenOnGitHub()
+    {
+        Log.OpenOnGitHubInvoked(_logger);
+        _urlLauncher.Open(RepositoryUrl);
+    }
+
+    [RelayCommand]
     private void Exit()
     {
         Log.ExitInvoked(_logger);
@@ -237,6 +252,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenAbout command invoked")]
         public static partial void OpenAboutInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOnGitHub command invoked")]
+        public static partial void OpenOnGitHubInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);
