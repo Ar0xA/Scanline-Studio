@@ -253,7 +253,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// interval (<see cref="RadioConnectionSpec.PollInterval"/>, ~250ms default) plus rig
     /// round-trip -- not instantaneous.</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(VfoKickerDisplay))]
     private bool _isKeyed;
+
+    /// <summary>VFO card kicker text. "VFO A" stays a fixed label -- no dual-VFO/memory-channel
+    /// concept exists anywhere in <see cref="IRadioSessionService"/> to back a real "A", and the
+    /// former "M1" segment was dropped for the same reason (stub sweep, 2026-08-26). RX/TX now
+    /// reflects <see cref="IsKeyed"/> for real, replacing what used to be a static "RX" literal.</summary>
+    public string VfoKickerDisplay => _localization.GetString(
+        IsKeyed ? "RadioStatus.VfoCaptionTx" : "RadioStatus.VfoCaptionRx");
 
     /// <summary>VFO card's UTC clock -- real, ticking, zero backend dependency
     /// (spec/17-rx-telemetry-feasibility.md).</summary>

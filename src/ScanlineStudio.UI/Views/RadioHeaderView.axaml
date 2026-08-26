@@ -51,7 +51,7 @@
                              Padding="14,5,14,5">
                 <StackPanel Orientation="Horizontal" Spacing="14">
                     <StackPanel>
-                        <TextBlock Classes="IndustryKicker wide" Text="{loc:Translate RadioStatus.VfoCaption}" />
+                        <TextBlock Classes="IndustryKicker wide" Text="{Binding VfoKickerDisplay}" />
                         <!-- 40px mono frequency readout. The ".000" dimmed-gray tail-split from
                              LAYOUT-SPEC is deferred exactly as the pre-Phase-2 code already
                              deferred it (real FrequencyDisplay format doesn't share mock2's own
