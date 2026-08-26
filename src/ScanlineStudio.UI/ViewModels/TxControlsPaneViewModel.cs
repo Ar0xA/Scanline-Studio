@@ -767,10 +767,45 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // AutoFollowRxMode is the same class of read, Tier B audit finding: it was left outside the
         // Post when IsEditorOpen was moved in for this exact reason, risking a stale-true read right
         // after the operator un-ticked auto-follow performing an unwanted mode change). Checking
-        // again once already marshalled onto the UI thread is race-free.
+        // again once already marshalled onto the UI thread is race-free. IsTransmitting/_loadedImage
+        // are the same class of UI-thread-only-written state (set from TransmitAsync/
+        // OnSelectedModeChanged, both RelayCommand/partial-property-changed methods that only ever
+        // run on the UI thread) -- checked inside the Post lambda for the identical reason.
+        //
+        // Two legacy guards added here (`TrackTxMode`, `Main.cpp:4907-4915`) that this method
+        // previously lacked (spec/18-path-to-1.0.md gap, flagged 2026-08-25 during the SBAuto
+        // RX-pause work):
+        //
+        // `!SBTX->Down` -- don't switch TX mode while actively transmitting. This port's
+        // TransmitAsync captures SelectedMode/_loadedImage into locals at its own start, so an
+        // in-flight transmission's audio can't be corrupted by a later SelectedMode change either
+        // way -- but without this guard, a mid-transmission auto-detect would still silently swap
+        // out the loaded/prepared image and mode the operator is looking at while they're actively
+        // sending an unrelated one, and would corrupt whatever gets queued for the NEXT transmit.
+        //
+        // `m_RXW == pBitmapTX->Width` -- only follow when the detected RX mode's own image width
+        // matches the currently loaded TX image's width. Load-bearing given this port's own
+        // architecture, not just a literal port for its own sake: OnSelectedModeChanged
+        // unconditionally crops/resizes/reflows _loadedImage to whatever mode is newly selected
+        // (see that method's own doc comment) -- without this guard, auto-follow detecting a
+        // different-width mode would silently re-crop an already-framed TX image the operator
+        // deliberately prepared. No width check at all when nothing is loaded yet (_loadedImage is
+        // null): there is nothing to protect. This IS a deliberate deviation from legacy, not a
+        // literal-equivalence claim -- legacy's own pBitmapTX always exists (allocated at
+        // construction, Main.cpp:968) and is always sized to the current TX mode, so legacy's width
+        // check is always live even against a blank TX bitmap; this port's own _loadedImage
+        // genuinely can be null (nothing picked for TX yet), and OnSelectedModeChanged's own
+        // `value is null || _editState is null` branch makes a reflow attempt there a real no-op
+        // regardless, so skipping the check in that case changes no IMAGE state -- SelectedMode
+        // itself (and the mode dropdown/"Auto picks" row it drives) still follows, unlike legacy.
         Dispatcher.UIThread.Post(() =>
         {
-            if (!AutoFollowRxMode || IsEditorOpen)
+            if (!AutoFollowRxMode || IsEditorOpen || IsTransmitting)
+            {
+                return;
+            }
+
+            if (_loadedImage is { } loaded && loaded.Width != mode.ImageWidth)
             {
                 return;
             }
