@@ -79,8 +79,55 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string? _maintenanceMessage;
 
+    [NotifyPropertyChangedFor(nameof(IsSidebandUsb), nameof(IsSidebandLsb), nameof(IsSidebandFm))]
     [ObservableProperty]
     private RadioMode _selectedRadioMode = RadioMode.Usb;
+
+    /// <summary>Stub survey Tier 4 (2026-08-26): the VFO card's sideband segment
+    /// (<c>RadioHeaderView.axaml</c>) was a fully-clickable but entirely unwired literal group --
+    /// <see cref="SelectedRadioMode"/> itself was already real (<see cref="SetModeSafeAsync"/> keys
+    /// PTT-adjacent CAT mode changes), just never bound to this specific control. Three plain
+    /// get/set booleans, not a generic enum-to-bool converter -- matches this class's own established
+    /// pattern for a bound 2/3-way segment (see the Receive tab's Auto/Locked segment, bound directly
+    /// to a plain bool with Avalonia's <c>!</c> negation operator, no converter). <see
+    /// cref="RadioMode"/> has 12 members total; only these 3 are exposed here since they're the only
+    /// ones this segment offers -- selecting any of them while the rig is actually in, say, CW or
+    /// RTTY is a real, silent mode change, same as any other <see cref="SelectedRadioMode"/> write.</summary>
+    public bool IsSidebandUsb
+    {
+        get => SelectedRadioMode == RadioMode.Usb;
+        set
+        {
+            if (value)
+            {
+                SelectedRadioMode = RadioMode.Usb;
+            }
+        }
+    }
+
+    public bool IsSidebandLsb
+    {
+        get => SelectedRadioMode == RadioMode.Lsb;
+        set
+        {
+            if (value)
+            {
+                SelectedRadioMode = RadioMode.Lsb;
+            }
+        }
+    }
+
+    public bool IsSidebandFm
+    {
+        get => SelectedRadioMode == RadioMode.Fm;
+        set
+        {
+            if (value)
+            {
+                SelectedRadioMode = RadioMode.Fm;
+            }
+        }
+    }
 
     private bool _suppressModeCommand;
 
