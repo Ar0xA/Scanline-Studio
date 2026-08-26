@@ -490,7 +490,7 @@ above, not left disabled.
 | Detected-mode LED + lozenge | REAL | `:1478-1483` | `RxImage.DetectedModeDisplay`; LED `.active` conditional on `DetectedMode` being non-null, so it isn't green during the "—" empty state. |
 | Auto-correct chip | REAL | `:1484-1486` | `RxImage.AutoCorrectDisplay`. |
 | Slant chip | REAL | `:1487-1489` | `RxImage.SlantPpmStatusBarDisplay` (`.cs:398`). |
-| SNR chip | PLACEHOLDER | `:1490-1492` | `MainWindow.TabStrip.SnrValue` = `"—"` (`en.json:46`). |
+| SNR chip | **REMOVED 2026-08-26** | -- | Status-bar, tab-strip, and Gallery Mode/SNR-suffix SNR chips all removed outright; real feature scoped as a backlog item, `spec/14-roadmap.md`. |
 | AUTOSAVE ON chip | STUB (disabled) | `:1493-1496` | `IsEnabled="False"`, `Opacity="0.45"`, `NotImplemented` tooltip. Text still literally reads `"AUTOSAVE ON"` (`en.json:47`) — the disabled/dimmed treatment is the mitigation, but the wording still asserts a state. Worth changing to `"—"`; noted, not overstated. |
 
 **Status bar** (`:1533-1610`)
