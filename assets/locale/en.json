@@ -67,8 +67,6 @@
   "RadioStatus.FavouritesHint": "Click a preset to recall it",
   "RadioStatus.StoreCurrent": "Store current",
   "RadioStatus.EditFavouritesList": "Edit list...",
-  "RadioStatus.ImportFavourites": "Import",
-  "RadioStatus.ScanFavourites": "Scan M1–M3",
   "RadioStatus.FavouritesHeader": "FAVOURITES",
   "RadioStatus.TransceiverHeader": "TRANSCEIVER",
   "RadioStatus.CatLinked": "CAT linked",
