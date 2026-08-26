@@ -189,7 +189,7 @@ public sealed class RadioSessionServiceTests
         var spec = await service.GetSafetySettingsAsync();
 
         Assert.False(spec.SwrCutoffEnabled);
-        Assert.Equal(3.0, spec.SwrCutoffThreshold);
+        Assert.Equal(RadioSafetySpec.DefaultSwrCutoffThreshold, spec.SwrCutoffThreshold);
     }
 
     [Fact]
@@ -204,6 +204,26 @@ public sealed class RadioSessionServiceTests
 
         Assert.True(spec.SwrCutoffEnabled);
         Assert.Equal(2.5, spec.SwrCutoffThreshold);
+    }
+
+    [Fact]
+    public async Task SaveSafetySettingsAsync_RaisesSafetySettingsChanged_WithTheSavedValue()
+    {
+        // Code-review finding: TxControlsPaneViewModel's own live-propagation coverage
+        // (SafetySettingsChanged_FiredDuringActiveTransmit...) only drives the TEST FAKE's raise --
+        // without this test, deleting the real SafetySettingsChanged?.Invoke(spec) line in
+        // RadioSessionService.SaveSafetySettingsAsync would leave the whole suite green while live
+        // propagation silently died in production.
+        var controller = new FakeRadioController();
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [], NullLogger<RadioSessionService>.Instance);
+        RadioSafetySpec? raised = null;
+        service.SafetySettingsChanged += spec => raised = spec;
+
+        await service.SaveSafetySettingsAsync(new RadioSafetySpec(true, 4.2));
+
+        Assert.NotNull(raised);
+        Assert.True(raised!.SwrCutoffEnabled);
+        Assert.Equal(4.2, raised.SwrCutoffThreshold);
     }
 
     // Options-dialog "Test PTT" button. Radio-safety-sensitive: every one of these proves the rig

@@ -91,5 +91,21 @@ public interface IRadioSessionService
     /// concrete assembly -- same reasoning as <see cref="FrequencyPreset"/>.</summary>
     Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default);
 
+    /// <summary>Persists <paramref name="spec"/> and raises <see cref="SafetySettingsChanged"/> once
+    /// the write succeeds -- the only way a live subscriber (e.g. <c>TxControlsPaneViewModel</c>'s SWR
+    /// auto-cutoff enforcement) finds out the persisted setting changed without being reconstructed.
+    /// <see cref="SaveSafetySettingsAsync"/> is the SOLE raise site for that event.</summary>
     Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default);
+
+    /// <summary>Fires once <see cref="SaveSafetySettingsAsync"/>'s write succeeds, carrying the newly
+    /// persisted value. Deliberately a plain multicast <see langword="event"/>, not an
+    /// <see cref="IObservable{T}"/> like <see cref="StateChanges"/>/<see cref="ConnectionEvents"/> --
+    /// this is a one-shot "something changed" signal with no history/replay need, unlike those two.
+    /// Same concurrency contract as those streams: raised SYNCHRONOUSLY on whatever thread
+    /// <see cref="SaveSafetySettingsAsync"/>'s own write continuation runs on (NOT the UI thread --
+    /// the reference implementation's continuation is <c>ConfigureAwait(false)</c>d), no buffering,
+    /// never blocks the raiser beyond a subscriber's own handler body -- a subscriber that needs UI
+    /// thread access must marshal itself (<c>Dispatcher.UIThread.Post</c>), the same "subscriber's own
+    /// responsibility" contract <see cref="StateChanges"/> already establishes.</summary>
+    event Action<RadioSafetySpec>? SafetySettingsChanged;
 }

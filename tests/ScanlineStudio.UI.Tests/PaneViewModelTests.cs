@@ -2541,32 +2541,6 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_SwrCutoffThresholdChangedRapidly_OnlyPersistsTheLatestValue()
-    {
-        // Tier B audit finding: SwrCutoffThreshold's TextBox is TwoWay/PropertyChanged-triggered, so
-        // typing "12" used to fire TWO overlapping, un-awaited PersistSafetySettingsAsync calls, each
-        // capturing its own value before its own await -- if the stale "1" call's SaveAsync happened
-        // to complete AFTER the fresh "12" call's, the persisted SWR safety cutoff would silently end
-        // up at 1.0 (an always-trips value) while the UI still showed 12. Debounce-and-cancel-
-        // supersedes (matching RadioStatusViewModel.PersistVolumeDebouncedAsync's own established fix
-        // for the identical hazard class) closes the race: only the LAST edit's value ever reaches
-        // SaveAsync.
-        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 3.0) };
-        var vm = new TxControlsPaneViewModel(new FakeSstvSessionService(), new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        Dispatcher.UIThread.RunJobs();
-
-        vm.SwrCutoffThreshold = 1.0;
-        vm.SwrCutoffThreshold = 12.0;
-
-        Assert.Equal(3.0, radioSession.SafetySpec.SwrCutoffThreshold); // not persisted yet -- still debouncing
-
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(12.0, radioSession.SafetySpec.SwrCutoffThreshold);
-    }
-
-    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_CancellingTheEditor_LeavesAnyPreviouslyAppliedImageUntouched()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };

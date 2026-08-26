@@ -445,6 +445,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             }
 
             OnPropertyChanged(nameof(RadioLinkStatusMessage));
+            OnPropertyChanged(nameof(ShowSwrCutoffCapabilityHint));
         });
     }
 
@@ -461,6 +462,35 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         IsRadioConnected && !_radioSession.IsGenuinelyConnected && RadioBackendId != "none"
             ? _localization.GetString("Options.Radio.Connect.NotYetConfirmed")
             : null;
+
+    /// <summary>SWR auto-cutoff (2026-08-26, relocated from TxControlsPaneView's own Output card --
+    /// see <see cref="LoadSafeAsync"/>'s own doc comment for the load, <see cref="SaveAsync"/>'s for
+    /// the save). Deliberately UNCONDITIONALLY editable regardless of <see cref="ShowSwrCutoffCapabilityHint"/>
+    /// below -- Options configures ahead of a connection, gating a settings-dialog control on what's
+    /// live RIGHT NOW would break that contract (unlike the control this replaced, whose
+    /// <c>IsEnabled="{Binding ShowSwrMeter}"</c> greying made sense only because it sat on a live pane
+    /// showing a live rig's current state).</summary>
+    [ObservableProperty]
+    private bool _swrCutoffEnabled;
+
+    [ObservableProperty]
+    private double _swrCutoffThreshold = RadioSafetySpec.DefaultSwrCutoffThreshold;
+
+    /// <summary>The capability-awareness the old TX-pane control's <c>IsEnabled="{Binding
+    /// ShowSwrMeter}"</c> greying used to provide, in non-disabling form (see
+    /// <see cref="SwrCutoffEnabled"/>'s own doc comment for why this control stays editable instead)
+    /// -- without this, an flrig user (confirmed zero SWR support) could tick the checkbox above and
+    /// get no indication anywhere that it will never fire. Gated on <see cref="IsRadioConnected"/>
+    /// (a real session actually exists, matching that property's own "would Disconnect do something"
+    /// contract), deliberately NOT <see cref="RadioBackendId"/> (the dropdown SELECTION, which can be
+    /// edited to a different, not-yet-connected backend while a genuinely different one stays live --
+    /// gating on the dropdown pick would show a stale/wrong capability read for whatever backend is
+    /// ACTUALLY connected right now). <see langword="true"/> only once a session exists AND the
+    /// currently connected/negotiated backend does not report <see cref="RadioCapabilities.SwrMeter"/>.
+    /// Re-evaluated on every <see cref="OnConnectionEvent"/>, not just at load -- <see cref="OnConnectionEvent"/>'s
+    /// own doc comment.</summary>
+    public bool ShowSwrCutoffCapabilityHint =>
+        IsRadioConnected && !_radioSession.Capabilities.HasFlag(RadioCapabilities.SwrMeter);
 
     public IReadOnlyList<CultureInfo> AvailableCultures => _localization.AvailableCultures;
 
@@ -1846,6 +1876,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? true;
             JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
 
+            // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
+            // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
+            // not Core.Radio, and IRadioSessionService.SafetySettingsChanged's own doc comment for how
+            // TxControlsPaneViewModel's live enforcement picks up a Save made here without being
+            // reconstructed). NOT part of OptionsSnapshot/_optionsSettingsService -- RadioSafety is its
+            // own settings section, saved via _radioSession.SaveSafetySettingsAsync (SaveAsync below),
+            // same reasoning as why RadioConnectionSettings itself isn't in the snapshot either.
+            var safetySpec = await _radioSession.GetSafetySettingsAsync();
+            SwrCutoffEnabled = safetySpec.SwrCutoffEnabled;
+            SwrCutoffThreshold = safetySpec.SwrCutoffThreshold;
+
             await _audioDeviceEnumerator.RefreshAsync();
             CaptureDevices.Clear();
             foreach (var device in _audioDeviceEnumerator.InputDevices)
@@ -2050,6 +2091,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             await _optionsSettingsService.SaveAsync(snapshot);
 
+            // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
+            // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync
+            // (which does its own independent fresh load-modify-save round trip, verified safe against
+            // the geometry/ImageExport whole-document save below: sequential, not concurrent, and each
+            // call reloads fresh immediately before writing, so neither can clobber the other -- but
+            // ONLY because this call is sequenced here, between the two, not after the geometry save).
+            // Also raises IRadioSessionService.SafetySettingsChanged, which is how
+            // TxControlsPaneViewModel's live enforcement picks up the new value without being
+            // reconstructed.
+            await _radioSession.SaveSafetySettingsAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold));
+
             // See RememberWindowPosition's own doc comment for why this bypasses
             // _optionsSettingsService entirely. Preserves Left/Top/Width/Height as-is -- those are
             // MainWindow's own domain (captured passively on Closing), not user-edited fields here.
@@ -2151,6 +2203,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         HamlibPttTestSucceeded = false;
         FlrigTestSucceeded = false;
         FlrigPttTestSucceeded = false;
+        // Not part of OptionsSettingsService.Defaults -- RadioSafety is its own settings section, not
+        // in OptionsSnapshot (see SaveAsync's own comment for why). RadioSafetySpec.DefaultSwrCutoffThreshold
+        // is the single source of truth for this default, shared with RadioSafetySettings' own
+        // property initializer.
+        SwrCutoffEnabled = false;
+        SwrCutoffThreshold = RadioSafetySpec.DefaultSwrCutoffThreshold;
     }
 
     [RelayCommand]

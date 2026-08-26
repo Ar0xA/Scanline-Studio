@@ -513,6 +513,37 @@
                                 </StackPanel>
                             </HeaderedContentControl>
 
+                            <!-- SWR auto-cutoff (2026-08-26, relocated here from the TX Controls
+                                 pane's own Output card per user request — see
+                                 OptionsWindowViewModel.SwrCutoffEnabled's own doc comment). Real,
+                                 enforced control — see TxControlsPaneViewModel.CheckSwrCutoff, which
+                                 picks up a Save made here live via IRadioSessionService.
+                                 SafetySettingsChanged, without needing a restart. Deliberately
+                                 UNCONDITIONALLY editable (no IsEnabled gate on live capability, unlike
+                                 the control this replaced) — Options configures ahead of a
+                                 connection; ShowSwrCutoffCapabilityHint below is the non-disabling
+                                 substitute for that old greying. -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.SafetyHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                              Content="{loc:Translate Options.Radio.SwrCutoffEnabled}"
+                                              IsChecked="{Binding SwrCutoffEnabled}"
+                                              ToolTip.Tip="{loc:Translate Options.Radio.SwrCutoffEnabled.Help}" />
+                                    <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="6">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.SwrCutoffThreshold}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
+                                                       Value="{Binding SwrCutoffThreshold}" Increment="0.1" Minimum="1.0" Maximum="10.0" FormatString="0.0" />
+                                    </Grid>
+                                    <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
+                                               Text="{loc:Translate Options.Radio.SwrCutoffCapabilityHint}"
+                                               Foreground="{StaticResource IndustryDanger}"
+                                               IsVisible="{Binding ShowSwrCutoffCapabilityHint}" />
+                                </StackPanel>
+                            </HeaderedContentControl>
+
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetRadioToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
