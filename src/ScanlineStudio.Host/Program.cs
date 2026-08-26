@@ -306,6 +306,11 @@ internal static partial class Program
         services.AddTransient<OptionsSettingsService>();
         services.AddTransient<OptionsWindowViewModel>();
 
+        // Storage settings dialog (stub survey Tier 2) -- transient, same reasoning as
+        // OptionsWindowViewModel: no existing pane already holds IReceiveHistoryStore for whatever
+        // menu opens this, and a fresh instance re-reads the persisted directory each open.
+        services.AddTransient<StorageSettingsWindowViewModel>();
+
         // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
         // Always boots into English; restoring a persisted non-English culture happens later in Main
         // (Tier C audit finding -- this comment used to say "a separate, later step, once

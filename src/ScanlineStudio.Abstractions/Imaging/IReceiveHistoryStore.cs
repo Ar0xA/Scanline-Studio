@@ -77,6 +77,23 @@ public interface IReceiveHistoryStore
     /// forbids that).</summary>
     Task<string> GetImagesDirectoryAsync(CancellationToken ct = default);
 
+    /// <summary>Persists a new saved-image folder location -- stub survey Tier 2's Storage settings
+    /// dialog. Same UI-layering reasoning as <see cref="GetImagesDirectoryAsync"/>: the concrete
+    /// `Core.Logbook` implementation owns reading/writing its own settings section, so
+    /// `ScanlineStudio.UI` never references `Core.Logbook.ReceiveHistorySettings` directly
+    /// (`UiLayeringArchitectureTests` forbids that; plan-review finding, 2026-08-26, corrected an
+    /// earlier plan that would have injected `ISettingsStore` straight into a UI view-model for
+    /// this). <paramref name="directory"/> <see langword="null"/> or all-whitespace resets to the
+    /// default <see cref="GetImagesDirectoryAsync"/> itself falls back to. A non-null value is
+    /// validated by actually creating the directory (or confirming it already exists) BEFORE the
+    /// setting is persisted -- <see cref="DirectoryNotFoundException"/>/<see cref="IOException"/>/
+    /// <see cref="UnauthorizedAccessException"/> propagate uncaught so the caller can surface the
+    /// real reason, rather than silently accepting a typo/permission problem that would otherwise
+    /// only surface later as every subsequent RX image quietly failing to save (plan-review
+    /// finding: the recorder's own write path is fire-and-forget with no user-visible failure
+    /// surface today).</summary>
+    Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default);
+
     /// <summary>Sets (or clears, via <see langword="null"/>) the Gallery frame metadata card's
     /// user-entered note on an existing entry. Returns <see langword="false"/> (not an exception)
     /// if <paramref name="entryId"/> no longer exists -- defensive, not a case this port's own

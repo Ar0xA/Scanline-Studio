@@ -390,7 +390,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanSelectLatest))]
     private void SelectLatest() => SelectedEntry = Entries.FirstOrDefault();
 
-    private async Task LoadImagesDirectoryAsync()
+    /// <summary>Not private: also called from <c>MainWindow.axaml.cs</c>'s own Storage settings
+    /// dialog Closed handler (stub survey Tier 2, plan-review finding) so the Gallery Storage card
+    /// picks up a just-saved directory change immediately, matching the existing precedent for
+    /// re-running a load unconditionally on dialog close (<c>OptionsWindowViewModel.RequestClose</c>'s
+    /// own Closed handler re-runs <c>LoadCallsignAsync</c>/output-device/identification loads the
+    /// same way, whether or not anything on that specific tab actually changed).</summary>
+    public async Task LoadImagesDirectoryAsync()
     {
         try
         {

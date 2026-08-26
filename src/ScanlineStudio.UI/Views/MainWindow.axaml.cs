@@ -329,6 +329,35 @@ public partial class MainWindow : Window
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 
+                // Stub survey Tier 2 (2026-08-26). Same shape as OptionsRequested above --
+                // DI-resolved view-model, refreshes the Gallery Storage card on close (matching
+                // OptionsRequested's own re-run-the-load-unconditionally-on-close precedent).
+                vm.StorageSettingsRequested += storageViewModel =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingStorageSettingsWindow(logger);
+                    }
+
+                    try
+                    {
+                        var window = new StorageSettingsWindowView { DataContext = storageViewModel };
+                        window.Closed += (_, _) => _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.StorageSettingsShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.StorageSettingsWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 // Stub survey Tier 2 (2026-08-26). Same synchronous, unawaited shape as
                 // OptionsRequested/AboutRequested above -- ShowDialog itself is synchronous (blocks
                 // until the dialog closes), no async construction work precedes it.
@@ -405,6 +434,15 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OptionsWindowView.ShowDialog returned")]
         public static partial void ShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing StorageSettingsWindowView")]
+        public static partial void ConstructingStorageSettingsWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "StorageSettingsWindowView.ShowDialog returned")]
+        public static partial void StorageSettingsShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "StorageSettingsWindowView failed to open or show")]
+        public static partial void StorageSettingsWindowFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
         public static partial void ExitRequested(ILogger logger);
