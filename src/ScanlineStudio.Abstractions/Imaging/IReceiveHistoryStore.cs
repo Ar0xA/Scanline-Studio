@@ -45,9 +45,8 @@ public sealed record ReceiveHistoryFilter(string? ModeId = null, DateTimeOffset?
 
 public interface IReceiveHistoryStore
 {
-    /// <summary>Fires with the entry once <see cref="RecordAsync"/>'s write completes (including its
-    /// own retention-trim pass, so a subscriber never gets notified about a row that was already
-    /// trimmed away in the same call) -- the only hook a live UI pane has for "a new frame just
+    /// <summary>Fires with the entry once <see cref="RecordAsync"/>'s write completes -- the only
+    /// hook a live UI pane has for "a new frame just
     /// landed in history," letting the Gallery tab's own list and the Receive tab's "Previous frames"
     /// strip (same shared <c>RxHistoryPaneViewModel</c> singleton, spec/16-gui-wiring-survey.md's own
     /// PARTIAL finding: neither refreshed live before this) stay current during an active session
@@ -80,11 +79,10 @@ public interface IReceiveHistoryStore
 
     /// <summary>Sets (or clears, via <see langword="null"/>) the Gallery frame metadata card's
     /// user-entered note on an existing entry. Returns <see langword="false"/> (not an exception)
-    /// if <paramref name="entryId"/> no longer exists -- a reachable case, not just defensive
-    /// programming: the retention-trim ring buffer (see `SqliteReceiveHistoryStore`'s own doc
-    /// comment) can delete an untouched row between the Gallery loading it and a user editing it.
-    /// The caller (a ViewModel) is expected to surface that to the user, not silently ignore
-    /// it.</summary>
+    /// if <paramref name="entryId"/> no longer exists -- defensive, not a case this port's own
+    /// production store can reach today (no automatic deletion path exists as of 2026-08-26, see
+    /// `docs/removed-features.md`). The caller (a ViewModel) is expected to surface that to the
+    /// user, not silently ignore it.</summary>
     Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default);
 
     /// <summary>Sets the Gallery "Flagged" filter/toggle on an existing entry. Same

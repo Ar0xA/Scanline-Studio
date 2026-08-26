@@ -59,8 +59,8 @@ public sealed class QsoLinkWindowViewModelTests
         var logbook = new FakeLogbookSessionService();
         logbook.Records.Add(SampleQsoRecord("qso-1"));
 
-        // Entry NOT in EntriesToReturn -- simulates the entry having aged out of retention between
-        // the Gallery load and this click.
+        // Entry NOT in EntriesToReturn -- simulates the entry no longer existing in the store by
+        // the time this click reaches it.
         var historyStore = new FakeReceiveHistoryStore { EntriesToReturn = [] };
         var vm = CreateVm(logbook, historyStore);
         Dispatcher.UIThread.RunJobs();

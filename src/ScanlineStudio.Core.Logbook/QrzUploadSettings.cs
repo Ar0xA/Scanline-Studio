@@ -7,7 +7,7 @@ namespace ScanlineStudio.Core.Logbook;
 /// <see cref="AdifUdpStreamingSettings"/> and the spec's existing QRZ.com *lookup* section —
 /// the app never uploads anywhere without the user explicitly enabling it and supplying their own
 /// API key. Nullable properties only, per the STJ-missing-property-defaults-to-CLR-default trap
-/// documented on <see cref="AdifUdpStreamingSettings"/>/<see cref="ReceiveHistorySettings.MaxEntries"/>.</summary>
+/// documented on <see cref="AdifUdpStreamingSettings"/>.</summary>
 public sealed record QrzUploadSettings
 {
     public const string SectionKey = "QrzUpload";
