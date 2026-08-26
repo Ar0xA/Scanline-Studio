@@ -462,8 +462,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     /// <summary>Same <see cref="SlantPpm"/> value, second display site (status bar) -- a distinct
     /// property, not just the same string, because the status bar's compact "label baked into the
-    /// value string" convention (matching its sibling readouts, e.g. `MainWindow.StatusBar.SnrValue`)
-    /// needs a "slant" prefix the Sync&amp;Slant card's own separate label `TextBlock` doesn't.</summary>
+    /// value string" convention (matching its sibling readouts, e.g. buffer/frames-today) needs a
+    /// "slant" prefix the Sync&amp;Slant card's own separate label `TextBlock` doesn't.</summary>
     public string SlantPpmStatusBarDisplay => SlantPpm is { } ppm
         ? _localization.GetString("MainWindow.StatusBar.SlantValueFormat", ppm)
         : _localization.GetString("MainWindow.StatusBar.SlantValueNoLock");
