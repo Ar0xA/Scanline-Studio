@@ -102,10 +102,14 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" Command="{Binding RxImage.RedecodeCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
             </MenuItem>
+            <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
+            <!-- Help moved behind Options (user request, 2026-08-26) — Options no longer dangles
+                 as the sole trailing item. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenOnGitHub}" Command="{Binding OpenOnGitHubCommand}" />
+                <!-- About stays the last item, per direct user request (2026-08-26). -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.About}" Command="{Binding OpenAboutCommand}" />
             </MenuItem>
-            <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
         </Menu>
 
         <!-- Operator's own callsign (mock2's own top-right green chip on the menu line) - real,
