@@ -1083,29 +1083,17 @@
                                         <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
                                             <!-- Mode badge overlaid top-left on the image (real Entry.ModeId);
                                                  IsHitTestVisible="False" so it never steals the click that
-                                                 selects the ListBoxItem underneath. Callsign/meta line is
-                                                 literal: ReceiveHistoryEntry has no such fields today.
-                                                 "gallery" modifier on caption/call/meta (design-fidelity-
-                                                 agent-caught fix): mock2's own Gallery figure uses a
-                                                 different padding/font-size than the Receive/Transmit
-                                                 thumbnail sites this composition was copied from — each
-                                                 mockup site genuinely has its own numbers, not one
-                                                 inconsistent atom. -->
+                                                 selects the ListBoxItem underneath. The bottom caption bar
+                                                 (callsign/meta) was removed outright, stub sweep 2026-08-26:
+                                                 ReceiveHistoryEntry has no such fields, so it was rendering
+                                                 as two literal em-dashes under every thumbnail. -->
                                             <Border Classes="IndustryThumbnail" Margin="0,0,7,7">
-                                                <DockPanel LastChildFill="True">
-                                                    <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption gallery">
-                                                        <StackPanel>
-                                                            <TextBlock Classes="IndustryThumbnailCall gallery" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
-                                                            <TextBlock Classes="IndustryThumbnailMeta gallery" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.RxHistory.ThumbMetaValue}" />
-                                                        </StackPanel>
+                                                <Panel>
+                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                                    <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
+                                                        <TextBlock Text="{Binding Entry.ModeId}" />
                                                     </Border>
-                                                    <Panel>
-                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
-                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
-                                                            <TextBlock Text="{Binding Entry.ModeId}" />
-                                                        </Border>
-                                                    </Panel>
-                                                </DockPanel>
+                                                </Panel>
                                             </Border>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -1123,10 +1111,12 @@
                          next to real data would be misleading, unlike the TX tab's now-removed
                          Queue/TX-log cards, which had no real data mixed in at all) + Storage card
                          (real ImagesDirectory, resolved via
-                         IReceiveHistoryStore.GetImagesDirectoryAsync). Sidecar-format and disk-free
-                         rows ARE rendered below, as literals, since neither is tracked anywhere
-                         today; they are not omitted, contrary to what an earlier pass's comment
-                         here used to claim. -->
+                         IReceiveHistoryStore.GetImagesDirectoryAsync). Disk-free is now real too
+                         (RxHistory.DiskFreeDisplay, DriveInfo-based, stub sweep 2026-08-26). The
+                         Sidecar-format row was removed outright in that same sweep — no
+                         sidecar-file feature exists anywhere in this app, so it was a permanent
+                         literal em-dash, unlike disk-free which just needed the DriveInfo read
+                         wired up. -->
                     <!-- Same ScrollViewer + pinned-Height + top-headroom fix as the Receive/
                          Transmit tabs' own right columns — same 834 figure (identical outer Grid
                          shape/margins). Column 0's own gallery grid needs no equivalent fix: its
@@ -1151,13 +1141,17 @@
                                     </Grid></Border>
                                     <!-- Combined rows matching mock2's own layout: Mode is real
                                          (Entry.ModeId), SNR is literal (no per-frame SNR is tracked
-                                         anywhere today); frequency is literal, time is real
-                                         (Entry.ReceivedAt). HorizontalAlignment="Right" on the
-                                         StackPanel itself (not just each child TextBlock, which
-                                         IndustryRowValue already right-aligns within its OWN bounds
-                                         to no visible effect inside a StackPanel) so the whole 2-part
-                                         group sits at the row's right edge, matching every
-                                         single-value row's own convention. -->
+                                         anywhere today, deliberately accepted placeholder). Time is
+                                         real (Entry.ReceivedAt); the Frequency half was removed
+                                         outright, stub sweep 2026-08-26 — ReceiveHistoryEntry has
+                                         no captured-frequency field, so it was a literal em-dash, and
+                                         the row's own label renamed from "Freq / time" to "Time" to
+                                         match. HorizontalAlignment="Right" on the ModeSnr StackPanel
+                                         itself (not just each child TextBlock, which IndustryRowValue
+                                         already right-aligns within its OWN bounds to no visible
+                                         effect inside a StackPanel) so that 2-part group sits at the
+                                         row's right edge, matching every single-value row's own
+                                         convention. -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
                                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
@@ -1167,10 +1161,7 @@
                                     </Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />
-                                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" HorizontalAlignment="Right">
-                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.FreqPrefixValue}" />
-                                            <TextBlock Classes="IndustryRowValue" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
-                                        </StackPanel>
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
                                     </Grid></Border>
                                     <!-- Grid/dist row removed outright 2026-08-26 (user decision, "maybe
                                          one day") — was a static two-dashes-both-sides placeholder
@@ -1250,12 +1241,8 @@
                                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.NamingValue}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.SidecarLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.SidecarValue}" />
-                                </Grid></Border>
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
-                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.DiskValue}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DiskFreeDisplay}" />
                                 </Grid></Border>
                             </StackPanel>
                         </HeaderedContentControl>
@@ -1521,19 +1508,23 @@
              spec/17-rx-telemetry-feasibility.md). Buffer's own "· N XRUN" half (a separate
              audio-engine dropped-frame counter, not this decoder's own sample buffer) is real too
              now, recombined into mock2's original single format; see
-             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. M1/SNR still
-             have no backing property anywhere in the app (true per-line
-             SNR still doesn't exist) and are literal placeholders matching mock2's own exact
-             values/wording, same precedent as the Receive tab's own scaffolding cards. -->
+             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. SNR still
+             has no backing property anywhere in the app (true per-line SNR still doesn't exist) and
+             is a literal placeholder matching mock2's own exact wording, same precedent as the
+             Receive tab's own scaffolding cards — a deliberately accepted gap, not a stray one
+             (stub sweep, 2026-08-26). The Memory chip that used to sit here (same placeholder
+             class) was removed outright in that same sweep — no memory-channel concept exists
+             anywhere in IRadioSessionService to back it, unlike Disk below. Disk is now real
+             (RxHistory.DiskFreeDisplay, DriveInfo-based, stub sweep 2026-08-26) — no longer a
+             placeholder. -->
         <!-- UI-redesign Phase 2: height corrected to LAYOUT-SPEC's real 25 (was a pre-existing
              24px literal), all chips re-skinned to the .mini atom (design doc §4). Deliberately
-             kept as 3 separate Frequency/Mode/Memory chips, not merged into the mockup's one
-             interpolated string — merging independently-live-updating bindings into a single
-             formatted string is a real behavior change, not a pure re-skin (design doc §4's own
-             flagged deviation). DISK is new: no disk-space binding exists anywhere in this
-             codebase today, literal FAKE-LIVE placeholder matching the SnrValue/MemoryTag
-             precedent already established in this exact bar, not a real feature added in this
-             phase. The TX-inhibit LED keeps its original visual unchanged (kept per direct user
+             kept as separate Frequency/Mode chips, not merged into the mockup's one interpolated
+             string — merging independently-live-updating bindings into a single formatted string
+             is a real behavior change, not a pure re-skin (design doc §4's own flagged deviation).
+             DISK was FAKE-LIVE as of this phase (no disk-space binding existed yet, matching the
+             SnrValue/MemoryTag precedent of that time) — since made real, see the comment above.
+             The TX-inhibit LED keeps its original visual unchanged (kept per direct user
              request, LAYOUT-SPEC's own static render just doesn't happen to show one) — Phase 7
              ported it 1:1 into Ellipse.IndustryLed/TextBlock.IndustryReadoutSmall (Atoms.axaml),
              same colors, just relocated off the deleted old-design files. -->
@@ -1596,9 +1587,6 @@
                         <TextBlock Text="{Binding RadioStatus.ModeDisplay}" />
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
-                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.MemoryTag}" />
-                    </Border>
-                    <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.DetectedModeText}" />
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
@@ -1614,7 +1602,7 @@
                         <TextBlock Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" />
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
-                        <TextBlock Text="{loc:Translate MainWindow.StatusBar.DiskValue}" />
+                        <TextBlock Text="{Binding RxHistory.DiskFreeDisplay}" />
                     </Border>
                 </StackPanel>
             </DockPanel>

@@ -729,6 +729,25 @@ public sealed class RadioStatusViewModelTests
         Assert.False(vm.IsKeyed);
     }
 
+    [AvaloniaFact]
+    public void VfoKickerDisplay_TracksIsKeyed_RxThenTx()
+    {
+        // Stub sweep, 2026-08-26: replaces the former static "VFO A · RX · M1" literal -- RX/TX now
+        // reflects the rig's own real IsKeyed readback instead.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("RadioStatus.VfoCaptionRx", vm.VfoKickerDisplay);
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("RadioStatus.VfoCaptionTx", vm.VfoKickerDisplay);
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("RadioStatus.VfoCaptionRx", vm.VfoKickerDisplay);
+    }
+
     // Auditor usability review follow-up (2026-08-18): the VFO card's rig-meters pill was a literal
     // stub on the false premise that no rig-meters concept exists on IRadioSessionService today --
     // RadioState.SwrRatio/AlcLevel/PowerPercent are real, already-polled data, just never read out.
