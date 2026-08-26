@@ -99,4 +99,22 @@ public sealed record AudioDeviceSettings
     /// <see cref="PeriodSizeInFrames"/> above -- <see langword="false"/> is both the desired
     /// "unset" default and <see cref="bool"/>'s own CLR default.</summary>
     public bool StereoTxEnabled { get; init; }
+
+    /// <summary>Manual TX sample-clock correction, in Hz -- port of legacy's <c>sys.m_TxSampOff</c>
+    /// (<c>[SoundCard] TxSampOffset</c>, <c>Main.cpp:1637/2200</c>, default <c>0.0</c>), the
+    /// Options dialog's own manual spinner/text-field for correcting a soundcard's real clock drift
+    /// from nominal (legacy's own auto-measure convenience on top of this, reachable only via real
+    /// full-duplex loopback hardware, is a separate, not-yet-ported piece — stub survey Tier 3).
+    /// Applied to the TX encoder's tone-generation math only (<c>AnalogFmSstvEncoder</c>'s
+    /// <c>sampleRateOffsetHz</c> parameter) — the nominal <see cref="SampleRate"/> above stays
+    /// unchanged for the playback device rate, WAV headers, and the TX output bandpass filter, all
+    /// three of which legacy itself keeps at the nominal rate too (<c>sstv.cpp:2768/2771</c>).
+    /// Plain non-nullable <c>double</c>, same CLR-default-safe reasoning as
+    /// <see cref="PeriodSizeInFrames"/> above — <c>0.0</c> (no correction) is both the desired
+    /// "unset" default and <see cref="double"/>'s own CLR default, so no STJ nullable-read-site
+    /// fallback is needed. Settings-boundary validation (non-finite or outside legacy's own
+    /// accepted ±1500 Hz range falls back to <c>0.0</c>) lives at the read site
+    /// (<c>SstvSessionService</c>'s transmit-settings resolution), matching this codebase's own
+    /// <c>CwToneFrequencyHz</c> precedent.</summary>
+    public double TxSampleRateOffsetHz { get; init; }
 }

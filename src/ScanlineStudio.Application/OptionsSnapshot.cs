@@ -31,6 +31,9 @@ public sealed record OptionsSnapshot(
     string? CaptureDeviceName,
     string? PlaybackDeviceName,
     int SampleRate,
+    // Stub survey Tier 3, "Clock calibration" piece 1 -- see AudioDeviceSettings.TxSampleRateOffsetHz's
+    // own doc comment.
+    double TxSampleRateOffsetHz,
     string RadioBackendId,
     string? RigctldHost,
     int? RigctldPort,

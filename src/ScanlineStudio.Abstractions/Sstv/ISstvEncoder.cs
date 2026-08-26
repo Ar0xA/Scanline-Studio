@@ -19,11 +19,23 @@ public interface ISstvEncoder
     /// Placed before <paramref name="ct"/> (not after, despite <c>ct</c> historically being this
     /// method's last parameter) so the many existing 2-arg call sites (<c>EncodeAsync(mode, image)</c>)
     /// are entirely unaffected by this addition.
+    ///
+    /// <paramref name="sampleRateOffsetHz"/> (stub survey Tier 3, "Clock calibration" piece 1):
+    /// manual TX sample-clock correction, in Hz, added to <see cref="SampleRate"/> for tone
+    /// generation ONLY -- see <c>AnalogFmSstvEncoder.EncodeAsyncCore</c>'s own doc comment for
+    /// exactly which internal calculations this touches vs. which stay at the nominal
+    /// <see cref="SampleRate"/> (the TX output bandpass filter is deliberately NOT one of them,
+    /// matching legacy's own <c>sstv.cpp:2768/2771</c>). Same "placed before <c>ct</c>" reasoning
+    /// as <paramref name="stationId"/> above -- existing shorter call sites are unaffected. Callers
+    /// needing the estimate below to match a specific in-flight call byte-for-byte must pass the
+    /// SAME resolved value to both, not re-resolve it independently, same requirement
+    /// <paramref name="stationId"/> already documents.
     /// </summary>
     IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
         CancellationToken ct = default);
 
     /// <summary>
@@ -47,5 +59,6 @@ public interface ISstvEncoder
     long EstimateSampleCount(
         SstvModeDefinition mode,
         IImageSource image,
-        StationIdTransmitOptions? stationId = null);
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0);
 }

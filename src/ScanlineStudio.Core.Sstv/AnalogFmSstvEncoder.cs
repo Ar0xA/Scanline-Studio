@@ -39,11 +39,27 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
         CancellationToken ct = default)
     {
         ValidateImageDimensions(mode, image);
 
-        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, ct);
+        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, ct);
+    }
+
+    /// <summary>Resolves <see cref="SampleRate"/> + <paramref name="sampleRateOffsetHz"/> into the
+    /// effective tone-generation rate, with a defensive floor -- a non-finite or non-positive
+    /// result (a corrupted/hand-edited settings value that somehow reached this deep, or an
+    /// absurdly large negative offset) would otherwise reach <c>Math.Sin</c> as NaN/Infinity
+    /// samples WITH PTT KEYED (see <c>ISstvEncoder.EncodeAsync</c>'s own doc comment on this
+    /// parameter). The real settings-boundary validation lives one layer up
+    /// (<c>SstvSessionService</c>'s transmit-settings resolution, matching this codebase's own
+    /// <c>CwToneFrequencyHz</c> precedent) -- this is a cheap last-resort guard, not the primary
+    /// defense.</summary>
+    private double ResolveEffectiveSampleRate(double sampleRateOffsetHz)
+    {
+        var effective = SampleRate + sampleRateOffsetHz;
+        return double.IsFinite(effective) && effective > 0 ? effective : SampleRate;
     }
 
     /// <summary>Spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
@@ -70,15 +86,17 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     public long EstimateSampleCount(
         SstvModeDefinition mode,
         IImageSource image,
-        StationIdTransmitOptions? stationId = null)
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0)
     {
         ValidateImageDimensions(mode, image);
 
+        var effectiveSampleRate = ResolveEffectiveSampleRate(sampleRateOffsetHz);
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var idealSamplesSoFar = 0.0;
         foreach (var (_, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, stationId ?? StationIdTransmitOptions.None))
         {
-            idealSamplesSoFar += durationMs / 1000.0 * SampleRate;
+            idealSamplesSoFar += durationMs / 1000.0 * effectiveSampleRate;
         }
 
         return (long)idealSamplesSoFar;
@@ -136,17 +154,26 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions stationId,
+        double sampleRateOffsetHz,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var phase = 0.0;
+
+        // Round-2 plan-review finding: the effective (offset-corrected) rate feeds ONLY the
+        // accumulator/phaseIncrement below -- resolved once, here, matching legacy's own
+        // once-per-transmission re-apply (Main.cpp:959/7948, never mid-transmission).
+        var effectiveSampleRate = ResolveEffectiveSampleRate(sampleRateOffsetHz);
 
         // ultracode audit finding #26: legacy's TX output bandpass filter is applied to EVERY emitted
         // sample, unconditionally, as the last step of CSSTVMOD::Do() -- constructed locally, not as
         // a field, so every EncodeAsync call gets fresh (zeroed) filter state, matching legacy's own
         // per-transmission InitTXBuf -> m_BPF.Clear() reset (this encoder is a DI singleton; a
         // ctor-field filter would leak state across calls). See TxOutputBandpassFilter's own doc
-        // comment for why this can't just reuse SearchBandpassFilter.
+        // comment for why this can't just reuse SearchBandpassFilter. Deliberately the NOMINAL
+        // SampleRate, not effectiveSampleRate -- legacy builds this same filter from the nominal
+        // rate too, never the TX-offset-corrected one (sstv.cpp:2768/2771/2923/2926), a Clock
+        // calibration plan-review finding (round 1).
         var bandpassFilter = new TxOutputBandpassFilter(SampleRate);
 
         // Running accumulator, not "round(durationMs -> samples) per segment": with ~245,000
@@ -164,7 +191,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         {
             ct.ThrowIfCancellationRequested();
 
-            idealSamplesSoFar += durationMs / 1000.0 * SampleRate;
+            idealSamplesSoFar += durationMs / 1000.0 * effectiveSampleRate;
             // ultracode audit finding #25: legacy's CSSTVMOD::Do uses `for (; m_iPos < int(m_dPos); ...)`
             // on an equivalent running accumulator -- floor/truncation, not round-to-nearest. Both are
             // bounded (non-cumulative, +/-1 sample per segment boundary) and Math.Round is arguably
@@ -181,7 +208,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             var samplesToEmit = targetEmitted - emittedSamples;
             emittedSamples = targetEmitted;
 
-            var phaseIncrement = 2 * Math.PI * frequencyHz / SampleRate;
+            var phaseIncrement = 2 * Math.PI * frequencyHz / effectiveSampleRate;
 
             for (var i = 0; i < samplesToEmit; i++)
             {
@@ -232,9 +259,16 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     // Kept as a small, deliberately independent implementation rather than extracted shared code:
     // EncodeAsyncCore's per-sample loop can't cleanly share a `ref double phase` across an iterator
     // method boundary, and this method has no cancellation/async concerns of its own to preserve.
+    //
+    // Clock calibration (stub survey Tier 3), revised decision: widened int -> double so this same
+    // test-only seam can also verify the sampleRateOffsetHz behavior directly (the accumulator/
+    // phaseIncrement math here is IDENTICAL to EncodeAsyncCore's, so a fractional effective rate
+    // exercises the exact same code shape a real offset-corrected transmission would). Purely
+    // test-only, no external API stability contract -- every existing caller passes a plain `int`
+    // literal/constant, which widens to `double` implicitly with no source changes needed anywhere.
     internal static IEnumerable<float> RenderSegments(
         IEnumerable<(double FrequencyHz, double DurationMs)> segments,
-        int sampleRate,
+        double sampleRate,
         bool applyFilter = true)
     {
         var phase = 0.0;

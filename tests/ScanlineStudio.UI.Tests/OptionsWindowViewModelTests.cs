@@ -1388,6 +1388,89 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void Constructor_PersistedTxSampleRateOffsetHz_LoadsIntoTheViewModel()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { TxSampleRateOffsetHz = 37.5 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(37.5, vm.TxSampleRateOffsetHz);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_ValidTxSampleRateOffsetHz_Persists()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.TxSampleRateOffsetHz = -820.5;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(-820.5, audio?.TxSampleRateOffsetHz);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_OutOfRangeTxSampleRateOffsetHz_PreservesPreviousValue()
+    {
+        // Round-2 plan-review finding: legacy's own TxSampOffChange (Option.cpp:1142-1146) rejects
+        // a typed value outside +/-1500Hz and silently keeps the prior one, rather than clamping.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { TxSampleRateOffsetHz = 250.0 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.TxSampleRateOffsetHz = 1500.01;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(250.0, audio?.TxSampleRateOffsetHz);
+    }
+
+    [AvaloniaFact]
+    public void ResetAudioToDefaultCommand_RestoresDefaultTxSampleRateOffsetHz()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { TxSampleRateOffsetHz = 900.0 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(),
+            settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(900.0, vm.TxSampleRateOffsetHz);
+
+        vm.ResetAudioToDefaultCommand.Execute(null);
+
+        Assert.Equal(0.0, vm.TxSampleRateOffsetHz);
+    }
+
+    [AvaloniaFact]
     public void CancelCommand_FiresRequestCloseWithoutSaving()
     {
         var settingsStore = new FakeSettingsStore();

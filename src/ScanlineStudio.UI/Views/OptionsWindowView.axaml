@@ -119,6 +119,20 @@
                                         <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
                                         <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding SampleRate}" />
                                     </Grid>
+
+                                    <!-- Stub survey Tier 3, "Clock calibration" piece 1 (2026-08-26):
+                                         placed next to Sample rate, matching legacy's own placement
+                                         (Option.h TxSampOff/UDTxSamp sit beside EditSamp on legacy's
+                                         Options dialog — round-2 plan-review finding, this port has
+                                         no separate Calibration-menu equivalent to this specific
+                                         control). Increment="0.02" matches legacy's own spinner step
+                                         (NormalSampFreq(x,50) quantization); Minimum/Maximum match
+                                         legacy's own accepted +/-1500Hz manual range (Option.cpp:1142). -->
+                                    <Grid ColumnDefinitions="Auto,Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.TxSampleRateOffset}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.TxSampleRateOffset.Help}" />
+                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding TxSampleRateOffsetHz}" Increment="0.02" Minimum="-1500" Maximum="1500" FormatString="0.00" />
+                                    </Grid>
                                 </StackPanel>
                             </ContentControl>
 
@@ -782,11 +796,12 @@
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.TxLpf}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <Grid ColumnDefinitions="Auto,Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxSampleClockOffset}" />
-                                        <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.TxSampleClockOffset.Help}" />
-                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" MinWidth="100" HorizontalAlignment="Left" Value="0" Minimum="-1500" Maximum="1500" Increment="0.02" FormatString="F2" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </Grid>
+                                    <!-- TX sample clock offset stub removed 2026-08-26 (Clock
+                                         calibration, stub survey Tier 3, code-review finding): this
+                                         was a duplicate, disabled, permanently-showing-0 control for
+                                         the SAME setting the Audio tab's own new "TX clock offset"
+                                         row now wires for real — see OptionsWindowView.axaml's
+                                         Audio-tab section. -->
                                 </StackPanel>
                             </HeaderedContentControl>
 
