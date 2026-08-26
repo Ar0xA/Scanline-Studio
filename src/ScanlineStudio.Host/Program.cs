@@ -316,6 +316,7 @@ internal static partial class Program
             new JsonLocalizationService(localeDirectory, sp.GetRequiredService<ILogger<JsonLocalizationService>>()));
 
         services.AddSingleton<IFilePickerService, FilePickerService>();
+        services.AddSingleton<IUrlLauncher, UrlLauncher>();
 
         // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
         // automatically by DI straight into MainViewModel's constructor (replaces the former

@@ -95,6 +95,29 @@ public sealed class SstvCompositionRootTests
     }
 
     [Fact]
+    public async Task MainViewModel_OpenOnGitHubCommand_OpensTheRepositoryUrl()
+    {
+        // Pins the literal URL, not just "it calls Open at all" -- a typo'd repo URL would
+        // otherwise ship silently, same reasoning as this codebase's other "assert the exact
+        // value, not just non-null" tests (e.g. the WAV/image file-picker suggested-name tests).
+        var urlLauncher = new FakeUrlLauncher();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        Program.RegisterServices(services);
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
+        services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        services.AddSingleton<ScanlineStudio.UI.Services.IUrlLauncher>(urlLauncher);
+        await using var provider = services.BuildServiceProvider();
+        var mainViewModel = provider.GetRequiredService<MainViewModel>();
+
+        mainViewModel.OpenOnGitHubCommand.Execute(null);
+
+        Assert.Equal(["https://github.com/Ar0xA/Scanline-Studio"], urlLauncher.OpenedUrls);
+    }
+
+    [Fact]
     public void CreateSstvDecoder_CorruptAudioDeviceSettingsSection_FallsBackToDefaultsInsteadOfThrowing()
     {
         // Tier C audit finding (risk): GetSection's own Deserialize call throws JsonException for a
@@ -141,6 +164,13 @@ public sealed class SstvCompositionRootTests
         public IReadOnlyList<AudioDeviceInfo> OutputDevices { get; } = [];
 
         public Task RefreshAsync(CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeUrlLauncher : ScanlineStudio.UI.Services.IUrlLauncher
+    {
+        public List<string> OpenedUrls { get; } = [];
+
+        public void Open(string url) => OpenedUrls.Add(url);
     }
 
     [Fact]
