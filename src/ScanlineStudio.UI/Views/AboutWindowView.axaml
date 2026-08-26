@@ -27,6 +27,16 @@
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VersionDisplay}" TextWrapping="Wrap" />
                     </Grid></Border>
 
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate About.AuthorLabel}" />
+                        <Button Grid.Column="1" Classes="Industry" Background="Transparent" BorderThickness="0" Padding="0"
+                                HorizontalAlignment="Left" HorizontalContentAlignment="Left" Cursor="Hand"
+                                Command="{Binding OpenAuthorQrzCommand}" ToolTip.Tip="{loc:Translate About.Author.Help}">
+                            <TextBlock Classes="IndustryRowValue" Text="{x:Static vm:AboutWindowViewModel.AuthorCallsign}"
+                                       Foreground="{StaticResource IndustryAccent}" TextDecorations="Underline" />
+                        </Button>
+                    </Grid></Border>
+
                     <TextBlock Classes="IndustryRowValue" Text="{Binding Copyright}" HorizontalAlignment="Center" />
 
                     <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
