@@ -11,7 +11,6 @@
   "MainWindow.Menu.Calibration.ClockCalibration": "Run 15-minute clock calibration",
   "MainWindow.Menu.Calibration.LoopbackSelfTest": "Loopback self-test",
   "MainWindow.Menu.Calibration.ToneGenerator": "Tone generator…",
-  "MainWindow.Menu.Calibration.SlantReference": "Slant reference…",
   "MainWindow.Menu.Tools": "_Tools",
   "MainWindow.Menu.Tools.RedecodeFromWav": "Re-decode from WAV…",
   "MainWindow.Menu.Tools.ExportSessionLog": "Export session log…",

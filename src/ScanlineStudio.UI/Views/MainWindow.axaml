@@ -94,7 +94,10 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ClockCalibration}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ToneGenerator}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.SlantReference}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Slant reference removed 2026-08-26 (user decision, "maybe one day") — no legacy
+                     precedent found at all (grep across yoniq-old/YONIQ-main turned up nothing), no
+                     documented intent for what it would even do. See spec/14-roadmap.md's backlog
+                     entry. -->
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.Menu.Tools}">
                 <!-- Piece C2 (RX tab Re-decode port): same command RxImage's own "Re-decode" button
