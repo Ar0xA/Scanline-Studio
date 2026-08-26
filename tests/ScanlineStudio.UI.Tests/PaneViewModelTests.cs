@@ -884,6 +884,26 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("595012", vm.DecodedNrRst);
+        Assert.Equal("595012", vm.DecodedNrRstDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_RaisesPropertyChangedForDecodedNrRstDisplay()
+    {
+        // Regression test for [NotifyPropertyChangedFor(nameof(DecodedNrRstDisplay))] on
+        // _decodedNrRst -- same class of gap this repo's own AutoCorrectDisplay/NotchEnabled
+        // regression tests already guard against (a value-only assert would pass identically even
+        // with the attribute deleted, since DecodedNrRstDisplay is a pure computed getter).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 12));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains(nameof(RxImagePaneViewModel.DecodedNrRstDisplay), raisedProperties);
     }
 
     [AvaloniaFact]
@@ -960,6 +980,7 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.DecodedNrRst);
+        Assert.Equal("—", vm.DecodedNrRstDisplay);
     }
 
     [AvaloniaFact]
@@ -1712,6 +1733,7 @@ public sealed class PaneViewModelTests
         Assert.Equal("—", vm.NameDisplay);
         Assert.Equal("—", vm.QthDisplay);
         Assert.Equal("— / --", vm.GridDisplay);
+        Assert.Equal("—", vm.DecodedNrRstDisplay);
     }
 
     [AvaloniaFact]
