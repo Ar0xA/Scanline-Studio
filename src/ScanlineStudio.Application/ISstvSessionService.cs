@@ -257,8 +257,41 @@ public interface ISstvSessionService : IAsyncDisposable
 
     /// <summary>Encodes and transmits <paramref name="image"/> as <paramref name="mode"/>. Pauses
     /// capture/decode for the duration (restored afterward only if RX was already running) and keys
-    /// PTT via the injected <c>IRadioSessionService</c> around playback.</summary>
+    /// PTT via the injected <c>IRadioSessionService</c> around playback. Also rejects (throwing
+    /// <see cref="InvalidOperationException"/>) while a <see cref="RunLoopbackSelfTestAsync"/> call
+    /// is in progress -- code-review finding: a self-test's encode+decode is real CPU work competing
+    /// with this method's own live PTT-keyed playback pump, and the self-test's own result dialog is
+    /// MODAL, so it could otherwise pop up mid-transmission and block reaching Stop TX.</summary>
     Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default);
+
+    /// <summary>Stub survey Tier 3, "Loopback self-test" (Calibration menu). One-shot software
+    /// preview: encodes <paramref name="image"/> as <paramref name="mode"/> and decodes the result
+    /// back, entirely in-process. NOT legacy's <c>RGLoopBack</c> Internal/External hardware loopback
+    /// (impossible under this port's architecture -- <see cref="TransmitAsync"/>'s own doc comment;
+    /// see <c>docs/removed-features.md</c>) and NOT live-monitoring-during-a-real-transmission
+    /// (locked user decision, stub-survey plan-review).
+    ///
+    /// Uses a FRESH, throwaway decoder instance -- never the shared, DI-singleton <see
+    /// cref="ISstvDecoder"/> the live RX pipeline/<c>ReceivedImageBuffer</c>/<c>ReceiveHistoryRecorder</c>
+    /// observe. This is the load-bearing design decision (plan-review round 5): a private instance is
+    /// unreachable from any of those, so nothing needs suppressing, nothing real gets abandoned, no RX
+    /// history is touched, and the live RX pane's own displayed image is never affected. Runs with
+    /// <c>sampleRateOffsetHz: 0.0</c> regardless of the persisted TX clock-offset setting -- the round
+    /// trip has no physical hardware clock in it, so applying that correction would fabricate a slant
+    /// with no real cause; this self-test structurally cannot measure real clock drift and must never
+    /// be presented as doing so. Encodes with no station-ID footer (avoids <c>EndOfImage</c>'s
+    /// documented low-risk false-lock-into-trailing-audio window; the self-test doesn't exercise the
+    /// FSK footer path, an accepted scope gap). Rejects (throwing <see cref="InvalidOperationException"/>)
+    /// if a transmit/tune or another self-test is already in progress -- and the reverse direction
+    /// is enforced too, <see cref="TransmitAsync"/> rejects while a self-test is running (code-review
+    /// finding: a full-image encode+decode is real CPU work competing with a live PTT-keyed playback
+    /// pump, and this self-test's own result dialog is MODAL -- popping up mid-transmission would
+    /// block reaching Stop TX). No relationship to
+    /// <c>DecodeFromFileAsync</c>'s <c>_autoDetectPaused</c> guard (that pause exists for the SHARED
+    /// decoder only; a private instance has no relationship to it, so is deliberately NOT gated on
+    /// it). Does not feed the live waterfall/level-meter -- synthetic audio there would be
+    /// misleading.</summary>
+    Task<LoopbackSelfTestResult> RunLoopbackSelfTestAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default);
 
     /// <summary>Fires periodically (roughly every 4096 samples, ~0.37s at 11025Hz) while a
     /// <see cref="TransmitAsync"/> call is actively enqueuing samples to the playback device — spec/

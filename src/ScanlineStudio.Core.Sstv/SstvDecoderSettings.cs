@@ -120,4 +120,36 @@ public sealed record SstvDecoderSettings
     /// inconsistency entirely, same reasoning as <see cref="RxBpfPreset"/>'s own documented `CalcBPF`
     /// bug and clamp-not-replicate decision.</summary>
     public RxBufferMode? RxBufferMode { get; init; }
+
+    /// <summary>Applies this record's documented absent-vs-out-of-range fallback rules, producing the
+    /// concrete values an <see cref="AnalogFmSstvDecoder"/> constructor call needs. Single source of
+    /// truth for that resolution -- previously duplicated independently in
+    /// <c>ScanlineStudio.Host.Program.CreateSstvDecoder</c> and the Loopback self-test's own decoder
+    /// construction; a third independent copy would risk silently drifting from the other two, which
+    /// would make a self-test decode with different settings than live RX -- exactly the kind of bad
+    /// demod-type/sense-level mismatch the self-test exists to catch.</summary>
+    public ResolvedSstvDecoderSettings Resolve() => new(
+        AfcEnabled: AfcEnabled ?? true,
+        SyncRestartEnabled: SyncRestartEnabled ?? true,
+        AutoSyncEnabled: AutoSyncEnabled ?? true,
+        AutoStopEnabled: AutoStopEnabled ?? false,
+        AutoSlantEnabled: AutoSlantEnabled ?? true,
+        SenseLevel: SenseLevel ?? 1,
+        // Fully qualified, not just `DemodType.Hilbert` -- this record has its own property named
+        // DemodType, which shadows the type name within this member's scope.
+        DemodType: DemodType is { } dt && Enum.IsDefined(dt) ? dt : Abstractions.Sstv.DemodType.Hilbert,
+        RxBpfPreset: RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : Abstractions.Sstv.RxBpfPreset.Wide,
+        RxBufferMode: RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : Abstractions.Sstv.RxBufferMode.On);
 }
+
+/// <summary>Concrete, fully-resolved decoder-behavior values -- see <see cref="SstvDecoderSettings.Resolve"/>.</summary>
+public sealed record ResolvedSstvDecoderSettings(
+    bool AfcEnabled,
+    bool SyncRestartEnabled,
+    bool AutoSyncEnabled,
+    bool AutoStopEnabled,
+    bool AutoSlantEnabled,
+    int SenseLevel,
+    DemodType DemodType,
+    RxBpfPreset RxBpfPreset,
+    RxBufferMode RxBufferMode);

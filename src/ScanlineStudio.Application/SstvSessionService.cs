@@ -1,8 +1,10 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
+using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 
@@ -53,6 +55,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // DecodeFromFileAsync's own) rather than sharing one flag, so a file decode and a transmit each
     // reject the OTHER cleanly instead of silently overlapping.
     private int _fileDecodeInFlight;
+
+    /// <summary>Single-flight guard for <see cref="RunLoopbackSelfTestAsync"/> -- same
+    /// <c>Interlocked.CompareExchange</c> shape as <see cref="_fileDecodeInFlight"/> above, but a
+    /// SEPARATE field, not a reuse of it: the self-test's own decoder is a private, throwaway
+    /// instance with no relationship to the shared decoder <see cref="_fileDecodeInFlight"/> guards,
+    /// so the two must never contend with each other -- two self-test calls racing is the only thing
+    /// this needs to prevent.</summary>
+    private int _loopbackSelfTestInFlight;
 
     /// <summary>Backs <see cref="RawInputPeakLevel"/> -- see that property's own doc comment for why
     /// this exists as a THIRD fan-out target alongside <see cref="_decoderHandler"/>/
@@ -1888,6 +1898,190 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
+    /// <summary>1x1 placeholder for the (unlikely in practice) case where the self-test's own decoder
+    /// never fired a single <see cref="ISstvDecoder.LineDecoded"/> event -- same shape as
+    /// <c>ReceivedImageBuffer</c>'s own <c>EmptyImage</c>, a distinct instance since that class isn't
+    /// reachable from here (this self-test never touches it, by design).</summary>
+    private static readonly IImageSource EmptySelfTestImage = new ArrayImageSource(1, 1, [new Rgb24(0, 0, 0)]);
+
+    /// <inheritdoc/>
+    public async Task<LoopbackSelfTestResult> RunLoopbackSelfTestAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (Interlocked.CompareExchange(ref _loopbackSelfTestInFlight, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("A loopback self-test is already in progress.");
+        }
+
+        try
+        {
+            if (Volatile.Read(ref _transmitInFlight) != 0)
+            {
+                throw new InvalidOperationException("Cannot run a loopback self-test while a transmit or tune is in progress.");
+            }
+
+            // sampleRate comes from _encoder.SampleRate, NOT a fresh AudioDeviceSettings read -- the
+            // encoder is what actually generates the audio this decoder consumes, and SampleRate is
+            // documented restart-only (ISstvDecoder.SampleRate's own doc comment): if the user changed
+            // the persisted sample rate mid-session without restarting, a fresh settings read here
+            // would silently disagree with what _encoder.EncodeAsync actually emits, corrupting every
+            // self-test until the next restart. Only the decoder BEHAVIOR settings need a fresh read
+            // (DemodType/senseLevel/etc. have no such restart-only encoder-side counterpart to drift
+            // against). Deliberately NOT ResolveTransmitSettingsAsync -- that resolves the REAL
+            // persisted StationId/TxSampleRateOffsetHz, both of which this self-test must never use
+            // (see this method's own interface doc comment for why).
+            var sampleRate = _encoder.SampleRate;
+            var appSettings = await Task.Run(() => _settingsStore.LoadAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+
+            // Code-review round-1 finding: unguarded GetSection call here would let a corrupt/
+            // version-skewed "SstvDecoder" section (e.g. a hand-edited settings.json) permanently
+            // break the self-test with a generic "failed" error, while live RX silently falls back to
+            // defaults via this SAME try/catch/fallback shape (Program.CreateSstvDecoder). Matching
+            // that established pattern here instead of leaving this the one unguarded read.
+            SstvDecoderSettings decoderSettings;
+            try
+            {
+                decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                    ?? new SstvDecoderSettings();
+            }
+            catch (JsonException ex)
+            {
+                SafeLog(() => Log.SettingsSectionReadFailed(_logger, SstvDecoderSettings.SectionKey, ex));
+                decoderSettings = new SstvDecoderSettings();
+            }
+
+            var resolved = decoderSettings.Resolve();
+
+            // Fresh, throwaway instance -- see this method's own interface doc comment for why this
+            // is the whole design (round-5 plan-review): never the shared _decoder, so nothing here
+            // needs to serialize against _rxTransitionGate or touch ReceivedImageBuffer/
+            // ReceiveHistoryRecorder/the live RX pane at all.
+            using var decoder = new AnalogFmSstvDecoder(
+                sampleRate: sampleRate,
+                afcEnabled: resolved.AfcEnabled,
+                syncRestartEnabled: resolved.SyncRestartEnabled,
+                autoSyncEnabled: resolved.AutoSyncEnabled,
+                autoStopEnabled: resolved.AutoStopEnabled,
+                autoSlantEnabled: resolved.AutoSlantEnabled,
+                senseLevel: resolved.SenseLevel,
+                demodType: resolved.DemodType,
+                rxBpfPreset: resolved.RxBpfPreset,
+                rxBufferMode: resolved.RxBufferMode);
+
+            ArrayImageSource? lastImage = null;
+            int? previousLine = null;
+            int? observedStep = null;
+            var lastLine = -1;
+            string? detectedModeId = null;
+            var decodeRestarted = false;
+
+            // Learns the scanline step from the first two events rather than assuming 1 -- paired-line
+            // families (PD/MP/RM8/RM12) advance 2 rows per event and RowsPerTransmissionLine isn't on
+            // the public SstvModeDefinition. Same technique ReceivedImageBuffer/ReceiveHistoryRecorder
+            // already use (round-5 plan-review finding).
+            void OnLineDecoded(DecodedImageUpdate update)
+            {
+                // Copy, not the live update.Image reference -- see ArrayImageSource.CopyFrom's own
+                // doc comment.
+                lastImage = ArrayImageSource.CopyFrom(update.Image);
+
+                if (previousLine is int previous && observedStep is null)
+                {
+                    observedStep = update.Line - previous;
+                }
+
+                previousLine = update.Line;
+                lastLine = update.Line;
+            }
+
+            void OnModeDetected(SstvModeDefinition detected) => detectedModeId = detected.Id;
+
+            // Code-review round-1 finding: DecodeRestarted has TWO reachable raise sites during a
+            // self-test, not one -- Auto Stop AND a mid-reception re-lock (a stronger/cleaner sync
+            // found while already locked, gated by syncRestartEnabled, which defaults true). With
+            // AutoStopEnabled defaulting FALSE, under stock settings every DecodeRestarted here is
+            // actually the re-lock case -- a real decode-fidelity failure, the exact thing this
+            // feature exists to catch. Only attribute it to Auto Stop when that setting is actually
+            // on; the event alone can't distinguish the two cases even then, so the outcome's own
+            // display text is deliberately hedged ("may be"), not asserted as fact.
+            void OnDecodeRestarted(SstvModeDefinition abandoned) => decodeRestarted = true;
+
+            decoder.LineDecoded += OnLineDecoded;
+            decoder.ModeDetected += OnModeDetected;
+            decoder.DecodeRestarted += OnDecodeRestarted;
+
+            try
+            {
+                // Runs on a background thread -- encode+decode events are synchronous, so without this
+                // the whole loop would run on whatever thread called this method (the UI thread, in
+                // practice) and block it for the full self-test duration. Same reasoning as
+                // DecodeFromFileAsync's own push loop.
+                await Task.Run(
+                    async () =>
+                    {
+                        const int ChunkSize = 4096;
+                        var buffer = new float[ChunkSize];
+                        var count = 0;
+
+                        // sampleRateOffsetHz: 0.0 and stationId: null (StationIdTransmitOptions.None) --
+                        // both deliberate, see this method's own interface doc comment.
+                        await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct)
+                            .WithCancellation(ct).ConfigureAwait(false))
+                        {
+                            buffer[count++] = sample;
+                            if (count == ChunkSize)
+                            {
+                                decoder.PushSamples(buffer.AsMemory(0, count));
+                                count = 0;
+                            }
+                        }
+
+                        if (count > 0)
+                        {
+                            decoder.PushSamples(buffer.AsMemory(0, count));
+                        }
+
+                        // Trailing silence: TryProcessBuffer can leave the final scanline undecoded
+                        // without it -- the sync-anchor correction shifts consumed-vs-received sample
+                        // counts, so exact-length encoded audio can fall short on the last line (round-5
+                        // plan-review finding). One full transmission line covers any anchor offset; the
+                        // sampleRate/2 floor keeps short-line modes sane.
+                        var padSamples = Math.Max((int)Math.Ceiling(mode.LineDurationMs / 1000.0 * sampleRate), sampleRate / 2);
+                        var silence = new float[Math.Min(padSamples, ChunkSize)];
+                        for (var remaining = padSamples; remaining > 0;)
+                        {
+                            var n = Math.Min(remaining, silence.Length);
+                            decoder.PushSamples(silence.AsMemory(0, n));
+                            remaining -= n;
+                        }
+                    },
+                    ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                decoder.LineDecoded -= OnLineDecoded;
+                decoder.ModeDetected -= OnModeDetected;
+                decoder.DecodeRestarted -= OnDecodeRestarted;
+            }
+
+            // Code-review round-1 finding: only attribute a restart to Auto Stop when that setting is
+            // actually enabled -- see OnDecodeRestarted's own comment above for why a restart with
+            // Auto Stop OFF (the default) is really a decode-fidelity failure, not expected behavior.
+            var outcome = decodeRestarted && resolved.AutoStopEnabled
+                ? LoopbackSelfTestOutcome.AbandonedByAutoStop
+                : observedStep is int step && step > 0 && lastLine + step >= mode.ImageHeight
+                    ? LoopbackSelfTestOutcome.Completed
+                    : LoopbackSelfTestOutcome.Incomplete;
+
+            return new LoopbackSelfTestResult(lastImage ?? EmptySelfTestImage, detectedModeId, outcome);
+        }
+        finally
+        {
+            Volatile.Write(ref _loopbackSelfTestInFlight, 0);
+        }
+    }
+
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
@@ -2222,6 +2416,17 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             Volatile.Write(ref _transmitInFlight, 0);
             throw new InvalidOperationException("Cannot transmit or tune while a file decode is in progress.");
+        }
+
+        // Code-review round-1 finding: the self-test's own entry checks _transmitInFlight (rejects a
+        // self-test started mid-transmit), but nothing enforced the OTHER direction -- a self-test's
+        // encode+decode is real CPU work competing with this live PTT-keyed playback pump, and its
+        // own result dialog is a MODAL ShowDialog that would otherwise pop up mid-transmission and
+        // block the user from reaching Stop TX. Same shape as the _fileDecodeInFlight check above.
+        if (Volatile.Read(ref _loopbackSelfTestInFlight) != 0)
+        {
+            Volatile.Write(ref _transmitInFlight, 0);
+            throw new InvalidOperationException("Cannot transmit or tune while a loopback self-test is in progress.");
         }
 
         try
@@ -3880,6 +4085,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         [LoggerMessage(Level = LogLevel.Error, Message = "Decoder PushSamples threw ({Count} occurrences so far)")]
         public static partial void DecoderPushSamplesFailed(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Reading settings section '{SectionKey}' failed; falling back to defaults")]
+        public static partial void SettingsSectionReadFailed(ILogger logger, string sectionKey, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Waterfall PushSamples threw ({Count} occurrences so far)")]
         public static partial void WaterfallPushSamplesFailed(ILogger logger, int count, Exception ex);

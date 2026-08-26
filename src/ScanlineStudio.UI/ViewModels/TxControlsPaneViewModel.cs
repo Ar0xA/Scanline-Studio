@@ -1387,7 +1387,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <c>SelectedMode</c>'s while an editor is open, even mid-edit. This invariant is load-bearing:
     /// don't let <see cref="SelectedMode"/> become mutable again while <see cref="IsEditorOpen"/>
     /// without re-checking it.</summary>
-    private bool CanTransmit() => _loadedImage is not null && !IsTransmitting;
+    // Code-review round-1 finding: must also check !IsRunningLoopbackSelfTest -- a self-test's
+    // encode+decode is real CPU work competing with a live PTT-keyed playback pump, and its own
+    // result dialog is MODAL, so letting a transmit start while one is running risked a dialog
+    // popping up mid-transmission and blocking Stop TX. Mirrored on the Application-layer side too
+    // (SstvSessionService.PlayWithPttAsync now cross-checks _loopbackSelfTestInFlight).
+    private bool CanTransmit() => _loadedImage is not null && !IsTransmitting && !IsRunningLoopbackSelfTest;
 
     [RelayCommand(CanExecute = nameof(CanTransmit))]
     private async Task TransmitAsync()
@@ -1411,6 +1416,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         TransmitProgress = 0;
         TransmitCommand.NotifyCanExecuteChanged();
         StopTransmitCommand.NotifyCanExecuteChanged();
+        RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
 
         _transmitCts = new CancellationTokenSource();
         try
@@ -1449,6 +1455,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             IsTransmitting = false;
             TransmitCommand.NotifyCanExecuteChanged();
             StopTransmitCommand.NotifyCanExecuteChanged();
+            RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -1459,6 +1466,54 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         Log.StopTransmitInvoked(_logger);
         _transmitCts?.Cancel();
+    }
+
+    /// <summary>Whether <see cref="RunLoopbackSelfTestCommand"/> is currently executing -- toggled
+    /// around the whole call, same shape as <see cref="IsTransmitting"/>/<see cref="TransmitAsync"/>
+    /// (a fresh encode+decode of a full image is real CPU work, not instant).</summary>
+    [ObservableProperty]
+    private bool _isRunningLoopbackSelfTest;
+
+    /// <summary>Fires once <see cref="RunLoopbackSelfTestCommand"/> completes successfully -- the
+    /// result surfaces ONLY via this dedicated dialog, never through the live RX pane's own
+    /// <c>Current</c>/<c>Progress</c> (round-5 plan-review: the self-test's private decoder is by
+    /// design unreachable from the RX pane, and must stay that way).</summary>
+    public event Action<LoopbackSelfTestResultWindowViewModel>? LoopbackSelfTestCompleted;
+
+    private bool CanRunLoopbackSelfTest() => _loadedImage is not null && !IsTransmitting && !IsRunningLoopbackSelfTest;
+
+    [RelayCommand(CanExecute = nameof(CanRunLoopbackSelfTest))]
+    private async Task RunLoopbackSelfTestAsync()
+    {
+        if (_loadedImage is not { } image || SelectedMode is not { } mode)
+        {
+            return;
+        }
+
+        Log.LoopbackSelfTestInvoked(_logger, mode.Id);
+        ErrorMessage = null;
+        IsRunningLoopbackSelfTest = true;
+        RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
+        // Code-review round-1 finding: TransmitCommand's CanExecute also depends on
+        // IsRunningLoopbackSelfTest now -- must be notified at both toggle points, same as
+        // RunLoopbackSelfTestCommand itself is notified at TransmitAsync's own toggle points.
+        TransmitCommand.NotifyCanExecuteChanged();
+        try
+        {
+            var result = await _sstvSession.RunLoopbackSelfTestAsync(mode, image);
+            LoopbackSelfTestCompleted?.Invoke(new LoopbackSelfTestResultWindowViewModel(mode, result, AvailableModes, _localization));
+        }
+        catch (Exception ex)
+        {
+            Log.LoopbackSelfTestFailed(_logger, mode.Id, ex);
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoopbackSelfTestFailed");
+        }
+        finally
+        {
+            IsRunningLoopbackSelfTest = false;
+            RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
+            TransmitCommand.NotifyCanExecuteChanged();
+        }
     }
 
     /// <summary>Re-runs Crop→Resize→ApplyAdjustments→ApplyTemplate against the retained
@@ -1553,6 +1608,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SWR auto-cutoff triggered: SWR={Swr}, threshold={Threshold}")]
         public static partial void SwrCutoffTriggered(ILogger logger, float swr, double threshold);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "RunLoopbackSelfTest invoked: {ModeId}")]
+        public static partial void LoopbackSelfTestInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loopback self-test failed: {ModeId}")]
+        public static partial void LoopbackSelfTestFailed(ILogger logger, string modeId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectFavoriteMode invoked: {ModeId}")]
         public static partial void SelectFavoriteModeInvoked(ILogger logger, string modeId);

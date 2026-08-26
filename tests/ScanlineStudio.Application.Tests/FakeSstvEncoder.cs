@@ -44,6 +44,13 @@ internal sealed class FakeSstvEncoder : ISstvEncoder
         return EstimateSampleCountOverride ?? SamplesToYield.Length;
     }
 
+    /// <summary>Loopback self-test tests: awaited before the FIRST yielded sample -- lets a test hold
+    /// a <see cref="SstvSessionService.TransmitAsync"/> call open past the point
+    /// <c>PlayWithPttAsync</c> sets <c>_transmitInFlight</c> (which happens before enumeration of
+    /// this method's <see cref="IAsyncEnumerable{Single}"/> ever starts), so a concurrent call racing
+    /// against it observes the guard deterministically instead of depending on timing.</summary>
+    public Func<Task>? BeforeFirstYield { get; set; }
+
     public async IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
@@ -53,6 +60,11 @@ internal sealed class FakeSstvEncoder : ISstvEncoder
     {
         LastStationIdOptions = stationId;
         LastSampleRateOffsetHz = sampleRateOffsetHz;
+        if (BeforeFirstYield is { } beforeFirstYield)
+        {
+            await beforeFirstYield();
+        }
+
         foreach (var sample in SamplesToYield)
         {
             ct.ThrowIfCancellationRequested();
