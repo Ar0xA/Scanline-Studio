@@ -239,19 +239,16 @@
                              leaving the button interactive with no effect; disabled here like its
                              Import/Scan siblings (neither of which has any backend at all) to meet the
                              "no fake-live/dead controls" bar. Stub survey Tier 2 (2026-08-26): user
-                             lifted that decision (AskUserQuestion) — "Edit list" now wired and split
-                             out of this disabled group; Import/Scan stay disabled (still genuinely no
-                             backend at all, Tier 3). -->
+                             lifted that decision (AskUserQuestion) — "Edit list" now wired. Import/Scan
+                             M1-M3 removed outright, not just disabled (user decision, "maybe one
+                             day", stub survey Tier 3): Import had no defined source format anywhere,
+                             and Scan M1-M3 would need a rig-memory-channel-read concept that doesn't
+                             exist anywhere in IRadioSessionService — real CAT-layer work, not bounded
+                             UI wiring. See spec/14-roadmap.md's backlog. -->
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="3">
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                     Content="{loc:Translate RadioStatus.EditFavouritesList}"
                                     Command="{Binding OpenFavouritesEditorCommand}" />
-                            <StackPanel Orientation="Horizontal" Spacing="3" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate RadioStatus.ImportFavourites}" />
-                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
-                                        Content="{loc:Translate RadioStatus.ScanFavourites}" />
-                            </StackPanel>
                         </StackPanel>
                         <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
                                    Foreground="{StaticResource IndustryLabel}" Margin="0,0,5,0"
