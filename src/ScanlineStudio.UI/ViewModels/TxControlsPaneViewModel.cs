@@ -74,20 +74,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     private int _consecutiveSwrOverThreshold;
 
-    private bool _suppressSafetyPersist;
-
-    /// <summary>Tier B audit finding: matches <c>RadioStatusViewModel.PersistVolumeDebouncedAsync</c>'s
-    /// own established shape/reasoning for the identical hazard class -- SwrCutoffThreshold's TextBox
-    /// is TwoWay/PropertyChanged-triggered, so typing "12" used to fire TWO overlapping, un-awaited
-    /// PersistSafetySettingsAsync calls, each capturing its own value before its own await; if the
-    /// stale "1" call's SaveAsync happened to complete AFTER the fresh "12" call's, the persisted SWR
-    /// safety cutoff would silently end up at 1.0 (an always-trips value) while the UI still showed
-    /// 12. Debounce-and-cancel-supersedes closes the same race the volume slider's own doc comment
-    /// already names ("overlapping un-awaited SaveAsync calls racing each other could let a stale
-    /// write clobber a fresher one").</summary>
-    private static readonly TimeSpan SafetyPersistDebounce = TimeSpan.FromMilliseconds(400);
-
-    private CancellationTokenSource? _safetyPersistCts;
+    /// <summary>Stub survey follow-up (2026-08-26, user request): the SWR-cutoff enable/threshold
+    /// control moved to Options -&gt; Radio/CAT -- this pane no longer owns editing or persisting it,
+    /// only enforcing it. Loaded once at construction (<see cref="LoadSafetySettingsAsync"/>) and kept
+    /// live via <see cref="IRadioSessionService.SafetySettingsChanged"/> so an edit made in Options
+    /// while this pane is already constructed (including mid-transmission) takes effect without
+    /// reconstructing the VM. A SINGLE <see cref="RadioSafetySpec"/> field, not two loose
+    /// enabled/threshold fields, deliberately -- both values must update together atomically as seen
+    /// by <see cref="CheckSwrCutoff"/>, which reads it from inside the SAME
+    /// <see cref="Dispatcher.UIThread.Post"/> callback <see cref="OnRadioStateChanged"/> already runs
+    /// in (<see cref="OnSafetySettingsChanged"/>'s own write is posted the same way) -- both sides are
+    /// UI-thread-only by construction, so two loose fields would risk observing a torn
+    /// enabled/threshold pair from two independent field writes, one record field cannot. Initialized
+    /// at declaration (not left default/null) since a poll can arrive before the constructor's own
+    /// fire-and-forget <see cref="LoadSafetySettingsAsync"/> completes.</summary>
+    private RadioSafetySpec _currentSafetySpec = new(false, RadioSafetySpec.DefaultSwrCutoffThreshold);
 
     private IImageSource? _loadedImage;
 
@@ -347,12 +348,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// vice versa).</summary>
     public bool ShowAnyMeter => ShowPowerMeter || ShowAlcMeter;
 
-    [ObservableProperty]
-    private bool _swrCutoffEnabled;
-
-    [ObservableProperty]
-    private double _swrCutoffThreshold = 3.0;
-
     /// <summary>The TX playback device's display name -- what
     /// <see cref="ISstvSessionService.TransmitAsync"/> would actually resolve and use right now,
     /// including a fallback to the backend-reported default device when nothing is explicitly
@@ -470,6 +465,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.TransmitProgressChanged += OnTransmitProgressChanged;
         radioSession.StateChanges.Subscribe(OnRadioStateChanged);
+        radioSession.SafetySettingsChanged += OnSafetySettingsChanged;
 
         // Best-effort initial load, same reasoning as RxHistoryPaneViewModel's constructor -- a
         // failure here leaves the strip empty rather than blocking construction.
@@ -643,30 +639,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     partial void OnAutoFollowRxModeChanged(bool value) => _ = PersistTxPaneUiSettingsAsync();
 
+    /// <summary>Constructor-time load, still needed even though the control that used to edit this
+    /// setting moved to Options -&gt; Radio/CAT (2026-08-26) -- without it, a persisted setting stays
+    /// inert until the user happens to open and re-Save Options after every app restart, which is
+    /// exactly the "safety feature looks armed and isn't" failure this pane exists to avoid.</summary>
     private async Task LoadSafetySettingsAsync()
     {
         try
         {
             var spec = await _radioSession.GetSafetySettingsAsync();
-            Dispatcher.UIThread.Post(() =>
-            {
-                // Tier B audit finding: try/finally, not a bare set-then-reset -- these two property
-                // sets raise PropertyChanged into live Avalonia bindings, which can throw; a throw
-                // here used to leave _suppressSafetyPersist stuck true for the process lifetime,
-                // silently and permanently breaking PersistSafetySettingsAsync -- the exact failure
-                // this method's own doc comment warns about ("the user's safety setting didn't take
-                // effect with nothing telling them so"), just triggered a different way.
-                try
-                {
-                    _suppressSafetyPersist = true;
-                    SwrCutoffEnabled = spec.SwrCutoffEnabled;
-                    SwrCutoffThreshold = spec.SwrCutoffThreshold;
-                }
-                finally
-                {
-                    _suppressSafetyPersist = false;
-                }
-            });
+            Dispatcher.UIThread.Post(() => _currentSafetySpec = spec);
         }
         catch (Exception ex)
         {
@@ -674,61 +656,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void SchedulePersistSafetySettings()
-    {
-        // Debounced (not one settings write per keystroke) -- also avoids the correctness hazard
-        // SafetyPersistDebounce's own doc comment names: overlapping un-awaited SaveAsync calls
-        // racing each other could let a stale write clobber a fresher one.
-        _safetyPersistCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _safetyPersistCts = cts;
-        _ = PersistSafetySettingsDebouncedAsync(new RadioSafetySpec(SwrCutoffEnabled, SwrCutoffThreshold), cts.Token);
-    }
-
-    /// <summary>Error, not Warning -- a silently-failed SWR-cutoff-setting write means the user's
-    /// safety setting didn't take effect with nothing telling them so.</summary>
-    private async Task PersistSafetySettingsDebouncedAsync(RadioSafetySpec spec, CancellationToken ct)
-    {
-        try
-        {
-            await Task.Delay(SafetyPersistDebounce, ct).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException)
-        {
-            // Normal control flow -- a newer edit superseded this one. Not worth a log line, same
-            // convention as RadioStatusViewModel.PersistVolumeDebouncedAsync's own identical catch.
-            return;
-        }
-
-        try
-        {
-            await _radioSession.SaveSafetySettingsAsync(spec, ct).ConfigureAwait(false);
-        }
-        catch (Exception ex)
-        {
-            Log.PersistSafetySettingsFailed(_logger, ex);
-        }
-    }
-
-    partial void OnSwrCutoffEnabledChanged(bool value)
-    {
-        if (_suppressSafetyPersist)
-        {
-            return;
-        }
-
-        SchedulePersistSafetySettings();
-    }
-
-    partial void OnSwrCutoffThresholdChanged(double value)
-    {
-        if (_suppressSafetyPersist)
-        {
-            return;
-        }
-
-        SchedulePersistSafetySettings();
-    }
+    /// <summary>The live-update half of the Options relocation (2026-08-26) -- fires when
+    /// <c>OptionsWindowViewModel</c> saves an edited value, so this pane's enforcement picks it up
+    /// without being reconstructed (including mid-transmission, if Options happens to be open in
+    /// parallel). Posted to the UI thread, same as <see cref="OnRadioStateChanged"/>'s own write --
+    /// see <see cref="_currentSafetySpec"/>'s own doc comment for why both sides being UI-thread-only
+    /// is what makes a single record-field write race-free.</summary>
+    private void OnSafetySettingsChanged(RadioSafetySpec spec) => Dispatcher.UIThread.Post(() => _currentSafetySpec = spec);
 
     /// <summary>Marshaled to the UI thread, same pattern as <c>RadioStatusViewModel.OnStateChanged</c>.
     /// Refreshes the meter-visibility flags from the current <c>Capabilities</c> every poll (see
@@ -797,7 +731,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// PTT keys, still carrying a stale RX-era value) must not trip a false cutoff.</summary>
     private void CheckSwrCutoff(RadioState state)
     {
-        if (!IsTransmitting || !state.IsTransmitting || !SwrCutoffEnabled || state.SwrRatio is not { } swr || swr <= SwrCutoffThreshold)
+        // Local snapshot, not repeated field reads (code-review finding): guarantees the guard check
+        // and the Log.SwrCutoffTriggered call below test/report the SAME threshold, even though
+        // _currentSafetySpec is also written from OnSafetySettingsChanged's own UI-thread-posted
+        // callback -- both this method and that callback only ever run inside a Dispatcher.UIThread.Post
+        // lambda (see _currentSafetySpec's own doc comment), so there's no torn read here either way,
+        // this is purely about not reading the field twice for one logical check.
+        var spec = _currentSafetySpec;
+        if (!IsTransmitting || !state.IsTransmitting || !spec.SwrCutoffEnabled || state.SwrRatio is not { } swr || swr <= spec.SwrCutoffThreshold)
         {
             _consecutiveSwrOverThreshold = 0;
             return;
@@ -806,7 +747,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _consecutiveSwrOverThreshold++;
         if (_consecutiveSwrOverThreshold >= SwrCutoffConsecutiveSamplesRequired)
         {
-            Log.SwrCutoffTriggered(_logger, swr, SwrCutoffThreshold);
+            Log.SwrCutoffTriggered(_logger, swr, spec.SwrCutoffThreshold);
             _cutoffTriggered = true;
             _transmitCts?.Cancel();
         }
@@ -1602,9 +1543,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading radio safety settings failed")]
         public static partial void LoadSafetySettingsFailed(ILogger logger, Exception ex);
-
-        [LoggerMessage(Level = LogLevel.Error, Message = "Persisting radio safety settings failed")]
-        public static partial void PersistSafetySettingsFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SWR auto-cutoff triggered: SWR={Swr}, threshold={Threshold}")]
         public static partial void SwrCutoffTriggered(ILogger logger, float swr, double threshold);

@@ -181,10 +181,14 @@
              to "Pwr" to match (a real OS-mixer-volume design briefly replaced this same-session,
              then was reverted; TxVolumeDisplay/TxIsMuted still show a real OS mute readout for
              the TX device independent of this gain, see RadioStatusViewModel.TxIsMuted) +
-             a literal Device row, plus the real per-capability meters and
-             SWR auto-cutoff. Each meter row only renders when the connected rig/backend actually
-             negotiated that capability; never a placeholder for an unsupported rig
-             (spec/14-roadmap.md's Piece 6 design decision). -->
+             a literal Device row, plus the real per-capability meters. Each meter row only renders
+             when the connected rig/backend actually negotiated that capability; never a placeholder
+             for an unsupported rig (spec/14-roadmap.md's Piece 6 design decision). SWR auto-cutoff
+             enable/threshold control moved to Options -&gt; Radio/CAT 2026-08-26 (user request) —
+             this card still shows the live SWR meter reading (the Border above, IsVisible=
+             ShowSwrMeter) so an operator can still see whether SWR is being read at all; only the
+             editable cutoff control itself relocated, enforcement (CheckSwrCutoff) stayed on this
+             pane's own ViewModel unchanged. -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.OutputLabel}" />
@@ -217,25 +221,6 @@
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveSwrRatio}" />
                     </Grid></Border>
                 </StackPanel>
-
-                <!-- SWR auto-cutoff: disabled/greyed out (not just unchecked) when the rig doesn't
-                     report SWR; a checked-but-non-functional toggle would be worse than no toggle.
-                     No mockup CheckBox atom exists (same reasoning as the waterfall's Peak-hold
-                     chip), represented as an IndustryMiniToggle chip instead. WrapPanel, not a
-                     non-wrapping horizontal StackPanel (design-fidelity-agent-caught fix): the
-                     toggle's own content text ("Stop TX if SWR too high") plus the Threshold
-                     label+TextBox together overflow the 236-DIP column width; WrapPanel lets the
-                     Threshold group drop to a second line instead of overflowing past the card's
-                     own border. -->
-                <WrapPanel Margin="0,2,0,0">
-                    <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4"
-                                  Content="{loc:Translate Panes.TxControls.SwrCutoffEnabled}"
-                                  IsChecked="{Binding SwrCutoffEnabled}"
-                                  IsEnabled="{Binding ShowSwrMeter}"
-                                  ToolTip.Tip="{loc:Translate Panes.TxControls.SwrCutoffEnabled.Help}" />
-                    <TextBlock Classes="IndustryRowLabel" Margin="0,0,4,4" Text="{loc:Translate Panes.TxControls.SwrCutoffThresholdLabel}" VerticalAlignment="Center" />
-                    <TextBox Classes="Industry IndustryInput" Margin="0,0,0,4" Text="{Binding SwrCutoffThreshold}" Width="60" IsEnabled="{Binding ShowSwrMeter}" />
-                </WrapPanel>
 
                 <!-- Tune drive, ToneMap, and TX clock are all real (un-stub-TX-tab pieces 1/2/7).
                      Monitor audio and Occupied BW rows removed 2026-08-25 (user decision, "maybe
