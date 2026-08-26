@@ -1555,21 +1555,25 @@
                             <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
-                    <!-- LED+lozenge (spec §6): amber "TX inhibited" row, not the red "fault" row —
-                         user decision, 2026-08-14, matches the chip's own label and its real
-                         binding (last TX error / SWR cutoff reads as "inhibited", not "device
-                         fault"). Was a bare Rectangle+TextBlock pair with no lozenge chrome at all. -->
+                    <!-- LED+lozenge (spec §6): amber "TX error" row, not the red "fault" row —
+                         still .attentionTint/.attention, not .dangerTint/.alert (that distinction
+                         from the 2026-08-14 decision stands). Renamed from "TX INHIBIT" 2026-08-26
+                         (direct user correction): the chip never actually inhibits/blocks a new
+                         Transmit (see its own Help text, unchanged) — it is a status readout of
+                         whether the LAST attempt errored or hit an automatic SWR cutoff, so "TX
+                         ERROR" states what it actually is instead of implying a block that doesn't
+                         exist. Was a bare Rectangle+TextBlock pair with no lozenge chrome at all. -->
                     <Border Classes="Industry IndustryStatus" Classes.attentionTint="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
-                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxInhibit.Help}">
+                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxError.Help}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Rectangle Classes="Industry IndustryLed" Classes.attention="{Binding TxControls.ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
-                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxInhibit}" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxError}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
                     <!-- spec/18-path-to-1.0.md High item 10: live PTT/keyed readback from the
                          connected rig (RadioStatus.IsKeyed: RadioState.IsTransmitting, cleared
                          on CAT loss, see that property's own doc comment). Red "Transmitting" row
-                         (mockups/colors/SSTV-Color-Scheme.md), distinct from the amber TX-INHIBIT
+                         (mockups/colors/SSTV-Color-Scheme.md), distinct from the amber TX-ERROR
                          chip just above (.dangerTint/.alert, not .attentionTint/.attention). -->
                     <Border Classes="Industry IndustryStatus" Classes.dangerTint="{Binding RadioStatus.IsKeyed}"
                             ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxKeyed.Help}">
