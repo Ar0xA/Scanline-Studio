@@ -1160,17 +1160,17 @@
                                      wider than its own text needs and leaving no trailing gap, unlike
                                      mock2's own ~78px of empty space after "Re-decode". IndustryBtn24
                                      (not 25): mock2's own height:24px/font-size:11px for this
-                                     specific row. -->
+                                     specific row.
+                                     Export wired 2026-08-15 (ExportFrameCommand, saves the selected
+                                     frame's already-auto-saved PNG to a user-chosen location,
+                                     optionally re-encoded as JPEG). Re-decode removed outright
+                                     2026-08-26 (user decision, "maybe one day") — needs per-history-
+                                     entry audio attachment, a materially bigger feature than the
+                                     Receive tab's own record/play-a-file Re-decode; see
+                                     spec/14-roadmap.md's backlog entry. -->
                                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
-                                    <!-- Export wired 2026-08-15 (ExportFrameCommand, saves the
-                                         selected frame's already-auto-saved PNG to a user-chosen
-                                         location, optionally re-encoded as JPEG). Re-decode still has
-                                         no Command wired (RxHistoryPaneViewModel has no re-decode
-                                         feature) — clickable-but-dead, same as the Incoming-frame
-                                         card's own buttons. -->
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" Command="{Binding ExportFrameCommand}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.Redecode}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding ErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
