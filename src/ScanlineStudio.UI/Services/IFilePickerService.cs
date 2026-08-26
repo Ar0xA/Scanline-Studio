@@ -69,4 +69,11 @@ public interface IFilePickerService
     /// rather than typing a path by hand. Returns the picked file's local path, or <c>null</c> if the
     /// user cancelled.</summary>
     Task<string?> PickHamlibLibraryFileAsync();
+
+    /// <summary>Stub survey Tier 2 -- the Storage settings dialog's own "Browse..." button for the
+    /// RX images folder. The only FOLDER (not file) picker on this interface. Returns the picked
+    /// directory's local path, or <c>null</c> if the user cancelled. <paramref
+    /// name="suggestedStartDirectory"/> pre-seeds the dialog at the currently-configured directory
+    /// (or the resolved default) rather than always opening wherever the OS last left it.</summary>
+    Task<string?> PickFolderAsync(string? suggestedStartDirectory);
 }

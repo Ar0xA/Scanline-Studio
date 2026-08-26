@@ -804,6 +804,16 @@ internal sealed class FakeFilePickerService : IFilePickerService
             ? Task.Run(() => HamlibLibraryPathToReturn)
             : Task.FromResult(HamlibLibraryPathToReturn);
 
+    public string? FolderPathToReturn { get; set; }
+
+    public string? LastSuggestedStartDirectory { get; private set; }
+
+    public Task<string?> PickFolderAsync(string? suggestedStartDirectory)
+    {
+        LastSuggestedStartDirectory = suggestedStartDirectory;
+        return Task.FromResult(FolderPathToReturn);
+    }
+
     public string? OpenWavPathToReturn { get; set; } = "/tmp/fake-open.wav";
 
     public string? SaveWavPathToReturn { get; set; } = "/tmp/fake-record.wav";
@@ -1057,6 +1067,22 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
+
+    public List<string?> SetImagesDirectoryCalls { get; } = [];
+
+    public bool ThrowOnSetImagesDirectory { get; set; }
+
+    public Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default)
+    {
+        if (ThrowOnSetImagesDirectory)
+        {
+            throw new IOException("Simulated directory-creation failure.");
+        }
+
+        SetImagesDirectoryCalls.Add(directory);
+        ImagesDirectory = string.IsNullOrWhiteSpace(directory) ? "/tmp/scanlinestudio-history" : directory;
+        return Task.CompletedTask;
+    }
 
     /// <summary>Every <see cref="SetNoteAsync"/> call, in order -- lets a test prove a selection
     /// change alone did NOT fire a spurious persist (records compare by value, so asserting against

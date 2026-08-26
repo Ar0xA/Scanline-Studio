@@ -160,6 +160,33 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore, ct);
 
+    /// <summary>See <see cref="IReceiveHistoryStore.SetImagesDirectoryAsync"/>.</summary>
+    public async Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default)
+    {
+        var normalized = string.IsNullOrWhiteSpace(directory) ? null : directory;
+        if (normalized is not null)
+        {
+            // Auditor-caught (2026-08-26): persist the RESOLVED absolute path, not whatever the
+            // user typed. A relative path (or literal "~", which .NET does not shell-expand) would
+            // otherwise get created under the process's current CWD, "succeed," and then re-resolve
+            // to a DIFFERENT real location on the next launch -- ReceiveHistoryRecorder.cs's own
+            // ResolveDirectoryAsync call re-resolves this same setting on every save, not once at
+            // startup, so a relative value is silently unstable across process restarts.
+            normalized = Path.GetFullPath(normalized);
+
+            // Validate BEFORE persisting -- see this method's own interface doc comment for why.
+            // Deliberately left to throw straight out of this method; the caller (the Storage
+            // settings dialog) surfaces the real exception instead of a generic failure.
+            Directory.CreateDirectory(normalized);
+        }
+
+        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
+        var updated = settings.WithSection(ReceiveHistorySettings.SectionKey, current with { ImagesDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        Log.ImagesDirectorySet(_logger, normalized);
+    }
+
     public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET Note = $note WHERE Id = $id", entryId, "$note", (object?)note ?? DBNull.Value, ct);
 
@@ -337,5 +364,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "A Recorded event subscriber threw for entry {EntryId}")]
         public static partial void RecordedSubscriberFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX images directory set to {Directory}")]
+        public static partial void ImagesDirectorySet(ILogger logger, string? directory);
     }
 }

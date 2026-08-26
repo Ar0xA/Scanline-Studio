@@ -26,6 +26,9 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
+    public Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
     public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 

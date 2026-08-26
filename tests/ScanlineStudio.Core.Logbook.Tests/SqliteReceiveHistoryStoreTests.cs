@@ -299,6 +299,120 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task SetImagesDirectoryAsync_ValidDirectory_CreatesItAndPersistsIt()
+    {
+        var dbPath = TempDbPath();
+        var targetDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-images-test-{Guid.NewGuid()}");
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            Assert.False(Directory.Exists(targetDirectory));
+
+            await store.SetImagesDirectoryAsync(targetDirectory);
+
+            // Validated by actually creating the directory (plan-review finding) -- not just a
+            // string written to settings with nothing checking it's ever usable.
+            Assert.True(Directory.Exists(targetDirectory));
+            Assert.Equal(targetDirectory, await store.GetImagesDirectoryAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(targetDirectory))
+            {
+                Directory.Delete(targetDirectory);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SetImagesDirectoryAsync_RelativePath_PersistsTheResolvedAbsolutePath()
+    {
+        // Auditor-caught (2026-08-26): a relative value would otherwise get created under the
+        // process's current CWD, "succeed," then re-resolve to a DIFFERENT real location on the
+        // next launch (ReceiveHistoryRecorder re-resolves this setting on every save, not once at
+        // startup) -- persisting the resolved absolute form makes it stable across process restarts.
+        var dbPath = TempDbPath();
+        var relativeName = $"scanline-studio-images-test-{Guid.NewGuid()}";
+        var expectedAbsolute = Path.GetFullPath(relativeName);
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            await store.SetImagesDirectoryAsync(relativeName);
+
+            Assert.True(Path.IsPathRooted(await store.GetImagesDirectoryAsync()));
+            Assert.Equal(expectedAbsolute, await store.GetImagesDirectoryAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(expectedAbsolute))
+            {
+                Directory.Delete(expectedAbsolute);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SetImagesDirectoryAsync_NullOrWhitespace_ResetsToTheDefaultPicturesFolder()
+    {
+        var dbPath = TempDbPath();
+        var targetDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-images-test-{Guid.NewGuid()}");
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(targetDirectory);
+            Assert.Equal(targetDirectory, await store.GetImagesDirectoryAsync());
+
+            await store.SetImagesDirectoryAsync("   ");
+
+            var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "ScanlineStudio", "History");
+            Assert.Equal(expected, await store.GetImagesDirectoryAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(targetDirectory))
+            {
+                Directory.Delete(targetDirectory);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SetImagesDirectoryAsync_PathIsActuallyAFile_ThrowsAndDoesNotPersist()
+    {
+        // The Storage settings dialog's own reason for validating up front (plan-review finding):
+        // without this, a typo/permission problem would only surface later as every subsequent RX
+        // image silently failing to save (ReceiveHistoryRecorder's own write path is fire-and-forget
+        // with no user-visible failure surface).
+        var dbPath = TempDbPath();
+        var conflictingFile = Path.Combine(Path.GetTempPath(), $"scanline-studio-images-test-file-{Guid.NewGuid()}");
+        File.WriteAllText(conflictingFile, "not a directory");
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var store = new SqliteReceiveHistoryStore(settingsStore, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var invalidTarget = Path.Combine(conflictingFile, "sub");
+
+            await Assert.ThrowsAnyAsync<IOException>(() => store.SetImagesDirectoryAsync(invalidTarget));
+
+            // The default, unchanged -- the failed attempt never reached SaveAsync.
+            var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "ScanlineStudio", "History");
+            Assert.Equal(expected, await store.GetImagesDirectoryAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            File.Delete(conflictingFile);
+        }
+    }
+
+    [Fact]
     public async Task RecordAsync_ManyEntries_KeepsEveryEntry_NoAutomaticRetentionTrim()
     {
         // User decision (2026-08-26): the Gallery tab's "All" filter must show every entry ever
