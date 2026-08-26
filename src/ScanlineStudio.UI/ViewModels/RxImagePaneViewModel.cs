@@ -648,6 +648,22 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [RelayCommand]
     private void RequestCorrectSlant() => _sstvSession.RequestCorrectSlant();
 
+    /// <summary>Backs the Receive tab's own Abort button. Mirrors <see cref="QuickSelectMode"/>'s
+    /// own body-level <see cref="ISstvSessionService.IsReceiving"/> check rather than a
+    /// view-layer <c>CanExecute</c> binding, for the same reason: this pane doesn't track
+    /// <see cref="ISstvSessionService.IsReceiving"/> reactively.</summary>
+    [RelayCommand]
+    private void Abort()
+    {
+        if (!_sstvSession.IsReceiving)
+        {
+            return;
+        }
+
+        Log.AbortInvoked(_logger);
+        _sstvSession.AbortReception();
+    }
+
     /// <summary>Backs the quick-mode-button grid (spec/18-path-to-1.0.md High item 7) --
     /// <see cref="ISstvSessionService.ForceMode"/> is a one-shot "start decoding as this mode
     /// right now" kick (see its own doc comment), not a persistent lock, so this is safe to fire
@@ -1468,6 +1484,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode button pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
         public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Abort invoked, abandoning current reception")]
+        public static partial void AbortInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX auto-detect pause toggled: paused={Paused}")]
         public static partial void AutoDetectPausedChanged(ILogger logger, bool paused);

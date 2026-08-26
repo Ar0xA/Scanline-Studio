@@ -72,7 +72,10 @@
                      pane's own "Browse..." button. A disabled MenuItem also suppresses its own
                      InputGesture, so this closes the Ctrl+O accelerator too, not just the click. -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" IsEnabled="{Binding TxControls.CanChangeSourceOrMode}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+S" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Stub survey Tier 1 (2026-08-26): same RxImagePaneViewModel.SaveFrameCommand the
+                     Receive tab's own "Save frame" button uses (action bar below) — one feature,
+                     two entry points, matching Tools > Re-decode's own pattern above. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+S" Command="{Binding RxImage.SaveFrameCommand}" />
                 <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.Exit}" Command="{Binding ExitCommand}" />
             </MenuItem>
@@ -103,7 +106,11 @@
                 <!-- Piece C2 (RX tab Re-decode port): same command RxImage's own "Re-decode" button
                      uses (MainWindow.axaml's action bar below) — one feature, two entry points. -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" Command="{Binding RxImage.RedecodeCommand}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Stub survey Tier 1 (2026-08-26): "session log" means the QSO log (the Logbook
+                     tab's own ADIF export), not the debug log (Help > Open application log covers
+                     that separately) — same LogbookPaneViewModel.ExportAdifCommand the Logbook
+                     tab's own "Export" button uses. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" Command="{Binding Logbook.ExportAdifCommand}" />
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
             <!-- Help moved behind Options (user request, 2026-08-26) — Options no longer dangles
@@ -545,9 +552,10 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxImage.CardHeader}" />
                             </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
-                                <!-- Bottom action bar: Abort is still literal/no-op (no legacy
-                                     precedent, spec/14-roadmap.md backlog, explicitly excluded from
-                                     the Piece C RX-tab port — see that plan's Context section). Log
+                                <!-- Bottom action bar: Abort wired 2026-08-26 (stub survey Tier 1) —
+                                     ISstvSessionService.AbortReception, an invented UI affordance
+                                     with no legacy precedent (RequestAbandonReception exists but
+                                     nothing in legacy exposes it as a user-facing button). Log
                                      QSO is real (wired 2026-08-15, see the inner comment below).
                                      Record/Re-decode wired as Piece C1/C2 (RX tab Re-decode port).
                                      Progress bar/count are real too (spec/18-path-to-1.0.md High
@@ -564,13 +572,12 @@
                                         <!-- Save Frame/Copy-to-TX wired 2026-08-18 (RxImagePaneViewModel.
                                              SaveFrameCommand / TxControlsPaneViewModel.CopyReceivedImageToTxCommand
                                              — see their own doc comments; Copy-to-TX has a real legacy
-                                             precedent, fileview.cpp's CopyRectBitmap(pBitmapTXM)). Abort
-                                             still has no backing command (no legacy precedent) — left
-                                             disabled rather than clickable-but-dead. This DockPanel's
-                                             own DataContext is MainViewModel, not RxImage/TxControls, so
+                                             precedent, fileview.cpp's CopyRectBitmap(pBitmapTXM)).
+                                             This DockPanel's own DataContext is MainViewModel, not
+                                             RxImage/TxControls, so
                                              every binding here is explicitly qualified. -->
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnPrimary" Content="{loc:Translate Panes.RxImage.SaveFrame}" Command="{Binding RxImage.SaveFrameCommand}" />
-                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.Abort}" Command="{Binding RxImage.AbortCommand}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{Binding RxImage.RecordButtonLabel}" Command="{Binding RxImage.ToggleRecordingCommand}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.RxImage.RedecodeAction}" Command="{Binding RxImage.RedecodeCommand}" />
                                         <!-- Round-1 code-review finding: without this, a genuine
@@ -1427,11 +1434,10 @@
              "decode locked" state, previously tinted, which tripped that rule). LED is conditional
              on a mode actually being detected — it was unconditionally green even while showing
              the "—" empty state, which read as fake-live once color started carrying real meaning.
-             AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property
-             (confirmed against spec/16-gui-wiring-survey.md) — genuinely fake-live, not the same
-             case as SNR's honest dash, despite this comment previously claiming otherwise. Given the
-             Disabled+tooltip treatment already used for other unimplemented stubs in this file
-             (RadioHeaderView.axaml's BW/Split pills). -->
+             AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property,
+             genuinely fake-live at the time — un-stubbed 2026-08-26 (stub survey Tier 1) once
+             confirmed RX images ARE unconditionally auto-saved by ReceiveHistoryRecorder (no
+             setting gates it), so the claim is simply true and needs no backing property at all. -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
                     Height="26" Margin="0,0,6,0" Spacing="5">
             <Border Classes="Industry IndustryMini" BorderThickness="1">
@@ -1452,8 +1458,7 @@
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.SnrValue}" />
             </Border>
-            <Border Classes="Industry IndustryMini" BorderThickness="1" IsEnabled="False" Opacity="0.45"
-                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+            <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutosaveOn}" />
             </Border>
         </StackPanel>
