@@ -995,10 +995,9 @@
                                 <TextBox Classes="Industry IndustryInput" Width="230" Margin="0,0,4,4" Text="{Binding SearchText}" Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding !ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterAll}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterToday}" />
-                                <!-- ReceiveHistoryEntry has no frequency field to filter by (spec/16-gui-wiring-survey.md):
-                                     disabled+tooltipped rather than dead-interactive, matching this app's own honesty-pass
-                                     convention (see Options.NotImplemented.Help's other call sites). -->
-                                <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" IsEnabled="False" Opacity="0.45" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Content="{loc:Translate Panes.RxHistory.Filter14Mhz}" />
+                                <!-- "14 MHz" frequency filter removed 2026-08-26 (user decision, "maybe
+                                     one day") — ReceiveHistoryEntry has no frequency field to filter by,
+                                     see spec/14-roadmap.md's backlog entry. -->
                                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" IsChecked="{Binding FilterUnloggedOnly}" Content="{loc:Translate Panes.RxHistory.FilterUnlogged}" />
                                 <ToggleButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="0,0,4,4" IsChecked="{Binding FilterFlaggedOnly}" Content="{loc:Translate Panes.RxHistory.FilterFlagged}" />
                                 <Border Classes="Industry IndustryMini" Margin="0,0,4,4"><TextBlock Text="{loc:Translate Panes.RxHistory.SortChip}" /></Border>
