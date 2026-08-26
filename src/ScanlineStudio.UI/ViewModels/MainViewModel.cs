@@ -187,6 +187,17 @@ public partial class MainViewModel : ViewModelBase
         StorageSettingsRequested?.Invoke(_services.GetRequiredService<StorageSettingsWindowViewModel>());
     }
 
+    /// <summary>Configurations &gt; Macros (stub survey Tier 3) -- same shape as
+    /// <see cref="OpenStorageSettings"/> above.</summary>
+    public event Action<MacrosReferenceWindowViewModel>? MacrosReferenceRequested;
+
+    [RelayCommand]
+    private void OpenMacrosReference()
+    {
+        Log.OpenMacrosReferenceInvoked(_logger);
+        MacrosReferenceRequested?.Invoke(_services.GetRequiredService<MacrosReferenceWindowViewModel>());
+    }
+
     /// <summary>The header-row callsign chip's click target -- previously a static, non-interactive
     /// chip with nothing wired to it at all. Callsign/OperatorName/OperatorGrid live on the TX tab
     /// (<see cref="OptionsWindowViewModel.TxTabIndex"/>), so this jumps straight there instead of
@@ -272,6 +283,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenStorageSettings command invoked")]
         public static partial void OpenStorageSettingsInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenMacrosReference command invoked")]
+        public static partial void OpenMacrosReferenceInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenAbout command invoked")]
         public static partial void OpenAboutInvoked(ILogger logger);

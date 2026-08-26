@@ -358,6 +358,32 @@ public partial class MainWindow : Window
                     }
                 };
 
+                // Stub survey Tier 3 (2026-08-26). Same shape as StorageSettingsRequested above.
+                vm.MacrosReferenceRequested += macrosViewModel =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingMacrosReferenceWindow(logger);
+                    }
+
+                    try
+                    {
+                        var window = new MacrosReferenceWindowView { DataContext = macrosViewModel };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.MacrosReferenceShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.MacrosReferenceWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 // Stub survey Tier 2 (2026-08-26). Same synchronous, unawaited shape as
                 // OptionsRequested/AboutRequested above -- ShowDialog itself is synchronous (blocks
                 // until the dialog closes), no async construction work precedes it.
@@ -443,6 +469,15 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "StorageSettingsWindowView failed to open or show")]
         public static partial void StorageSettingsWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing MacrosReferenceWindowView")]
+        public static partial void ConstructingMacrosReferenceWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "MacrosReferenceWindowView.ShowDialog returned")]
+        public static partial void MacrosReferenceShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "MacrosReferenceWindowView failed to open or show")]
+        public static partial void MacrosReferenceWindowFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
         public static partial void ExitRequested(ILogger logger);
