@@ -429,9 +429,9 @@ line each:
 | USB / LSB / FM sideband segment | REAL, **wired 2026-08-26** | `:62-79` | Bound to `RadioStatusViewModel.IsSidebandUsb/Lsb/Fm` (three plain derived booleans over the already-real `SelectedRadioMode`). `SelectedRadioMode`'s own CAT wiring (`SetModeAsync`) predates this fix — the stub was this segment's own binding, not a missing concept. |
 | UTC clock | REAL | `:88-91` | `UtcClockDisplay` (`.cs:114`), 1 s `DispatcherTimer` (`UpdateUtcClock`, `.cs:265`). |
 | BW pill | REAL, **wired 2026-08-26, capability-gated** | `:106-121` | `BandwidthDisplay`/`CanReadBandwidth`/`CanSetBandwidth`/`SetBandwidthCommand` (`RadioStatusViewModel.cs`) — Hamlib/rigctld both genuinely carry a passband value on their existing mode calls, flrig deliberately doesn't (unreliable Hz readback); falls back to the old disabled stub pill when neither capability is present. |
-| Split pill | STUB (disabled) | `:122-126` | `IsEnabled="False"`, `Opacity="0.45"`, tooltip; value `"SPLIT —"` (`en.json:65`) — real, unresolved design question (how a second TX frequency fits this port's single-`FrequencyHz` model), out of scope for the BW item above. |
+| Split pill | **REMOVED 2026-08-26** | — | User decision "maybe one day." No legacy precedent (`cradio.h`/`cradio.cpp`/`Main.cpp`/`Option.cpp` have zero mentions of it — only trace anywhere in legacy is an unused property on OmniRig's auto-generated COM binding, `OmniRig_OCX.h`, never read/written by YONIQ's own code); also raises its own unresolved design question (how a second TX frequency fits this port's single-`FrequencyHz` model). Pill and `RadioStatus.SplitValue` locale key deleted; see `spec/14-roadmap.md`'s backlog. |
 | CAT link lozenge | REAL | `:113-122` | `CatLinked` (`.cs:94`), driven by `IRadioSessionService.ConnectionEvents` (`.cs:344`); LED + a real two-state text swap. |
-| Step / RIT pills | STUB (disabled) | `:127-136` | Same treatment; `"STEP —"` / `"RIT —"` (`en.json:70-71`). |
+| Step / RIT pills | **REMOVED 2026-08-26 (both)** | — | User decision "maybe one day," both times. No legacy precedent for either (Step: `cradio.h` has zero mentions; RIT: same zero-mentions result across `cradio.h`/`cradio.cpp`/`Main.cpp`/`Option.cpp`, only trace anywhere in legacy is the same unused OmniRig COM property pattern as Split above). Pills and `RadioStatus.StepValue`/`RadioStatus.RitValue` locale keys deleted; see `spec/14-roadmap.md`'s backlog. |
 | Rig-meters pill | REAL | `:146-149` | `RigMetersDisplay` (`.cs:146`), joined from the real polled `RadioState.SwrRatio`/`AlcLevel`/`PowerPercent`; reset to `"—"` when CAT drops (`.cs:364`). **Reclassified from STUB** — the previous revision's "no rig-meters concept exists" premise was checked against `RigctldClientProtocol`/`HamlibRadioProtocol` and found false. |
 
 **Favourites card** (`:163-256`)
@@ -719,8 +719,9 @@ dialog. Options Forwarding tab. Options QRZ.com tab. Spectrum & waterfall card.
 **Mostly real, mixed:** Transmit tab left column (mode/ID/output/stock/transmit machinery fully
 real as of 2026-08-25 — un-stub-TX-tab pieces 1-9; no placeholder rows remain there). Gallery tab
 (list/filter/storage/note/flag/link real; the filter row is the honesty gap). Radio header
-(frequency/CAT/receiving/TX-volume/UTC/rig-meters/RX-level real; sideband/BW/split/step/RIT
-stubbed; the persistent give-up-after-5 error text line was removed 2026-08-25, the must-acknowledge
+(frequency/CAT/receiving/TX-volume/UTC/rig-meters/RX-level/sideband/BW real as of 2026-08-26;
+split/step/RIT removed outright, no stubs remain on the VFO card; the persistent give-up-after-5
+error text line was removed 2026-08-25, the must-acknowledge
 popup is the only surface for that signal now). Receive tab Sync&Slant / Input-chain / Signal-quality
 cards. Options General/Audio/Radio/Tx/Decode/Identification tabs.
 

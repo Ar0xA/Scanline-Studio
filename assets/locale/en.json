@@ -62,8 +62,6 @@
   "RadioStatus.BwValue": "BW —",
   "RadioStatus.SetBandwidth": "Set",
   "RadioStatus.BandwidthInput.Help": "Requests this filter passband (Hz) from the rig. An overly narrow value can break SSTV decode or clip TX audio -- the rig may also silently snap it to its nearest real filter.",
-  "RadioStatus.SplitValue": "SPLIT —",
-  "RadioStatus.RitValue": "RIT —",
   "RadioStatus.UtcValueFormat": "{0:HH:mm:ss}Z",
   "RadioStatus.FavouritesHint": "Click a preset to recall it",
   "RadioStatus.StoreCurrent": "Store current",
