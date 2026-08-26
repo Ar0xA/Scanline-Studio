@@ -550,21 +550,22 @@ internal static partial class Program
             decoderSettings = new SstvDecoderSettings();
         }
 
-        // Absent or out-of-range values use the documented legacy-derived defaults. SenseLevel's
-        // distinct out-of-range fallback remains inside AnalogFmSstvDecoder's constructor.
-        var demodType = decoderSettings.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
-        var rxBpfPreset = decoderSettings.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
-        var rxBufferMode = decoderSettings.RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : RxBufferMode.On;
+        // SenseLevel's distinct out-of-range fallback remains inside AnalogFmSstvDecoder's
+        // constructor. Every other absent-or-out-of-range default lives in SstvDecoderSettings.Resolve
+        // itself now -- single source of truth also used by the Loopback self-test's own decoder
+        // construction, see that method's own doc comment for why a second independent copy here
+        // would have been a real drift risk.
+        var resolved = decoderSettings.Resolve();
         return new RestartableSstvDecoder(
-            afcEnabled: decoderSettings.AfcEnabled ?? true,
-            syncRestartEnabled: decoderSettings.SyncRestartEnabled ?? true,
-            autoSyncEnabled: decoderSettings.AutoSyncEnabled ?? true,
-            autoStopEnabled: decoderSettings.AutoStopEnabled ?? false,
-            autoSlantEnabled: decoderSettings.AutoSlantEnabled ?? true,
-            senseLevel: decoderSettings.SenseLevel ?? 1,
-            demodType: demodType,
-            rxBpfPreset: rxBpfPreset,
-            rxBufferMode: rxBufferMode,
+            afcEnabled: resolved.AfcEnabled,
+            syncRestartEnabled: resolved.SyncRestartEnabled,
+            autoSyncEnabled: resolved.AutoSyncEnabled,
+            autoStopEnabled: resolved.AutoStopEnabled,
+            autoSlantEnabled: resolved.AutoSlantEnabled,
+            senseLevel: resolved.SenseLevel,
+            demodType: resolved.DemodType,
+            rxBpfPreset: resolved.RxBpfPreset,
+            rxBufferMode: resolved.RxBufferMode,
             sampleRate: sampleRate,
             loggerFactory: loggerFactory);
     }

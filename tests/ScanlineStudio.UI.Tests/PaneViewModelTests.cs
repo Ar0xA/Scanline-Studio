@@ -2092,6 +2092,106 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RunLoopbackSelfTestCommand_InvokesSstvSessionServiceAndRaisesCompleted()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            RunLoopbackSelfTestResult = new LoopbackSelfTestResult(new ArrayImageSource(1, 1, [new Rgb24(4, 5, 6)]), TestMode.Id, LoopbackSelfTestOutcome.Completed),
+        };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        Assert.False(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+
+        LoopbackSelfTestResultWindowViewModel? completedResult = null;
+        vm.LoopbackSelfTestCompleted += result => completedResult = result;
+
+        await vm.RunLoopbackSelfTestCommand.ExecuteAsync(null);
+
+        Assert.Single(sstvSession.RunLoopbackSelfTestCalls);
+        Assert.Equal(TestMode, sstvSession.RunLoopbackSelfTestCalls[0].Mode);
+        Assert.NotNull(completedResult);
+        Assert.Null(completedResult!.ModeMismatchWarning);
+        Assert.False(vm.IsRunningLoopbackSelfTest);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RunLoopbackSelfTestCommand_OnFailure_SetsErrorMessage()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            ThrowOnRunLoopbackSelfTest = new InvalidOperationException("boom"),
+        };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var completedRaised = false;
+        vm.LoopbackSelfTestCompleted += _ => completedRaised = true;
+
+        await vm.RunLoopbackSelfTestCommand.ExecuteAsync(null);
+
+        Assert.False(completedRaised);
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.False(vm.IsRunningLoopbackSelfTest);
+        Assert.True(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TransmitAndRunLoopbackSelfTest_CanExecuteAreMutuallyExclusive()
+    {
+        // Code-review round-1 finding: a self-test's encode+decode is real CPU work competing with a
+        // live PTT-keyed playback pump, and its own result dialog is MODAL -- letting either run
+        // while the other is in flight risked a dialog popping up mid-transmission and blocking Stop
+        // TX. Both directions of the guard are checked here, not just one.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+        Assert.True(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+
+        sstvSession.RunLoopbackSelfTestGate = new TaskCompletionSource();
+        var selfTestTask = vm.RunLoopbackSelfTestCommand.ExecuteAsync(null);
+
+        Assert.False(vm.TransmitCommand.CanExecute(null));
+
+        sstvSession.RunLoopbackSelfTestGate.SetResult();
+        await selfTestTask;
+
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+
+        sstvSession.BlockUntilCancelled = true;
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+
+        vm.StopTransmitCommand.Execute(null);
+        await transmitTask;
+
+        Assert.True(vm.RunLoopbackSelfTestCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_OpensTheEditorWithAModeSizedNeutralPlaceholder()
     {
         // Backlog fix (user request, 2026-08-17): "don't leave the TX window completely empty until
