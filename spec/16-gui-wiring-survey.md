@@ -500,7 +500,7 @@ above, not left disabled.
 | Frames today | REAL | `:1541-1543` | `RxHistory.FramesTodayDisplay` (`RxHistoryPaneViewModel.cs:251`). |
 | Log size | REAL | `:1544-1546` | `Logbook.LogSizeDisplay` (`LogbookPaneViewModel.cs:170`). |
 | Receiving LED + lozenge | REAL | `:1551-1556` | `RadioStatus.IsReceiving`, with a `healthyTint` class binding. |
-| TX-INHIBIT LED + lozenge | REAL | `:1561-1567` | `TxControls.ErrorMessage != null`, amber `attentionTint`; tooltip states the narrow meaning honestly (`en.json:29`). |
+| TX-ERROR LED + lozenge | REAL, **renamed from TX-INHIBIT 2026-08-26** | `:1566-1572` | `TxControls.ErrorMessage != null`, amber `attentionTint`; tooltip states the narrow meaning honestly (`en.json:24`). Renamed per direct user correction — the chip never actually inhibits/blocks a new Transmit, it's a status readout of whether the last attempt errored or hit an automatic SWR cutoff. |
 | TX-KEYED LED + lozenge | REAL | `:1573-1579` | `RadioStatus.IsKeyed` (`RadioStatusViewModel.cs:109`) — real rig PTT readback, cleared when CAT drops; red `dangerTint`. Tooltip states the polling lag and the VOX/DTR caveat (`en.json:31`). |
 | Frequency / Mode | REAL | `:1581-1586` | `RadioStatus.FrequencyDisplay` / `ModeDisplay`. |
 | Memory tag | PLACEHOLDER | `:1587-1589` | `"—"` (`en.json:32`). |
