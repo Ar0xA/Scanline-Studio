@@ -426,7 +426,7 @@ line each:
 |---|---|---|---|
 | "VFO A · RX · M1" kicker | **FAKE-LIVE** (mild) | `:48` | `RadioStatus.VfoCaption` = `"VFO A · RX · M1"` (`en.json:64`). A static caption asserting VFO A, RX state, and memory M1 — none of which are tracked. Decorative in intent, but it reads as rig state. |
 | Frequency readout (40 pt) | REAL | `:53-58` | `FrequencyDisplay` (`RadioStatusViewModel.cs:37`), assigned in `OnStateChanged` (`.cs:282`) from `IRadioSessionService.StateChanges`. |
-| USB / LSB / FM sideband segment | STUB (disabled) | `:70-81` | Whole `StackPanel` `IsEnabled="False"` + `Options.NotImplemented.Help`. The `IsChecked="True"` on USB (`:73`) is inert. No sideband concept on `IRadioSessionService`. |
+| USB / LSB / FM sideband segment | REAL, **wired 2026-08-26** | `:62-79` | Bound to `RadioStatusViewModel.IsSidebandUsb/Lsb/Fm` (three plain derived booleans over the already-real `SelectedRadioMode`). `SelectedRadioMode`'s own CAT wiring (`SetModeAsync`) predates this fix — the stub was this segment's own binding, not a missing concept. |
 | UTC clock | REAL | `:88-91` | `UtcClockDisplay` (`.cs:114`), 1 s `DispatcherTimer` (`UpdateUtcClock`, `.cs:265`). |
 | BW / Split pills | STUB (disabled) | `:98-107` | `IsEnabled="False"`, `Opacity="0.45"`, tooltip; values `"BW —"` / `"SPLIT —"` (`en.json:68-69`). |
 | CAT link lozenge | REAL | `:113-122` | `CatLinked` (`.cs:94`), driven by `IRadioSessionService.ConnectionEvents` (`.cs:344`); LED + a real two-state text swap. |

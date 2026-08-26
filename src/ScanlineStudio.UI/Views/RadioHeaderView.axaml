@@ -33,10 +33,12 @@
         <Grid ColumnDefinitions="Auto,*,272" ColumnSpacing="10" Margin="9,7,9,8" Classes="Industry">
 
             <!-- VFO card: one of this design's 3 real blueprint-corner sites (design doc §2).
-                 Frequency readout, CAT-link status, and the rig-meters pill (2026-08-18) are real;
-                 sideband segment/BW·SPLIT·STEP·RIT pills are still literal — no sideband, bandwidth,
-                 split, step, or RIT concept exists on IRadioSessionService today (spec/14-roadmap.md
-                 backlog), same STUB state as before this phase for those, just re-skinned. Preserved
+                 Frequency readout, CAT-link status, sideband segment (Tier 4, 2026-08-26 — see
+                 IsSidebandUsb/Lsb/Fm's own doc comment), and the rig-meters pill (2026-08-18) are
+                 real; BW·SPLIT·STEP·RIT pills are still literal — bandwidth/split/RIT need real new
+                 CAT-layer plumbing this port doesn't have yet (Hamlib's own frozen P/Invoke table has
+                 no split/RIT binding at all), and Step may not be a CAT concept at all (legacy's own
+                 CAT header has no trace of it) — see spec/14-roadmap.md backlog, still open. Preserved
                  product decision (design doc §2): no vertical divider between columns B/C, per prior
                  direct user feedback — LAYOUT-SPEC's own Column C has a 1px left border; deliberately
                  not resurrected here. -->
@@ -59,24 +61,23 @@
                     </StackPanel>
                     <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,Auto"
                           ColumnSpacing="14" RowSpacing="4" VerticalAlignment="Center">
-                        <!-- Literal/unwired sideband segment, matching the pre-Phase-2 file's own
-                             comment: no real sideband concept exists on IRadioSessionService
-                             today. RadioButtons (not ToggleButtons) so IndustrySegTheme's
-                             mutual-exclusion visual applies; GroupName scopes them to this control
-                             only. Combined-batch auditor review, 2026-08-14: was fully clickable
-                             despite being unwired — unlike the Receive tab's Auto/Locked segment
-                             (where "Auto" is real), none of USB/LSB/FM has any backing here, so the
-                             whole group is disabled, not just one option. -->
-                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="0"
-                                    IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                        <!-- Stub survey Tier 4 (2026-08-26): now bound to SelectedRadioMode via
+                             three plain derived booleans (IsSidebandUsb/Lsb/Fm) — see those
+                             properties' own doc comment. Previously a fully-clickable but entirely
+                             unwired literal group (combined-batch auditor review, 2026-08-14) despite
+                             SelectedRadioMode itself already being real — the stub state was this
+                             control's own binding, not a missing concept. RadioButtons (not
+                             ToggleButtons) so IndustrySegTheme's mutual-exclusion visual applies;
+                             GroupName scopes them to this control only. -->
+                        <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="0">
                             <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
-                                         GroupName="VfoSideband" IsChecked="True"
+                                         GroupName="VfoSideband" IsChecked="{Binding IsSidebandUsb}"
                                          Content="{loc:Translate RadioStatus.SidebandUsb}" />
                             <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
-                                         GroupName="VfoSideband"
+                                         GroupName="VfoSideband" IsChecked="{Binding IsSidebandLsb}"
                                          Content="{loc:Translate RadioStatus.SidebandLsb}" />
                             <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
-                                         GroupName="VfoSideband"
+                                         GroupName="VfoSideband" IsChecked="{Binding IsSidebandFm}"
                                          Content="{loc:Translate RadioStatus.SidebandFm}" />
                         </StackPanel>
                         <!-- Bound directly, no added " UTC" suffix: RadioStatus.UtcValueFormat

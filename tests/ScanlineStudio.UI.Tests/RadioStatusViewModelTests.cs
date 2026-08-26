@@ -30,6 +30,76 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void SelectedRadioModeChanged_UpdatesTheThreeSidebandBooleans()
+    {
+        // Stub survey Tier 4 (2026-08-26): the VFO card's sideband segment is now bound to these
+        // three derived properties -- proves they track SelectedRadioMode both ways, including the
+        // rig-driven direction (OnStateChanged sets SelectedRadioMode directly, not via one of these
+        // setters), not just the user-click direction the setters cover.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedRadioMode = RadioMode.Lsb;
+
+        Assert.False(vm.IsSidebandUsb);
+        Assert.True(vm.IsSidebandLsb);
+        Assert.False(vm.IsSidebandFm);
+    }
+
+    [AvaloniaFact]
+    public void SelectedRadioModeChanged_RaisesPropertyChangedForAllThreeSidebandBooleans()
+    {
+        // Code-review finding: a passing getter-value assertion alone (the test above) doesn't prove
+        // the live RadioButtons actually re-render -- only a real PropertyChanged notification does,
+        // and it's the one thing [NotifyPropertyChangedFor]'s own removal wouldn't otherwise be
+        // caught by (the getters still compute correctly on next read either way). Mirrors
+        // OptionsWindowViewModelTests' own established pattern for this exact class of gap.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.SelectedRadioMode = RadioMode.Lsb;
+
+        Assert.Contains(nameof(vm.IsSidebandUsb), raised);
+        Assert.Contains(nameof(vm.IsSidebandLsb), raised);
+        Assert.Contains(nameof(vm.IsSidebandFm), raised);
+    }
+
+    [AvaloniaFact]
+    public void IsSidebandLsb_SetTrue_ChangesSelectedRadioModeAndCallsRadioSession()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsSidebandLsb = true;
+
+        Assert.Equal(RadioMode.Lsb, vm.SelectedRadioMode);
+        Assert.Contains(RadioMode.Lsb, radioSession.SetModeCalls);
+    }
+
+    [AvaloniaFact]
+    public void IsSidebandUsb_SetFalse_DoesNotChangeSelectedRadioMode()
+    {
+        // RadioButton also fires IsChecked=false for the option being DEselected as the group's
+        // mutual exclusion switches away -- must be a no-op, not clear SelectedRadioMode to some
+        // "none selected" state RadioMode has no member for. Starting mode is deliberately Lsb, NOT
+        // the RadioMode field's own Usb default (code-review finding: starting from Usb left this
+        // test green even with the `if (value)` guard removed entirely, since a guardless setter
+        // would clobber SelectedRadioMode straight back to the value it already was) -- this is the
+        // scenario the guard actually has to prevent: user clicks LSB, USB's own button unchecks as
+        // the group's mutual exclusion switches away, and that deselection must not un-clobber LSB.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Lsb;
+
+        vm.IsSidebandUsb = false;
+
+        Assert.Equal(RadioMode.Lsb, vm.SelectedRadioMode);
+    }
+
+    [AvaloniaFact]
     public void TxVolumeDisplay_ShowsMutedGlyphInsteadOfPercent_WhenDeviceIsMuted()
     {
         var sstvSession = new FakeSstvSessionService { TxVolumePercent = 42, TxIsMuted = true };
