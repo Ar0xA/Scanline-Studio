@@ -119,24 +119,157 @@ public class MidReceptionRestartTests
         Assert.True(detectedModeCount >= 1, "Never even detected the first transmission -- test setup problem.");
     }
 
-    // D0-audit round-11/12: an end-to-end regression test was attempted here (a station-ID FSK
-    // burst spliced into a locked MartinM1 reception, syncRestartEnabled: false, asserting
-    // StationIdDecoded still fires) to cover round 11's TryNarrowFskScan-hoisting fix. It does not
-    // pass, and -- checked directly -- the SAME construction still fails even with
-    // syncRestartEnabled: true (the pre-round-11 code path, unaffected by that fix): narrow-FSK
-    // never delivers a StationIdDecoded result while genuinely locked mid-reception through
-    // BandpassFilteredSampleAt's `useLocked` (H1) filter selection, in either setting. This means
-    // round 12's specific justification for expecting the test to "just work" (FSK tone frequencies
-    // sit inside the locked filter's nominal passband) was not sufficient in practice -- something
-    // else in the locked-filter path prevents narrow-FSK demodulation from completing, a real,
-    // separate, pre-existing gap this file has apparently never had ANY test coverage for (every
-    // existing StationIdDecoded test is either pre-lock, `StationIdDoesNotAbortScanTests`, or a
-    // post-image FOOTER burst that plays only after EndOfImage has already nulled `_mode` again,
-    // `AnalogFmSstvEncoderStationIdWiringTests` -- neither exercises `_mode is not null` at burst
-    // time). Round 11's own gating fix is independently correct by direct code tracing (confirmed
-    // by two separate audit rounds); this gap is orthogonal to it, not a hole in it. Left
-    // deliberately unfixed and untested here -- diagnosing WHY locked-filter narrow-FSK doesn't
-    // decode is a new, separate investigation, not a one-line follow-up to this fix.
+    // Shared by the two mid-reception station-ID tests below. MUST stay a WIDE mode (MartinM1):
+    // BandpassFilteredSampleAt's `useLocked` gate is forced false whenever `_mode.NarrowModeCode is
+    // not null` (narrow modes always run H2/search), so a narrow mode would silently stop exercising
+    // the H1 (locked bandpass) path these tests exist to cover.
+    private static async Task<(bool LockedBeforeBurst, int ImageHeight, List<string> Callsigns,
+        List<uint?> CompactNrs, List<string?> NrTexts, List<int> EventLines, List<SstvModeDefinition> ModeDetected,
+        List<SstvModeDefinition> Restarts)> RunMidReceptionStationIdScenarioAsync(
+        bool syncRestartEnabled, double splitFraction, string? nrRst)
+    {
+        var mode = SstvModeRegistry.MartinM1;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight, offset: 0);
+
+        var encoder = new AnalogFmSstvEncoder(11025);
+        var imageSamples = new List<float>();
+        await foreach (var sample in encoder.EncodeAsync(mode, sourceImage))
+        {
+            imageSamples.Add(sample);
+        }
+
+        var splitPoint = (int)(imageSamples.Count * splitFraction);
+        var before = imageSamples.Take(splitPoint).ToArray();
+        var after = imageSamples.Skip(splitPoint).ToArray();
+
+        var fskSegments = FskStationIdEncoder.Generate("W1AW", nrRst);
+        var fskBurst = AnalogFmSstvEncoder.RenderSegments(fskSegments, 11025).ToArray();
+
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate, syncRestartEnabled: syncRestartEnabled) { StationIdDecodeEnabled = true };
+        var callsigns = new List<string>();
+        var compactNrs = new List<uint?>();
+        var nrTexts = new List<string?>();
+        var eventLines = new List<int>();
+        var modeDetected = new List<SstvModeDefinition>();
+        var restarts = new List<SstvModeDefinition>();
+        var lastLine = -1;
+
+        decoder.LineDecoded += update => lastLine = update.Line;
+        decoder.StationIdDecoded += info =>
+        {
+            callsigns.Add(info.Callsign ?? "(null)");
+            compactNrs.Add(info.CompactNr);
+            nrTexts.Add(info.NrText);
+            eventLines.Add(lastLine);
+        };
+        decoder.ModeDetected += m => modeDetected.Add(m);
+        decoder.DecodeRestarted += m => restarts.Add(m);
+
+        const int chunkSize = 512;
+        void Feed(float[] samples)
+        {
+            for (var i = 0; i < samples.Length; i += chunkSize)
+            {
+                var len = Math.Min(chunkSize, samples.Length - i);
+                decoder.PushSamples(samples.AsSpan(i, len).ToArray());
+            }
+        }
+
+        Feed(before);
+        var lockedBeforeBurst = decoder.FirstLockedBandpassIndex is not null;
+        Feed(fskBurst);
+        Feed(after);
+        Feed(new float[11025 * 2]); // trailing silence so any in-flight scan can finish
+
+        return (lockedBeforeBurst, mode.ImageHeight, callsigns, compactNrs, nrTexts, eventLines, modeDetected, restarts);
+    }
+
+    // Burst duration is ~1.15s (100ms guard + 22ms start bit + ~7 bytes x 6 bits x 22ms + 100ms
+    // guard) -- roughly 8 MartinM1 transmission lines. A genuinely mid-reception delivery must land
+    // within a handful of lines of the splice point, not at/near ImageHeight-1 (which is exactly what
+    // a regressed "only the post-EndOfImage scan still delivers it" case would produce, since
+    // LineDecoded's own last-observed line is never reset by this harness).
+    private static int MaxExpectedStationIdEventLine(int imageHeight, double splitFraction) =>
+        (int)(imageHeight * splitFraction) + 30;
+
+    [Theory]
+    [InlineData(false, 0.10)]
+    [InlineData(false, 0.50)]
+    [InlineData(true, 0.10)]
+    [InlineData(true, 0.50)]
+    public async Task CallsignOnlyBurst_FiresStationIdDecoded_GenuinelyMidImage_NeverRestarts(bool syncRestartEnabled, double splitFraction)
+    {
+        var result = await RunMidReceptionStationIdScenarioAsync(syncRestartEnabled, splitFraction, nrRst: null);
+        var maxExpectedLine = MaxExpectedStationIdEventLine(result.ImageHeight, splitFraction);
+
+        Assert.True(result.LockedBeforeBurst, "Setup problem: never locked before splicing the burst in.");
+        Assert.Single(result.Callsigns);
+        Assert.Equal("W1AW", result.Callsigns[0]);
+        Assert.InRange(result.EventLines[0], 0, maxExpectedLine);
+        Assert.Empty(result.Restarts);
+        Assert.Single(result.ModeDetected); // exactly the original lock, no spurious re-lock
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NrRstSubPacketBurst_FiresBothEvents_GenuinelyMidImage(bool syncRestartEnabled)
+    {
+        const double splitFraction = 0.50;
+        var result = await RunMidReceptionStationIdScenarioAsync(syncRestartEnabled, splitFraction, nrRst: "599123");
+        var maxExpectedLine = MaxExpectedStationIdEventLine(result.ImageHeight, splitFraction);
+
+        Assert.True(result.LockedBeforeBurst);
+        // Matches AnalogFmSstvEncoderStationIdWiringTests' own established shape: two SEPARATE
+        // commits (callsign, then NR), not one combined event.
+        Assert.Equal(2, result.Callsigns.Count);
+        Assert.Equal("W1AW", result.Callsigns[0]);
+        Assert.Null(result.CompactNrs[0]);
+        Assert.Equal("(null)", result.Callsigns[1]);
+        Assert.Equal(123u, result.CompactNrs[1]);
+        Assert.Null(result.NrTexts[1]);
+        Assert.All(result.EventLines, line => Assert.InRange(line, 0, maxExpectedLine));
+        Assert.Empty(result.Restarts);
+        Assert.Single(result.ModeDetected);
+    }
+
+    // D0-audit round-13, 2026-08-26: round 11/12's finding above (narrow-FSK "never delivers a
+    // StationIdDecoded result while genuinely locked mid-reception... in either [syncRestartEnabled]
+    // setting") does NOT reproduce. Re-investigated from scratch: a station-ID FSK burst spliced
+    // into a locked MartinM1 reception (both callsign-only and the NR/RST two-event sub-packet form,
+    // both syncRestartEnabled settings, splice points at 10% and 50% through the image body) fires
+    // StationIdDecoded correctly every time -- see CallsignOnlyBurst_FiresStationIdDecoded_
+    // GenuinelyMidImage_NeverRestarts/NrRstSubPacketBurst_FiresBothEvents_GenuinelyMidImage below,
+    // added as this investigation's own permanent regression coverage (the ORIGINAL gap round 12
+    // named -- "this exact scenario has no test coverage anywhere in the suite" -- was real and is
+    // now closed, independent of whether the decode failure itself ever was). Both tests assert a
+    // TIGHT, splice-proportional upper bound on which decoded image line the event lands on (not a
+    // trivial 0..ImageHeight-1 range, which a regressed "only the post-EndOfImage scan still
+    // delivers it" case would still satisfy) -- proving genuine mid-image delivery, not just "an
+    // event eventually fired somewhere in the pushed buffer."
+    //
+    // Cross-checked against legacy ground truth, not assumed: `yoniq-old/YONIQ-main/Sound.cpp:356,364`
+    // (`SSTVDEM.Do(*lp)`, the real-time audio callback) feeds every sample through the decoder
+    // unconditionally, image-in-progress or not; `sstv.cpp:1858` (`DecodeFSK(int(d19), int(dsp))`)
+    // runs unconditionally on that same per-sample call, BEFORE the `!m_Sync||...` sync-state branch
+    // even starts; the station-ID commit at `sstv.cpp:2483-2495` has no `m_Sync`/`m_SyncRestart` gate
+    // at all (unlike the mode-announce commit at `:2592`). So legacy requires mid-reception FSK-ID
+    // delivery to work, and this port's own call graph (`AnalogFmSstvDecoder.TryNarrowFskScan`,
+    // hoisted unconditional per decoded line since round 11; the station-ID branch inside it fires
+    // via the event with no `Commit()`/lock-state gate at all, only the separate mode-announce match
+    // is gated) already matches that -- confirmed correct by direct code trace, not inferred from the
+    // tests passing. Numerically verified too: H1 (locked) and H2 (search) bandpass filters have
+    // near-identical gain at both FSK tone frequencies (1900/2100Hz, both ~0dB via the real
+    // `SearchBandpassFilter.MakeFilter` coefficients), ruling out round 12's own filter-passband
+    // theory as the (never real) mechanism.
+    //
+    // Most likely explanation for round 12's original false negative (unverifiable -- that round's
+    // failing test was written and removed in the same commit, never itself committed): a decoder
+    // constructed without `StationIdDecodeEnabled = true` would silently produce zero StationIdDecoded
+    // events in EITHER syncRestartEnabled setting, matching the reported symptom exactly --
+    // `StationIdDoesNotAbortScanTests.StationIdDecodeDisabled_TransmissionProducesNoEventAtAll`
+    // already documents this exact trap existing elsewhere in this test suite. A hypothesis, not a
+    // confirmed root cause -- flagged as such, not asserted as fact.
     private static ArrayImageSource CreateGradientTestImage(int width, int height, int offset)
     {
         var pixels = new Rgb24[width * height];
