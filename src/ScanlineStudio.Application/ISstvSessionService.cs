@@ -198,6 +198,17 @@ public interface ISstvSessionService : IAsyncDisposable
     /// own doc comment lists.</summary>
     void RequestCorrectSlant();
 
+    /// <summary>Abandons whatever reception is currently in progress and returns to listening for a
+    /// new VIS header -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestAbandonReception"/> for the
+    /// full contract. Unlike <see cref="SetAutoDetectPaused"/>, this does NOT pause auto-detect or
+    /// stop forwarding audio to the decoder -- it only discards the in-progress image so the next
+    /// VIS header can lock immediately. Safe to call from any thread; a no-op if nothing is
+    /// currently being received. Backs the Receive tab's own Abort button -- zero legacy precedent
+    /// (an invented UI affordance, not a port; see docs/removed-features.md's own note that CAT/rig
+    /// control is the only area with a hard no-invention rule).</summary>
+    void AbortReception();
+
     /// <summary>Requests an immediate decode restart into <paramref name="mode"/>, bypassing VIS
     /// header detection — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ForceMode"/> for the full contract
