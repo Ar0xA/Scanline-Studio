@@ -8,7 +8,6 @@
   "MainWindow.Menu.Configurations.StorageNaming": "Storage",
   "MainWindow.Menu.Configurations.Macros": "Macros",
   "MainWindow.Menu.Calibration": "Cali_bration",
-  "MainWindow.Menu.Calibration.ClockCalibration": "Run 15-minute clock calibration",
   "MainWindow.Menu.Calibration.LoopbackSelfTest": "Loopback self-test",
   "MainWindow.Menu.Calibration.ToneGenerator": "Tone generator…",
   "MainWindow.Menu.Tools": "_Tools",
