@@ -688,8 +688,9 @@
                      Tier 2) is a static, user-typed value, not a live "current QSO" exchange field:
                      StationIdSettings.NrRstText's own doc comment already made that call, not a
                      new decision here. The RX-side decoded-NR/RST display
-                     (RxImagePaneViewModel.DecodedNrRst) is a separate, still-unbound gap, not
-                     fixed by this change. -->
+                     (RxImagePaneViewModel.DecodedNrRst) is now bound to a real row on the RxFrameMeta
+                     card (2026-08-26), not this Options dialog — unrelated to the TX-side field
+                     documented above. -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Identification.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">

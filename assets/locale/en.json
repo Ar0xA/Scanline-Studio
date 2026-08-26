@@ -185,6 +185,7 @@
   "Panes.RxDecodeLog.TracePanTooltip": "Pan (shift the visible window)",
   "Panes.RxFrameMeta.CardHeader": "FRAME METADATA",
   "Panes.RxFrameMeta.Callsign": "Callsign",
+  "Panes.RxFrameMeta.NrRst": "NR / RST",
   "Panes.RxFrameMeta.NameLabel": "Name · QRZ",
   "Panes.RxFrameMeta.QthLabel": "QTH · QRZ",
   "Panes.RxFrameMeta.GridDistance": "Grid / dist · QRZ",

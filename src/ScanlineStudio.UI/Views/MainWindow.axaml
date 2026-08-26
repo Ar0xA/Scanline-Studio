@@ -818,6 +818,14 @@
                                          value no longer comes from OCR (which still doesn't exist),
                                          so keeping "· OCR" in the label would misattribute the source. -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CallsignDisplay}" /></Grid></Border>
+                                    <!-- Wired 2026-08-26: DecodedNrRst (legacy's real MyRST equivalent,
+                                         Main.cpp:3648) was real, tested backing state with no card row
+                                         since Phase 5 — see that property's own doc comment. Placed
+                                         right after Callsign, before Name/QTH: both this row and
+                                         Callsign come from the SAME FSK station-ID decode event
+                                         (OnStationIdDecoded), unlike Name/QTH below (a separate QRZ
+                                         lookup). -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NrRst}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DecodedNrRstDisplay}" /></Grid></Border>
                                     <!-- Wired 2026-08-11: real QRZ.com lookup (QrzCallsignLookup.cs).
                                          Name/QTH have no legacy-equivalent row in this card's original
                                          inventory (mock2 draws none), added because the lookup itself

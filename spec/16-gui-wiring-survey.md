@@ -620,9 +620,9 @@ any DI-singleton-baked setting. Squelch/sense level is the most user-visible ins
 | Tune-satellite trigger | STUB (disabled) | `:592-593` | `IsEnabled="False"` + tooltip — this specific checkbox (auto-transmit once a Tune tone's duration elapses) stays unwired regardless of the note below. **Corrected 2026-08-24:** the previous revision's claim that Tune itself is "currently unmapped to any control anywhere in the UI" is now false — `RadioStatusViewModel`'s own `TuneFrequencyHz`/`TuneDurationSeconds`/`TuneCommand` (`.cs:143,146,607`) are still unmapped to any header control, but the Radio tab's new Pwr+Tune card (see that tab's own table above) gives Tune a real, working UI surface via a SEPARATE `OptionsWindowViewModel`-owned implementation, not this one. |
 | Reset section | REAL | `:598` | `ResetIdentificationToDefaultCommand`. |
 
-**Gap worth naming:** the RX-side decoded NR/RST value (`RxImagePaneViewModel.DecodedNrRst`, `.cs:288`)
-is a real, populated property with **no control bound to it anywhere** — see the file's own note at
-`OptionsWindowView.axaml:521-523`.
+**Closed 2026-08-26:** the RX-side decoded NR/RST value (`RxImagePaneViewModel.DecodedNrRst`) is now
+bound to a real "NR / RST" row on the RxFrameMeta card (`MainWindow.axaml`, `Panes.RxFrameMeta.NrRst`)
+— was previously a real, populated property with no control bound to it anywhere.
 
 ### Advanced tab (`:607-690`) — **fully STUB, by deliberate decision**
 
@@ -743,8 +743,8 @@ so it's dropped from this list rather than counted as stub.)
    remain the app's only two FAKE-LIVE chips tied to genuinely unbuilt features.
 3. **The Storage "Naming" row is fixed, 2026-08-22** — corrected to
    `yyyyMMdd-HHmmssfff_MODE_ID8.png`, matching `ReceiveHistoryRecorder.cs:328` exactly.
-4. **`RxImagePaneViewModel.DecodedNrRst` is real and populated with no control bound to it anywhere** —
-   a fully-built RX-side decode result with no display surface.
+4. **`RxImagePaneViewModel.DecodedNrRst` — closed 2026-08-26.** Was real and populated with no control
+   bound to it anywhere; now bound to a real "NR / RST" row on the RxFrameMeta card.
 5. **Options → Decode settings are restart-only.** Every decoder toggle on that tab is baked into a DI
    singleton with no live-reconfiguration path. Sense level is the most user-visible case, since it's
    the control most likely to be adjusted while actively chasing a signal (legacy applies it live).
