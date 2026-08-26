@@ -156,6 +156,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private double _tuneDurationSeconds = 5;
 
+    /// <summary>Toggle state for <see cref="TuneCommand"/> -- same shape as
+    /// <see cref="OptionsWindowViewModel.IsTuning"/>, added per that class's own established Stop/
+    /// cts safety pattern (plan-review finding, 2026-08-26): this command lets the OPERATOR pick the
+    /// duration, up to <c>ISstvSessionService</c>'s own 5-minute safety backstop, so it needs the
+    /// same start/stop toggle and window-close cancellation that dialog already has -- shipping the
+    /// general-purpose Tune with weaker transmitter safety than the fixed-30s AFC one would be
+    /// backwards.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TuneButtonLabel))]
+    private bool _isTuning;
+
+    public string TuneButtonLabel => _localization.GetString(IsTuning ? "RadioStatus.Tune.Stop" : "RadioStatus.Tune");
+
+    private CancellationTokenSource? _tuneCts;
+
     /// <summary>Backs the Transceiver card's Receiving/Halt toggle -- real state, mirrors
     /// <see cref="ISstvSessionService.IsReceiving"/> exactly (including the case where a startup
     /// auto-start silently failed for lack of an audio device).</summary>
@@ -327,6 +342,28 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="Dispatcher.UIThread.Post"/> callback as every other cross-thread signal in this
     /// class.</summary>
     public event Action<string>? ConnectionGaveUp;
+
+    /// <summary>Stub survey Tier 2 (2026-08-26) -- same view-model-never-touches-a-Window pattern as
+    /// <see cref="ConnectionGaveUp"/>/<c>MainViewModel.OptionsRequested</c>; <c>MainWindow.axaml.cs</c>
+    /// owns the actual window construction/<c>ShowDialog</c> call. Parameterless: the Favourites
+    /// Editor's DataContext is THIS live instance, not a fresh child view-model.</summary>
+    public event Action? FavouritesEditorRequested;
+
+    /// <summary>Same shape as <see cref="FavouritesEditorRequested"/>.</summary>
+    public event Action? ToneGeneratorRequested;
+
+    [RelayCommand]
+    private void OpenFavouritesEditor()
+    {
+        // Reload from persisted state on open (plan-review finding, 2026-08-26): EditorRows is live
+        // shared state with no rollback -- without this, a prior session's un-Saved Add/Remove/edit
+        // would keep showing indefinitely instead of reflecting what's actually on disk.
+        _ = LoadPresetsSafeAsync();
+        FavouritesEditorRequested?.Invoke();
+    }
+
+    [RelayCommand]
+    private void OpenToneGenerator() => ToneGeneratorRequested?.Invoke();
 
     public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
 
@@ -567,16 +604,14 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <summary>Backs the Favourites card's "Store current" button -- adds the currently-tuned
     /// frequency/mode as a new preset and persists immediately. Deliberately does NOT reuse
     /// <see cref="SavePresetsCommand"/> alone (that command only re-persists whatever's already in
-    /// <see cref="EditorRows"/>, which mirrors the existing <see cref="Presets"/> 1:1 since no editor
-    /// UI is shown anywhere in this view -- "Edit favourites list" is deliberately unmapped, see
-    /// this file's own comment) -- it needs to append the current radio state as a genuinely new row
+    /// <see cref="EditorRows"/>) -- it needs to append the current radio state as a genuinely new row
     /// first. Label is left empty, same precedent as <see cref="AddPresetRow"/>'s manual-add default:
-    /// no rename UI exists to fill it in either way. Gated by <see cref="CanStoreCurrentPreset"/>
-    /// (auditor-caught, 2026-08-11): <see cref="_currentFrequencyHz"/> is <c>0</c> until the first
-    /// <see cref="OnStateChanged"/> call, which never fires with no radio connected/before the first
-    /// poll -- without the guard this would silently persist an unremovable "0.000000 USB" preset
-    /// (no in-app UI ever exposes <see cref="EditorRows"/>/<see cref="RemovePresetRowCommand"/> to
-    /// delete it, "Edit favourites list" is deliberately unmapped, see above).</summary>
+    /// this command has no rename UI to fill it in either way (the Favourites Editor dialog does).
+    /// Gated by <see cref="CanStoreCurrentPreset"/> (auditor-caught, 2026-08-11):
+    /// <see cref="_currentFrequencyHz"/> is <c>0</c> until the first <see cref="OnStateChanged"/>
+    /// call, which never fires with no radio connected/before the first poll -- without the guard
+    /// this would silently persist a "0.000000 USB" preset the operator would then need to open the
+    /// Favourites Editor dialog to delete.</summary>
     [RelayCommand(CanExecute = nameof(CanStoreCurrentPreset))]
     private async Task StoreCurrentPresetAsync()
     {
@@ -588,10 +623,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // the outcome -- if the save failed, the just-added row stayed in EditorRows with nothing
         // ever removing it (SavePresetsInternalAsync's own failure path deliberately leaves
         // EditorRows untouched, matching its "report the error, don't discard unsaved edits"
-        // contract). Since no shipped UI exposes EditorRows/RemovePresetRowCommand at all ("Edit
-        // favourites list" is deliberately unmapped, see this method's own class-level doc comment),
-        // a retry after the failure appended a SECOND row on top of the first, persisting a
-        // duplicate, permanently undeletable preset the moment the save eventually succeeded.
+        // contract), so a retry after the failure appended a SECOND row on top of the first,
+        // persisting a duplicate preset the moment the save eventually succeeded. The Favourites
+        // Editor dialog's own RemoveCommand can clean up a lingering failed-add row today, but this
+        // explicit removal keeps the "Store current" button itself honest either way.
         if (!await SavePresetsInternalAsync().ConfigureAwait(false))
         {
             Dispatcher.UIThread.Post(() => EditorRows.Remove(row));
@@ -628,13 +663,25 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         var presets = new List<FrequencyPreset>();
         foreach (var row in EditorRows)
         {
-            if (double.TryParse(row.FrequencyMhzText, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz))
+            if (!double.TryParse(row.FrequencyMhzText, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz))
             {
-                // Math.Round, not a bare cast (auditor-caught, 2026-08-11): the "0.000000"-formatted
-                // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
-                // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
-                presets.Add(new FrequencyPreset(row.Label, (long)Math.Round(mhz * 1_000_000), row.SelectedMode));
+                // Plan-review finding, 2026-08-26: this used to silently SKIP an unparseable row --
+                // unreachable while EditorRows' only sources were persisted values and AddPresetRow's
+                // own valid default, reachable the instant the Favourites Editor dialog lets a user
+                // type into FrequencyMhzText directly. A typo (or InvariantCulture rejecting a
+                // comma-decimal "14,230000") silently deleted the row on Save while reporting
+                // success. Now aborts the whole save instead, leaving EditorRows untouched -- same
+                // "report the error, don't discard unsaved edits" contract as the exception handler
+                // below.
+                Log.SavePresetsInvalidFrequency(_logger, row.Label);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetFrequency", row.Label));
+                return false;
             }
+
+            // Math.Round, not a bare cast (auditor-caught, 2026-08-11): the "0.000000"-formatted
+            // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
+            // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
+            presets.Add(new FrequencyPreset(row.Label, (long)Math.Round(mhz * 1_000_000), row.SelectedMode));
         }
 
         Log.SavePresetsInvoked(_logger, presets.Count);
@@ -656,18 +703,44 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [RelayCommand]
     private async Task TuneAsync()
     {
+        if (IsTuning)
+        {
+            _tuneCts?.Cancel();
+            return;
+        }
+
         Log.TuneInvoked(_logger, TuneFrequencyHz, TuneDurationSeconds);
+        ErrorMessage = null;
+        IsTuning = true;
+        var cts = new CancellationTokenSource();
+        _tuneCts = cts;
         try
         {
-            ErrorMessage = null;
-            await _sstvSession.TuneAsync(TuneFrequencyHz, TimeSpan.FromSeconds(TuneDurationSeconds)).ConfigureAwait(false);
+            await _sstvSession.TuneAsync(TuneFrequencyHz, TimeSpan.FromSeconds(TuneDurationSeconds), ct: cts.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal control flow -- the operator clicked Stop (see the IsTuning branch above), or
+            // the Tone Generator dialog closed mid-tone (StopTuneIfActive below, called from that
+            // window's own Closing path).
         }
         catch (Exception ex)
         {
             Log.TuneFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.TuneFailed"));
         }
+        finally
+        {
+            IsTuning = false;
+            _tuneCts = null;
+            cts.Dispose();
+        }
     }
+
+    /// <summary>Called from the Tone Generator window's own Closing path so a Tune tone left running
+    /// (PTT still keyed) can't outlive the dialog that started it -- same reasoning as
+    /// <see cref="OptionsWindowViewModel.StopTuneIfActive"/>.</summary>
+    public void StopTuneIfActive() => _tuneCts?.Cancel();
 
     // ISstvSessionService's own doc comment states these three fire synchronously on the audio drain
     // thread (same contract as ModeDetected) -- marshal to the UI thread before touching any
@@ -898,6 +971,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Error, Message = "SavePresets failed")]
         public static partial void SavePresetsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SavePresets aborted: row {Label} has an unparseable frequency")]
+        public static partial void SavePresetsInvalidFrequency(ILogger logger, string label);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Tune invoked: {FrequencyHz}Hz for {Seconds}s")]
         public static partial void TuneInvoked(ILogger logger, double frequencyHz, double seconds);

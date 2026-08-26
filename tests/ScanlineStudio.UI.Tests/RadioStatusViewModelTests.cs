@@ -102,6 +102,74 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SavePresetsCommand_RowWithInvalidFrequency_AbortsSaveAndLeavesEditorRowsUntouched()
+    {
+        // Plan-review finding, 2026-08-26: SavePresetsInternalAsync used to silently SKIP a row
+        // whose FrequencyMhzText failed to parse, then rebuild EditorRows from the filtered list --
+        // unreachable while EditorRows' only sources were persisted values and AddPresetRow's own
+        // valid default, reachable the instant the Favourites Editor dialog lets a user type into
+        // FrequencyMhzText directly. The row silently vanished on Save while reporting success.
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("Good", 14_230_000, RadioMode.Usb)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var goodRow = Assert.Single(vm.EditorRows);
+
+        vm.AddPresetRowCommand.Execute(null);
+        var badRow = vm.EditorRows[1];
+        badRow.FrequencyMhzText = "not-a-number";
+
+        await vm.SavePresetsCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.EditorRows.Count);
+        Assert.Same(goodRow, vm.EditorRows[0]);
+        Assert.Same(badRow, vm.EditorRows[1]);
+        Assert.Equal("not-a-number", vm.EditorRows[1].FrequencyMhzText);
+        Assert.Single(radioSession.Presets); // unchanged -- the save never reached SaveFrequencyPresetsAsync
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void OpenFavouritesEditorCommand_RaisesFavouritesEditorRequestedAndReloadsPresets()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("40m SSTV", 7_171_000, RadioMode.Lsb)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.FavouritesEditorRequested += () => fireCount++;
+
+        vm.OpenFavouritesEditorCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, fireCount);
+        // Reload-on-open (plan-review finding): EditorRows is live shared state with no rollback --
+        // without this, a prior session's un-Saved Add/Remove/edit would keep showing indefinitely
+        // instead of reflecting what's actually persisted.
+        Assert.Single(vm.EditorRows);
+    }
+
+    [AvaloniaFact]
+    public void OpenToneGeneratorCommand_RaisesToneGeneratorRequested()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.ToneGeneratorRequested += () => fireCount++;
+
+        vm.OpenToneGeneratorCommand.Execute(null);
+
+        Assert.Equal(1, fireCount);
+    }
+
+    [AvaloniaFact]
     public void StoreCurrentPresetCommand_DisabledUntilFirstRadioStateArrives()
     {
         // Regression test (auditor-caught, 2026-08-11): before any RadioState, _currentFrequencyHz
@@ -274,6 +342,37 @@ public sealed class RadioStatusViewModelTests
         var call = Assert.Single(sstvSession.TuneCalls);
         Assert.Equal(1750, call.FrequencyHz);
         Assert.Equal(TimeSpan.FromSeconds(3), call.Duration);
+    }
+
+    [AvaloniaFact]
+    public void TuneCommand_ReturnsToTheStartLabelOnceTheToneFinishes()
+    {
+        // Plan-review finding, 2026-08-26: RadioStatusViewModel.TuneCommand lets the OPERATOR pick
+        // the duration (up to ISstvSessionService's own 5-minute safety backstop), unlike the
+        // fixed-30s Options tab Tune -- it needed the same start/stop toggle that dialog already
+        // has. FakeSstvSessionService.TuneAsync completes synchronously (Task.CompletedTask), so
+        // this proves the toggle correctly resets rather than getting stuck "Stop tune" -- it does
+        // NOT exercise the mid-flight Stop-cancels-the-tone path (the fake has no way to hang).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TuneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsTuning);
+        Assert.Equal("RadioStatus.Tune", vm.TuneButtonLabel);
+    }
+
+    [AvaloniaFact]
+    public void StopTuneIfActive_NothingCurrentlyTuning_IsASafeNoOp()
+    {
+        // ToneGeneratorWindowView.axaml.cs calls this unconditionally on every Closed, including the
+        // overwhelmingly common case where the dialog is closed without ever clicking Tune.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.StopTuneIfActive();
     }
 
     [AvaloniaFact]

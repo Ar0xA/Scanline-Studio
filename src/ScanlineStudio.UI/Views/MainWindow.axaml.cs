@@ -329,6 +329,59 @@ public partial class MainWindow : Window
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 
+                // Stub survey Tier 2 (2026-08-26). Same synchronous, unawaited shape as
+                // OptionsRequested/AboutRequested above -- ShowDialog itself is synchronous (blocks
+                // until the dialog closes), no async construction work precedes it.
+                vm.RadioStatus.FavouritesEditorRequested += () =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingFavouritesEditorWindow(logger);
+                    }
+
+                    try
+                    {
+                        var window = new FavouritesEditorWindowView { DataContext = vm.RadioStatus };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.FavouritesEditorShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.FavouritesEditorWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
+                vm.RadioStatus.ToneGeneratorRequested += () =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingToneGeneratorWindow(logger);
+                    }
+
+                    try
+                    {
+                        var window = new ToneGeneratorWindowView { DataContext = vm.RadioStatus };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.ToneGeneratorShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.ToneGeneratorWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 vm.ExitRequested += () =>
                 {
                     if (logger is not null)
@@ -370,6 +423,24 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QsoLinkWindowView failed to open or show")]
         public static partial void QsoLinkWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing FavouritesEditorWindowView")]
+        public static partial void ConstructingFavouritesEditorWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "FavouritesEditorWindowView.ShowDialog returned")]
+        public static partial void FavouritesEditorShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "FavouritesEditorWindowView failed to open or show")]
+        public static partial void FavouritesEditorWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing ToneGeneratorWindowView")]
+        public static partial void ConstructingToneGeneratorWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ToneGeneratorWindowView.ShowDialog returned")]
+        public static partial void ToneGeneratorShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ToneGeneratorWindowView failed to open or show")]
+        public static partial void ToneGeneratorWindowFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Log QSO requested from the RX pane; switching to the Logbook tab")]
         public static partial void LogQsoRequested(ILogger logger);

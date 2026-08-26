@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.ToneGeneratorWindowView"
+        x:DataType="vm:RadioStatusViewModel"
+        Title="{loc:Translate ToneGenerator.Title}"
+        Width="360" Height="220"
+        MinWidth="320" MinHeight="200"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+
+    <!-- Stub survey Tier 2 (2026-08-26). The general-purpose sibling of the already-shipped
+         Options → Radio tab "Tune" button (fixed 1750Hz/30s AFC-dial-in aid) — this one lets the
+         operator pick both frequency and duration, reusing RadioStatusViewModel's own
+         TuneCommand/TuneFrequencyHz/TuneDurationSeconds (previously implemented, error-handled, but
+         never exposed in any View). Same DataContext-is-the-live-instance shape as
+         FavouritesEditorWindowView. Min/Max bounds mirror ISstvSessionService.TuneAsync's own
+         validation (SstvSessionService.cs) so an out-of-range value is rejected by the control
+         itself with a visible limit, instead of surfacing as a generic "Tune failed" after the
+         ArgumentOutOfRangeException round-trips through the session layer (plan-review finding,
+         2026-08-26). Frequency capped well under Nyquist for every audio device this app supports
+         (all ≥8kHz) rather than reading the actual configured sample rate, which TuneAsync's own
+         bound is relative to and this dialog has no cheap way to query. Duration capped at exactly
+         ISstvSessionService's own 5-minute MaxTuneDuration constant (that constant is private to
+         SstvSessionService, so this value is a deliberate duplicate — keep it in sync if that one
+         changes). -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+
+            <StackPanel Grid.Row="0" Spacing="{StaticResource IndustrySpacingGroup}">
+                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate ToneGenerator.FrequencyLabel}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                        <NumericUpDown Classes="Industry" Value="{Binding TuneFrequencyHz}" Minimum="100" Maximum="3000" Increment="10" FormatString="0" IsEnabled="{Binding !IsTuning}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate RadioStatus.Tune.HertzUnit}" />
+                    </Grid>
+                </StackPanel>
+                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate ToneGenerator.DurationLabel}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                        <NumericUpDown Classes="Industry" Value="{Binding TuneDurationSeconds}" Minimum="1" Maximum="300" Increment="1" FormatString="0" IsEnabled="{Binding !IsTuning}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate RadioStatus.Tune.SecondsUnit}" />
+                    </Grid>
+                </StackPanel>
+
+                <TextBlock Text="{Binding ErrorMessage}"
+                           Foreground="{StaticResource IndustryDanger}"
+                           TextWrapping="Wrap"
+                           IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+            </StackPanel>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,11,0,0">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{Binding TuneButtonLabel}" Command="{Binding TuneCommand}"
+                        ToolTip.Tip="{loc:Translate RadioStatus.Tune.Help}" />
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate ToneGenerator.CloseButton}" Click="CloseButton_OnClick" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
