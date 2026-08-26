@@ -113,4 +113,22 @@ public interface IReceiveHistoryStore
     /// reverse foreign key, already designed for this exact link. Same missing-
     /// <paramref name="entryId"/> contract as <see cref="SetNoteAsync"/>.</summary>
     Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default);
+
+    /// <summary>Disk/DB reconciliation, user-reported 2026-08-26: a real divergence can leave image
+    /// files saved to <see cref="GetImagesDirectoryAsync"/>'s own folder with no matching row (e.g.
+    /// the DB file was lost/reset independently of the images folder). Scans that folder for files
+    /// matching this app's own naming convention (<c>ReceiveHistoryRecorder</c>'s
+    /// <c>yyyyMMdd-HHmmssfff_MODE[_partial]_ID8.png</c>, which encodes <see
+    /// cref="ReceiveHistoryEntry.ReceivedAt"/>/<see cref="ReceiveHistoryEntry.ModeId"/>/<see
+    /// cref="ReceiveHistoryEntry.DecodeState"/> in the filename itself) and backfills a new entry
+    /// for each one with no existing row (matched by <see cref="ReceiveHistoryEntry.FilePath"/>,
+    /// exact -- ONLY ever adds a missing row, never touches/duplicates an existing one). A file that
+    /// doesn't match the naming convention is skipped, not guessed at -- inventing ReceivedAt/ModeId
+    /// for a foreign file (a manual copy, a different app's export) would be fabricated data, not a
+    /// real reconciliation. Deliberately does NOT raise <see cref="Recorded"/> for backfilled entries
+    /// -- that event means "a frame just landed," and a historical backfill is the opposite of that
+    /// (see the concrete UI consequence this avoids: <c>RxImagePaneViewModel.PreviousFrames</c>'s own
+    /// doc comment, a SESSION-only list that must not be polluted with old, already-on-disk frames
+    /// bulk-imported by this call). Returns the count of entries actually imported.</summary>
+    Task<int> ReconcileWithDiskAsync(CancellationToken ct = default);
 }

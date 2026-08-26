@@ -23,6 +23,10 @@ public partial class MainViewModel : ViewModelBase
     /// compile-time or obvious runtime signal).</summary>
     public const int LogbookTabIndex = 3;
 
+    /// <summary>Same reasoning/guard-test convention as <see cref="LogbookTabIndex"/> (source order
+    /// above) -- drives <see cref="OnSelectedTabIndexChanged"/>'s disk/DB reconcile trigger.</summary>
+    public const int GalleryTabIndex = 2;
+
     private readonly IServiceProvider _services;
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly IUrlLauncher _urlLauncher;
@@ -42,6 +46,20 @@ public partial class MainViewModel : ViewModelBase
     /// default behavior.</summary>
     [ObservableProperty]
     private int _selectedTabIndex;
+
+    /// <summary>User-reported gap, 2026-08-26: disk/DB divergence (real report was ~85 images on
+    /// disk against 1 DB row) needs a reconcile pass -- triggered here, on Gallery tab SELECTION,
+    /// matching the user's own stated trigger point exactly (not app startup, which would run the
+    /// scan for a session that never even visits Gallery). <see cref="RxHistoryPaneViewModel.ReconcileDiskThenRefreshAsync"/>
+    /// itself guards against repeat runs within one session -- this handler doesn't need its own
+    /// such guard.</summary>
+    partial void OnSelectedTabIndexChanged(int value)
+    {
+        if (value == GalleryTabIndex)
+        {
+            _ = RxHistory.ReconcileDiskThenRefreshAsync();
+        }
+    }
 
     /// <summary>Operator's own callsign (spec/09-ui.md menu-row chip, mock2's own top-right
     /// "DL2QSK" green pill) -- real, loaded from <see cref="OptionsSettingsService"/> the same

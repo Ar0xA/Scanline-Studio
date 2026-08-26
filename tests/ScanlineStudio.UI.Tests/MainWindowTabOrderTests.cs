@@ -28,6 +28,26 @@ public sealed partial class MainWindowTabOrderTests
     }
 
     /// <summary>Same reasoning as <see cref="MainTabControl_LogbookTabIndex_PointsAtTheActualLogbookTab"/>
+    /// above, for <see cref="ViewModels.MainViewModel.GalleryTabIndex"/>'s disk/DB reconcile
+    /// trigger (<see cref="ViewModels.MainViewModel.OnSelectedTabIndexChanged"/>) -- a silent tab
+    /// reorder would otherwise fire the reconcile scan on the wrong tab (or never, if it silently
+    /// pointed at an out-of-range index).</summary>
+    [Fact]
+    public void MainTabControl_GalleryTabIndex_PointsAtTheActualGalleryTab()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var mainWindowPath = Path.Combine(uiSourceDirectory, "Views", "MainWindow.axaml");
+        var text = File.ReadAllText(mainWindowPath);
+
+        var headers = TabItemHeaderRegex().Matches(text).Select(m => m.Groups[1].Value).ToList();
+
+        Assert.True(
+            ViewModels.MainViewModel.GalleryTabIndex < headers.Count,
+            $"MainViewModel.GalleryTabIndex ({ViewModels.MainViewModel.GalleryTabIndex}) is out of range for the {headers.Count} top-level TabItems found in MainWindow.axaml.");
+        Assert.Equal("MainWindow.Tabs.Gallery", headers[ViewModels.MainViewModel.GalleryTabIndex]);
+    }
+
+    /// <summary>Same reasoning as <see cref="MainTabControl_LogbookTabIndex_PointsAtTheActualLogbookTab"/>
     /// above, for the header-row callsign chip's jump target: <see cref="ViewModels.OptionsWindowViewModel.TxTabIndex"/>
     /// is a hardcoded index into `OptionsWindowView.axaml`'s own `TabControl` -- nothing would catch a
     /// future tab reorder silently sending the chip to the wrong tab.</summary>
