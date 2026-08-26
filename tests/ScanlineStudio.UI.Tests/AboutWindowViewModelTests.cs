@@ -16,7 +16,7 @@ public sealed class AboutWindowViewModelTests
         // worth catching a regression on -- is that the fallback chain never produces a blank/null
         // display value, which is the actual failure mode a broken assembly attribute lookup would
         // produce.
-        var vm = new AboutWindowViewModel();
+        var vm = new AboutWindowViewModel(new FakeUrlLauncher());
 
         Assert.False(string.IsNullOrWhiteSpace(vm.ApplicationName));
         Assert.False(string.IsNullOrWhiteSpace(vm.VersionDisplay));
@@ -31,7 +31,7 @@ public sealed class AboutWindowViewModelTests
         // instead of only "is this non-blank" -- catches a regression like Product/Copyright
         // silently disappearing from Directory.Build.props, or the Version stamp reverting to the
         // .NET default "1.0.0.0".
-        var vm = new AboutWindowViewModel(typeof(AboutWindowViewModel).Assembly);
+        var vm = new AboutWindowViewModel(typeof(AboutWindowViewModel).Assembly, new FakeUrlLauncher());
 
         Assert.Equal("Scanline Studio", vm.ApplicationName);
         Assert.StartsWith("0.9.0", vm.VersionDisplay);
@@ -41,12 +41,23 @@ public sealed class AboutWindowViewModelTests
     [AvaloniaFact]
     public void CloseCommand_RaisesRequestClose()
     {
-        var vm = new AboutWindowViewModel();
+        var vm = new AboutWindowViewModel(new FakeUrlLauncher());
         var closed = false;
         vm.RequestClose += () => closed = true;
 
         vm.CloseCommand.Execute(null);
 
         Assert.True(closed);
+    }
+
+    [AvaloniaFact]
+    public void OpenAuthorQrzCommand_OpensTheAuthorsQrzPage()
+    {
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = new AboutWindowViewModel(urlLauncher);
+
+        vm.OpenAuthorQrzCommand.Execute(null);
+
+        Assert.Equal(["https://www.qrz.com/db/PD3AN"], urlLauncher.OpenedUrls);
     }
 }
