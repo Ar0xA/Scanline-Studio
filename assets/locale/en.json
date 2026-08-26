@@ -61,7 +61,6 @@
   "RadioStatus.SidebandFm": "FM",
   "RadioStatus.BwValue": "BW —",
   "RadioStatus.SplitValue": "SPLIT —",
-  "RadioStatus.StepValue": "STEP —",
   "RadioStatus.RitValue": "RIT —",
   "RadioStatus.UtcValueFormat": "{0:HH:mm:ss}Z",
   "RadioStatus.FavouritesHint": "Click a preset to recall it",
