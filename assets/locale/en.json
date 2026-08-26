@@ -540,6 +540,8 @@
   "MainWindow.Menu.Help.OpenApplicationLog": "Open application log",
   "About.Title": "About Scanline Studio",
   "About.VersionLabel": "Version",
+  "About.AuthorLabel": "Author",
+  "About.Author.Help": "Open this callsign's QRZ.com page in your default browser",
   "About.Derivative": "A ground-up rewrite of YONIQ (a fork of MMSSTV) for Windows, Linux, and macOS.",
   "About.LicenseHeader": "License",
   "About.LicenseBody": "Licensed under the GNU Lesser General Public License v3.0 or later (LGPL-3.0-or-later), matching the license of the upstream YONIQ/MMSSTV project this is a derivative work of. Full license text (COPYING, COPYING.LESSER) and license provenance (LICENSES.md) are included alongside this application.",

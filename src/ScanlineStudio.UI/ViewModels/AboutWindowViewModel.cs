@@ -1,12 +1,15 @@
 using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
 
 /// <summary>Backs Help > About (spec/18-path-to-1.0.md High item 5). Constructed directly with
-/// <c>new</c> (no DI dependencies) -- same reasoning as <see cref="QsoLinkWindowViewModel"/>'s own
-/// doc comment: this VM only ever needs read-only assembly metadata, nothing injectable.
+/// <c>new</c> (not DI-resolved) -- same reasoning as <see cref="QsoLinkWindowViewModel"/>'s own
+/// doc comment: <c>MainViewModel</c> already holds the one real dependency this needs
+/// (<see cref="IUrlLauncher"/>, for the Author callsign link) directly, so there's no container
+/// round trip to make.
 ///
 /// Reads <see cref="Assembly.GetEntryAssembly"/> (the running <c>ScanlineStudio.Host</c>
 /// executable), not this assembly (<c>ScanlineStudio.UI</c>) -- both carry the same
@@ -27,7 +30,17 @@ public sealed partial class AboutWindowViewModel : ObservableObject
 
     public string Copyright { get; }
 
-    public AboutWindowViewModel() : this(Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly())
+    /// <summary>The app's own author callsign, clickable via <see cref="OpenAuthorQrzCommand"/> --
+    /// a plain identifier, not translatable natural-language copy, so (like
+    /// <c>MainViewModel.RepositoryUrl</c>) it's a C# constant, not a locale key.</summary>
+    public const string AuthorCallsign = "PD3AN";
+
+    private const string AuthorQrzUrl = "https://www.qrz.com/db/PD3AN";
+
+    private readonly IUrlLauncher _urlLauncher;
+
+    public AboutWindowViewModel(IUrlLauncher urlLauncher)
+        : this(Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly(), urlLauncher)
     {
     }
 
@@ -41,14 +54,18 @@ public sealed partial class AboutWindowViewModel : ObservableObject
     /// test inject <c>typeof(AboutWindowViewModel).Assembly</c> (this project's own, which DOES
     /// carry the real Directory.Build.props-stamped Product/Version/Copyright) lets tests assert
     /// the actual real-app values instead of only "is this non-blank."</summary>
-    public AboutWindowViewModel(Assembly assembly)
+    public AboutWindowViewModel(Assembly assembly, IUrlLauncher urlLauncher)
     {
+        _urlLauncher = urlLauncher;
         ApplicationName = assembly.GetCustomAttribute<AssemblyProductAttribute>()?.Product ?? "Scanline Studio";
         VersionDisplay = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString()
             ?? "unknown";
         Copyright = assembly.GetCustomAttribute<AssemblyCopyrightAttribute>()?.Copyright ?? string.Empty;
     }
+
+    [RelayCommand]
+    private void OpenAuthorQrz() => _urlLauncher.Open(AuthorQrzUrl);
 
     /// <summary>Same convention as <see cref="QsoLinkWindowViewModel.RequestClose"/> -- the View's
     /// code-behind subscribes <c>vm.RequestClose += Close;</c>.</summary>
