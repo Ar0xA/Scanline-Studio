@@ -95,30 +95,12 @@
             </StackPanel>
             </Border>
 
-            <!-- Merged tool strip: Move/Crop/Scale/.../Pick RadioButton group, IndustryMiniRadioTheme
-                 (GroupName="EditorTool"). Only "Move" reflects real behavior (the default/only tool
-                 state), so it's the sole enabled+checked radio; the other 7 (Rotate graduated out to
-                 a real Button below, spec/18-path-to-1.0.md High item 3) imply tool-switching
-                 that doesn't exist (Crop/Text are especially misleading since a REAL always-on crop
-                 rectangle and a separate real "Add text" button already exist elsewhere in this
-                 file) — disabled with the app's standard NotImplemented tooltip rather than removed,
-                 since removing Move's siblings would leave an orphan single radio with no group
-                 context. Undo/Redo now real (spec/18-path-to-1.0.md Medium item, undo/redo
-                 sub-piece — CanExecute-gated via UndoCommand/RedoCommand, no IsEnabled="False"/
-                 NotImplemented tooltip needed). Fit/100% now real (Phase 7, spec/15-template-
-                 designer.md — see this file's own OnFitButtonClick/ApplyFitFromViewport and
-                 TxImageEditorPaneViewModel.ZoomFactor's own doc comment).
-                 Safe-area's ToggleButton isn't wired to the canvas guide below
-                 (that guide is unconditionally visible), so it's disabled too but keeps
-                 IsChecked="True" to match the guide's always-on state. Dimensions chip is a plain
-                 (non-interactive) label, left as-is. Real wired
-                 PreserveAspect/AddText/Apply/Cancel on the right — ALL in one WrapPanel (not a fixed
-                 non-wrapping StackPanel/Grid), matching the old design's own stated intent
-                 ("collapsed from 2 rows into 1 to match mock2's single tool-strip row") while fixing
-                 a real containment risk that intent introduces: mock2's row assumes a 1920px-wide
-                 design canvas, this column is far narrower at runtime, so a non-wrapping row would
-                 clip; WrapPanel degrades to extra lines instead (containment over an exact 1-line
-                 match, this project's #1 priority). -->
+            <!-- All in one WrapPanel (not a fixed non-wrapping StackPanel/Grid), matching the old
+                 design's own stated intent ("collapsed from 2 rows into 1 to match mock2's single
+                 tool-strip row") while fixing a real containment risk that intent introduces: mock2's
+                 row assumes a 1920px-wide design canvas, this column is far narrower at runtime, so a
+                 non-wrapping row would clip; WrapPanel degrades to extra lines instead (containment
+                 over an exact 1-line match, this project's #1 priority). -->
             <WrapPanel Grid.Row="1" Margin="0,0,0,6">
                 <!-- Phase 1 (spec/15-template-designer.md): the old EditorTool RadioButton group
                      (Move/Crop/Scale/Text/Box/Line/Mask/Pick) removed outright — 7 of its 8
@@ -182,6 +164,14 @@
                     <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding ZoomPercentText}" />
                 </StackPanel>
                 <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SnapToGrid}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SnapGrid.Help}" />
+                <!-- App-wide stub survey finding (2026-08-26): NOT an honest stub — this binds to
+                     SafeAreaVisible, a property that doesn't exist anywhere on
+                     TxImageEditorPaneViewModel (same missing property backs the safe-area guide's
+                     own IsVisible below, line ~546), so both this toggle and the guide are dead —
+                     Avalonia logs a binding-failure warning and falls back to false/unset, not a
+                     crash. Tier 1 fix once picked up: the sizing math (SafeAreaWidthPixels/
+                     SafeAreaHeightPixels/SafeAreaInsetPixels) is already real and computed —
+                     this just needs an actual bool property added and wired to both binding sites. -->
                 <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" IsChecked="{Binding SafeAreaVisible}" Margin="0,0,4,4" Content="{loc:Translate Panes.TxImageEditor.SafeArea}" />
                 <!-- design-fidelity Phase G (#16): CROP mono label, matching the mock's own toolbar
                      grouping (a divider + "CROP" kicker ahead of the dimensions chip/aspect toggles).
