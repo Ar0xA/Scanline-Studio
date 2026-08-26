@@ -45,7 +45,7 @@ internal static partial class Program
         // by default -- see FileLoggerProvider's own doc comment for why. Fixed, predictable path
         // (not per-run-timestamped) so it can always be read directly without hunting for the
         // latest file.
-        var logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ScanlineStudio", "logs", "app.log");
+        var logPath = Path.Combine(AppLogPaths.LogDirectory, "app.log");
 
         // Debug is the default floor while this project is in active development/debugging (see
         // docs/logging-guidelines.md) -- deliberately verbose, not the intended shipped default.
