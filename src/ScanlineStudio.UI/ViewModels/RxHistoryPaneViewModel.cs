@@ -194,6 +194,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _imagesDirectory;
 
+    /// <summary>Free space, in gibibytes, on <see cref="ImagesDirectory"/>'s own volume -- real,
+    /// via <see cref="DriveInfo"/>. <see langword="null"/> when the read fails (path unmounted,
+    /// permission denied, etc.), rendered as an honest em-dash by <see cref="DiskFreeDisplay"/>.
+    /// Refreshed on the same cadence as <see cref="ImagesDirectory"/> itself (construction +
+    /// Storage settings dialog close) -- not polled live, matching the existing "loaded when the
+    /// directory resolves" convention, not a new live-telemetry class.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DiskFreeDisplay))]
+    private double? _diskFreeGigabytes;
+
     /// <summary>Gallery tab's "Received" header count caption -- real, recomputed off
     /// <see cref="Entries"/>' own <see cref="ObservableCollection{T}.CollectionChanged"/> rather
     /// than duplicated as a separately-maintained counter.</summary>
@@ -319,6 +329,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     public string FramesTodayDisplay => _localization.GetString("MainWindow.StatusBar.FramesTodayValueFormat", FramesTodayCount);
 
+    /// <summary>Status bar's Disk chip and the Gallery Storage card's "Disk free" row -- same
+    /// underlying value, single source of truth rather than two independently-drifting reads.</summary>
+    public string DiskFreeDisplay => DiskFreeGigabytes is { } gb
+        ? _localization.GetString("Panes.RxHistory.DiskFreeValueFormat", gb)
+        : "—";
+
     private void UpdateEntryCountText() => EntryCountText = Entries.Count switch
     {
         1 => _localization.GetString("Panes.RxHistory.EntryCountSingular"),
@@ -405,6 +421,54 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             // Best-effort, same reasoning as RefreshAsync -- the Storage card just shows nothing.
             Log.GetImagesDirectoryFailed(_logger, ex);
+            return;
+        }
+
+        UpdateDiskFreeSpace();
+    }
+
+    /// <summary>Best-effort, same reasoning as <see cref="LoadImagesDirectoryAsync"/> -- a failed
+    /// read just leaves <see cref="DiskFreeGigabytes"/> <see langword="null"/> (shown as "—"),
+    /// never surfaced as a user-facing error for a non-essential status readout.
+    ///
+    /// <b>Auditor-caught fix</b>: <see cref="ImagesDirectory"/> itself may not exist yet --
+    /// <c>ReceiveHistorySettings.ResolveDirectoryAsync</c>'s own default (<c>~/Pictures/
+    /// ScanlineStudio/History</c>) is only actually created on the FIRST saved frame
+    /// (<c>ReceiveHistoryRecorder</c>) or by explicitly picking a folder in Storage settings
+    /// (validate-by-creating) -- on a fresh profile with nothing received yet, constructing
+    /// <see cref="DriveInfo"/> directly against it throws (<c>DriveNotFoundException</c> on Unix)
+    /// and both readouts would stay stuck at "—" for the entire first session. Walks up to the
+    /// nearest existing ancestor first -- the volume containing an about-to-exist directory is the
+    /// same volume that will actually receive the images once it's created.</summary>
+    private void UpdateDiskFreeSpace()
+    {
+        if (ImagesDirectory is null)
+        {
+            DiskFreeGigabytes = null;
+            return;
+        }
+
+        try
+        {
+            var probePath = ImagesDirectory;
+            while (!Directory.Exists(probePath))
+            {
+                var parent = Path.GetDirectoryName(probePath);
+                if (string.IsNullOrEmpty(parent) || parent == probePath)
+                {
+                    break;
+                }
+
+                probePath = parent;
+            }
+
+            var drive = new DriveInfo(probePath);
+            DiskFreeGigabytes = drive.AvailableFreeSpace / 1_073_741_824.0;
+        }
+        catch (Exception ex)
+        {
+            DiskFreeGigabytes = null;
+            Log.GetDiskFreeSpaceFailed(_logger, ex);
         }
     }
 
@@ -933,6 +997,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "GetImagesDirectoryAsync failed")]
         public static partial void GetImagesDirectoryFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Reading disk free space failed")]
+        public static partial void GetDiskFreeSpaceFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the frames-today count failed")]
         public static partial void LoadFramesTodayCountFailed(ILogger logger, Exception ex);

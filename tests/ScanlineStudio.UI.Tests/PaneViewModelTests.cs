@@ -14,6 +14,7 @@ using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
+using System.IO;
 
 namespace ScanlineStudio.UI.Tests;
 
@@ -3093,6 +3094,51 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/scanlinestudio-history", vm.ImagesDirectory);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_ImagesDirectoryExists_LoadsRealDiskFreeSpace()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = Path.GetTempPath() };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.DiskFreeGigabytes);
+        Assert.True(vm.DiskFreeGigabytes > 0);
+        Assert.NotEqual("—", vm.DiskFreeDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_ImagesDirectoryNotYetCreated_StillLoadsDiskFreeSpace_ViaNearestExistingAncestor()
+    {
+        // Auditor-caught regression: on a fresh profile, ReceiveHistorySettings' own default images
+        // directory doesn't exist until the first frame is actually saved -- without walking up to
+        // the nearest existing ancestor, this would stay stuck at "—" for the entire first session.
+        var notYetCreated = Path.Combine(Path.GetTempPath(), "scanlinestudio-not-yet-created-" + Guid.NewGuid().ToString("N"));
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = notYetCreated };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.DiskFreeGigabytes);
+        Assert.True(vm.DiskFreeGigabytes > 0);
+    }
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_ImagesDirectoryUnresolvable_DiskFreeStaysAnHonestPlaceholder()
+    {
+        // Empty string is the one input the nearest-existing-ancestor walk can't recover from --
+        // Path.GetDirectoryName("") returns null, so the walk stops immediately and DriveInfo("")
+        // throws ArgumentException (confirmed empirically), which UpdateDiskFreeSpace must swallow
+        // the same best-effort way LoadImagesDirectoryAsync already does for the directory read
+        // itself, not surface as an unhandled exception. A merely-not-yet-created but otherwise
+        // well-formed path (e.g. the default FakeReceiveHistoryStore.ImagesDirectory) is NOT this
+        // case any more -- see the nearest-existing-ancestor test above.
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "" };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.DiskFreeGigabytes);
+        Assert.Equal("—", vm.DiskFreeDisplay);
     }
 
     [AvaloniaFact]
