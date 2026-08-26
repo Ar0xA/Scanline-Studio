@@ -273,3 +273,31 @@ and its resolution, verified directly against current source, not inferred from 
   resolve to a different date/time in this port than legacy would have produced, with no setting to
   reproduce the correction. No decode-correctness impact — this only affects text baked into a TX
   overlay via macro substitution, not any DSP/decode path.
+
+## RGLoopBack hardware loopback (Internal/External)
+
+- **Legacy**: `sys.m_LoopBack` (`Option.cpp`'s `RGLoopBack` 3-way radio group — Off/Internal/
+  External, `[Define] TXLoopBack`) runs a REAL, simultaneous TX+RX session: audio is genuinely
+  transmitted while capture keeps running, either looped back internally in software (`Sound.cpp`'s
+  "Interno" path) or through real external hardware (a physical audio cable from output back to
+  input). Both modes let the operator monitor their own signal live, during an actual on-air (or
+  cabled) transmission.
+- **Replacement**: partial. Stub survey Tier 3 (2026-08-26), "Loopback self-test" (Calibration menu)
+  — `ISstvSessionService.RunLoopbackSelfTestAsync` — is a one-shot SOFTWARE preview: encode the
+  currently loaded TX image, decode it back entirely in-process, show the result in a dialog. This
+  port's TX/RX are architecturally mutually exclusive (`ISstvSessionService.TransmitAsync`'s own doc
+  comment — capture is paused for the whole duration of a transmit), so a literal port of either
+  Internal or External mode is impossible without a fundamentally different capture/playback
+  architecture. User decision (AskUserQuestion, 2026-08-26): build the simpler one-shot preview
+  instead of pursuing that architecture change.
+- **Impact**: NOT a substitute for either legacy mode. No live monitoring during a real transmission
+  (no PTT is keyed, no audio device is touched at all — the whole round trip runs synthetically, in
+  memory). No real hardware or sound-card path is exercised, so this cannot catch a genuine
+  audio-chain problem (a bad cable, a misconfigured output device, RF getting into the audio path)
+  the way External mode could. No real TX sample-clock drift is measured either — the round trip has
+  no physical clock in it, so the self-test always runs with a synthetic zero-offset encode
+  regardless of the user's persisted TX clock-offset setting (see that setting's own "Clock
+  calibration" entry above), and must never be read as a calibration/drift measurement. What it DOES
+  give: a way to sanity-check that the current TX image/mode round-trips through this port's own
+  encoder→decoder pipeline before going on air — a real, useful diagnostic, just a narrower one than
+  either legacy mode provided.

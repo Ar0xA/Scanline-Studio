@@ -104,7 +104,14 @@
                  Options' Radio/CAT tab Test PTT), so nothing here still lacks a home if implemented. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.ClockCalibration}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                <!-- Stub survey Tier 3 (2026-08-26): one-shot software preview — encode the TX
+                     pane's currently loaded image/mode, decode it back in-process, show the result
+                     in a dedicated dialog. NOT legacy's RGLoopBack hardware loopback (see
+                     ISstvSessionService.RunLoopbackSelfTestAsync's own doc comment and
+                     docs/removed-features.md). Same binding-path reasoning as Macros/Storage above
+                     (TxControls, not RadioStatus) — this needs the currently loaded TX image/mode,
+                     which lives on TxControlsPaneViewModel. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" Command="{Binding TxControls.RunLoopbackSelfTestCommand}" />
                 <!-- Stub survey Tier 2 (2026-08-26): opens the new general-purpose Tone Generator
                      dialog, reusing RadioStatusViewModel.TuneCommand (already real, previously
                      unexposed) — see FavouritesEditorWindowView/ToneGeneratorWindowView's own

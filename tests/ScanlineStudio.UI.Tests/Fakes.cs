@@ -348,6 +348,35 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         return Task.CompletedTask;
     }
 
+    public List<(SstvModeDefinition Mode, IImageSource Image)> RunLoopbackSelfTestCalls { get; } = [];
+
+    public LoopbackSelfTestResult RunLoopbackSelfTestResult { get; set; } =
+        new(new ArrayImageSource(1, 1, [new Rgb24(0, 0, 0)]), null, LoopbackSelfTestOutcome.Completed);
+
+    public Exception? ThrowOnRunLoopbackSelfTest { get; set; }
+
+    /// <summary>Code-review round-1 coverage gap: when set, <see cref="RunLoopbackSelfTestAsync"/>
+    /// doesn't return until this completes -- lets a test hold a call open long enough to assert the
+    /// mutual-exclusion CanExecute cross-wiring against <c>TransmitCommand</c> (same shape as this
+    /// class's own <see cref="BlockUntilCancelled"/> for <see cref="TransmitAsync"/>).</summary>
+    public TaskCompletionSource? RunLoopbackSelfTestGate { get; set; }
+
+    public async Task<LoopbackSelfTestResult> RunLoopbackSelfTestAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
+    {
+        RunLoopbackSelfTestCalls.Add((mode, image));
+        if (RunLoopbackSelfTestGate is { } gate)
+        {
+            await gate.Task;
+        }
+
+        if (ThrowOnRunLoopbackSelfTest is { } ex)
+        {
+            throw ex;
+        }
+
+        return RunLoopbackSelfTestResult;
+    }
+
     public List<string> DecodeFromFileCalls { get; } = [];
 
     public Exception? ThrowOnDecodeFromFile { get; set; }

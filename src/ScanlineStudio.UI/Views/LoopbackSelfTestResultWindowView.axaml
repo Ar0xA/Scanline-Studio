@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.LoopbackSelfTestResultWindowView"
+        x:DataType="vm:LoopbackSelfTestResultWindowViewModel"
+        Title="{loc:Translate LoopbackSelfTest.Title}"
+        Width="480" Height="480"
+        MinWidth="360" MinHeight="360"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Stub survey Tier 3 "Loopback self-test" (2026-08-26) — one-shot software preview dialog,
+         see LoopbackSelfTestResultWindowViewModel's own doc comment for the full feature design.
+         No mockup exists (new scope, not a legacy MMSSTV screen), modeled on AboutWindowView's own
+         Grid RowDefinitions="*,Auto" content/footer split. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="*,Auto">
+
+            <StackPanel Grid.Row="0" Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                <Border Classes="IndustryRow"><Image Source="{Binding Bitmap}" Stretch="Uniform" MaxHeight="320" /></Border>
+
+                <TextBlock Classes="IndustryRowValue" Text="{Binding OutcomeText}" HorizontalAlignment="Center" />
+
+                <TextBlock Classes="IndustryRowValue" Text="{Binding ModeMismatchWarning}"
+                           IsVisible="{Binding ModeMismatchWarning, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                           Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate LoopbackSelfTest.CloseButton}" Command="{Binding CloseCommand}" IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

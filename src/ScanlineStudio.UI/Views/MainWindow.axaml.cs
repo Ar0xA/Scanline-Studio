@@ -437,6 +437,36 @@ public partial class MainWindow : Window
                     }
                 };
 
+                // Stub survey Tier 3 "Loopback self-test" (2026-08-26). Same shape as
+                // FavouritesEditorRequested/ToneGeneratorRequested above -- pane-level event, not
+                // forwarded through MainViewModel, since the result window needs a fresh, single-use
+                // view-model (the result of ONE self-test run), not TxControls itself as its
+                // DataContext.
+                vm.TxControls.LoopbackSelfTestCompleted += result =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingLoopbackSelfTestResultWindow(logger);
+                    }
+
+                    try
+                    {
+                        var window = new LoopbackSelfTestResultWindowView { DataContext = result };
+                        window.ShowDialog(this);
+                        if (logger is not null)
+                        {
+                            Log.LoopbackSelfTestResultShowDialogReturned(logger);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.LoopbackSelfTestResultWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 vm.ExitRequested += () =>
                 {
                     if (logger is not null)
@@ -514,6 +544,15 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ToneGeneratorWindowView failed to open or show")]
         public static partial void ToneGeneratorWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing LoopbackSelfTestResultWindowView")]
+        public static partial void ConstructingLoopbackSelfTestResultWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "LoopbackSelfTestResultWindowView.ShowDialog returned")]
+        public static partial void LoopbackSelfTestResultShowDialogReturned(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "LoopbackSelfTestResultWindowView failed to open or show")]
+        public static partial void LoopbackSelfTestResultWindowFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Log QSO requested from the RX pane; switching to the Logbook tab")]
         public static partial void LogQsoRequested(ILogger logger);

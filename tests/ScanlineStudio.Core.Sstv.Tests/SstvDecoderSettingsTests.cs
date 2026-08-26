@@ -96,10 +96,11 @@ public sealed class SstvDecoderSettingsTests
         Assert.False(Enum.IsDefined(roundTripped.DemodType!.Value));
         Assert.Equal((DemodType)99, roundTripped.DemodType!.Value);
 
-        // Program.cs's exact clamp expression (decoderSettings.DemodType is { } dt &&
-        // Enum.IsDefined(dt) ? dt : DemodType.Hilbert), applied to this real deserialized value.
-        var resolved = roundTripped.DemodType is { } dt && Enum.IsDefined(dt) ? dt : DemodType.Hilbert;
-        Assert.Equal(DemodType.Hilbert, resolved);
+        // Resolve() is the single source of truth for this clamp now (Loopback self-test plan-review
+        // finding: Program.cs and the self-test's own decoder construction previously each carried an
+        // independent copy of this exact ternary) -- calling the real method, not reproducing its
+        // logic inline.
+        Assert.Equal(DemodType.Hilbert, roundTripped.Resolve().DemodType);
     }
 
     [Fact]
@@ -149,10 +150,9 @@ public sealed class SstvDecoderSettingsTests
         Assert.False(Enum.IsDefined(roundTripped.RxBpfPreset!.Value));
         Assert.Equal((RxBpfPreset)99, roundTripped.RxBpfPreset!.Value);
 
-        // Program.cs's exact clamp expression (decoderSettings.RxBpfPreset is { } bpf &&
-        // Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide), applied to this real deserialized value.
-        var resolved = roundTripped.RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : RxBpfPreset.Wide;
-        Assert.Equal(RxBpfPreset.Wide, resolved);
+        // Resolve() is the single source of truth for this clamp now -- see DemodType's own sibling
+        // test above for why this calls the real method instead of reproducing its logic inline.
+        Assert.Equal(RxBpfPreset.Wide, roundTripped.Resolve().RxBpfPreset);
     }
 
     [Fact]
@@ -203,9 +203,60 @@ public sealed class SstvDecoderSettingsTests
         Assert.False(Enum.IsDefined(roundTripped.RxBufferMode!.Value));
         Assert.Equal((RxBufferMode)99, roundTripped.RxBufferMode!.Value);
 
-        // Program.cs's exact clamp expression (decoderSettings.RxBufferMode is { } rxb &&
-        // Enum.IsDefined(rxb) ? rxb : RxBufferMode.On), applied to this real deserialized value.
-        var resolved = roundTripped.RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : RxBufferMode.On;
-        Assert.Equal(RxBufferMode.On, resolved);
+        // Resolve() is the single source of truth for this clamp now -- see DemodType's own sibling
+        // test above for why this calls the real method instead of reproducing its logic inline.
+        Assert.Equal(RxBufferMode.On, roundTripped.Resolve().RxBufferMode);
+    }
+
+    [Fact]
+    public void Resolve_DefaultInstance_MatchesEveryDocumentedDesiredDefault()
+    {
+        // Single source of truth for the whole absent-vs-out-of-range resolution (see this method's
+        // own doc comment) -- covers every field, not just the four with a pre-existing
+        // "DefaultInstance_XFallsBackToY" sibling test above (AfcEnabled/DemodType/RxBpfPreset/
+        // RxBufferMode). SenseLevel's own desired absent-default (1) is distinct from its
+        // present-but-out-of-range fallback (0) -- see SstvDecoderSettings' own class doc comment --
+        // this test covers only the absent case; AnalogFmSstvDecoder's own constructor covers the
+        // out-of-range one (SenseLevelForTests-backed tests).
+        var resolved = new SstvDecoderSettings().Resolve();
+
+        Assert.True(resolved.AfcEnabled);
+        Assert.True(resolved.SyncRestartEnabled);
+        Assert.True(resolved.AutoSyncEnabled);
+        Assert.False(resolved.AutoStopEnabled);
+        Assert.True(resolved.AutoSlantEnabled);
+        Assert.Equal(1, resolved.SenseLevel);
+        Assert.Equal(DemodType.Hilbert, resolved.DemodType);
+        Assert.Equal(RxBpfPreset.Wide, resolved.RxBpfPreset);
+        Assert.Equal(RxBufferMode.On, resolved.RxBufferMode);
+    }
+
+    [Fact]
+    public void Resolve_ExplicitValues_PassThroughUnchanged()
+    {
+        var settings = new SstvDecoderSettings
+        {
+            AfcEnabled = false,
+            SyncRestartEnabled = false,
+            AutoSyncEnabled = false,
+            AutoStopEnabled = true,
+            AutoSlantEnabled = false,
+            SenseLevel = 3,
+            DemodType = DemodType.Pll,
+            RxBpfPreset = RxBpfPreset.Narrow,
+            RxBufferMode = RxBufferMode.Extended,
+        };
+
+        var resolved = settings.Resolve();
+
+        Assert.False(resolved.AfcEnabled);
+        Assert.False(resolved.SyncRestartEnabled);
+        Assert.False(resolved.AutoSyncEnabled);
+        Assert.True(resolved.AutoStopEnabled);
+        Assert.False(resolved.AutoSlantEnabled);
+        Assert.Equal(3, resolved.SenseLevel);
+        Assert.Equal(DemodType.Pll, resolved.DemodType);
+        Assert.Equal(RxBpfPreset.Narrow, resolved.RxBpfPreset);
+        Assert.Equal(RxBufferMode.Extended, resolved.RxBufferMode);
     }
 }
