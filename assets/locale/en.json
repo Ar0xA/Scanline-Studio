@@ -306,7 +306,7 @@
   "Panes.TxControls.FavoritesLabel": "FAVORITES",
   "Panes.TxControls.EditFavorites": "Edit favorites...",
   "Panes.TxControls.AutoFollowRxMode": "Auto-set TX mode from received signal",
-  "Panes.TxControls.AutoFollowRxMode.Help": "Auto: TX mode automatically matches the last mode received, so you reply in kind. Manual: TX mode stays at whatever you pick yourself.",
+  "Panes.TxControls.AutoFollowRxMode.Help": "Auto: TX mode automatically matches the last mode received, so you reply in kind -- except while transmitting, or when the received mode's picture width doesn't match the image already loaded for TX. Manual: TX mode stays at whatever you pick yourself.",
   "Panes.TxControls.Error.LoadFailed": "Could not load that image file.",
   "Panes.TxControls.Error.TransmitFailed": "Transmission failed. Check your radio and audio device settings.",
   "Panes.TxControls.Error.SwrCutoff": "Transmission stopped automatically: SWR too high.",
