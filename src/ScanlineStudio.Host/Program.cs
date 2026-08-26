@@ -311,6 +311,10 @@ internal static partial class Program
         // menu opens this, and a fresh instance re-reads the persisted directory each open.
         services.AddTransient<StorageSettingsWindowViewModel>();
 
+        // Macros reference/preview dialog (stub survey Tier 3) -- transient, same reasoning: a
+        // fresh instance re-reads OperatorSettings (Name/Grid/Callsign) each open.
+        services.AddTransient<MacrosReferenceWindowViewModel>();
+
         // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
         // Always boots into English; restoring a persisted non-English culture happens later in Main
         // (Tier C audit finding -- this comment used to say "a separate, later step, once

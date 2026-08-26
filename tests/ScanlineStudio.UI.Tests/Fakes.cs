@@ -30,10 +30,28 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
     /// review).</summary>
     public Exception? LoadAsyncException { get; set; }
 
+    /// <summary>When set, <see cref="LoadAsync"/> parks on this until it completes -- lets a test
+    /// deterministically observe VM state BEFORE an async settings load resolves (a real,
+    /// controllable gate, not a race on task-scheduling order -- same convention as
+    /// ScanlineStudio.Application.Tests' own <c>FakeSettingsStore.Gate</c>).</summary>
+    public Task? Gate { get; set; }
+
     public IObservable<AppSettings> Changes => _changes;
 
-    public Task<AppSettings> LoadAsync(CancellationToken ct = default) =>
-        LoadAsyncException is { } ex ? Task.FromException<AppSettings>(ex) : Task.FromResult(Settings);
+    public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
+    {
+        if (Gate is not null)
+        {
+            await Gate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        if (LoadAsyncException is { } ex)
+        {
+            throw ex;
+        }
+
+        return Settings;
+    }
 
     public Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
