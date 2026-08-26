@@ -40,6 +40,7 @@ public sealed partial class OptionsSettingsService
         CaptureDeviceName: new AudioDeviceSettings().CaptureDeviceName,
         PlaybackDeviceName: new AudioDeviceSettings().PlaybackDeviceName,
         SampleRate: new AudioDeviceSettings().SampleRate,
+        TxSampleRateOffsetHz: new AudioDeviceSettings().TxSampleRateOffsetHz,
         RadioBackendId: new RadioConnectionSettings().BackendId,
         RigctldHost: new RadioConnectionSettings().Host,
         RigctldPort: new RadioConnectionSettings().Port,
@@ -126,6 +127,7 @@ public sealed partial class OptionsSettingsService
             CaptureDeviceName: audio.CaptureDeviceName,
             PlaybackDeviceName: audio.PlaybackDeviceName,
             SampleRate: SstvSampleRate.NormalizePersisted(audio.SampleRate),
+            TxSampleRateOffsetHz: audio.TxSampleRateOffsetHz,
             RadioBackendId: radio.BackendId,
             RigctldHost: radio.Host,
             RigctldPort: radio.Port,
@@ -201,6 +203,13 @@ public sealed partial class OptionsSettingsService
         var sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
             ? snapshot.SampleRate
             : SstvSampleRate.NormalizePersisted(previousAudio.SampleRate);
+        // Same "reject, preserve the prior valid value" shape as SampleRate above -- legacy's own
+        // TxSampOffChange (Option.cpp:1142-1146) accepts a typed value only within +/-1500Hz and
+        // otherwise silently keeps whatever m_TxSampOff already held, rather than clamping to the
+        // boundary.
+        var txSampleRateOffsetToPersist = snapshot.TxSampleRateOffsetHz is >= -1500.0 and <= 1500.0
+            ? snapshot.TxSampleRateOffsetHz
+            : previousAudio.TxSampleRateOffsetHz;
         var previousRadio = currentSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var previousDecoder = currentSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var previousStationId = currentSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
@@ -225,6 +234,7 @@ public sealed partial class OptionsSettingsService
                     // outside 5000..CLOCKMAX (Option.cpp:421-424); startup's invalid-value behavior
                     // is deliberately different and falls back to 11025.
                     SampleRate = sampleRateToPersist,
+                    TxSampleRateOffsetHz = txSampleRateOffsetToPersist,
                     CaptureChannelSource = snapshot.CaptureChannelSource,
                     StereoTxEnabled = snapshot.StereoTxEnabled,
                 },
