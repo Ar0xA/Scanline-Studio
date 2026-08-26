@@ -36,7 +36,14 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// strength relative to S9, arg int (dB)" -- <c>0</c> means exactly S9, negative means below S9,
 /// positive means above S9 (an "S9+N dB" reading). <see langword="null"/> means "not read this poll"
 /// (TX, capability absent, or the read itself failed) -- never a meaningful zero (zero IS a real,
-/// meaningful S9 reading here, unlike the TX-only meters' own null-vs-zero convention).</para></summary>
+/// meaningful S9 reading here, unlike the TX-only meters' own null-vs-zero convention).</para>
+///
+/// <para><see cref="BandwidthHz"/> -- the rig's current filter passband/bandwidth in Hz, trailing and
+/// optional like the meter fields above but NOT TX/RX gated (a passband is meaningful in either
+/// direction). <see langword="null"/> means "not read this poll" (capability absent, or the read
+/// itself failed) OR the backend reported Hamlib's <c>RIG_PASSBAND_NORMAL</c> sentinel (0, "use the
+/// rig's default for this mode") -- neither case is a real 0 Hz reading, so both map to
+/// <see langword="null"/> at the read site rather than a misleading zero.</para></summary>
 public readonly record struct RadioState(
     long FrequencyHz,
     RadioMode Mode,
@@ -45,4 +52,5 @@ public readonly record struct RadioState(
     DateTimeOffset ObservedAt,
     float? SwrRatio = null,
     float? AlcLevel = null,
-    float? PowerPercent = null);
+    float? PowerPercent = null,
+    int? BandwidthHz = null);

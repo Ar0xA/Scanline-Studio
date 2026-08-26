@@ -18,4 +18,6 @@ public enum RadioCapabilities
     SwrMeter      = 1 << 6,
     AlcMeter      = 1 << 7,
     PowerMeter    = 1 << 8,
+    ReadBandwidth = 1 << 9,
+    SetBandwidth  = 1 << 10,
 }

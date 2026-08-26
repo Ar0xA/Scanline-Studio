@@ -253,6 +253,8 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public Task SetPttAsync(bool tx, CancellationToken ct = default) => _controller.SetPttAsync(tx, ct);
 
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct = default) => _controller.SetBandwidthAsync(bandwidthHz, ct);
+
     public async Task<IReadOnlyList<FrequencyPreset>> GetFrequencyPresetsAsync(CancellationToken ct = default)
     {
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);

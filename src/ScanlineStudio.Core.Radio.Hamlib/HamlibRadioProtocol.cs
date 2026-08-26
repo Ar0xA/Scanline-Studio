@@ -177,12 +177,17 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
             }
 
             var mode = RadioMode.Unknown;
+            int? bandwidthHz = null;
             if (Capabilities.HasFlag(RadioCapabilities.ReadMode))
             {
-                mode = await CallAsync(() =>
+                (mode, bandwidthHz) = await CallAsync(() =>
                 {
-                    ThrowIfError(_native.RigGetMode(_rig, VfoCurrent, out var value, out _));
-                    return HamlibToMode.GetValueOrDefault(value, RadioMode.Unknown);
+                    ThrowIfError(_native.RigGetMode(_rig, VfoCurrent, out var value, out var width));
+                    var mappedMode = HamlibToMode.GetValueOrDefault(value, RadioMode.Unknown);
+                    // RIG_PASSBAND_NORMAL (0) means "rig's default for this mode", not a real 0 Hz
+                    // reading -- see RadioState.BandwidthHz's own doc comment.
+                    var widthHz = (int)width.Value;
+                    return (mappedMode, widthHz <= 0 ? (int?)null : widthHz);
                 }).ConfigureAwait(false);
             }
 
@@ -232,7 +237,7 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
                 signalStrengthDb = await TryReadIntMeterAsync(LevelStrength).ConfigureAwait(false);
             }
 
-            return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+            return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent, bandwidthHz);
         }
         finally
         {
@@ -285,6 +290,38 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
             await EnsureConnectedAsync().ConfigureAwait(false);
             await CallAsync(() => ThrowIfError(_native.RigSetPtt(_rig, VfoCurrent, tx ? PttOn : PttOff)))
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
+
+    /// <summary>Reads the rig's CURRENT mode back as its raw ulong bit-flag and passes it straight
+    /// through to RigSetMode, never round-tripped via HamlibToMode/ModeToHamlib (that dictionary only
+    /// maps 11 of Hamlib's ~30 RIG_MODE_* values -- a rig sitting in an unmapped mode like WFM/SAM
+    /// would read as RadioMode.Unknown and a round-trip through ModeToHamlib would either throw or
+    /// silently change the operating mode as a side effect of a bandwidth-only set). Code-review
+    /// correction: Hamlib's rig_set_mode DOES have a width-only path (mode == RIG_MODE_NONE resolves
+    /// to "use the current mode," per a local Hamlib clone's rig.c) -- not relied on here regardless,
+    /// since this port only targets Hamlib major 4 and that behavior is unverified against a released
+    /// 4.x header (spec/03-cat-layer.md's version gate); the explicit read-then-set below is
+    /// behaviorally equivalent either way. Both reads happen inside one
+    /// AcquireAsync/EnsureConnectedAsync/CallAsync critical section, matching PollAsync's own
+    /// established multi-call-under-one-lock shape -- a bandwidth set is strictly cheaper than a
+    /// normal poll, so this doesn't move the documented latency bound in this class's own doc
+    /// comment.</summary>
+    public async Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct)
+    {
+        await AcquireAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await EnsureConnectedAsync().ConfigureAwait(false);
+            await CallAsync(() =>
+            {
+                ThrowIfError(_native.RigGetMode(_rig, VfoCurrent, out var currentMode, out _));
+                ThrowIfError(_native.RigSetMode(_rig, VfoCurrent, currentMode, new CLong(bandwidthHz ?? PassbandNormal)));
+            }).ConfigureAwait(false);
         }
         finally
         {
@@ -398,7 +435,11 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
         if (TryProbe(() => _native.RigGetMode(_rig, VfoCurrent, out _, out _)))
         {
-            caps |= RadioCapabilities.ReadMode | RadioCapabilities.SetMode;
+            // Same rig_get_mode call reads back passband too -- ReadBandwidth/SetBandwidth ride along
+            // with ReadMode/SetMode rather than a separate probe (see SetBandwidthAsync's own doc
+            // comment: mode and width are the same Hamlib call).
+            caps |= RadioCapabilities.ReadMode | RadioCapabilities.SetMode
+                    | RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth;
         }
 
         if (TryProbe(() => _native.RigGetPtt(_rig, VfoCurrent, out _)))

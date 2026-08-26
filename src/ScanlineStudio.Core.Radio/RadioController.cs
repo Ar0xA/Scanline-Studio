@@ -275,6 +275,9 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     public Task SetPttAsync(bool tx, CancellationToken ct) =>
         RequireProtocol().SetPttAsync(tx, ct);
 
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct) =>
+        RequireProtocol().SetBandwidthAsync(bandwidthHz, ct);
+
     private IRadioProtocol RequireProtocol()
     {
         return _protocol ?? throw new InvalidOperationException(

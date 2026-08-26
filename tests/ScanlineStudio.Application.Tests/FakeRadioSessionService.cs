@@ -51,6 +51,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct = default) => Task.CompletedTask;
 
+    public List<int?> SetBandwidthCalls { get; } = [];
+
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct = default)
+    {
+        SetBandwidthCalls.Add(bandwidthHz);
+        return Task.CompletedTask;
+    }
+
     /// <summary>Unlike the other members here, this one honors <paramref name="ct"/> (throwing if
     /// already cancelled) -- matching the real <c>RigctldClientProtocol</c>/<c>HamlibRadioProtocol</c>
     /// contract (both throw immediately from their own <c>_requestLock.WaitAsync(ct)</c> on an

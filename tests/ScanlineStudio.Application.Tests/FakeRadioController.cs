@@ -36,6 +36,14 @@ internal sealed class FakeRadioController : IRadioController, IDisposable
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct) => Task.CompletedTask;
 
+    public List<int?> SetBandwidthCalls { get; } = [];
+
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct)
+    {
+        SetBandwidthCalls.Add(bandwidthHz);
+        return Task.CompletedTask;
+    }
+
     public Task SetPttAsync(bool tx, CancellationToken ct)
     {
         PttCalls.Add(tx);

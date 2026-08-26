@@ -123,9 +123,10 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                 }
 
                 var mode = RadioMode.Unknown;
+                int? bandwidthHz = null;
                 if (Capabilities.HasFlag(RadioCapabilities.ReadMode))
                 {
-                    mode = await GetModeAsync(requestCt).ConfigureAwait(false);
+                    (mode, bandwidthHz) = await GetModeAsync(requestCt).ConfigureAwait(false);
                 }
 
                 var isTransmitting = false;
@@ -188,7 +189,7 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                         : null;
                 }
 
-                return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent);
+                return new RadioState(hz, mode, isTransmitting, signalStrengthDb, DateTimeOffset.UtcNow, swr, alc, powerPercent, bandwidthHz);
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -226,8 +227,11 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         {
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
             // Passband 0 = Hamlib's RIG_PASSBAND_NORMAL sentinel ("use the rig's default passband
-            // for this mode") -- verified against hamlib/include/hamlib/rig.h. RadioState has no
-            // passband field, so this is always what ScanlineStudio asks for.
+            // for this mode") -- verified against hamlib/include/hamlib/rig.h. A mode change always
+            // requests the rig's default passband for the new mode, same as before RadioState.BandwidthHz
+            // existed; preserving/reapplying the PREVIOUS mode's bandwidth across a mode switch is a
+            // separate, un-asked-for feature -- SetBandwidthAsync is the only way to request a
+            // specific passband.
             await WithRequestTimeoutAsync(requestCt => SendSetCommandAsync($"M {token} 0", requestCt), ct)
                 .ConfigureAwait(false);
         }
@@ -245,6 +249,49 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
             await EnsureConnectedAsync(ct).ConfigureAwait(false);
             await WithRequestTimeoutAsync(requestCt => SendSetCommandAsync($"T {(tx ? 1 : 0)}", requestCt), ct)
                 .ConfigureAwait(false);
+        }
+        finally
+        {
+            _requestLock.Release();
+        }
+    }
+
+    /// <summary>rigctld's `M` verb couples mode+passband in one command -- no width-only entry point
+    /// (verified against a local Hamlib clone's rigctl_parse.c: `M` is `rig_parse_mode(arg1)` +
+    /// `sscanf(arg2, ...)`, no separate width-only verb). Reads the rig's CURRENT mode back as its
+    /// raw wire token and echoes it VERBATIM in the `M` command, never round-tripped through
+    /// TokenToMode/ModeToToken (a rig sitting in an unmapped mode -- WFM/SAM/etc -- would read as
+    /// RadioMode.Unknown, and a round-trip through ModeToToken would either throw or silently change
+    /// the operating mode as a side effect of a bandwidth-only set). Both the `m` read and the `M`
+    /// write happen inside ONE <see cref="WithRequestTimeoutAsync{T}"/> call (not two), matching
+    /// PollAsync's own multi-round-trip-under-one-lock shape -- a bandwidth set is strictly cheaper
+    /// than a normal poll's up-to-7 round trips.</summary>
+    public async Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct)
+    {
+        await AcquireAsync(ct).ConfigureAwait(false);
+        try
+        {
+            await EnsureConnectedAsync(ct).ConfigureAwait(false);
+            await WithRequestTimeoutAsync(async requestCt =>
+            {
+                await WriteCommandAsync("m", requestCt).ConfigureAwait(false);
+                var modeLine = await ReadLineAsync(requestCt).ConfigureAwait(false);
+                ThrowIfErrorLine(modeLine);
+                // Code-review finding: rig_strrmode() (Hamlib's own src/misc.c) returns "" for
+                // RIG_MODE_NONE AND for any mode not in its own mode_str[] table -- rigctld's `get_mode`
+                // prints that empty line unconditionally, it is NOT an RPRT error line, so
+                // ThrowIfErrorLine above doesn't catch it. Sending "M  <width>" (an empty mode token)
+                // would desync rigctld's own arg parser (it blocks reading a second arg that never
+                // arrives), stalling this call for the full WithRequestTimeoutAsync window instead of
+                // failing fast.
+                if (string.IsNullOrWhiteSpace(modeLine))
+                {
+                    throw new RadioProtocolException("rigctld 'm' returned an empty mode token -- cannot set bandwidth without a mode to echo back.");
+                }
+
+                _ = await ReadLineAsync(requestCt).ConfigureAwait(false); // passband -- consumed to stay in sync, same as GetModeAsync
+                await SendSetCommandAsync($"M {modeLine} {bandwidthHz ?? 0}", requestCt).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -330,7 +377,11 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         if (!IsErrorLine(modeLine))
         {
             _ = await ReadLineAsync(ct).ConfigureAwait(false); // passband line -- consumed to stay in sync
-            caps |= RadioCapabilities.ReadMode | RadioCapabilities.SetMode;
+            // Same `m` response carries passband -- ReadBandwidth/SetBandwidth ride along with
+            // ReadMode/SetMode rather than a separate probe (rigctld's `M` verb couples mode+passband
+            // in one command, see SetBandwidthAsync's own doc comment).
+            caps |= RadioCapabilities.ReadMode | RadioCapabilities.SetMode
+                    | RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth;
         }
 
         await WriteCommandAsync("t", ct).ConfigureAwait(false);
@@ -438,13 +489,19 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         };
     }
 
-    private async Task<RadioMode> GetModeAsync(CancellationToken ct)
+    private async Task<(RadioMode Mode, int? BandwidthHz)> GetModeAsync(CancellationToken ct)
     {
         await WriteCommandAsync("m", ct).ConfigureAwait(false);
         var modeLine = await ReadLineAsync(ct).ConfigureAwait(false);
         ThrowIfErrorLine(modeLine);
-        _ = await ReadLineAsync(ct).ConfigureAwait(false); // passband -- not modeled in RadioState
-        return TokenToMode.GetValueOrDefault(modeLine, RadioMode.Unknown);
+        var passbandLine = await ReadLineAsync(ct).ConfigureAwait(false);
+        // Passband 0 (Hamlib's RIG_PASSBAND_NORMAL sentinel, "use the rig's default for this mode")
+        // or an unparseable line both map to null, not a real 0 Hz reading -- see
+        // RadioState.BandwidthHz's own doc comment.
+        var bandwidthHz = int.TryParse(passbandLine, NumberStyles.Integer, CultureInfo.InvariantCulture, out var width) && width > 0
+            ? width
+            : (int?)null;
+        return (TokenToMode.GetValueOrDefault(modeLine, RadioMode.Unknown), bandwidthHz);
     }
 
     private async Task<string> GetSingleLineOrThrowAsync(string command, CancellationToken ct)
