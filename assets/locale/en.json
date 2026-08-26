@@ -227,7 +227,6 @@
   "Panes.RxHistory.FreqPrefixValue": "—",
   "Panes.RxHistory.StorageHeader": "STORAGE",
   "Panes.RxHistory.FolderLabel": "Folder",
-  "Panes.RxHistory.Filter14Mhz": "14 MHz",
   "Panes.RxHistory.FilterUnlogged": "UNLOGGED",
   "Panes.RxHistory.FilterFlagged": "FLAGGED",
   "Panes.RxHistory.SearchWatermark": "mode, note…",
