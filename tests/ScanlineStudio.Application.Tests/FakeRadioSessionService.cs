@@ -203,13 +203,21 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
         return Task.CompletedTask;
     }
 
-    public RadioSafetySpec SafetySpec { get; set; } = new(false, 3.0);
+    public RadioSafetySpec SafetySpec { get; set; } = new(false, RadioSafetySpec.DefaultSwrCutoffThreshold);
 
     public Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default) => Task.FromResult(SafetySpec);
 
     public Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default)
     {
         SafetySpec = spec;
+        SafetySettingsChanged?.Invoke(spec);
         return Task.CompletedTask;
     }
+
+    public event Action<RadioSafetySpec>? SafetySettingsChanged;
+
+    /// <summary>Test-only helper mirroring <see cref="SaveSafetySettingsAsync"/>'s own event raise --
+    /// lets a test simulate a live Options-side edit WITHOUT going through the fake's own save path
+    /// (e.g. to prove a subscriber picks up the change without a settings-file round trip involved).</summary>
+    public void RaiseSafetySettingsChanged(RadioSafetySpec spec) => SafetySettingsChanged?.Invoke(spec);
 }

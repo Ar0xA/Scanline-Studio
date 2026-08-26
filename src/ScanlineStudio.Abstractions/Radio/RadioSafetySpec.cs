@@ -10,4 +10,13 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// A detection-latency note, not just a threshold picker: this is a convenience backstop riding the
 /// existing ~250ms poll cadence plus a PTT-off round trip -- it is not a substitute for the rig's own
 /// hardware SWR protection, and should never be presented to the user as an instant cutoff.</summary>
-public sealed record RadioSafetySpec(bool SwrCutoffEnabled, double SwrCutoffThreshold);
+public sealed record RadioSafetySpec(bool SwrCutoffEnabled, double SwrCutoffThreshold)
+{
+    /// <summary>Single source of truth for the SWR-cutoff default -- lives here (not on
+    /// <c>Core.Radio.RadioSafetySettings</c>, which owns persistence) because <c>ScanlineStudio.UI</c>
+    /// (specifically <c>OptionsWindowViewModel.ResetRadioToDefault</c>) needs it too and cannot
+    /// reference any <c>ScanlineStudio.Core.*</c> assembly (enforced by
+    /// <c>UiLayeringArchitectureTests</c>). User-set default (2026-08-26), not a legacy value --
+    /// this feature has no legacy precedent at all.</summary>
+    public const double DefaultSwrCutoffThreshold = 2.5;
+}

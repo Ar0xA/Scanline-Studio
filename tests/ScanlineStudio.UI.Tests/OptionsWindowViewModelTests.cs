@@ -83,6 +83,59 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(80, saved.TxVolumePercent);
     }
 
+    // SWR auto-cutoff relocation (2026-08-26, user request) -- the checkbox+threshold control moved
+    // here from TxControlsPaneView's own Output card. RadioSafety is deliberately its own settings
+    // section, NOT part of OptionsSnapshot (see OptionsWindowViewModel.SaveAsync's own comment) --
+    // loaded/saved through IRadioSessionService.GetSafetySettingsAsync/SaveSafetySettingsAsync instead.
+
+    [AvaloniaFact]
+    public void Constructor_LoadsPersistedSwrCutoffSettings()
+    {
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 4.0) };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SwrCutoffEnabled);
+        Assert.Equal(4.0, vm.SwrCutoffThreshold);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveAsync_CallsSaveSafetySettingsAsyncWithTheEditedValues_ForwardedToTxControlsEnforcement()
+    {
+        // Also proves SafetySettingsChanged fires -- the exact signal TxControlsPaneViewModel's live
+        // enforcement subscribes to (see IRadioSessionService.SafetySettingsChanged's own doc comment).
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(false, 2.5) };
+        RadioSafetySpec? raised = null;
+        radioSession.SafetySettingsChanged += spec => raised = spec;
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SwrCutoffEnabled = true;
+        vm.SwrCutoffThreshold = 4.2;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(radioSession.SafetySpec.SwrCutoffEnabled);
+        Assert.Equal(4.2, radioSession.SafetySpec.SwrCutoffThreshold);
+        Assert.NotNull(raised);
+        Assert.True(raised!.SwrCutoffEnabled);
+        Assert.Equal(4.2, raised.SwrCutoffThreshold);
+    }
+
+    [AvaloniaFact]
+    public void ResetRadioToDefault_ResetsSwrCutoffToItsOwnDefault()
+    {
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 4.0) };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.SwrCutoffEnabled);
+
+        vm.ResetRadioToDefaultCommand.Execute(null);
+
+        Assert.False(vm.SwrCutoffEnabled);
+        Assert.Equal(RadioSafetySpec.DefaultSwrCutoffThreshold, vm.SwrCutoffThreshold);
+    }
+
     // User-reported fix (2026-08-23): a real, OS-agnostic device-id-churn scenario -- observed live
     // when a PipeWire USB capture node was re-created under a new id after a mute toggle, same
     // physical device, same friendly name. AudioDeviceSettings.CaptureDeviceName/PlaybackDeviceName

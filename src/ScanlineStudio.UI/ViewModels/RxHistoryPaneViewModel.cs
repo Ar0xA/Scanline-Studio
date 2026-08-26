@@ -132,9 +132,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <summary>Gallery Selected-frame panel's Flag toggle -- same reasoning as
     /// <see cref="SelectedEntryNote"/>, backing the real <see cref="IReceiveHistoryStore.SetFlaggedAsync"/>.
     /// Persisted immediately on toggle (a discrete click, not a continuous drag like the Note
-    /// `TextBox` -- no debounce needed, same distinction <c>TxControlsPaneViewModel.SwrCutoffEnabled</c>
-    /// draws between its own immediate-persist toggle and <c>RadioStatusViewModel.TxVolumePercent</c>'s
-    /// debounced slider).</summary>
+    /// `TextBox` -- no debounce needed, same distinction <c>RadioStatusViewModel.TxVolumePercent</c>'s
+    /// own debounced slider draws against a discrete-click control).</summary>
     [ObservableProperty]
     private bool _selectedEntryIsFlagged;
 

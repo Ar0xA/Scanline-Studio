@@ -289,7 +289,10 @@ public sealed partial class RadioSessionService : IRadioSessionService
             new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
             RadioSafetySettingsJsonContext.Default.RadioSafetySettings);
         await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        SafetySettingsChanged?.Invoke(spec);
     }
+
+    public event Action<RadioSafetySpec>? SafetySettingsChanged;
 
     private static partial class Log
     {

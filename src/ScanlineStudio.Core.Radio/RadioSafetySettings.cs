@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Radio;
+
 namespace ScanlineStudio.Core.Radio;
 
 /// <summary>Gates the SWR auto-cutoff safety monitor (see spec/04-rigctld.md's telemetry section) —
@@ -10,6 +12,8 @@ public sealed record RadioSafetySettings
 
     public bool SwrCutoffEnabled { get; init; }
 
-    /// <summary>SWR ratio (e.g. 3.0 = 3:1) above which an in-progress transmit is cancelled.</summary>
-    public double SwrCutoffThreshold { get; init; } = 3.0;
+    /// <summary>SWR ratio (e.g. 2.5 = 2.5:1) above which an in-progress transmit is cancelled --
+    /// defaults to <see cref="RadioSafetySpec.DefaultSwrCutoffThreshold"/>, that constant's own doc
+    /// comment is the single source of truth for the actual default value.</summary>
+    public double SwrCutoffThreshold { get; init; } = RadioSafetySpec.DefaultSwrCutoffThreshold;
 }

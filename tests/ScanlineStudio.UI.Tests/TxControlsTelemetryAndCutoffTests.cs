@@ -202,35 +202,73 @@ public sealed class TxControlsTelemetryAndCutoffTests
     }
 
     [AvaloniaFact]
-    public void Constructor_LoadsPersistedSwrCutoffSettings()
+    public async Task Constructor_LoadsPersistedSwrCutoffSettings_UsesThePersistedThreshold_NotAFallbackDefault()
     {
-        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 2.5) };
-        var vm = CreateViewModel(radioSession, new FakeSstvSessionService());
+        // Behavioral, not a property read (2026-08-26 relocation to Options -> Radio/CAT removed the
+        // public SwrCutoffEnabled/Threshold properties this test used to assert directly -- enforcement
+        // is now internal, only observable through whether a cutoff actually fires). Persisted threshold
+        // (4.0) is deliberately ABOVE the field's own fallback default (RadioSafetySpec.
+        // DefaultSwrCutoffThreshold = 2.5, used only before the constructor's load completes) -- an
+        // implementation that silently fell back to the default instead of genuinely loading the
+        // persisted value would incorrectly trip on the first (3.0) pair below, which this test proves
+        // does NOT happen, not just that a later, clearly-over-any-plausible-threshold sample trips.
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(true, 4.0) };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(radioSession, sstvSession);
+        await AwaitConstructorLoadsAsync();
+
+        await StartBlockingTransmitAsync(vm);
+
+        // Below the PERSISTED threshold (4.0) but above the fallback default (2.5) -- must NOT trip.
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 3.0f));
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 3.0f));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsTransmitting);
+
+        // Above the persisted threshold -- must trip.
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 4.5f));
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, SwrRatio: 4.5f));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.True(vm.SwrCutoffEnabled);
-        Assert.Equal(2.5, vm.SwrCutoffThreshold);
+        await WaitUntilNotTransmittingAsync(vm);
+        Assert.False(vm.IsTransmitting);
+        Assert.NotNull(vm.ErrorMessage);
     }
 
     [AvaloniaFact]
-    public async Task TogglingSwrCutoffEnabled_PersistsAfterDebounceDelay()
+    public async Task SafetySettingsChanged_FiredDuringActiveTransmit_UpdatesEnforcementWithoutReconstructingTheVm()
     {
-        // Tier B audit finding: persisting the SWR safety settings is now debounced (matching
-        // RadioStatusViewModel.PersistVolumeDebouncedAsync's own established fix) -- overlapping
-        // un-awaited SaveAsync calls (rapid edits to SwrCutoffThreshold's TextBox in particular)
-        // could otherwise let a stale write clobber a fresher one.
-        var radioSession = new FakeRadioSessionService();
-        var vm = CreateViewModel(radioSession, new FakeSstvSessionService());
+        // The exact "someone edits Options while a transmit is already in flight" scenario the
+        // relocation plan-review flagged -- proves the live-propagation path works, not just that the
+        // constructor-time load does.
+        var radioSession = new FakeRadioSessionService { SafetySpec = new RadioSafetySpec(false, 3.0) };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(radioSession, sstvSession);
+        await AwaitConstructorLoadsAsync();
+
+        await StartBlockingTransmitAsync(vm);
+
+        // Cutoff starts disabled -- high SWR must not trip it yet.
+        radioSession.Push(HighSwrState());
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(HighSwrState());
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsTransmitting);
+
+        // Simulates an Options Save landing WHILE this transmit is still in flight.
+        radioSession.RaiseSafetySettingsChanged(new RadioSafetySpec(true, 3.0));
         Dispatcher.UIThread.RunJobs();
 
-        vm.SwrCutoffEnabled = true;
+        radioSession.Push(HighSwrState());
         Dispatcher.UIThread.RunJobs();
-        Assert.False(radioSession.SafetySpec.SwrCutoffEnabled); // not persisted yet -- still debouncing
-
-        await Task.Delay(600);
+        radioSession.Push(HighSwrState());
         Dispatcher.UIThread.RunJobs();
 
-        Assert.True(radioSession.SafetySpec.SwrCutoffEnabled);
+        await WaitUntilNotTransmittingAsync(vm);
+        Assert.False(vm.IsTransmitting);
+        Assert.NotNull(vm.ErrorMessage);
     }
 
     private static RadioState HighSwrState() =>
