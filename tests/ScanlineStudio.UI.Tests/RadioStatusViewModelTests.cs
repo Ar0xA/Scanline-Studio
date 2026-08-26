@@ -879,6 +879,125 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void CanReadCanSetBandwidth_SeededFromCapabilitiesAtConstruction()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Capabilities = RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth,
+        };
+
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanReadBandwidth);
+        Assert.True(vm.CanSetBandwidth);
+        Assert.True(vm.SetBandwidthCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void CanReadCanSetBandwidth_RefreshedOnStateChanged_NotOnlyAtConstruction()
+    {
+        // Capabilities can go from None (before the first successful poll) to real flags mid-session
+        // -- proves OnStateChanged re-reads IRadioSessionService.Capabilities live, not just the
+        // constructor-time snapshot.
+        var radioSession = new FakeRadioSessionService { Capabilities = RadioCapabilities.None };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CanReadBandwidth);
+        Assert.False(vm.CanSetBandwidth);
+
+        radioSession.Capabilities = RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth;
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanReadBandwidth);
+        Assert.True(vm.CanSetBandwidth);
+    }
+
+    [AvaloniaFact]
+    public void BandwidthDisplay_PopulatedFromPolledState_PlaceholderWhenNull()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(
+            14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
+            BandwidthHz: 2400));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("BW 2400 Hz", vm.BandwidthDisplay);
+
+        radioSession.Push(new RadioState(
+            14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
+            BandwidthHz: null));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("BW —", vm.BandwidthDisplay);
+    }
+
+    [AvaloniaFact]
+    public void BandwidthCapabilitiesAndDisplay_ClearWhenCatLinkDropsMidSession()
+    {
+        // Same staleness gap this class already had to fix for RigMetersDisplay/IsKeyed -- without
+        // this, a lost link would leave the BW pill showing its last live reading and an Apply
+        // button a user could still click into a dead connection.
+        var radioSession = new FakeRadioSessionService
+        {
+            Capabilities = RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth,
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Connected, null, null, DateTimeOffset.UtcNow));
+        radioSession.Push(new RadioState(
+            14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
+            BandwidthHz: 2400));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanReadBandwidth);
+        Assert.True(vm.CanSetBandwidth);
+        Assert.Equal("BW 2400 Hz", vm.BandwidthDisplay);
+
+        radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.CanReadBandwidth);
+        Assert.False(vm.CanSetBandwidth);
+        Assert.Equal("BW —", vm.BandwidthDisplay);
+        Assert.False(vm.SetBandwidthCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void SetBandwidthCommand_RoundsInputAndCallsRadioSession()
+    {
+        var radioSession = new FakeRadioSessionService { Capabilities = RadioCapabilities.SetBandwidth };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.BandwidthInputHz = 2400.6;
+        vm.SetBandwidthCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([2401], radioSession.SetBandwidthCalls);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void SetBandwidthCommand_BackendThrows_SetsErrorMessage()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Capabilities = RadioCapabilities.SetBandwidth,
+            ThrowOnSetBandwidth = true,
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SetBandwidthCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
     public void IsKeyed_RevertsToFalse_WhenConnectionEntersReconnecting()
     {
         // Code-review finding: the sibling test above (explicit Disconnected) is the wrong

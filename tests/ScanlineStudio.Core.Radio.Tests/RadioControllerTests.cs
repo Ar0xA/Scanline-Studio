@@ -663,6 +663,8 @@ public class RadioControllerTests
 
         public Task SetModeAsync(RadioMode mode, CancellationToken ct) => Task.CompletedTask;
 
+        public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct) => Task.CompletedTask;
+
         public Task SetPttAsync(bool tx, CancellationToken ct) => Task.CompletedTask;
 
         public ValueTask DisposeAsync()

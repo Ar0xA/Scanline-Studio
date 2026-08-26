@@ -45,9 +45,13 @@ public class RigctldClientProtocolTests
         Assert.Null(state.SwrRatio);
         Assert.Null(state.AlcLevel);
         Assert.Null(state.PowerPercent);
+        // "0" passband = Hamlib's RIG_PASSBAND_NORMAL sentinel -- maps to null, not a real 0 Hz
+        // reading, per RadioState.BandwidthHz's own doc comment.
+        Assert.Null(state.BandwidthHz);
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
-            RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl,
+            RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
+            RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth,
             sut.Capabilities);
         Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\n", transport.WrittenText);
     }
@@ -178,11 +182,12 @@ public class RigctldClientProtocolTests
         // poll -- IsTransmitting is true, and SignalStrengthDb is RX-only (opposite gating from the
         // three TX-only meters just asserted above).
         Assert.Null(state.SignalStrengthDb);
+        Assert.Null(state.BandwidthHz); // "0" passband both polls = RIG_PASSBAND_NORMAL sentinel
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
             RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
             RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter |
-            RadioCapabilities.SignalMeter,
+            RadioCapabilities.SignalMeter | RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth,
             sut.Capabilities);
         Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nf\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\n", transport.WrittenText);
     }
@@ -353,8 +358,9 @@ public class RigctldClientProtocolTests
 
         await sut.SetModeAsync(RadioMode.Lsb, CancellationToken.None);
 
-        // Passband 0 = Hamlib's RIG_PASSBAND_NORMAL sentinel (verified against rig.h) -- ScanlineStudio's
-        // domain model has no passband field, so this is always what's requested.
+        // Passband 0 = Hamlib's RIG_PASSBAND_NORMAL sentinel (verified against rig.h) -- a mode
+        // change always requests the rig's default passband for the new mode; SetBandwidthAsync is
+        // the only way to request a specific one (see that method's own doc comment).
         Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nM LSB 0\n", transport.WrittenText);
     }
 
@@ -368,6 +374,77 @@ public class RigctldClientProtocolTests
         // no wire command that means "set the mode to unknown."
         Assert.ThrowsAsync<ArgumentOutOfRangeException>(
             () => sut.SetModeAsync(RadioMode.Unknown, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_EchoesRawModeTokenVerbatim_SendsMCommandWithRequestedWidth()
+    {
+        // "SAM" (synchronous AM) is deliberately NOT one of TokenToMode's mapped tokens -- proves the
+        // mode round-trips through the raw wire token, never through TokenToMode/ModeToToken (see
+        // SetBandwidthAsync's own doc comment: a round-trip through that dictionary would throw or
+        // silently change the operating mode as a side effect of a bandwidth-only set).
+        var script = Script(
+            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe], // probe
+            ["SAM", "0", "RPRT 0"]); // SetBandwidthAsync: m (mode, passband), then the M reply
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        await sut.SetBandwidthAsync(2100, CancellationToken.None);
+
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nm\nM SAM 2100\n", transport.WrittenText);
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_NullRequest_SendsPassbandNormalSentinel()
+    {
+        var script = Script(
+            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe],
+            ["USB", "0", "RPRT 0"]);
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        await sut.SetBandwidthAsync(null, CancellationToken.None);
+
+        Assert.EndsWith("M USB 0\n", transport.WrittenText);
+    }
+
+    [Fact]
+    public async Task PollAsync_NonZeroPassband_PopulatesBandwidthHz()
+    {
+        // Code-review finding: every other rigctld poll/SetBandwidth test in this fixture scripts a
+        // "0" passband, so reverting GetModeAsync back to discard-and-return-null would have left the
+        // whole suite green -- this is the one test that actually exercises a real, non-sentinel
+        // reading.
+        var script = Script(
+            ["14074000", "USB", "2400", "0", .. MetersUnsupportedProbe],
+            ["14074000", "USB", "2400", "0"]);
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Equal(2400, state.BandwidthHz);
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_ThrowsRadioProtocolException_WhenModeTokenIsEmpty()
+    {
+        // Code-review finding: rig_strrmode() (Hamlib's own src/misc.c) returns "" for RIG_MODE_NONE
+        // and for any unrecognized mode, and rigctld's `get_mode` prints that empty line
+        // unconditionally -- it is NOT an RPRT error line. Sending "M  <width>" (an empty mode token)
+        // would desync rigctld's own arg parser instead of failing fast, so this must be caught before
+        // the M command is ever sent.
+        var script = Script(
+            ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe],
+            [""]); // SetBandwidthAsync's own "m" query returns an empty mode line
+        var transport = new FakeRadioTransport(script);
+        var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        await Assert.ThrowsAsync<RadioProtocolException>(
+            () => sut.SetBandwidthAsync(2100, CancellationToken.None));
+        // The M command must never be sent -- confirms the guard fires before the write, not after a
+        // failed/hung one. WrittenText ends right after the "m" query itself.
+        Assert.Equal("f\nm\nt\nl SWR\nl ALC\nl RFPOWER_METER\nl STRENGTH\nm\n", transport.WrittenText);
     }
 
     [Fact]

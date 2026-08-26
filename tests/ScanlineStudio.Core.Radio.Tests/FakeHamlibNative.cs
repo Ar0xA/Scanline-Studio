@@ -41,6 +41,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
     public int RigSetModeCode { get; set; }
     public int RigGetModeCode { get; set; }
     public ulong Mode { get; set; } = 1UL << 2; // RIG_MODE_USB
+    public CLong Width { get; set; }
     public int RigSetPttCode { get; set; }
     public int RigGetPttCode { get; set; }
     public int Ptt { get; set; }
@@ -113,6 +114,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
     {
         CallLog.Add("rig_set_mode");
         Mode = mode;
+        Width = width;
         return RigSetModeCode;
     });
 
@@ -124,7 +126,7 @@ internal sealed class FakeHamlibNative : IHamlibNative
             return RigGetModeCode;
         });
         mode = Mode;
-        width = default;
+        width = Width;
         return code;
     }
 

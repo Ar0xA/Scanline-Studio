@@ -37,6 +37,19 @@ public sealed partial class FlrigClientProtocolTests
         };
 
     [Fact]
+    public async Task SetBandwidthAsync_ThrowsWithoutMakingAnyRequest()
+    {
+        var handler = new FakeHttpMessageHandler();
+        var sut = CreateProtocol(handler);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => sut.SetBandwidthAsync(2400, CancellationToken.None));
+        Assert.Empty(handler.AllRequestBodies);
+        Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.SetBandwidth));
+        Assert.False(sut.Capabilities.HasFlag(RadioCapabilities.ReadBandwidth));
+    }
+
+    [Fact]
     public async Task PollAsync_HappyPath_ReturnsParsedRadioState()
     {
         var handler = new FakeHttpMessageHandler

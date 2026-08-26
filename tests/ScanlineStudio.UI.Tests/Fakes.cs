@@ -622,6 +622,25 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public Task SetPttAsync(bool tx, CancellationToken ct = default) => Task.CompletedTask;
 
+    public List<int?> SetBandwidthCalls { get; } = [];
+
+    /// <summary>Simulates a backend (e.g. flrig) that throws when SetBandwidth isn't actually
+    /// supported -- mirrors <see cref="ThrowOnSetFrequencyOrMode"/>'s shape but kept separate since a
+    /// real caller is expected to check <see cref="Capabilities"/> before calling this one, unlike
+    /// frequency/mode.</summary>
+    public bool ThrowOnSetBandwidth { get; set; }
+
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct = default)
+    {
+        if (ThrowOnSetBandwidth)
+        {
+            throw new InvalidOperationException("This backend does not support setting bandwidth.");
+        }
+
+        SetBandwidthCalls.Add(bandwidthHz);
+        return Task.CompletedTask;
+    }
+
     public IReadOnlyList<FrequencyPreset> Presets { get; set; } = [];
 
     public Task<IReadOnlyList<FrequencyPreset>> GetFrequencyPresetsAsync(CancellationToken ct = default) => Task.FromResult(Presets);

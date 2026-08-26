@@ -34,11 +34,12 @@
 
             <!-- VFO card: one of this design's 3 real blueprint-corner sites (design doc §2).
                  Frequency readout, CAT-link status, sideband segment (Tier 4, 2026-08-26 — see
-                 IsSidebandUsb/Lsb/Fm's own doc comment), and the rig-meters pill (2026-08-18) are
-                 real; BW·SPLIT·RIT pills are still literal — need real new CAT-layer plumbing this
-                 port doesn't have yet (Hamlib's own frozen P/Invoke table has no split/RIT binding
-                 at all) — see spec/14-roadmap.md backlog, still open. Step removed outright
-                 2026-08-26 (see the pill's own comment below). Preserved
+                 IsSidebandUsb/Lsb/Fm's own doc comment), the rig-meters pill (2026-08-18), and now
+                 Bandwidth (Tier 4, 2026-08-26 — capability-gated, see CanReadBandwidth/
+                 CanSetBandwidth's own doc comment) are real; SPLIT·RIT pills are still literal —
+                 need real new CAT-layer plumbing this port doesn't have yet (Hamlib's own frozen
+                 P/Invoke table has no split/RIT binding at all) — see spec/14-roadmap.md backlog,
+                 still open. Step removed outright 2026-08-26 (see the pill's own comment below). Preserved
                  product decision (design doc §2): no vertical divider between columns B/C, per prior
                  direct user feedback — LAYOUT-SPEC's own Column C has a 1px left border; deliberately
                  not resurrected here. -->
@@ -91,18 +92,37 @@
                                    HorizontalAlignment="Right" VerticalAlignment="Center"
                                    Text="{Binding UtcClockDisplay}" />
 
-                        <!-- STUB (spec/16-gui-wiring-survey.md:344, reclassified FAKE-LIVE in that
-                             doc's own summary counts): no bandwidth/split concept exists on
-                             IRadioSessionService today. Disabled + tooltipped, matching this app's
-                             established stub convention (Options.NotImplemented.Help), instead of
-                             reading as live rig state. -->
-                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="3"
-                                    IsEnabled="False" Opacity="0.45"
+                        <!-- BW un-stubbed 2026-08-26 (Tier 4 stub-removal item) — real,
+                             capability-gated per RadioStatusViewModel.CanReadBandwidth/
+                             CanSetBandwidth's own doc comment: Hamlib and rigctld both genuinely
+                             carry a passband value on their existing mode calls, flrig deliberately
+                             doesn't (unreliable Hz readback, see FlrigClientProtocol.
+                             SetBandwidthAsync). Falls back to the old disabled/tooltipped stub pill
+                             (spec/16-gui-wiring-survey.md:344) when neither capability is present.
+                             Split stays a SEPARATE, still-stubbed pill, unchanged — it raises a
+                             real, unresolved design question (how a second TX frequency fits this
+                             port's single-FrequencyHz model), out of scope for this item; see
+                             spec/14-roadmap.md's backlog. -->
+                        <StackPanel Grid.Row="1" Grid.Column="0" Orientation="Horizontal" Spacing="3">
+                            <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding CanReadBandwidth}">
+                                <TextBlock Text="{Binding BandwidthDisplay}" />
+                            </Border>
+                            <NumericUpDown Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
+                                           Width="86" Height="22" FontSize="11"
+                                           Minimum="0" Maximum="20000" Increment="10" FormatString="0"
+                                           Value="{Binding BandwidthInputHz}" IsVisible="{Binding CanSetBandwidth}"
+                                           ToolTip.Tip="{loc:Translate RadioStatus.BandwidthInput.Help}" />
+                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
+                                    Content="{loc:Translate RadioStatus.SetBandwidth}" Command="{Binding SetBandwidthCommand}"
+                                    IsVisible="{Binding CanSetBandwidth}" />
+                            <Border Classes="Industry IndustryMini" BorderThickness="1"
+                                    IsVisible="{Binding !CanReadBandwidth}" Opacity="0.45"
                                     ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                            <Border Classes="Industry IndustryMini" BorderThickness="1">
                                 <TextBlock Text="{loc:Translate RadioStatus.BwValue}" />
                             </Border>
-                            <Border Classes="Industry IndustryMini" BorderThickness="1">
+                            <Border Classes="Industry IndustryMini" BorderThickness="1"
+                                    IsEnabled="False" Opacity="0.45"
+                                    ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
                                 <TextBlock Text="{loc:Translate RadioStatus.SplitValue}" />
                             </Border>
                         </StackPanel>

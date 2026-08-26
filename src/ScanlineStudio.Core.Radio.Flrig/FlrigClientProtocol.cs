@@ -269,6 +269,25 @@ public sealed partial class FlrigClientProtocol : IRadioProtocol
         }
     }
 
+    /// <summary>Deliberately unsupported, not implemented against flrig's real
+    /// <c>rig.set_bandwidth</c>/<c>rig.get_bw</c> RPCs. <c>rig.set_bandwidth</c> itself does take Hz
+    /// (server-side, per flrig's <c>xml_server.cxx</c>: label-table rigs snap to the nearest
+    /// available value, int-bandwidth rigs clamp/round it), so the SET half is not the blocker. The
+    /// READ half is: <c>rig.get_bw</c> returns strings straight from the rig's own bandwidth table --
+    /// sometimes a numeric label, sometimes a non-numeric one ("WIDE"/"NORMAL"/"NARROW" on several
+    /// Icom rigs), sometimes a dual lo/hi DSP pair -- with no general, reliable mapping into
+    /// <see cref="RadioState.BandwidthHz"/> without per-rig table data this port doesn't have. A
+    /// set-only capability with no trustworthy readback would let the UI show a value it can never
+    /// confirm was actually applied, which is worse than not offering it -- see
+    /// spec/14-roadmap.md's backlog entry for the deferred full implementation. Never adds
+    /// <see cref="RadioCapabilities.ReadBandwidth"/>/<see cref="RadioCapabilities.SetBandwidth"/> to
+    /// <see cref="Capabilities"/>, so capability-gated UI never reaches this call in practice; it still
+    /// throws rather than silently no-op'ing for any caller that bypasses that gate.</summary>
+    public Task SetBandwidthAsync(int? bandwidthHz, CancellationToken ct) =>
+        throw new InvalidOperationException(
+            "This backend (flrig) does not support setting bandwidth -- flrig's own bandwidth readback " +
+            "isn't reliably convertible to Hz across rigs, so this port doesn't offer a set path either.");
+
     private void InvalidateModesCacheIfXcvrChanged(string xcvrName)
     {
         if (_lastKnownXcvrName is not null && !string.Equals(_lastKnownXcvrName, xcvrName, StringComparison.Ordinal))

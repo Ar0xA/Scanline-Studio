@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Core.Radio.Hamlib;
 
@@ -44,12 +45,63 @@ public class HamlibRadioProtocolTests
         // but the value itself stays null this poll -- IsTransmitting is true, and SignalStrengthDb
         // is RX-only (opposite gating from the three TX-only meters just asserted above).
         Assert.Null(state.SignalStrengthDb);
+        // FakeHamlibNative's RigGetMode defaults its width out-param to 0 (RIG_PASSBAND_NORMAL) when
+        // not scripted -- maps to null, not a real 0 Hz reading, per RadioState.BandwidthHz's own
+        // doc comment.
+        Assert.Null(state.BandwidthHz);
         Assert.Equal(
             RadioCapabilities.ReadFrequency | RadioCapabilities.SetFrequency |
             RadioCapabilities.ReadMode | RadioCapabilities.SetMode | RadioCapabilities.PttControl |
             RadioCapabilities.SwrMeter | RadioCapabilities.AlcMeter | RadioCapabilities.PowerMeter |
-            RadioCapabilities.SignalMeter,
+            RadioCapabilities.SignalMeter | RadioCapabilities.ReadBandwidth | RadioCapabilities.SetBandwidth,
             sut.Capabilities);
+    }
+
+    [Fact]
+    public async Task PollAsync_NonZeroPassband_PopulatesBandwidthHz()
+    {
+        var native = new FakeHamlibNative { Mode = 1UL << 2, Width = new CLong(2400) }; // RIG_MODE_USB
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        var state = await sut.PollAsync(CancellationToken.None);
+
+        Assert.Equal(2400, state.BandwidthHz);
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_PreservesCurrentMode_PassesRequestedWidthVerbatim()
+    {
+        // 1UL << 6 is deliberately NOT one of HamlibToMode's mapped values (code-review correction:
+        // 1UL << 3 used here originally IS RIG_MODE_LSB, one of the 11 mapped values, so a
+        // round-trip-through-HamlibToMode/ModeToHamlib implementation would have produced an
+        // identical result and this test would not have caught it) -- proves the mode round-trips
+        // through its raw ulong bit-flag, never through the dictionaries (see SetBandwidthAsync's own
+        // doc comment: a round-trip through them would throw or silently change the operating mode as
+        // a side effect of a bandwidth-only set).
+        var native = new FakeHamlibNative { Mode = 1UL << 6 };
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        await sut.SetBandwidthAsync(1800, CancellationToken.None);
+
+        Assert.Equal(1UL << 6, native.Mode);
+        Assert.Equal(1800, native.Width.Value);
+        Assert.Equal(["rig_get_mode", "rig_set_mode"], native.CallLog.TakeLast(2));
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_NullRequest_SendsPassbandNormalSentinel()
+    {
+        // Width starts non-zero (code-review correction: FakeHamlibNative.Width defaults to 0
+        // already, so the original version of this test passed even with SetBandwidthAsync as a
+        // complete no-op) -- proves the call genuinely reset it to the RIG_PASSBAND_NORMAL sentinel,
+        // not merely that it was already 0.
+        var native = new FakeHamlibNative { Mode = 1UL << 2, Width = new CLong(2400) };
+        var sut = new HamlibRadioProtocol(native, model: 1);
+
+        await sut.SetBandwidthAsync(null, CancellationToken.None);
+
+        Assert.Equal(0, native.Width.Value); // RIG_PASSBAND_NORMAL
+        Assert.Equal(["rig_get_mode", "rig_set_mode"], native.CallLog.TakeLast(2));
     }
 
     [Fact]
