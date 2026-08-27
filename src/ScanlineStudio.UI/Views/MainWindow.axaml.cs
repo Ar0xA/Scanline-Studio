@@ -41,11 +41,15 @@ public partial class MainWindow : Window
         // and is safe -- but it runs during generic-host/DI-container construction, BEFORE
         // BuildAvaloniaApp().Start*() ever installs Avalonia's UI-thread SynchronizationContext.
         // This constructor runs AFTER that (App.axaml.cs's OnFrameworkInitializationCompleted calls
-        // `new MainWindow()` on the UI thread), and JsonSettingsStore.LoadAsync's own `await`s have
-        // no ConfigureAwait(false) -- their continuation tries to resume back on the captured
+        // `new MainWindow()` on the UI thread). `_settingsStore` is typed as the abstract
+        // `ISettingsStore`, not the concrete `JsonSettingsStore` -- even though that concrete
+        // implementation now uses `ConfigureAwait(false)` throughout (restart-required-settings
+        // backlog item 3, 2026-08-27), a bare `.LoadAsync().GetAwaiter().GetResult()` here would
+        // still be one implementation swap away from resuming a continuation back on the captured
         // UI-thread context, which is exactly the thread blocked waiting on GetResult(). Wrapping in
         // Task.Run moves the whole awaited chain onto a thread-pool thread with no captured context,
-        // so the continuation never needs the blocked UI thread back. Port of legacy's own
+        // so the continuation never needs the blocked UI thread back regardless of which
+        // ISettingsStore is actually registered. Port of legacy's own
         // Main.cpp:1686-1692 load gate (sys.m_MemWindow) -- see WindowGeometrySettings' own doc
         // comment for the full citation.
         if (_settingsStore is not null)
@@ -249,6 +253,10 @@ public partial class MainWindow : Window
                             // unchanged (RxImagePaneViewModel.RefreshSenseLevelFromSession's own doc
                             // comment).
                             vm.RxImage.RefreshSenseLevelFromSession();
+                            // Receive tab's own "Auto-correct" status text -- Options' AutoSlantEnabled
+                            // is now ALSO live (2026-08-27, restart-required-settings backlog item 1),
+                            // same reasoning as RefreshSenseLevelFromSession immediately above.
+                            vm.RxImage.RefreshAutoSlantEnabledFromSession();
                         };
                         // Options > General's Config/Database "Restart Now" -- closes THIS dialog
                         // first, then (from that window's own Closed event, not inline right after

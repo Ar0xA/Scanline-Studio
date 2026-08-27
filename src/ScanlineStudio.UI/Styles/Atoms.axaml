@@ -767,7 +767,7 @@
     </Style>
     <!-- 2026-08-14: same tint fix as the ToggleButton/RadioButton.IndustrySeg variants — this is
          the app's real "mini radio group" selector atom (Options window's SenseLevel/RxBpf/
-         DemodType/AppPriority/StereoSource groups, Identification's ID-method radios, etc.), the
+         DemodType/StereoSource groups, Identification's ID-method radios, etc.), the
          same SELECTION semantics as a segmented control at a more compact size, per spec §5's own
          "Selected = tint, not solid" rule. -->
     <Style Selector="RadioButton.IndustryMini:checked /template/ Border#PART_Face">

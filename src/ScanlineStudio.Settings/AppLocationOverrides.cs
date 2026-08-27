@@ -9,12 +9,17 @@ namespace ScanlineStudio.Settings;
 /// path (<see cref="GetDefaultOverridesFilePath"/>) -- there is nowhere else to record "where do I
 /// look for my own settings" that doesn't have the same bootstrapping problem one level up.
 ///
-/// Config/Database are <b>staged, not live</b>: <c>ConfigDirectory</c>/<c>DatabaseDirectory</c> is
-/// where the file actually is right now (what this running process is using); the matching
-/// <c>Pending*Directory</c> is where the user asked to move it to, applied once at the next
-/// startup, before any settings/database connection is ever opened in that process (see
-/// <c>Program.cs</c>'s <c>ApplyPendingRelocations</c>). <c>LogDirectory</c> has no pending
-/// counterpart -- log relocation applies live, no restart needed.</summary>
+/// Database is <b>staged, not live</b> (permanently, by standing user decision -- SQLite's pooled
+/// native handles make a live relocation unsafe): <c>DatabaseDirectory</c> is where the file
+/// actually is right now (what this running process is using); <c>PendingDatabaseDirectory</c> is
+/// where the user asked to move it to, applied once at the next startup, before any database
+/// connection is ever opened in that process (see <c>Program.cs</c>'s <c>ApplyPendingRelocations</c>).
+/// <c>ConfigDirectory</c> and <c>LogDirectory</c> both apply LIVE, no restart needed (Config as of
+/// restart-required-settings backlog item 3, 2026-08-27 -- previously staged the same way Database
+/// still is). <c>PendingConfigDirectory</c> survives ONLY as a one-time backward-compatibility path:
+/// a value staged under an older, pre-item-3 build is still applied by <c>ApplyPendingRelocations</c>
+/// on that one bridging restart, but nothing new ever writes to it again once
+/// <c>AppLocationsService.SetConfigDirectoryAsync</c> has run.</summary>
 public sealed record AppLocationOverrides(
     string? ConfigDirectory = null,
     string? PendingConfigDirectory = null,

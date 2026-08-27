@@ -196,25 +196,6 @@ internal static partial class Program
             Log.CultureRestoreFailed(logger, ex);
         }
 
-        // Apply a settings-driven process priority, if configured -- a QoL knob, not a startup
-        // requirement, so a failure here (e.g. Win32Exception from insufficient permission on some
-        // platforms) must never prevent the app from starting. Null means "leave the OS default
-        // alone" (see AppPerformanceSettings.ProcessPriority's own doc comment).
-        try
-        {
-            var appPerformanceSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
-                .GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
-            if (appPerformanceSettings?.ProcessPriority is { } priority)
-            {
-                System.Diagnostics.Process.GetCurrentProcess().PriorityClass = priority;
-                Log.ProcessPrioritySet(logger, priority);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.ProcessPrioritySetFailed(logger, ex);
-        }
-
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
         // fixed, read-only label, not an interactive "Connect" button (Phase 3 plan decision), so
         // this is the only place the initial connection attempt happens. A missing/unset radio
@@ -596,7 +577,17 @@ internal static partial class Program
 
     internal static void RegisterServices(IServiceCollection services)
     {
-        services.AddSingleton<ISettingsStore>(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
+        // Restart-required-settings backlog item 3 (2026-08-27): registered as the concrete type,
+        // not directly as ISettingsStore, then FORWARDED to both interfaces it implements
+        // (ISettingsStore, ISettingsFileRelocator) -- round-3 plan-review finding. A naive
+        // `AddSingleton<ISettingsStore>(...)` plus a separate `AddSingleton<ISettingsFileRelocator>(sp =>
+        // (JsonSettingsStore)sp.GetRequiredService<ISettingsStore>())` cast would throw the moment any
+        // test or alternate registration substitutes ISettingsStore with something else -- forwarding
+        // through the concrete singleton instead guarantees both interfaces always resolve to the
+        // SAME instance (one lock, one mutable path field) regardless of what else is registered.
+        services.AddSingleton(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
+        services.AddSingleton<ISettingsStore>(sp => sp.GetRequiredService<JsonSettingsStore>());
+        services.AddSingleton<ISettingsFileRelocator>(sp => sp.GetRequiredService<JsonSettingsStore>());
 
         // First IHttpClientFactory consumer in this codebase (QrzLogbookUploader) -- no prior
         // registration to match, this is the standard AddHttpClient() entry point.
@@ -920,12 +911,6 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Critical, Message = "ApplicationLifetime.Start threw")]
         public static partial void LifetimeStartThrew(ILogger logger, Exception ex);
-
-        [LoggerMessage(Level = LogLevel.Information, Message = "Process priority set to {Priority}")]
-        public static partial void ProcessPrioritySet(ILogger logger, System.Diagnostics.ProcessPriorityClass priority);
-
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to apply configured process priority; continuing at the OS default")]
-        public static partial void ProcessPrioritySetFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Initial radio auto-connect failed; continuing without a radio connection")]
         public static partial void RadioAutoConnectFailed(ILogger logger, Exception ex);

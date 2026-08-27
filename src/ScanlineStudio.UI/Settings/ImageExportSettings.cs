@@ -15,8 +15,9 @@ public sealed record ImageExportSettings
 
     /// <summary>1..100, JPEG-only (ignored for PNG exports). Nullable -- System.Text.Json does not
     /// honor property-initializer defaults for <c>init</c>-only properties absent from the JSON
-    /// payload (see <c>AppPerformanceSettings</c>'s own doc comment for the full STJ explanation);
-    /// the real default (85, matching the Options dialog's own pre-existing placeholder value) is
+    /// payload (see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.CaptureThreadPriority</c>'s own
+    /// doc comment for the full STJ explanation); the real default (85, matching the Options
+    /// dialog's own pre-existing placeholder value) is
     /// applied explicitly at both read sites (<c>OptionsWindowViewModel</c>,
     /// <c>RxHistoryPaneViewModel</c>), never here. <c>SixLabors.ImageSharp.JpegEncoder.Quality</c>'s
     /// own setter throws outside 1..100 -- since this value can also arrive via a hand-edited

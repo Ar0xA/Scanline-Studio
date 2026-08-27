@@ -236,6 +236,60 @@ public class AutoStopTests
         Assert.Equal(0, decoder.AutoStopCntForTests);
     }
 
+    [Fact]
+    public void AutoStopEnabled_LiveEnableAfterCounterPreElevated_TriggersMuchSoonerThanAFreshClimb()
+    {
+        // Restart-required-settings backlog item 1 (2026-08-27), plan-review round 2/3 documented
+        // divergence: this port's _autoStopCnt accumulates regardless of AutoSyncEnabled/
+        // AutoStopEnabled/AutoSlantEnabled (confirmed above -- AutoStopEnabledFalse_NeverTriggers_
+        // ButBookkeepingStillRuns already proves this for AutoStopEnabled alone), unlike legacy, which
+        // gates the WHOLE accumulation behind `sys.m_AutoStop || sys.m_AutoSync || KRSA->Checked`
+        // (Main.cpp:3886) -- KRSA is AutoSlant (Main.cpp:1863's Define/AutoSlant .ini key), NOT
+        // SyncRestart (code-review correction: an earlier version of this comment, and this test's
+        // own constructor call, wrongly named the third gate term SyncRestartEnabled -- that flag
+        // only appears in the unrelated Lock-button UI gate, Main.cpp:1597, never in this counter's
+        // own gate). Now that all three (AutoSync/AutoStop/AutoSlant) are independently live-settable,
+        // "all three off" is a real reachable state where this port keeps counting and legacy would
+        // not have counted at all -- so turning AutoStopEnabled on afterward fires MUCH sooner here
+        // (the counter is already at/above its own threshold), where legacy would need 8 MORE
+        // qualifying observations from a zero start. Deliberately not ported (unmeasured ripple risk
+        // into this same method's other bookkeeping) -- this pins the resulting real, tested
+        // divergence rather than leaving it unverified.
+        var mode = SstvModeRegistry.Robot36;
+        var samples = EncodeRealTransmission(mode, out _);
+        var noisy = ReplaceTailWithNoise(samples);
+
+        var decoder = new AnalogFmSstvDecoder(11025, autoSyncEnabled: false, autoStopEnabled: false, autoSlantEnabled: false, syncRestartEnabled: false);
+
+        const int chunkSize = 256;
+        var offset = 0;
+        for (; offset < noisy.Length && decoder.AutoStopCntForTests < 8; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, noisy.Length - offset);
+            decoder.PushSamples(noisy.AsMemory(offset, length));
+        }
+
+        Assert.True(decoder.AutoStopCntForTests >= 8,
+            $"Test setup problem -- expected the counter to reach its own >=8 trigger threshold while AutoStopEnabled was off; got {decoder.AutoStopCntForTests}.");
+        Assert.Equal(0, decoder.AutoStopTriggerCountForTests); // never triggered -- it was off the whole time
+
+        decoder.AutoStopEnabled = true;
+        // Counter fluctuates line to line even under noise (some lines land in the n>=4 stable-cluster
+        // branch, which decrements it, not the n<4 erratic branch the trigger check lives in) -- so
+        // "on the very next qualifying line" isn't necessarily the very next PushSamples call. Continue
+        // feeding the rest of the SAME noisy tail (not a fresh climb -- the counter starts this phase
+        // already at/above 8) until it fires, same bounded-eventual-trigger shape as
+        // SustainedNoise_EventuallyTriggersAutoStop above.
+        for (; offset < noisy.Length && decoder.AutoStopTriggerCountForTests == 0; offset += chunkSize)
+        {
+            var length = Math.Min(chunkSize, noisy.Length - offset);
+            decoder.PushSamples(noisy.AsMemory(offset, length));
+        }
+
+        Assert.True(decoder.AutoStopTriggerCountForTests > 0,
+            "Expected Auto Stop to fire once enabled, since its counter was already at/above the trigger threshold when it was turned on.");
+    }
+
     // Replaces the back half of a real transmission with deterministic random noise -- see
     // SustainedNoise_EventuallyTriggersAutoStop's own doc comment for why noise (not silence) is
     // needed to make ComputeAutoSyncPosition genuinely scatter line to line.

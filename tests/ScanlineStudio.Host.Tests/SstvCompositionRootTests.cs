@@ -40,7 +40,11 @@ public sealed class SstvCompositionRootTests
         var services = new ServiceCollection();
         services.AddLogging();
         Program.RegisterServices(services);
-        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        // Both interfaces substituted from the SAME instance -- see StaticSettingsStore's own doc
+        // comment for why (round-3 plan-review risk-A).
+        var staticSettingsStore = new StaticSettingsStore(new AppSettings());
+        services.AddSingleton<ISettingsStore>(staticSettingsStore);
+        services.AddSingleton<ISettingsFileRelocator>(staticSettingsStore);
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
@@ -74,6 +78,7 @@ public sealed class SstvCompositionRootTests
         services.AddLogging();
         Program.RegisterServices(services);
         services.AddSingleton<ISettingsStore>(settingsStore);
+        services.AddSingleton<ISettingsFileRelocator>(settingsStore);
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
@@ -104,7 +109,9 @@ public sealed class SstvCompositionRootTests
         var services = new ServiceCollection();
         services.AddLogging();
         Program.RegisterServices(services);
-        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        var staticSettingsStore = new StaticSettingsStore(new AppSettings());
+        services.AddSingleton<ISettingsStore>(staticSettingsStore);
+        services.AddSingleton<ISettingsFileRelocator>(staticSettingsStore);
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
@@ -127,7 +134,9 @@ public sealed class SstvCompositionRootTests
         var services = new ServiceCollection();
         services.AddLogging();
         Program.RegisterServices(services);
-        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(new AppSettings()));
+        var staticSettingsStore = new StaticSettingsStore(new AppSettings());
+        services.AddSingleton<ISettingsStore>(staticSettingsStore);
+        services.AddSingleton<ISettingsFileRelocator>(staticSettingsStore);
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
@@ -319,7 +328,14 @@ public sealed class SstvCompositionRootTests
         Assert.Equal(1, loggerFactory.RxDiskLoggerCreateCount);
     }
 
-    private sealed class StaticSettingsStore(AppSettings settings) : ISettingsStore
+    // Round-3 plan-review risk-A: also implements ISettingsFileRelocator (a trivial no-op -- none of
+    // these tests ever drives a Config-directory Apply) so BOTH interfaces substitute together at
+    // every call site that registers this fake. Registering only ISettingsStore would leave
+    // ISettingsFileRelocator resolving to the REAL JsonSettingsStore singleton -- a SEPARATE instance
+    // constructed against this machine's actual location-overrides.json/config directory, exactly
+    // the shadowing hazard the round-2 comment above documents one level deeper (harmless today since
+    // no test here drives Apply, but a real hazard for any future test that does).
+    private sealed class StaticSettingsStore(AppSettings settings) : ISettingsStore, ISettingsFileRelocator
     {
         // Settable (not the ctor param directly) so a test can simulate a settings change between
         // two LoadAsync calls -- e.g. MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange
@@ -332,6 +348,9 @@ public sealed class SstvCompositionRootTests
         public Task<AppSettings> LoadAsync(CancellationToken ct = default) => Task.FromResult(Settings);
 
         public Task SaveAsync(AppSettings updatedSettings, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task<(bool Moved, string PreviousDirectory)> RelocateAsync(string newDirectory, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
         private sealed class NeverObservable : IObservable<AppSettings>

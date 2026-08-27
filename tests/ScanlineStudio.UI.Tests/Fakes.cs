@@ -236,6 +236,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action? MaintenanceCriticalStopRaised;
 
+    public event Action? DecoderInstanceReplaced;
+
     public int RequestReSyncCallCount { get; private set; }
 
     public void RequestReSync() => RequestReSyncCallCount++;
@@ -276,6 +278,57 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         RequestSenseLevelCallCount++;
         LastRequestedSenseLevel = level;
         SenseLevel = level;
+    }
+
+    public int RequestAutoSyncEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedAutoSyncEnabled { get; private set; }
+
+    public void RequestAutoSyncEnabled(bool enabled)
+    {
+        RequestAutoSyncEnabledCallCount++;
+        LastRequestedAutoSyncEnabled = enabled;
+    }
+
+    public int RequestAutoStopEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedAutoStopEnabled { get; private set; }
+
+    public void RequestAutoStopEnabled(bool enabled)
+    {
+        RequestAutoStopEnabledCallCount++;
+        LastRequestedAutoStopEnabled = enabled;
+    }
+
+    public int RequestAutoSlantEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedAutoSlantEnabled { get; private set; }
+
+    public void RequestAutoSlantEnabled(bool enabled)
+    {
+        RequestAutoSlantEnabledCallCount++;
+        LastRequestedAutoSlantEnabled = enabled;
+        AutoSlantEnabled = enabled;
+    }
+
+    public int RequestSyncRestartEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedSyncRestartEnabled { get; private set; }
+
+    public void RequestSyncRestartEnabled(bool enabled)
+    {
+        RequestSyncRestartEnabledCallCount++;
+        LastRequestedSyncRestartEnabled = enabled;
+    }
+
+    public int RequestReconfigurationCallCount { get; private set; }
+
+    public (RxBpfPreset RxBpfPreset, DemodType DemodType, RxBufferMode RxBufferMode)? LastRequestedReconfiguration { get; private set; }
+
+    public void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode)
+    {
+        RequestReconfigurationCallCount++;
+        LastRequestedReconfiguration = (rxBpfPreset, demodType, rxBufferMode);
     }
 
     public int PersistSenseLevelCallCount { get; private set; }
@@ -523,6 +576,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public void RaiseMaintenanceWarningCleared() => MaintenanceWarningCleared?.Invoke();
 
     public void RaiseMaintenanceCriticalStopRaised() => MaintenanceCriticalStopRaised?.Invoke();
+
+    public void RaiseDecoderInstanceReplaced() => DecoderInstanceReplaced?.Invoke();
 }
 
 internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposable
@@ -1457,8 +1512,9 @@ internal sealed class FakeLogger<T> : ILogger<T>
 /// <c>AppLocationsService</c>'s own validation-failure/conflict shape (an exception, not a bool).</summary>
 internal sealed class FakeAppLocationsService : IAppLocationsService
 {
+    // Restart-required-settings backlog item 3 (2026-08-27): applies live now, same immediate-apply
+    // shape as LogDirectory/SetLogDirectoryAsync below -- no more PendingConfigDirectory/staging.
     public string ConfigDirectory { get; set; } = "/config/current";
-    public string? PendingConfigDirectory { get; set; }
     public Exception? ConfigDirectoryToThrow { get; set; }
 
     public string DatabaseDirectory { get; set; } = "/database/current";
@@ -1470,8 +1526,6 @@ internal sealed class FakeAppLocationsService : IAppLocationsService
 
     public Task<string> GetConfigDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ConfigDirectory);
 
-    public Task<string?> GetPendingConfigDirectoryAsync(CancellationToken ct = default) => Task.FromResult(PendingConfigDirectory);
-
     public Task SetConfigDirectoryAsync(string? directory, CancellationToken ct = default)
     {
         if (ConfigDirectoryToThrow is { } ex)
@@ -1479,7 +1533,11 @@ internal sealed class FakeAppLocationsService : IAppLocationsService
             throw ex;
         }
 
-        PendingConfigDirectory = string.IsNullOrWhiteSpace(directory) || directory == ConfigDirectory ? null : directory;
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            ConfigDirectory = directory;
+        }
+
         return Task.CompletedTask;
     }
 

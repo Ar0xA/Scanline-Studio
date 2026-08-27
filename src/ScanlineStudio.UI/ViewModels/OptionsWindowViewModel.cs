@@ -115,8 +115,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private AudioDeviceInfo? _selectedPlaybackDevice;
 
+    /// <summary>Legacy's <c>EditSamp</c> is a <c>TComboBox</c> (<c>Option.h:97</c>), not the plain
+    /// text field this port originally assumed -- its <c>Option.dfm</c>-defined <c>Items.Strings</c>
+    /// list is exactly <see cref="AvailableSampleRates"/> below. Still editable (legacy parses
+    /// whatever text is typed via <c>sscanf</c>, same as this port's own out-of-list-value
+    /// round-trip convention already established for <see cref="AvailableBaudRates"/>), so the
+    /// preset list is a convenience, not a restriction.</summary>
     [ObservableProperty]
     private int _sampleRate = 11025;
+
+    /// <summary>Legacy's own <c>EditSamp</c> dropdown preset list, verbatim (<c>Option.dfm</c>'s
+    /// <c>Items.Strings</c>) -- NOT <c>ComLib.cpp</c>'s unrelated <c>SampTable[]</c> (a different,
+    /// internal processing-bucket table with a different value set, never shown to the user).</summary>
+    public IReadOnlyList<int> AvailableSampleRates { get; } = [8000, 11025, 12000, 14000, 16000, 18000, 22050, 24000, 44100, 48000];
 
     /// <summary>Stub survey Tier 3, "Clock calibration" piece 1 -- see
     /// <c>AudioDeviceSettings.TxSampleRateOffsetHz</c>'s own doc comment. Lives next to
@@ -142,15 +153,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _stereoTxEnabled;
 
-    /// <summary>OS process scheduling priority -- real, already-wired backend field
-    /// (<c>AppPerformanceSettings.ProcessPriority</c>, applied once at startup in
-    /// <c>ScanlineStudio.Host.Program</c>) that had no UI path before. Only Normal/High are offered,
-    /// matching legacy's own real UI scope (<c>Option.dfm</c>'s <c>AppPriority</c> radio group only
-    /// ever exposed 2 of <see cref="System.Diagnostics.ProcessPriorityClass"/>'s 6 real values,
-    /// deliberately -- Realtime priority can hang/crash a misbehaving process's own host).</summary>
-    [ObservableProperty]
-    private bool _appPriorityIsHigh;
-
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
     [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
@@ -172,6 +174,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <see cref="AutoDetectHamlibAsync"/>/<see cref="ProbeHamlibAsync"/> below.</summary>
     [ObservableProperty]
     private string? _hamlibLibraryPath;
+
+    /// <summary>Value of <see cref="HamlibLibraryPath"/> when this dialog was loaded -- see
+    /// <see cref="RestartRequiredWarningRequested"/>'s own doc comment.</summary>
+    private string? _originalHamlibLibraryPath;
 
     [ObservableProperty]
     private string? _hamlibDiscoveryStatusMessage;
@@ -230,8 +236,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <summary>General tab's Storage section -- 4 rows (Images/Config/Database/Log), moved in
     /// from the former standalone "Configurations &gt; Storage" dialog (Images) plus 3 new rows.
     /// Deliberately NOT part of <see cref="OptionsSnapshot"/>/staged-until-Save like every field
-    /// above -- each row commits (Images/Log) or stages (Config/Database) immediately on its own
-    /// Apply, and <see cref="SaveCommand"/>/<see cref="CancelCommand"/>/
+    /// above -- each row commits (Images/Config/Log) or stages (Database only, restart-required by
+    /// standing user decision) immediately on its own Apply, and <see cref="SaveCommand"/>/<see cref="CancelCommand"/>/
     /// <see cref="ResetGeneralToDefaultCommand"/> must never touch any of them (see those methods'
     /// own bodies -- none reference these fields at all, by omission, not a guard).</summary>
     [ObservableProperty]
@@ -240,17 +246,26 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _imagesDirectoryErrorMessage;
 
+    /// <summary>"Currently using" display value -- refreshed after a successful
+    /// <see cref="ApplyConfigDirectoryAsync"/> (restart-required-settings backlog item 3, 2026-08-27:
+    /// Config directory now applies live, same shape as <see cref="LogDirectory"/>'s own
+    /// display/refresh, no longer staged-until-restart like <see cref="DatabaseDirectory"/> still
+    /// is). NOT the TextBox/Browse binding target -- see <see cref="ConfigDirectoryInput"/> for
+    /// that.</summary>
     [ObservableProperty]
     private string _configDirectory = string.Empty;
 
+    /// <summary>TextBox/Browse binding target -- deliberately a SEPARATE property from
+    /// <see cref="ConfigDirectory"/> (round-3 plan-review finding), empty-seeded exactly like
+    /// <see cref="DatabaseDirectory"/>'s own equivalent <c>PendingDatabaseDirectory</c> input, so
+    /// <see cref="ApplyConfigDirectoryAsync"/>'s existing blank-means-error guard (a user who clicks
+    /// Apply without typing or browsing anything) keeps working unchanged now that Config no longer
+    /// has a real "pending" concept to double as that same input.</summary>
     [ObservableProperty]
-    private string? _pendingConfigDirectory;
+    private string? _configDirectoryInput;
 
     [ObservableProperty]
     private string? _configDirectoryErrorMessage;
-
-    [ObservableProperty]
-    private bool _isConfirmingConfigRestart;
 
     [ObservableProperty]
     private string _databaseDirectory = string.Empty;
@@ -272,14 +287,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Backs the Decode tab's real toggles -- see <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSyncEnabled"/>/
     /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSlantEnabled"/>'s own doc comments
-    /// for what each genuinely gates in <c>AnalogFmSstvDecoder</c>. Deliberately NOT the tab's other
-    /// two checkboxes (Auto-stop/Auto-restart) -- <c>Options.Decode.AutoStop</c>'s loc text ("Auto-stop
-    /// when sync looks stable") doesn't match what <c>AutoStopEnabled</c> actually gates (stops on
-    /// erratic/weak signal, not stable sync) and <c>AutoRestart</c>'s wording is a similar mismatch
-    /// against <c>SyncRestartEnabled</c>'s real semantics -- left STUB pending a wording fix, not
-    /// wired here to avoid shipping a control that lies about what it does. Takes effect on next
-    /// app restart, same as every other Options-dialog setting baked into a DI singleton at startup
-    /// (Radio backend, Audio device, etc. -- no live-reconfiguration path exists for any of them).</summary>
+    /// for what each genuinely gates in <c>AnalogFmSstvDecoder</c>. All four of this tab's decoder
+    /// toggles (this one, <see cref="AutoStopEnabled"/>, <see cref="AutoSlantEnabled"/>,
+    /// <see cref="SyncRestartEnabled"/>) are real and wired -- an earlier version of this comment
+    /// wrongly claimed the other two were left stub pending a wording fix; both the wiring
+    /// (<c>OptionsWindowView.axaml</c>) and the loc text (<c>assets/locale/en.json</c>) were already
+    /// corrected before this note was fixed (2026-08-27). Genuinely LIVE now too (2026-08-27,
+    /// restart-required-settings backlog item 1) -- see <see cref="SaveCoreAsync"/>'s own
+    /// <c>RequestAutoSyncEnabled</c>/etc. calls, unlike every OTHER Options-dialog setting baked into
+    /// a DI singleton at startup (Radio backend, Audio device, etc. -- no live-reconfiguration path
+    /// exists for those).</summary>
     [ObservableProperty]
     private bool _autoSyncEnabled = true;
 
@@ -288,7 +305,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Legacy fresh-install default is OFF (unlike every other decoder toggle here) --
     /// see <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoStopEnabled"/>'s own doc
-    /// comment for the citation.</summary>
+    /// comment for the citation. Genuinely live now (2026-08-27) -- see <see cref="AutoSyncEnabled"/>'s
+    /// own doc comment above.</summary>
     [ObservableProperty]
     private bool _autoStopEnabled;
 
@@ -1874,34 +1892,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Backs the Audio tab's 2-way App priority radio group.</summary>
-    public bool IsAppPriorityNormalSelected
-    {
-        get => !AppPriorityIsHigh;
-        set
-        {
-            if (value)
-            {
-                AppPriorityIsHigh = false;
-            }
-        }
-    }
-
-    public bool IsAppPriorityHighSelected
-    {
-        get => AppPriorityIsHigh;
-        set
-        {
-            if (value)
-            {
-                AppPriorityIsHigh = true;
-            }
-        }
-    }
-
     /// <summary>Fired on Save (after a successful persist) and on Cancel -- the View closes the
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
+
+    /// <summary>Fired from <see cref="SaveAsync"/> only (not <see cref="RestartNowAsync"/>, which
+    /// already has its own explicit Restart Now/Not Now confirm) when a Save persisted a change to
+    /// <see cref="HamlibLibraryPath"/> or leaves a database-directory relocation still pending --
+    /// both genuinely restart-required (2026-08-27 audit, see <c>PROJECT_BRIEF.md</c>), with no
+    /// live-apply planned for either. The View awaits this before actually closing the dialog, so
+    /// the acknowledgement is seen before the window disappears. <c>Func&lt;Task&gt;</c>, not
+    /// <c>Action</c>, specifically so the View can show a real modal dialog and have Save wait for
+    /// the user's OK -- restarting itself stays entirely up to the user, this only informs them.</summary>
+    public event Func<Task>? RestartRequiredWarningRequested;
 
     /// <summary>Fired by Restart Now (Config/Database rows), after any dirty edit elsewhere in this
     /// dialog has already been saved successfully -- see <see cref="RestartNowAsync"/>. Distinct
@@ -2003,7 +2006,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Pre-fills all 4 Storage rows with their REAL effective values (current directory,
-    /// plus any already-staged pending target for Config/Database) -- never left blank just
+    /// plus Database's own already-staged pending target) -- never left blank just
     /// because the underlying setting happens to be unset, same reasoning as
     /// <see cref="IReceiveHistoryStore.SetImagesDirectoryAsync"/>'s own doc comment (this row's
     /// original source, from the former standalone "Configurations &gt; Storage" dialog). A
@@ -2015,7 +2018,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             ImagesDirectory = await _historyStore.GetImagesDirectoryAsync();
             ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
-            PendingConfigDirectory = await _appLocationsService.GetPendingConfigDirectoryAsync();
             DatabaseDirectory = await _appLocationsService.GetDatabaseDirectoryAsync();
             PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
             LogDirectory = await _appLocationsService.GetLogDirectoryAsync();
@@ -2054,21 +2056,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task BrowseConfigDirectoryAsync()
     {
-        var picked = await _filePickerService.PickFolderAsync(PendingConfigDirectory ?? ConfigDirectory);
+        var picked = await _filePickerService.PickFolderAsync(ConfigDirectoryInput ?? ConfigDirectory);
         if (picked is not null)
         {
-            PendingConfigDirectory = picked;
+            ConfigDirectoryInput = picked;
         }
     }
 
+    /// <summary>Restart-required-settings backlog item 3 (2026-08-27): applies LIVE now, same
+    /// immediate-apply-then-refresh shape as <see cref="ApplyLogDirectoryAsync"/> below -- no more
+    /// staging, no restart confirmation. The blank-means-error guard is UNCHANGED from before this
+    /// feature (round-1 finding on the ORIGINAL staged version, kept deliberately -- see
+    /// <see cref="ConfigDirectoryInput"/>'s own doc comment for why it still needs a guard despite
+    /// no longer being a "pending" value).</summary>
     [RelayCommand]
     private async Task ApplyConfigDirectoryAsync()
     {
-        // Code-review round-1 finding: unlike Images/Log (pre-filled with the CURRENT value, so
-        // blanking them is a deliberate act), this field is null/blank whenever nothing is staged
-        // yet -- passing that straight through used to silently stage "move back to default" for
-        // a user who clicked Apply without typing or browsing anything at all.
-        if (string.IsNullOrWhiteSpace(PendingConfigDirectory))
+        if (string.IsNullOrWhiteSpace(ConfigDirectoryInput))
         {
             ConfigDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.NoFolderChosen");
             return;
@@ -2077,9 +2081,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         try
         {
             ConfigDirectoryErrorMessage = null;
-            await _appLocationsService.SetConfigDirectoryAsync(PendingConfigDirectory);
-            PendingConfigDirectory = await _appLocationsService.GetPendingConfigDirectoryAsync();
-            IsConfirmingConfigRestart = PendingConfigDirectory is not null;
+            await _appLocationsService.SetConfigDirectoryAsync(ConfigDirectoryInput);
+            ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
+            ConfigDirectoryInput = null;
         }
         catch (Exception ex)
         {
@@ -2087,14 +2091,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             ConfigDirectoryErrorMessage = ex.Message;
         }
     }
-
-    [RelayCommand]
-    private Task ConfirmConfigRestartAsync() => RestartNowAsync(
-        dismissConfirm: () => IsConfirmingConfigRestart = false,
-        setError: message => ConfigDirectoryErrorMessage = message);
-
-    [RelayCommand]
-    private void CancelConfigRestart() => IsConfirmingConfigRestart = false;
 
     [RelayCommand]
     private async Task BrowseDatabaseDirectoryAsync()
@@ -2138,7 +2134,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void CancelDatabaseRestart() => IsConfirmingDatabaseRestart = false;
 
-    /// <summary>Shared by both Config and Database rows' Restart Now action -- see
+    /// <summary>Backs Database's own Restart Now action (Config used to share this same helper
+    /// before restart-required-settings backlog item 3, 2026-08-27, made it apply live instead) --
+    /// see
     /// <see cref="RestartRequested"/>'s own doc comment for the full ordering rationale. Saves any
     /// dirty edit elsewhere in the dialog FIRST (only if a load actually succeeded, mirroring
     /// <see cref="CanSave"/>'s own guard -- a dialog that failed to load has no real snapshot to
@@ -2192,12 +2190,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TxSampleRateOffsetHz = snapshot.TxSampleRateOffsetHz;
         CaptureChannelSource = Enum.IsDefined(snapshot.CaptureChannelSource) ? snapshot.CaptureChannelSource : AudioChannelSource.Mono;
         StereoTxEnabled = snapshot.StereoTxEnabled;
-        AppPriorityIsHigh = snapshot.AppPriorityIsHigh;
         RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" or "flrig" ? snapshot.RadioBackendId : "none";
         RigctldHost = snapshot.RigctldHost;
         RigctldPort = snapshot.RigctldPort;
         HamlibModel = snapshot.HamlibModel;
         HamlibLibraryPath = snapshot.HamlibLibraryPath;
+        // Save-time restart-warning baseline -- see RestartRequiredWarningRequested's own doc
+        // comment. Captured here (dialog-open time), not re-captured by ResetRadioToDefault, so a
+        // Save after "Reset to default" still correctly detects a real change against what was
+        // actually loaded.
+        _originalHamlibLibraryPath = snapshot.HamlibLibraryPath;
         HamlibSerialPort = snapshot.HamlibSerialPort;
         HamlibBaudRate = snapshot.HamlibBaudRate;
         // Normalize, not trust -- the old free-text field's own help text used to tell users to
@@ -2283,6 +2285,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         if (await SaveCoreAsync())
         {
+            // See RestartRequiredWarningRequested's own doc comment -- both conditions are
+            // genuinely restart-required with no live-apply, unlike everything else this dialog
+            // saves. PendingDatabaseDirectory (not IsConfirmingDatabaseRestart) so a relocation
+            // staged in an earlier dialog session, then left pending, still warns here even if the
+            // user never revisits that row this time.
+            var needsRestartWarning = HamlibLibraryPath != _originalHamlibLibraryPath || PendingDatabaseDirectory is not null;
+            if (needsRestartWarning && RestartRequiredWarningRequested is not null)
+            {
+                await RestartRequiredWarningRequested.Invoke();
+            }
+
             RequestClose?.Invoke();
         }
     }
@@ -2339,7 +2352,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             QrzLookupPassword: QrzLookupPassword,
             CaptureChannelSource: CaptureChannelSource,
             StereoTxEnabled: StereoTxEnabled,
-            AppPriorityIsHigh: AppPriorityIsHigh,
             CwIdMode: CwIdMode,
             CwText: CwText,
             CwWpm: CwWpm,
@@ -2366,6 +2378,30 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // Closed event (see MainWindow.axaml.cs) -- this call is what keeps the running decoder
             // itself in sync with an Options-driven change.
             _sstvSession.RequestSenseLevel(SenseLevel);
+
+            // Auto-Sync/Auto-Stop/Auto-Slant/Sync-Restart (2026-08-27, restart-required-settings
+            // backlog item 1): same reasoning as RequestSenseLevel immediately above -- these four
+            // are now ALSO genuinely live, no separate PersistXAsync needed (see
+            // ISstvSessionService.RequestAutoSyncEnabled's own doc comment for why: none of these
+            // four has a standalone out-of-dialog control, so OptionsSettingsService.SaveAsync above
+            // already persists them as part of the whole-dialog snapshot). AutoSlantEnabled's own
+            // Receive-tab status text is refreshed separately, on this window's own Closed event
+            // (see MainWindow.axaml.cs), same pattern as SenseLevel's dropdown above.
+            _sstvSession.RequestAutoSyncEnabled(AutoSyncEnabled);
+            _sstvSession.RequestAutoStopEnabled(AutoStopEnabled);
+            _sstvSession.RequestAutoSlantEnabled(AutoSlantEnabled);
+            _sstvSession.RequestSyncRestartEnabled(SyncRestartEnabled);
+
+            // RX BPF preset/Demod type/RX buffer mode (2026-08-27, restart-required-settings backlog
+            // item 2): same unconditional-every-Save convention as RequestSenseLevel/RequestAutoSyncEnabled
+            // above -- ISstvSessionService.RequestReconfiguration's own doc comment covers why no diff
+            // check is needed first (an equality guard against the currently-COMMITTED decoder value
+            // already lives inside RestartableSstvDecoder itself). Unlike those, this one is idle-GATED,
+            // not applied immediately -- the Receive tab's own Input Chain "BPF" row is refreshed
+            // separately, via ISstvSessionService.DecoderInstanceReplaced (RxImagePaneViewModel), not
+            // this window's Closed event (see that property's own doc comment for why a pull-based
+            // Closed-event refresh would be redundant here).
+            _sstvSession.RequestReconfiguration(RxBpfPreset, DemodType, RxBufferMode);
 
             // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
             // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync
@@ -2441,7 +2477,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TxSampleRateOffsetHz = defaults.TxSampleRateOffsetHz;
         CaptureChannelSource = defaults.CaptureChannelSource;
         StereoTxEnabled = defaults.StereoTxEnabled;
-        AppPriorityIsHigh = defaults.AppPriorityIsHigh;
     }
 
     [RelayCommand]
@@ -2679,12 +2714,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsCaptureChannelMonoSelected));
         OnPropertyChanged(nameof(IsCaptureChannelLeftSelected));
         OnPropertyChanged(nameof(IsCaptureChannelRightSelected));
-    }
-
-    partial void OnAppPriorityIsHighChanged(bool value)
-    {
-        OnPropertyChanged(nameof(IsAppPriorityNormalSelected));
-        OnPropertyChanged(nameof(IsAppPriorityHighSelected));
     }
 
     private static partial class Log

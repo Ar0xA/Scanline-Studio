@@ -91,6 +91,86 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         Assert.Null(section);
     }
 
+    [Fact]
+    public async Task RelocateAsync_MovesTheFileToTheNewDirectory_SubsequentLoadReadsFromThere()
+    {
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        var saved = new AppSettings { SchemaVersion = AppSettings.CurrentSchemaVersion + 1 };
+        await store.SaveAsync(saved);
+
+        var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
+        var newDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "relocated");
+        var (moved, previousDirectory) = await store.RelocateAsync(newDirectory);
+
+        Assert.True(moved);
+        Assert.Equal(originalDirectory, previousDirectory);
+        Assert.False(File.Exists(_settingsFilePath));
+        Assert.True(File.Exists(Path.Combine(newDirectory, "settings.json")));
+
+        var loaded = await store.LoadAsync();
+        Assert.Equal(saved.SchemaVersion, loaded.SchemaVersion);
+
+        Directory.Delete(newDirectory, recursive: true);
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenNoFileExistsYet_JustRetargets_NoMoveNeeded()
+    {
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
+        var newDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "fresh-install-target");
+
+        var (moved, previousDirectory) = await store.RelocateAsync(newDirectory);
+
+        Assert.True(moved);
+        Assert.Equal(originalDirectory, previousDirectory);
+        Assert.False(Directory.Exists(newDirectory) && File.Exists(Path.Combine(newDirectory, "settings.json")));
+
+        // The path retargeted even though nothing existed to move -- a subsequent save lands at the
+        // NEW directory, not the original one.
+        await store.SaveAsync(new AppSettings());
+        Assert.True(File.Exists(Path.Combine(newDirectory, "settings.json")));
+
+        Directory.Delete(newDirectory, recursive: true);
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenTargetEqualsCurrentDirectory_IsANoOp_ReturnsTrueAndThePreviousDirectory()
+    {
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        var currentDirectory = Path.GetDirectoryName(_settingsFilePath)!;
+
+        var (moved, previousDirectory) = await store.RelocateAsync(currentDirectory);
+
+        Assert.True(moved);
+        Assert.Equal(currentDirectory, previousDirectory);
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenDestinationAlreadyHasASettingsFile_ReturnsFalse_NeverUpdatesThePath()
+    {
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        await store.SaveAsync(new AppSettings { SchemaVersion = AppSettings.CurrentSchemaVersion + 1 });
+
+        var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
+        var conflictDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "conflict");
+        Directory.CreateDirectory(conflictDirectory);
+        await File.WriteAllTextAsync(Path.Combine(conflictDirectory, "settings.json"), "{}");
+
+        var (moved, previousDirectory) = await store.RelocateAsync(conflictDirectory);
+
+        Assert.False(moved);
+        Assert.Equal(originalDirectory, previousDirectory);
+        Assert.True(File.Exists(_settingsFilePath)); // the ORIGINAL file was never touched
+
+        // The path contract: never updated on a `false` return -- a subsequent Load still reads the
+        // original, unmoved file, not the (unrelated) conflicting one at the destination.
+        var loaded = await store.LoadAsync();
+        Assert.Equal(AppSettings.CurrentSchemaVersion + 1, loaded.SchemaVersion);
+
+        Directory.Delete(conflictDirectory, recursive: true);
+    }
+
     private sealed record SampleSection(string Name, int Value)
     {
         public const string SectionKey = "Sample";

@@ -350,8 +350,8 @@ public interface ISstvDecoder
     bool IsLevelOverdriven { get; }
 
     /// <summary>Whether legacy's <c>KRSA-&gt;Checked</c> ("Auto Slant") setting is enabled --
-    /// restart-only, same as this decoder's other settings-driven toggles: constructed once per DI
-    /// singleton lifetime, no live-reconfigure path. When <see langword="false"/>, slant-correction
+    /// genuinely live-settable (see the third paragraph below for the full contract), not
+    /// restart-only. When <see langword="false"/>, slant-correction
     /// commits never happen (the underlying drift-detection bookkeeping still runs), so
     /// <see cref="SlantPpm"/> never moves away from its <c>0.0</c> default for the whole reception --
     /// NOT <see langword="null"/>: <see cref="SlantPpm"/> is non-null (reading exactly <c>0.0</c>) from
@@ -359,8 +359,35 @@ public interface ISstvDecoder
     /// <see langword="false"/>, since the underlying tracker's drift value starts at zero and is only
     /// ever reassigned by an actual commit. This property is the only way a caller can distinguish a
     /// genuine "off" reading of <c>0.0</c> from a genuine "on, zero drift measured so far" reading of
-    /// the same value. Safe to read from any thread.</summary>
-    bool AutoSlantEnabled { get; }
+    /// the same value.
+    ///
+    /// Genuinely live-settable (2026-08-27, restart-required-settings backlog item 1) -- same
+    /// deferred-latch shape as <see cref="SenseLevel"/> below (safe to set from any thread; the
+    /// request is applied on whichever thread next calls <see cref="PushSamples"/>). Getter is
+    /// always the already-applied value currently in effect, same "eventual, not immediate"
+    /// visibility caveat as <see cref="SenseLevel"/>'s own getter.</summary>
+    bool AutoSlantEnabled { get; set; }
+
+    /// <summary>Port of legacy's real <c>sys.m_AutoSync</c> -- gates only Auto Sync's own trigger
+    /// branches, not the drift-detection bookkeeping that runs unconditionally either way (see
+    /// <c>AnalogFmSstvDecoder._autoSyncEnabled</c>'s own doc comment for the full citation). Same
+    /// deferred-latch live-apply shape as <see cref="AutoSlantEnabled"/> above -- genuinely
+    /// live-settable (2026-08-27).</summary>
+    bool AutoSyncEnabled { get; set; }
+
+    /// <summary>Port of legacy's real <c>sys.m_AutoStop</c> -- see
+    /// <c>AnalogFmSstvDecoder.AutoStopEnabled</c>'s own doc comment for the counter-accumulates-
+    /// regardless behavioral note and a related, newly-reachable divergence once all three of this
+    /// flag's sibling gates are independently live. Same deferred-latch live-apply shape as
+    /// <see cref="AutoSlantEnabled"/> above -- genuinely live-settable (2026-08-27).</summary>
+    bool AutoStopEnabled { get; set; }
+
+    /// <summary>Port of legacy's real <c>m_SyncRestart</c> ("Lock" toolbar toggle) -- see
+    /// <c>AnalogFmSstvDecoder.SyncRestartEnabled</c>'s own doc comment for why this one, unlike its
+    /// three siblings here, additionally rebuilds the RX bandpass filter's H1 coefficients and
+    /// re-anchors VIS-lock state on the false-&gt;true edge. Same deferred-latch live-apply shape as
+    /// <see cref="AutoSlantEnabled"/> above -- genuinely live-settable (2026-08-27).</summary>
+    bool SyncRestartEnabled { get; set; }
 
     /// <summary>VIS-lock envelope-amplitude sense-level ("Squelch level") preset currently in
     /// effect, as the clamped 0-3 index (0=Very low, 1=Low [the real shipped default], 2=High,
@@ -372,8 +399,8 @@ public interface ISstvDecoder
     /// (this port's Options window already has real locale keys for the 4 names), not this raw
     /// index.
     ///
-    /// Genuinely live-settable (user-reported 2026-08-27, "Squelch level" live control) -- unlike
-    /// <see cref="AutoSlantEnabled"/> above, matching legacy's own <c>Option.cpp:612-613</c>
+    /// Genuinely live-settable (user-reported 2026-08-27, "Squelch level" live control) -- matching
+    /// legacy's own <c>Option.cpp:612-613</c>
     /// (<c>CSSTVDEM::SetSenseLvl</c> called on the live demodulator instantly, unconditionally, no
     /// state reset). Safe to set from any thread; the request is deferred (last-request-wins) and
     /// applied on whichever thread next calls <see cref="PushSamples"/>, the same deferred shape as
@@ -388,8 +415,15 @@ public interface ISstvDecoder
     /// contract. For the Input Chain card's "BPF" row -- the locked-filter cutoff frequency varies
     /// by whether a mode is currently locked (H1) vs still searching (H2, 400-2500 Hz at every
     /// preset), so a consumer should display the preset NAME only, not a cutoff figure that would
-    /// be wrong whenever unlocked. Restart-only, same limitation as <see cref="AutoSlantEnabled"/>
-    /// above. Safe to read from any thread.</summary>
+    /// be wrong whenever unlocked. Fixed for THIS object's whole lifetime -- unlike
+    /// <see cref="AutoSlantEnabled"/>/<see cref="AutoSyncEnabled"/>/<see cref="AutoStopEnabled"/>/
+    /// <see cref="SyncRestartEnabled"/> above, there is no in-place mutation path on this interface
+    /// alone. Genuinely LIVE as of 2026-08-27 (restart-required-settings backlog item 2) ONLY via
+    /// <c>RestartableSstvDecoder</c>'s optional <c>ISstvDecoderReconfiguration</c> side-channel
+    /// (same shape as <see cref="ISstvDecoder"/>'s sibling <c>ISstvDecoderMaintenance</c>), which
+    /// requests an idle-gated whole-instance swap rather than mutating this getter's value directly
+    /// -- a caller holding only this bare interface has no way to request a change. Safe to read
+    /// from any thread.</summary>
     RxBpfPreset RxBpfPreset { get; }
 
     /// <summary>Current sync-tone AFC frequency correction, in Hz -- direct passthrough of the
@@ -433,8 +467,9 @@ public interface ISstvDecoder
     /// <summary>Legacy <c>m_fskdecode</c> equivalent (<c>sstv.h:708</c>, <c>.ini</c> key
     /// <c>RXFSKID</c>) -- whether the FSK station-ID (STX <c>0x2a</c>) continuation is decoded at
     /// all; the shared mode-announce front half (STX <c>0x2d</c>) always runs regardless. Defaults
-    /// <see langword="false"/>, matching legacy's own default. Deliberately LIVE-settable (unlike
-    /// <see cref="AutoSlantEnabled"/>'s restart-only shape above) -- legacy's own
+    /// <see langword="false"/>, matching legacy's own default. Deliberately LIVE-settable directly on
+    /// THIS interface (unlike <see cref="RxBpfPreset"/> above, which needs the separate
+    /// <c>ISstvDecoderReconfiguration</c> side-channel to change live) -- legacy's own
     /// <c>m_fskdecode</c> is checked fresh on every dispatched byte (<c>sstv.cpp</c>'s station-ID
     /// continuation cases), so toggling it live is the MORE faithful behavior here, not less. A
     /// <c>RestartableSstvDecoder</c> implementation must apply a set value to its current inner

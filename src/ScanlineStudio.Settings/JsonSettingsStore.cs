@@ -5,11 +5,37 @@ using Microsoft.Extensions.Logging;
 
 namespace ScanlineStudio.Settings;
 
-public sealed partial class JsonSettingsStore : ISettingsStore, IDisposable
+/// <summary>Restart-required-settings backlog item 3 (2026-08-27, "Config directory" live relocation):
+/// <see cref="_fileLock"/> serializes every <see cref="LoadAsync"/>/<see cref="SaveAsync"/>/
+/// <see cref="RelocateAsync"/> call against each other -- without it, a relocation moving the file
+/// away mid-<see cref="SaveAsync"/> could strand a write at the old, now-abandoned directory, or a
+/// concurrent <see cref="LoadAsync"/> could observe a torn/missing file mid-move. It does NOT make a
+/// caller's own read-then-modify-then-save sequence atomic against a DIFFERENT concurrent caller
+/// doing the same -- that race (last-write-wins across ~30 call sites app-wide) predates this
+/// feature and is unchanged/out of scope here.
+///
+/// Every await in this class uses <c>ConfigureAwait(false)</c> -- required, not a style preference.
+/// Several call sites BLOCK the UI thread synchronously on this store's own async methods
+/// (`Program.cs`'s bootstrap, `MainWindow.axaml.cs`'s constructor and Closing handler, via
+/// <c>Task.Run(...).GetAwaiter().GetResult()</c>). Without <c>ConfigureAwait(false)</c>, a method
+/// that started on the UI thread would hold <see cref="_fileLock"/> across an await whose
+/// continuation posts back to that same (currently blocked) UI thread -- a genuine deadlock, found
+/// by this feature's own round-1 plan-review before any code existed.
+///
+/// <see cref="LoadAsync"/>'s cancellation behavior changed by this feature, deliberately: a cancelled
+/// token now fails fast via <see cref="_fileLock"/>'s own <c>WaitAsync(ct)</c>, even for the
+/// fresh-install/no-file case that previously returned defaults synchronously without ever consulting
+/// <paramref name="ct"/>. Accepted as more correct, not a regression to work around -- a cancelled
+/// load racing an in-flight relocation should fail rather than risk observing a half-relocated
+/// state. Every real caller either passes no token (the synchronous bootstrap/shutdown paths above)
+/// or already wraps this store's calls in its own timeout (<c>SstvSessionService</c>'s
+/// <c>WaitAsync(_cleanupTimeout, ct)</c>).</summary>
+public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRelocator, IDisposable
 {
-    private readonly string _settingsFilePath;
+    private readonly SemaphoreSlim _fileLock = new(1, 1);
     private readonly ILogger<JsonSettingsStore> _logger;
     private readonly Subject<AppSettings> _changes = new();
+    private string _settingsFilePath;
 
     public JsonSettingsStore(ILogger<JsonSettingsStore> logger, string? settingsFilePath = null)
     {
@@ -21,54 +47,154 @@ public sealed partial class JsonSettingsStore : ISettingsStore, IDisposable
 
     public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
     {
-        if (!File.Exists(_settingsFilePath))
-        {
-            Log.NoSettingsFile(_logger, _settingsFilePath);
-            return new AppSettings();
-        }
-
-        // A corrupt/truncated settings.json (partial write from an old build predating the atomic
-        // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
-        // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
-        // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
-        // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
-        // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
-        // NOT derive from IOException, so it slipped past this exact guard.
+        await _fileLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            await using var stream = File.OpenRead(_settingsFilePath);
-            var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct);
-            return settings ?? new AppSettings();
+            if (!File.Exists(_settingsFilePath))
+            {
+                Log.NoSettingsFile(_logger, _settingsFilePath);
+                return new AppSettings();
+            }
+
+            // A corrupt/truncated settings.json (partial write from an old build predating the atomic
+            // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
+            // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
+            // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
+            // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
+            // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
+            // NOT derive from IOException, so it slipped past this exact guard.
+            try
+            {
+                var stream = File.OpenRead(_settingsFilePath);
+                await using (stream.ConfigureAwait(false))
+                {
+                    var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+                    return settings ?? new AppSettings();
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                Log.LoadFailed(_logger, _settingsFilePath, ex);
+                return new AppSettings();
+            }
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        finally
         {
-            Log.LoadFailed(_logger, _settingsFilePath, ex);
-            return new AppSettings();
+            _fileLock.Release();
         }
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
-        var directory = Path.GetDirectoryName(_settingsFilePath);
-        if (!string.IsNullOrEmpty(directory))
+        string savedPath;
+        await _fileLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            Directory.CreateDirectory(directory);
+            var directory = Path.GetDirectoryName(_settingsFilePath);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
+            // truncated or corrupted — see spec/12-settings.md.
+            var tempFilePath = _settingsFilePath + ".tmp";
+            var stream = File.Create(tempFilePath);
+            await using (stream.ConfigureAwait(false))
+            {
+                await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+            }
+
+            File.Move(tempFilePath, _settingsFilePath, overwrite: true);
+            savedPath = _settingsFilePath; // captured under the lock -- logged below, after Release
+        }
+        finally
+        {
+            _fileLock.Release();
         }
 
-        // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
-        // truncated or corrupted — see spec/12-settings.md.
-        var tempFilePath = _settingsFilePath + ".tmp";
-        await using (var stream = File.Create(tempFilePath))
-        {
-            await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct);
-        }
-
-        File.Move(tempFilePath, _settingsFilePath, overwrite: true);
+        // Fired AFTER releasing the lock -- _fileLock is not reentrant, so a subscriber that calls
+        // back into LoadAsync/SaveAsync from inside OnNext would otherwise self-deadlock. Changes has
+        // no subscribers in this codebase today, but it is a public interface member.
         _changes.OnNext(settings);
-        Log.Saved(_logger, _settingsFilePath);
+        Log.Saved(_logger, savedPath);
     }
 
-    public void Dispose() => _changes.Dispose();
+    /// <summary>See <see cref="ISettingsFileRelocator.RelocateAsync"/> for the caller-facing
+    /// contract.</summary>
+    public async Task<(bool Moved, string PreviousDirectory)> RelocateAsync(string newDirectory, CancellationToken ct = default)
+    {
+        await _fileLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var previousDirectory = Path.GetDirectoryName(_settingsFilePath);
+            if (string.IsNullOrEmpty(previousDirectory))
+            {
+                // Unreachable via real DI (GetDefaultSettingsFilePath always returns an absolute
+                // path under a real directory) -- only reachable if this store were constructed
+                // directly with a bare filename, which no production or test code does today.
+                throw new InvalidOperationException($"'{_settingsFilePath}' has no resolvable directory.");
+            }
+
+            if (DirectoryPathComparer.AreEqual(previousDirectory, newDirectory))
+            {
+                return (true, previousDirectory);
+            }
+
+            try
+            {
+                Directory.CreateDirectory(newDirectory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Code-review round-1 finding: mirrors FileLoggerProvider.RelocateAsync's own
+                // identical fix -- an unusable target (unwritable parent, invalid path) used to throw
+                // a raw exception out of RelocateAsync instead of the clean "refuse" contract
+                // ISettingsFileRelocator/IAppLocationsService.SetConfigDirectoryAsync both promise.
+                // Nothing was moved yet, so returning false here is exactly as safe as the
+                // destination-conflict/move-failure returns below.
+                return (false, previousDirectory);
+            }
+
+            var newPath = Path.Combine(newDirectory, Path.GetFileName(_settingsFilePath));
+            if (File.Exists(newPath))
+            {
+                return (false, previousDirectory);
+            }
+
+            if (File.Exists(_settingsFilePath))
+            {
+                try
+                {
+                    File.Move(_settingsFilePath, newPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    return (false, previousDirectory);
+                }
+            }
+
+            // Only ever updated here, on a physically-confirmed move (or the no-op return above) --
+            // never on a `false` return, so this field always points at where the file actually is.
+            _settingsFilePath = newPath;
+            return (true, previousDirectory);
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+    }
+
+    /// <summary>Registered under 2 interfaces resolving to this same singleton instance
+    /// (<see cref="ISettingsStore"/>, <see cref="ISettingsFileRelocator"/>) -- MS.DI disposes each
+    /// resolved service instance once per call site with no dedup, so this can run more than once.
+    /// Both <see cref="Subject{T}.Dispose"/> and <see cref="SemaphoreSlim.Dispose"/> are safe to call
+    /// repeatedly; any FUTURE teardown added here must keep that same idempotence.</summary>
+    public void Dispose()
+    {
+        _changes.Dispose();
+        _fileLock.Dispose();
+    }
 
     private static string GetDefaultSettingsFilePath() => Path.Combine(AppConfigPaths.ConfigDirectory, "settings.json");
 
