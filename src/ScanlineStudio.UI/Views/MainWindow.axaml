@@ -819,18 +819,13 @@
                                     <!-- Wired 2026-08-26: DecodedNrRst (legacy's real MyRST equivalent,
                                          Main.cpp:3648) was real, tested backing state with no card row
                                          since Phase 5 — see that property's own doc comment. Placed
-                                         right after Callsign, before Name/QTH: both this row and
-                                         Callsign come from the SAME FSK station-ID decode event
-                                         (OnStationIdDecoded), unlike Name/QTH below (a separate QRZ
-                                         lookup). -->
+                                         right after Callsign: both this row and Callsign come from the
+                                         SAME FSK station-ID decode event (OnStationIdDecoded). Name/QTH/
+                                         Grid (a separate QRZ lookup, not decoded from the frame at all)
+                                         moved 2026-08-27 to sit under the Lookup QRZ button instead of
+                                         here, so it reads as the lookup's OWN result, not more decoded
+                                         frame data (direct user request). -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NrRst}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DecodedNrRstDisplay}" /></Grid></Border>
-                                    <!-- Wired 2026-08-11: real QRZ.com lookup (QrzCallsignLookup.cs).
-                                         Name/QTH have no legacy-equivalent row in this card's original
-                                         inventory (mock2 draws none), added because the lookup itself
-                                         is real and needs somewhere to show its result. -->
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NameLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding NameDisplay}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.QthLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding QthDisplay}" /></Grid></Border>
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GridDisplay}" /></Grid></Border>
                                     <!-- Ancestor-relative binding, not a new RxImagePaneViewModel
                                          dependency: RadioStatus lives on the root MainViewModel (this
                                          card's own DataContext is scoped to RxImage). This project
@@ -883,24 +878,38 @@
                                 <TextBox Classes="Industry IndustryInput" Text="{Binding Note}" Watermark="{loc:Translate Panes.RxFrameMeta.NoteWatermark}" IsEnabled="{Binding CanEditFrameMetadata}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
                                 <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{Binding OverrideCallsign}" />
-                                <Grid ColumnDefinitions="*,*" ColumnSpacing="4" Margin="0,2,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" Command="{Binding LookupQrzCommand}" />
-                                    <!-- Wired 2026-08-18: same real IReceiveHistoryStore.SetFlaggedAsync
-                                         write as the Note field above — see that control's own
-                                         comment. ToggleButton (not Button), matching the Gallery tab's
-                                         own real flag toggle and this app's established
-                                         IsChecked-bound-toggle-with-Industry-button-classes convention
-                                         (e.g. the Transceiver card's Receiving toggle). -->
-                                    <ToggleButton Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.Flag}" IsChecked="{Binding IsFlagged}" IsEnabled="{Binding CanEditFrameMetadata}" />
-                                </Grid>
-                                <TextBlock Text="{Binding FrameMetadataErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
-                                           TextWrapping="Wrap"
-                                           IsVisible="{Binding FrameMetadataErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <!-- Flag toggle removed 2026-08-27 (direct user request) — Gallery's
+                                     own flag toggle (SelectedEntryIsFlagged, a separate
+                                     RxHistoryPaneViewModel property/control) remains the real,
+                                     user-facing way to flag an entry. This pane's own IsFlagged/
+                                     OnIsFlaggedChanged/PersistFlaggedAsync backing code is
+                                     deliberately left as-is, not ripped out — out of scope for a
+                                     UI-only removal request; flagging an off-scope note rather than
+                                     chasing it.
+                                     ToolTip added same session (auditor review-2 nit on the QRZ
+                                     configured-gate fix): a disabled button used to give no reason
+                                     why, unlike the pre-fix behavior of failing visibly after a
+                                     click. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,2,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxFrameMeta.LookupQrz}" Command="{Binding LookupQrzCommand}" ToolTip.Tip="{loc:Translate Panes.RxFrameMeta.LookupQrz.Help}" />
+                                <!-- Wired 2026-08-11 (real QRZ.com lookup, QrzCallsignLookup.cs); moved
+                                     here 2026-08-27 (direct user request) from the top decoded-fields
+                                     group above — Name/QTH/Grid are NOT decoded from the received
+                                     frame at all, unlike Callsign/NR-RST right above them in that
+                                     group. Sitting directly under the Lookup QRZ button makes that
+                                     source explicit instead of reading as more decoded frame data. -->
+                                <StackPanel Classes="Industry IndustryRows" Margin="0,2,0,0">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NameLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding NameDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.QthLabel}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding QthDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GridDisplay}" /></Grid></Border>
+                                </StackPanel>
                                 <TextBlock Text="{Binding QrzLookupErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding QrzLookupErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                <TextBlock Text="{Binding FrameMetadataErrorMessage}"
+                                           Foreground="{StaticResource IndustryDanger}"
+                                           TextWrapping="Wrap"
+                                           IsVisible="{Binding FrameMetadataErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                             </StackPanel>
                         </HeaderedContentControl>
 

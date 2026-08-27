@@ -156,12 +156,12 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
             var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
             var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
-            if (qrzLookupSettings.Enabled != true || string.IsNullOrEmpty(qrzLookupSettings.Username) || string.IsNullOrEmpty(qrzLookupSettings.Password))
+            if (!IsQrzLookupConfigured(qrzLookupSettings))
             {
                 return new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options.");
             }
 
-            return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username, qrzLookupSettings.Password, ct).ConfigureAwait(false);
+            return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username!, qrzLookupSettings.Password!, ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -169,6 +169,30 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
             return new QrzCallsignLookupResult(false, null, null, null, ex.Message);
         }
     }
+
+    public async Task<bool> IsQrzLookupConfiguredAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+            var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
+            return IsQrzLookupConfigured(qrzLookupSettings);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Same "never throws" contract as LookupCallsignAsync above -- a settings-read
+            // failure resolves to "not configured", the same outcome a genuinely unconfigured
+            // lookup would produce, rather than surfacing as a thrown exception to a UI gate.
+            Log.IsQrzLookupConfiguredReadFailed(_logger, ex);
+            return false;
+        }
+    }
+
+    /// <summary>Shared by <see cref="LookupCallsignAsync"/> and
+    /// <see cref="IsQrzLookupConfiguredAsync"/> -- one source of truth for what "configured" means,
+    /// so the button-gating check and the actual lookup's own gate can never drift apart.</summary>
+    private static bool IsQrzLookupConfigured(QrzLookupSettings settings) =>
+        settings.Enabled == true && !string.IsNullOrEmpty(settings.Username) && !string.IsNullOrEmpty(settings.Password);
 
     public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default) =>
         _qrzLookup.TestCredentialsAsync(username, password, ct);
@@ -189,5 +213,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "LookupCallsignAsync({Callsign}) failed reading QRZ lookup settings")]
         public static partial void LookupCallsignSettingsReadFailed(ILogger logger, string callsign, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "IsQrzLookupConfiguredAsync failed reading QRZ lookup settings")]
+        public static partial void IsQrzLookupConfiguredReadFailed(ILogger logger, Exception exception);
     }
 }
