@@ -226,8 +226,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(AutoCorrectDisplay))]
     private double? _slantPpm;
 
-    /// <summary>Live, polled telemetry (see <see cref="PollTelemetry"/>) -- NOT a restart-only
-    /// construction-time fetch, unlike <see cref="AutoSlantEnabled"/>. Defaults to
+    /// <summary>Live, polled telemetry (see <see cref="PollTelemetry"/>) -- NOT the swap-refreshed
+    /// shape <see cref="RxBpfPreset"/> above uses. Defaults to
     /// <see cref="SstvSyncSource.Idle"/> (the CLR's own enum default, and also the correct value
     /// before this pane's first poll tick).</summary>
     [ObservableProperty]
@@ -421,7 +421,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _historyStore = historyStore;
         _settingsStore = settingsStore;
         _logger = logger;
-        AutoSlantEnabled = sstvSession.AutoSlantEnabled;
+        // Direct field assignment, NOT the generated property setter -- this property has no
+        // per-change side effect (unlike SenseLevel below), but seeding the field directly keeps
+        // both settings' construction-time init consistent.
+        _autoSlantEnabled = sstvSession.AutoSlantEnabled;
         // Direct field assignment, NOT the generated property setter (round-2 plan-review finding):
         // going through the setter would fire OnSenseLevelChanged for a value that's already correct
         // and already saved, spuriously re-requesting/re-persisting it at construction. See
@@ -439,7 +442,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             _localization.GetString("Options.Decode.SenseLevel.High"),
             _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
         ];
-        RxBpfPreset = sstvSession.RxBpfPreset;
+        // Direct field assignment, NOT the generated property setter -- same reasoning as
+        // _autoSlantEnabled above (this property has no per-change side effect either).
+        _rxBpfPreset = sstvSession.RxBpfPreset;
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
@@ -447,6 +452,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.DecodeRestarted += OnDecodeRestarted;
         sstvSession.StationIdDecoded += OnStationIdDecoded;
+        // Restart-required-settings backlog item 2 (2026-08-27): the ONLY trigger for
+        // RefreshRxBpfPresetFromSession -- see that method's own doc comment for why a pull-based
+        // Options-Closed refresh (like AutoSlantEnabled/SenseLevel above use) would be redundant here.
+        sstvSession.DecoderInstanceReplaced += OnDecoderInstanceReplaced;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
@@ -549,18 +558,36 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public string SyncOffsetSamplesDisplay => SyncOffsetSamples is { } offset ? _localization.GetString("Panes.RxSync.OffsetSamplesFormat", offset) : "—";
 
     /// <summary>Whether legacy's real <c>AutoSlant</c> setting (<c>ISstvSessionService.AutoSlantEnabled</c>)
-    /// is on -- a plain synchronous read at construction, not an <c>[ObservableProperty]</c>: this is
-    /// documented restart-only (the decoder is a DI singleton with no live-reconfigure path), unlike
-    /// the genuinely-live telemetry polled every 250ms elsewhere in this pane.</summary>
-    public bool AutoSlantEnabled { get; }
+    /// is on -- genuinely live now (2026-08-27, restart-required-settings backlog item 1), refreshed
+    /// on the Options window's own Closed event, unlike <see cref="RxBpfPreset"/> below, which is
+    /// refreshed on a decoder swap instead (see that property's own doc comment for why). Backs the
+    /// Sync &amp; Slant card's "Auto-correct" status text (<see cref="AutoCorrectDisplay"/>) --
+    /// <see cref="RefreshAutoSlantEnabledFromSession"/> re-syncs this from the session after an
+    /// Options-driven change (see <c>MainWindow.axaml.cs</c>'s Options-Closed refresh block), same
+    /// pattern as <see cref="RefreshSenseLevelFromSession"/> below. Seeded directly from the backing
+    /// field in the constructor (NOT the generated property setter), same reasoning as
+    /// <see cref="SenseLevel"/>'s own construction-time seed below -- this property has no per-change
+    /// side effect today (unlike <see cref="SenseLevel"/>'s live-apply/persist), but seeding the
+    /// field directly keeps both settings' construction-time init consistent.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AutoCorrectDisplay))]
+    private bool _autoSlantEnabled;
+
+    /// <summary>Re-syncs <see cref="AutoSlantEnabled"/> from the session -- called from the Options
+    /// window's own Closed event (see <c>MainWindow.axaml.cs</c>), same reasoning and shape as
+    /// <see cref="RefreshSenseLevelFromSession"/> below: a no-op if unchanged, and the ONLY way this
+    /// pane's "Auto-correct" status text can go stale after Options makes AutoSlantEnabled live is if
+    /// this call is missing from that refresh block.</summary>
+    public void RefreshAutoSlantEnabledFromSession() => AutoSlantEnabled = _sstvSession.AutoSlantEnabled;
 
     /// <summary>Sync &amp; Slant card's "Squelch level" row (renamed from "VIS threshold"
     /// 2026-08-27 to match the Options window's own naming for this same setting) -- genuinely
-    /// live and user-editable now (a ComboBox bound to <see cref="SenseLevelOptions"/>), not the
-    /// restart-only construction-time-read shape <see cref="AutoSlantEnabled"/>/<see cref="RxBpfPreset"/>
-    /// still have. Seeded directly from the backing field in the constructor (NOT the generated
-    /// property setter -- see the constructor's own comment) so construction itself never fires a
-    /// spurious live-apply/persist round-trip. See <see cref="OnSenseLevelChanged"/> for what a real
+    /// live and user-editable now (a ComboBox bound to <see cref="SenseLevelOptions"/>), refreshed
+    /// on the Options window's own Closed event, unlike <see cref="RxBpfPreset"/> below (see that
+    /// property's own doc comment for why it uses a decoder-swap refresh instead). Seeded
+    /// directly from the backing field in the constructor (NOT the generated property setter -- see
+    /// the constructor's own comment) so construction itself never fires a spurious
+    /// live-apply/persist round-trip. See <see cref="OnSenseLevelChanged"/> for what a real
     /// user-driven change actually does.</summary>
     [ObservableProperty]
     private int _senseLevel;
@@ -639,9 +666,29 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// Cancelled, or Saved without touching Squelch level.</summary>
     public void RefreshSenseLevelFromSession() => SenseLevel = _sstvSession.SenseLevel;
 
-    /// <summary>Same restart-only construction-time-read shape as <see cref="AutoSlantEnabled"/>
-    /// above -- see <see cref="ISstvSessionService.RxBpfPreset"/> for the full contract.</summary>
-    public RxBpfPreset RxBpfPreset { get; }
+    /// <summary>Genuinely live now (2026-08-27, restart-required-settings backlog item 2) -- see
+    /// <see cref="ISstvSessionService.RxBpfPreset"/> for the full idle-gated contract.
+    /// <see cref="RefreshRxBpfPresetFromSession"/> re-syncs this after a swap (NOT after the Options
+    /// window's own Closed event, unlike <see cref="AutoSlantEnabled"/>/<see cref="SenseLevel"/>
+    /// above -- see that method's own doc comment for why). Seeded directly from the backing field
+    /// in the constructor (NOT the generated property setter), same reasoning as
+    /// <see cref="AutoSlantEnabled"/>'s own construction-time seed above.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(RxBpfDisplay))]
+    private RxBpfPreset _rxBpfPreset;
+
+    /// <summary>Re-syncs <see cref="RxBpfPreset"/> from the session -- called from
+    /// <see cref="OnDecoderInstanceReplaced"/>, NOT the Options window's own Closed event that
+    /// <see cref="RefreshAutoSlantEnabledFromSession"/>/<see cref="RefreshSenseLevelFromSession"/> use.
+    /// Round-2/round-3 plan-review: a pull-based Options-Closed refresh would read the exact same
+    /// value a push-based one does here (both ultimately read <c>ISstvSessionService.RxBpfPreset</c>,
+    /// which itself only changes once a swap actually happens) -- so keeping both would be pure
+    /// redundancy, not extra safety. This is the ONLY way this pane's Input Chain "BPF" row can go
+    /// stale after an Options-driven change: a change queued via <c>RequestReconfiguration</c> doesn't
+    /// take visible effect until the decoder's next idle swap fires this refresh.</summary>
+    private void OnDecoderInstanceReplaced() => Dispatcher.UIThread.Post(RefreshRxBpfPresetFromSession);
+
+    public void RefreshRxBpfPresetFromSession() => RxBpfPreset = _sstvSession.RxBpfPreset;
 
     /// <summary>Input Chain card's "BPF" row -- the preset NAME only, not a cutoff figure (see
     /// <see cref="ISstvDecoder.RxBpfPreset"/>'s own doc comment for why a cutoff would be wrong

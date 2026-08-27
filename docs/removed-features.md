@@ -301,3 +301,59 @@ and its resolution, verified directly against current source, not inferred from 
   give: a way to sanity-check that the current TX image/mode round-trips through this port's own
   encoder→decoder pipeline before going on air — a real, useful diagnostic, just a narrower one than
   either legacy mode provided.
+
+## Audio-tab performance placeholders: RX/TX FIFO size, Sound card thread priority, App priority
+
+- **Legacy**: `Option.dfm`'s RX/TX sound-buffer (FIFO) size spinners (Win32 `waveIn`/`waveOut` buffer
+  count), `m_SoundPriority` (a 4-level sound-thread priority radio group), and `AppPriority` (a
+  2-level `Normal`/`High` process-priority radio group backing `SetPriorityClass`).
+- **Replacement**: none, and none planned. Found and removed 2026-08-27 during an Options
+  restart-required audit, under a "does this have any measurable benefit on a modern OS" pass (the
+  same lens that already justified dropping the Clock-adjust wizard, below).
+- **Why**:
+  - RX/TX FIFO: legacy's Win32 `waveIn`/`waveOut` buffer-count concept has no analog in this port's
+    MiniAudio-based audio engine, which manages its own buffering automatically. This was a disabled
+    placeholder in this port from the start — never functional here, and per the point above, never
+    going to be.
+  - Sound priority: legacy's own `m_SoundPriority` was read from and written to `Config.cfg` but
+    never actually applied to anything — confirmed directly against legacy source, this was dead UI
+    even in the original MMSSTV/YONIQ. Also a disabled placeholder in this port from the start.
+  - App priority: this one DID work in this port — a real, live `Process.PriorityClass` toggle,
+    applied once at startup. Removed anyway: on a modern OS, the mechanism that actually prevents
+    audio glitches under load is OS/audio-stack-specific (Windows MMCSS, Linux PipeWire/JACK
+    real-time threads, macOS Core Audio thread policies), not whole-process scheduling priority.
+    Raising it also has a real downside with little corresponding benefit — a "High"-priority process
+    can make the rest of the system feel sluggish under contention. This port's real capture-thread
+    priority knob (`AudioDeviceSettings.CaptureThreadPriority`, a different, already-existing
+    mechanism) is the more targeted tool for this problem, and remains in place — this removal is
+    scoped to the whole-process `AppPriority` toggle only.
+- **Impact**: no functional loss for any user. Two of the three were never wired to anything in this
+  port; the third worked but its real-world payoff on current hardware/OS audio stacks was judged not
+  worth the settings-file field, DI wiring, and UI surface it required. `AppPerformanceSettings` (the
+  settings record backing App priority) is deleted entirely, not deprecated in place — a
+  `settings.json` with a stale `AppPerformance` section from before this change is read via
+  `ISettingsStore`'s normal unknown-section tolerance and simply ignored, not migrated.
+
+## Advanced-tab "Clock-adjust wizard" button (Options dialog)
+
+- **Legacy**: `ClockAdj.cpp`, a live master-clock calibration wizard invoked from
+  `Option.cpp:791-805`'s `SBClockAdjClick` — real-time RX audio through a tone-locked envelope
+  detector, a scrolling waterfall-style canvas, and a manual two-click line-marking interaction to
+  correct the app's assumed sample rate against a WWV/JJY/BPM time-standard tone.
+- **Replacement**: this port's Auto Slant mechanism, which auto-corrects per-line clock drift on
+  every reception automatically, tested to a 500 ppm and a 1% (10,000 ppm) mismatch
+  ([[spec/06-sstv-dsp]], `SlantTests.cs`) — well past any real-world sound-card clock error.
+- **Why**: a live-port design was scoped and passed a round-1 auditor plan-review (with fixable
+  defects: wrong scroll direction, a click-anchor drift bug, a missing AGC/intensity mapping, an
+  `internal`-visibility compile error, several sign/rounding bugs) — buildable, but non-trivial.
+  Before a round-2 review, the team re-examined whether it was worth building at all: the wizard's
+  only remaining edge over Auto Slant is faster lock on a reception's first few lines, before Auto
+  Slant's own tracking catches up. That narrow payoff didn't justify the build cost. User decision:
+  "maybe one day." The Calibration-menu item and its locale key were removed 2026-08-26; a leftover,
+  already-disabled duplicate button on the Options dialog's Advanced tab (a placeholder that
+  predated, and was never reconciled with, that menu removal) was found and removed in the same pass
+  as the Audio-tab items above, 2026-08-27.
+- **Impact**: no functional loss — this was never implemented in this port; only two dead UI entry
+  points (a menu item, then a placeholder button) pointing at it are gone. A user who needs
+  faster-than-Auto-Slant clock lock on a reception's very first lines has no path to that in this
+  port; no user has asked for this since Auto Slant shipped.

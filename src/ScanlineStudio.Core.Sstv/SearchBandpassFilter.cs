@@ -81,10 +81,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// </summary>
 internal sealed class SearchBandpassFilter
 {
-    private readonly double[] _h1; // locked/normal (HBPF) -- Band-1 item 4b
+    private double[] _h1; // locked/normal (HBPF) -- Band-1 item 4b. NOT readonly -- see UpdateSyncRestart.
     private readonly double[] _h2; // search/pre-lock (HBPFS) -- Piece B
     private readonly double[] _z; // delay line, length tap+1. _z[0]=newest sample, _z[tap]=oldest.
     private readonly int _tap;
+    private readonly int _sampleRate; // retained (not just a ctor local) so UpdateSyncRestart can recompute H1
+    private readonly double _h1Fch;
+    private readonly double _h1Att;
 
     /// <param name="preset">Wide/Narrow/VeryNarrow only -- <see cref="RxBpfPreset.Off"/> is a bypass
     /// decision owned by <see cref="AnalogFmSstvDecoder"/> (which leaves its own filter field null
@@ -107,6 +110,9 @@ internal sealed class SearchBandpassFilter
         };
 
         _tap = (int)(multiplier * sampleRate / 11025.0); // bpftap, scaled by sample rate (sstv.cpp:1529/1535/1541)
+        _sampleRate = sampleRate;
+        _h1Fch = h1Fch;
+        _h1Att = h1Att;
         var h1Fcl = syncRestartEnabled ? 1100.0 : 1200.0; // lfq, sstv.cpp:1524
         _h1 = MakeFilter(_tap, sampleRate, fcl: h1Fcl, fch: h1Fch, att: h1Att);
         _h2 = MakeFilter(_tap, sampleRate, fcl: 400.0, fch: 2500.0, att: 20.0);
@@ -114,6 +120,48 @@ internal sealed class SearchBandpassFilter
                                     // (fir.cpp:1087-1088), confirmed never reset mid-stream on RX
                                     // (Clear() is TX-only, sstv.cpp:2827).
     }
+
+    /// <summary>Live-apply for a SyncRestart flag change (2026-08-27, restart-required-settings
+    /// backlog item 1) -- rebuilds H1's coefficients for the new `fcl` (1100/1200Hz), the only
+    /// tap-count-invariant value this flag affects (H2's own `fcl` is the constant 400Hz regardless,
+    /// class doc comment). Deliberately does NOT touch <see cref="_z"/> -- legacy's own
+    /// `CFIR2::Create` only reinitializes the delay line when TAP COUNT itself changes
+    /// (`fir.cpp:1085`'s `(m_Tap != tap)` guard), and this flag never changes tap, only H1's `fcl` --
+    /// so the delay line's in-flight history survives this call unmodified, exactly as it would in
+    /// legacy at an unchanged preset (`sstv.cpp:1602-1613`'s own `SetBPF`).
+    ///
+    /// Deliberate DIVERGENCE from legacy's own Options-OK path specifically: `Option.cpp:609-611`
+    /// assigns `m_SyncRestart` AFTER its own `SetBPF()` call already ran that OK click, with no later
+    /// `CalcBPF()` -- legacy's Options dialog does NOT rebuild H1 for this exact change. This method
+    /// is called from <see cref="AnalogFmSstvDecoder"/>'s Options-driven live-apply path anyway,
+    /// matching legacy's TOOLBAR-toggle path instead (`Main.cpp:11887-11888`'s `KRARClick`, which DOES
+    /// call `CalcBPF()`) -- the defensible choice (this port has no separate toolbar/Options
+    /// distinction for this setting), but a real divergence from what Options-OK specifically does in
+    /// legacy, not parity.
+    ///
+    /// Caller-side threading contract: must be called from the decode thread only (the same thread
+    /// that calls <see cref="ProcessSample"/>), never directly from a UI thread -- see
+    /// <c>AnalogFmSstvDecoder.ApplyPendingDecoderFlagsRequest</c>'s own doc comment. With that
+    /// contract, <see cref="_h1"/> has exactly one writer and one reader, both this same thread, so
+    /// program order alone gives correct visibility -- no <see cref="System.Threading.Volatile"/> or
+    /// lock is needed here (plan-review round 2, confirmed: production has no other reader of this
+    /// array at all, only <see cref="ProcessSample"/> itself. <see cref="H1ForTests"/> below DOES
+    /// also read <see cref="_h1"/>, but only from single-threaded test code, never concurrently with
+    /// a real decode -- not a reachable concurrent-reader case in production). Takes effect from
+    /// whatever sample <see cref="ProcessSample"/> is next
+    /// called with -- since the caller's own cache (`AnalogFmSstvDecoder.FilteredRawSampleAt`) is a
+    /// lazy-fill, that is the cache's own forward cursor position, not necessarily the very latest
+    /// sample just pushed -- a bounded lag, not instant, same as every other change to that cache.</summary>
+    public void UpdateSyncRestart(bool syncRestartEnabled)
+    {
+        var h1Fcl = syncRestartEnabled ? 1100.0 : 1200.0;
+        _h1 = MakeFilter(_tap, _sampleRate, fcl: h1Fcl, fch: _h1Fch, att: _h1Att);
+    }
+
+    /// <summary>Diagnostic-only: exposes <see cref="_h1"/>'s current coefficients so a test can prove
+    /// <see cref="UpdateSyncRestart"/> actually rebuilt them, not just that it ran without
+    /// throwing.</summary>
+    internal double[] H1ForTests => _h1;
 
     /// <summary>Streaming, one-sample-at-a-time convolution -- a genuine persistent delay line, not a
     /// stateless window recompute (round-2 performance fix: an earlier <c>Func&lt;int,double&gt;</c>-

@@ -430,6 +430,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
             maintenance.Restarted += OnDecoderRestarted;
             maintenance.RestartCriticallyOverdue += OnDecoderRestartCriticallyOverdue;
         }
+
+        // Restart-required-settings backlog item 2 (2026-08-27): same optional-side-channel shape as
+        // ISstvDecoderMaintenance immediately above -- the various FakeSstvDecoders used by other test
+        // projects don't implement this either, so this is a no-op there.
+        if (_decoder is ISstvDecoderReconfiguration reconfiguration)
+        {
+            reconfiguration.ReconfigurationRejected += OnReconfigurationRejected;
+        }
     }
 
     public IWaterfallSource Waterfall { get; }
@@ -1167,7 +1175,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.IsLevelOverdriven"/> / <see cref="ISstvDecoder.IsLevelOverdriven"/>.</summary>
     public bool IsLevelOverdriven => _decoder.IsLevelOverdriven;
 
-    /// <summary>See <see cref="ISstvSessionService.AutoSlantEnabled"/> / <see cref="ISstvDecoder.AutoSlantEnabled"/>.</summary>
+    /// <summary>See <see cref="ISstvSessionService.AutoSlantEnabled"/> / <see cref="ISstvDecoder.AutoSlantEnabled"/> --
+    /// genuinely live now (2026-08-27).</summary>
     public bool AutoSlantEnabled => _decoder.AutoSlantEnabled;
 
     /// <summary>See <see cref="ISstvSessionService.SenseLevel"/> / <see cref="ISstvDecoder.SenseLevel"/>.</summary>
@@ -1224,6 +1233,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public event Action? MaintenanceCriticalStopRaised;
 
+    public event Action? DecoderInstanceReplaced;
+
     /// <summary>See <see cref="ISstvSessionService.RequestReSync"/>.</summary>
     public void RequestReSync()
     {
@@ -1250,6 +1261,44 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         Log.SenseLevelRequested(_logger, level);
         _decoder.SenseLevel = level;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestAutoSyncEnabled"/>.</summary>
+    public void RequestAutoSyncEnabled(bool enabled)
+    {
+        Log.AutoSyncEnabledRequested(_logger, enabled);
+        _decoder.AutoSyncEnabled = enabled;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestAutoStopEnabled"/>.</summary>
+    public void RequestAutoStopEnabled(bool enabled)
+    {
+        Log.AutoStopEnabledRequested(_logger, enabled);
+        _decoder.AutoStopEnabled = enabled;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestAutoSlantEnabled"/>.</summary>
+    public void RequestAutoSlantEnabled(bool enabled)
+    {
+        Log.AutoSlantEnabledRequested(_logger, enabled);
+        _decoder.AutoSlantEnabled = enabled;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestSyncRestartEnabled"/>.</summary>
+    public void RequestSyncRestartEnabled(bool enabled)
+    {
+        Log.SyncRestartEnabledRequested(_logger, enabled);
+        _decoder.SyncRestartEnabled = enabled;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestReconfiguration"/>.</summary>
+    public void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode)
+    {
+        Log.ReconfigurationRequested(_logger, rxBpfPreset, demodType, rxBufferMode);
+        if (_decoder is ISstvDecoderReconfiguration reconfiguration)
+        {
+            reconfiguration.RequestReconfiguration(rxBpfPreset, demodType, rxBufferMode);
+        }
     }
 
     /// <summary>See <see cref="ISstvSessionService.PersistSenseLevelAsync"/>. Read-modify-write
@@ -1326,10 +1375,35 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 SafeLog(() => Log.MaintenanceWarningCleared(_logger));
                 MaintenanceWarningCleared?.Invoke();
             }
+
+            // Restart-required-settings backlog item 2 (2026-08-27): unconditional, unlike
+            // MaintenanceWarningCleared above -- every swap replaces _inner, whether or not a
+            // maintenance warning was ever raised for it, so any UI-layer cache of a decoder-read
+            // value (currently only RxImagePaneViewModel.RxBpfPreset) needs this signal every time,
+            // not just on the "overdue warning just cleared" subset.
+            DecoderInstanceReplaced?.Invoke();
         }
         catch (Exception ex)
         {
             SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestarted), ex));
+        }
+    }
+
+    /// <summary>See <see cref="ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.ReconfigurationRejected"/>
+    /// for the full contract -- restart-required-settings backlog item 2 (2026-08-27). Log-only: once
+    /// <see cref="ISstvSessionService.RxBpfPreset"/>'s live refresh (via
+    /// <see cref="DecoderInstanceReplaced"/>) lands, a rejected reconfiguration is already visible to
+    /// the operator as the Receive tab's Input Chain card silently disagreeing with what Options shows
+    /// (round-3 plan-review Q3) -- no separate dialog/toast needed.</summary>
+    private void OnReconfigurationRejected()
+    {
+        try
+        {
+            SafeLog(() => Log.ReconfigurationRejected(_logger));
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnReconfigurationRejected), ex));
         }
     }
 
@@ -4131,6 +4205,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Squelch level requested: {Level}")]
         public static partial void SenseLevelRequested(ILogger logger, int level);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Auto-Sync enabled requested: {Enabled}")]
+        public static partial void AutoSyncEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Auto-Stop enabled requested: {Enabled}")]
+        public static partial void AutoStopEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Auto-Slant enabled requested: {Enabled}")]
+        public static partial void AutoSlantEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Sync-Restart enabled requested: {Enabled}")]
+        public static partial void SyncRestartEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Reconfiguration requested: RxBpfPreset={RxBpfPreset}, DemodType={DemodType}, RxBufferMode={RxBufferMode}")]
+        public static partial void ReconfigurationRequested(ILogger logger, RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A queued reconfiguration request was rejected -- the decoder kept its previous RxBpfPreset/DemodType/RxBufferMode")]
+        public static partial void ReconfigurationRejected(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);

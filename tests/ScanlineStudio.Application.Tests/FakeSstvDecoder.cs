@@ -111,6 +111,12 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public bool AutoSlantEnabled { get; set; } = true;
 
+    public bool AutoSyncEnabled { get; set; } = true;
+
+    public bool AutoStopEnabled { get; set; }
+
+    public bool SyncRestartEnabled { get; set; } = true;
+
     public int SenseLevel { get; set; } = 1;
 
     public RxBpfPreset RxBpfPreset { get; set; } = RxBpfPreset.Wide;

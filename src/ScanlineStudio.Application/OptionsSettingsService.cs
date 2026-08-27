@@ -87,10 +87,6 @@ public sealed partial class OptionsSettingsService
         QrzLookupPassword: new QrzLookupSettings().Password,
         CaptureChannelSource: new AudioDeviceSettings().CaptureChannelSource,
         StereoTxEnabled: new AudioDeviceSettings().StereoTxEnabled,
-        // AppPerformanceSettings.ProcessPriority's own desired "unset" default is null ("don't touch
-        // the OS default"), which is also ProcessPriorityClass.Normal in every practical sense -- see
-        // that record's own doc comment. AppPriorityIsHigh: false round-trips that correctly.
-        AppPriorityIsHigh: new AppPerformanceSettings().ProcessPriority == System.Diagnostics.ProcessPriorityClass.High,
         CwIdMode: new StationIdSettings().CwIdMode,
         CwText: new StationIdSettings().CwText ?? StationIdSettings.DefaultCwText,
         CwWpm: new StationIdSettings().CwWpm ?? StationIdSettings.DefaultCwWpm,
@@ -113,7 +109,6 @@ public sealed partial class OptionsSettingsService
         var operatorSettings = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
         var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-        var appPerformance = _loadedSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
         var stationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
         // MigrateIfNeeded (not a plain GetSection) so this dialog shows exactly what
         // AdifUdpStreamer.SendLoggedQsoAsync will actually send -- an upgrading user's already-
@@ -159,7 +154,6 @@ public sealed partial class OptionsSettingsService
             QrzLookupPassword: qrzLookup.Password,
             CaptureChannelSource: audio.CaptureChannelSource,
             StereoTxEnabled: audio.StereoTxEnabled,
-            AppPriorityIsHigh: appPerformance.ProcessPriority == System.Diagnostics.ProcessPriorityClass.High,
             CwIdMode: stationId.CwIdMode,
             CwText: stationId.CwText ?? StationIdSettings.DefaultCwText,
             CwWpm: stationId.CwWpm ?? StationIdSettings.DefaultCwWpm,
@@ -187,16 +181,15 @@ public sealed partial class OptionsSettingsService
         // anything other than this dialog's own Save.
         var currentSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
 
-        // Tier B audit finding: these four (Localization/AppPerformance/Operator/QrzLookup) used to
-        // build a fresh `new X { ... }` instead of `previous with { ... }` like every OTHER section
-        // here -- harmless today only because none of these four records currently has a field the
-        // dialog doesn't own (confirmed field-by-field), but it's the exact sibling-inconsistency
-        // shape this whole sweep keeps finding: the day a non-dialog field is added to any of these
-        // four (a QRZ session-cache token, an operator default-power field, ...), every Options Save
+        // Tier B audit finding: these three (Localization/Operator/QrzLookup) used to build a fresh
+        // `new X { ... }` instead of `previous with { ... }` like every OTHER section here --
+        // harmless today only because none of these three records currently has a field the dialog
+        // doesn't own (confirmed field-by-field), but it's the exact sibling-inconsistency shape
+        // this whole sweep keeps finding: the day a non-dialog field is added to any of these three
+        // (a QRZ session-cache token, an operator default-power field, ...), every Options Save
         // would silently reset it, with no existing test able to catch it. Read previous* up front
         // and preserve via `with` uniformly, matching AfcEnabled/ClientId's own established pattern.
         var previousLocalization = currentSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
-        var previousAppPerformance = currentSettings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings) ?? new AppPerformanceSettings();
         var previousOperator = currentSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
         var previousQrzLookup = currentSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
         var previousAudio = currentSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
@@ -239,14 +232,6 @@ public sealed partial class OptionsSettingsService
                     StereoTxEnabled = snapshot.StereoTxEnabled,
                 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings)
-            .WithSection(
-                AppPerformanceSettings.SectionKey,
-                // null (not ProcessPriorityClass.Normal) for "Normal" -- matches
-                // AppPerformanceSettings.ProcessPriority's own "unset = don't touch the OS default"
-                // contract (see that record's own doc comment); Program.cs's read site already
-                // treats null as a no-op, functionally equivalent for a freshly-launched process.
-                previousAppPerformance with { ProcessPriority = snapshot.AppPriorityIsHigh ? System.Diagnostics.ProcessPriorityClass.High : null },
-                AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings)
             .WithSection(
                 RadioConnectionSettings.SectionKey,
                 previousRadio with

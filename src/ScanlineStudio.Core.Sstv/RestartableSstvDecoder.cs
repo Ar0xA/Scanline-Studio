@@ -42,7 +42,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// on a different thread and then contend for `_gate` against the (still-lock-holding) original
 /// thread -- a genuine deadlock. Raising outside the lock removes the whole class, since the swap has
 /// already fully happened by the time any handler runs.</summary>
-public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
+public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, ISstvDecoderReconfiguration, IDisposable
 {
     internal const int ProductionSampleRate = SstvSampleRate.Default;
     internal const long DefaultWarningThresholdSamples = 12L * 3600 * ProductionSampleRate;
@@ -55,19 +55,43 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         long ProjectionReserveSamples);
 
     private readonly bool _afcEnabled;
-    private readonly bool _syncRestartEnabled;
-    private readonly bool _autoSyncEnabled;
-    private readonly bool _autoStopEnabled;
-    private readonly bool _autoSlantEnabled;
+
+    // NOT readonly (2026-08-27, restart-required-settings backlog item 1) -- same shape as
+    // _stationIdDecodeEnabled below: both the seed for a freshly-(re)built inner (CreateInner) AND
+    // the current live value (this wrapper's own field, kept in sync by each property's setter, NOT
+    // forwarded-to from the inner decoder's own value -- see each property's own doc comment for why
+    // that distinction matters for the getter contract).
+    private bool _syncRestartEnabled;
+    private bool _autoSyncEnabled;
+    private bool _autoStopEnabled;
+    private bool _autoSlantEnabled;
 
     // NOT readonly (user-reported 2026-08-27, "Squelch level" live control) -- same shape as
     // _stationIdDecodeEnabled below: both the seed for a freshly-(re)built inner AND the current
     // live value, kept in sync with _inner.SenseLevel by the constructor, property setter, and
     // CreateInner under _gate.
     private int _senseLevel;
-    private readonly DemodType _demodType;
-    private readonly RxBpfPreset _rxBpfPreset;
-    private readonly RxBufferMode _rxBufferMode;
+
+    // NOT readonly (2026-08-27, restart-required-settings backlog item 2) -- unlike the four
+    // booleans and SenseLevel above, these three have NO in-place mutation path on
+    // AnalogFmSstvDecoder (each is read ONCE, at construction, by CreateInner below); a requested
+    // change is only ever applied by DRAINING _pendingReconfiguration inside Swap, which reassigns
+    // these fields immediately before calling CreateInner. Safe to leave un-`readonly`: only
+    // CreateInner (under _gate) ever reads them, and this wrapper's own public getters (RxBpfPreset
+    // below) forward to `_inner`'s value, never to these fields directly -- so there is no
+    // torn-read/stale-read exposure from dropping `readonly` (round-3 plan-review nit).
+    private DemodType _demodType;
+    private RxBpfPreset _rxBpfPreset;
+    private RxBufferMode _rxBufferMode;
+
+    /// <summary>NOT drained anywhere but inside <see cref="Swap"/> -- see
+    /// <see cref="RequestReconfiguration"/>'s own doc comment for the full contract (idle-gating,
+    /// equality-guard, and the bounded-retry failure policy a persistent <c>CreateInner</c> failure
+    /// needs, restart-required-settings backlog item 2, round-2/round-3 plan-review).</summary>
+    private sealed record PendingReconfiguration(RxBpfPreset RxBpfPreset, DemodType DemodType, RxBufferMode RxBufferMode);
+
+    private PendingReconfiguration? _pendingReconfiguration;
+
     private readonly int _sampleRate;
     private readonly long _warningThresholdSamples;
     private readonly long _criticalThresholdSamples;
@@ -121,6 +145,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     public event Action? RestartOverdue;
     public event Action? RestartCriticallyOverdue;
     public event Action? Restarted;
+    public event Action? ReconfigurationRejected;
 
     /// <summary>Diagnostic-only: how many times the inner decoder has been swapped (initial
     /// construction does not count). Test infrastructure for pinning the self-clearing property.</summary>
@@ -155,6 +180,26 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.StationIdDecodeEnabled;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.AutoSlantEnabled"/> directly -- same reasoning/shape as
+    /// <see cref="InnerStationIdDecodeEnabledForTests"/> above (2026-08-27, restart-required-settings
+    /// backlog item 1): proves a live change, and a re-seed across a periodic swap, actually reached
+    /// the LIVE inner decoder, not just the wrapper's own stored field. AutoSyncEnabled/
+    /// AutoStopEnabled/SyncRestartEnabled already have their own equivalent
+    /// <c>InnerXForTests</c> accessors further below (pre-existing, forwarding to
+    /// <c>AnalogFmSstvDecoder</c>'s own test-only <c>XForTests</c> readbacks of the same now-mutable
+    /// fields) -- not duplicated here.</summary>
+    internal bool InnerAutoSlantEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.AutoSlantEnabled;
             }
         }
     }
@@ -437,6 +482,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         var raiseWarning = false;
         var raiseCritical = false;
         var raiseRestarted = false;
+        var raiseReconfigurationRejected = false;
 
         lock (_gate)
         {
@@ -458,20 +504,33 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
             if (samples.Length > _maximumSafeSampleIndex - n)
             {
-                Swap();
+                // mandatory: true -- this swap is the overflow-safety guarantee itself and must
+                // happen regardless of a coincidentally-pending (and possibly failing) reconfiguration
+                // request; see Swap's own doc comment for why "mandatory" always either commits or
+                // throws, never silently no-ops (round-3 plan-review B1/Q3).
+                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
                 raiseCritical = true;
-                raiseRestarted = true;
             }
             else if (n >= _criticalThresholdSamples)
             {
-                Swap();
+                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
                 raiseCritical = true;
-                raiseRestarted = true;
             }
             else if (_inner.IsIdle && n >= _warningThresholdSamples)
             {
-                Swap();
-                raiseRestarted = true;
+                // Also mandatory (round-3 plan-review finding): this is the routine periodic
+                // maintenance swap, not the new reconfiguration-only trigger below -- it must not
+                // silently degrade into a no-op just because a pending reconfiguration happens to be
+                // queued and its CreateInner attempt fails.
+                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
+            }
+            else if (_inner.IsIdle && _pendingReconfiguration is not null)
+            {
+                // Restart-required-settings backlog item 2 (2026-08-27): the ONLY discretionary swap
+                // trigger -- a persistent CreateInner failure here just leaves the old (still fully
+                // functional) inner decoder in place instead of forcing anything (see Swap's own
+                // doc comment).
+                raiseRestarted = Swap(mandatory: false, out raiseReconfigurationRejected);
             }
             else if (!_inner.IsIdle && n >= _warningThresholdSamples && !_warningRaised)
             {
@@ -508,6 +567,11 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         if (raiseWarning)
         {
             RaiseMaintenanceSubscribers(RestartOverdue, ref maintenanceFailure);
+        }
+
+        if (raiseReconfigurationRejected)
+        {
+            RaiseMaintenanceSubscribers(ReconfigurationRejected, ref maintenanceFailure);
         }
 
         innerFailure?.Throw();
@@ -732,11 +796,98 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    /// <summary>Reads this WRAPPER's own stored flag, not the inner decoder's -- unlike the
-    /// swap-affected telemetry below, this is immutable for the wrapper's whole lifetime (restart-only,
-    /// same reasoning as every constructor-injected toggle here), so there's no post-swap caveat to
-    /// document and no need to take <see cref="_gate"/> to read it.</summary>
-    public bool AutoSlantEnabled => _autoSlantEnabled;
+    /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/> -- genuinely live now (2026-08-27,
+    /// restart-required-settings backlog item 1), same shape as <see cref="StationIdDecodeEnabled"/>
+    /// below: a set value is applied to the CURRENT inner instance immediately, under
+    /// <see cref="_gate"/>, and also stored so <see cref="CreateInner"/> seeds a future (re)built
+    /// inner with the last value set. The getter reads THIS wrapper's own stored field, not
+    /// <c>_inner.AutoSlantEnabled</c> -- deliberately, same reasoning as <see cref="SenseLevel"/>'s
+    /// own doc comment: forwarding to the inner decoder's own deferred (apply-on-next-PushSamples)
+    /// value could read stale for a moment after a set (plan-review round 3 finding).</summary>
+    public bool AutoSlantEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _autoSlantEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _autoSlantEnabled = value;
+                _inner.AutoSlantEnabled = value;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.AutoSyncEnabled"/> -- genuinely live now (2026-08-27).
+    /// See <see cref="AutoSlantEnabled"/>'s own doc comment immediately above for the shared shape
+    /// and getter contract.</summary>
+    public bool AutoSyncEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _autoSyncEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _autoSyncEnabled = value;
+                _inner.AutoSyncEnabled = value;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.AutoStopEnabled"/> -- genuinely live now (2026-08-27).
+    /// See <see cref="AutoSlantEnabled"/>'s own doc comment above for the shared shape and getter
+    /// contract.</summary>
+    public bool AutoStopEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _autoStopEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _autoStopEnabled = value;
+                _inner.AutoStopEnabled = value;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.SyncRestartEnabled"/> -- genuinely live now
+    /// (2026-08-27). See <see cref="AutoSlantEnabled"/>'s own doc comment above for the shared shape
+    /// and getter contract.</summary>
+    public bool SyncRestartEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _syncRestartEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _syncRestartEnabled = value;
+                _inner.SyncRestartEnabled = value;
+            }
+        }
+    }
 
     /// <summary>See <see cref="ISstvDecoder.SenseLevel"/> for the full contract -- genuinely live
     /// now (user-reported 2026-08-27, "Squelch level" live control), same shape as
@@ -784,8 +935,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    /// <summary>Forwards to whichever inner instance is current -- same reasoning/shape as
-    /// <see cref="SenseLevel"/> above.</summary>
+    /// <summary>Forwards to whichever inner instance is current -- deliberately last-APPLIED, not
+    /// last-requested (different from <see cref="SenseLevel"/>/<see cref="AutoSlantEnabled"/>'s
+    /// choice above; restart-required-settings backlog item 2, 2026-08-27). No round-trip
+    /// persistence risk exists either way here, and last-applied is the more honest read for a
+    /// display that can legitimately lag an entire reception behind what Options just saved (a
+    /// pending change only applies once the decoder goes idle -- see
+    /// <see cref="RequestReconfiguration"/>). Genuinely live now, no longer restart-only.</summary>
     public RxBpfPreset RxBpfPreset
     {
         get
@@ -794,6 +950,34 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             {
                 return _inner.RxBpfPreset;
             }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoderReconfiguration.RequestReconfiguration"/> for the
+    /// caller-facing contract. Unlike <see cref="StationIdDecodeEnabled"/>'s in-place forward, none
+    /// of these three fields has a safe in-place mutation path on <see cref="AnalogFmSstvDecoder"/>
+    /// (each is <c>readonly</c> there, read once at construction) -- so a request here only ever
+    /// QUEUES a value; <see cref="Swap"/> is the sole place that ever drains and applies it, gated
+    /// to only ever fire while <see cref="AnalogFmSstvDecoder.IsIdle"/> (see <see cref="PushSamplesCore"/>'s
+    /// new branch) so a live reception's own group-delay/sync-anchor/staging-buffer state is never
+    /// disturbed mid-image. The equality guard below compares against this wrapper's own currently-
+    /// COMMITTED fields (not `_inner`'s, which could be mid-drain) -- so an unrelated Options Save
+    /// that didn't touch any of these three never queues a spurious rebuild, and a user who queues a
+    /// change then reverts it back before it applies correctly cancels the pending request.
+    /// Deliberately does NOT guard against a post-<see cref="Dispose"/> call the way
+    /// <see cref="PushSamplesCore"/> does -- matching every sibling <c>Request*</c> method on this
+    /// class (<see cref="RequestReSync"/>/<see cref="RequestNotch"/>/<see cref="RequestCorrectSlant"/>/
+    /// <see cref="RequestAbandonReception"/>), none of which throws post-dispose either (round-3
+    /// plan-review R2: a moot post-dispose request is correctly dropped, not lossy, and introducing
+    /// the ONE throwing `Request*` method here would be new, unprecedented behavior, not consistency
+    /// with anything). Safe to call from any thread.</summary>
+    public void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode)
+    {
+        lock (_gate)
+        {
+            _pendingReconfiguration = (rxBpfPreset == _rxBpfPreset && demodType == _demodType && rxBufferMode == _rxBufferMode)
+                ? null
+                : new PendingReconfiguration(rxBpfPreset, demodType, rxBufferMode);
         }
     }
 
@@ -868,30 +1052,93 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    private void Swap()
+    /// <summary>Returns whether the swap actually committed a fresh <see cref="_inner"/> (always
+    /// <see langword="true"/> when <paramref name="mandatory"/> is <see langword="true"/> -- a
+    /// mandatory swap either commits or throws, it never silently no-ops). <paramref name="reconfigurationRejected"/>
+    /// is set when a queued <see cref="RequestReconfiguration"/> request had to be rolled back and
+    /// dropped because <c>CreateInner</c> threw while draining it -- orthogonal to the return value:
+    /// a mandatory swap can commit (<see langword="true"/>) using the PREVIOUS settings while still
+    /// reporting the drop (round-3 plan-review Q3/finding).
+    ///
+    /// RX buffer subsystem Phase 7 (disposal-chain sub-piece): the outgoing instance's own
+    /// RxBufferMode.Extended staging buffer (if any) owns scratch files and a background writer
+    /// task -- disposing it here, before the reference is dropped, is the only place that ever
+    /// happens for a decoder that gets swapped out mid-session (as opposed to torn down at
+    /// session end, see this class's own Dispose() below). Every restart creates a fresh inner
+    /// instance (CreateInner, below), so without this, Extended mode would leak two scratch files
+    /// + a live consumer task per restart cycle -- a real, unbounded production leak, not a
+    /// hypothetical one (this exact gap was flagged by round-2 plan-review before Phase 7 started).
+    /// This whole method runs under <see cref="_gate"/> (this class's own established convention, see
+    /// the class doc comment) -- the outgoing instance's own Dispose() does a bounded
+    /// channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout, waited twice =
+    /// ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
+    /// (SignalPeakLevel/SlantPpm/SyncSource/SyncOffsetSamples/BufferedSampleCount/
+    /// IsLevelOverdriven/SyncFrequencyCorrectionHz) is waiting on this same lock for up to that
+    /// long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
+    /// a many-hour maintenance swap interval originally -- restart-required-settings backlog item 2
+    /// (2026-08-27) made this user-triggerable (a Reconfiguration Save queues a swap on the very next
+    /// idle push), so the worst case is now bounded by human click rate, not a many-hour interval;
+    /// still code-review-accepted, the underlying stuck-writer precondition is unchanged.</summary>
+    private bool Swap(bool mandatory, out bool reconfigurationRejected)
     {
-        // RX buffer subsystem Phase 7 (disposal-chain sub-piece): the outgoing instance's own
-        // RxBufferMode.Extended staging buffer (if any) owns scratch files and a background writer
-        // task -- disposing it here, before the reference is dropped, is the only place that ever
-        // happens for a decoder that gets swapped out mid-session (as opposed to torn down at
-        // session end, see this class's own Dispose() below). Every restart creates a fresh inner
-        // instance (CreateInner, below), so without this, Extended mode would leak two scratch files
-        // + a live consumer task per restart cycle -- a real, unbounded production leak, not a
-        // hypothetical one (this exact gap was flagged by round-2 plan-review before Phase 7 started).
-        // This whole method runs under `lock (_gate)` (this class's own established convention, see
-        // the class doc comment) -- the outgoing instance's own Dispose() does a bounded
-        // channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout, waited twice =
-        // ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
-        // (SignalPeakLevel/SlantPpm/SyncSource/SyncOffsetSamples/BufferedSampleCount/
-        // IsLevelOverdriven/SyncFrequencyCorrectionHz) is waiting on this same lock for up to that
-        // long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
-        // a many-hour maintenance swap interval, not a normal-operation cost.
+        reconfigurationRejected = false;
+        var pending = _pendingReconfiguration;
+        var previousRxBpfPreset = _rxBpfPreset;
+        var previousDemodType = _demodType;
+        var previousRxBufferMode = _rxBufferMode;
+        if (pending is not null)
+        {
+            _rxBpfPreset = pending.RxBpfPreset;
+            _demodType = pending.DemodType;
+            _rxBufferMode = pending.RxBufferMode;
+        }
+
         var outgoing = _inner;
 
         // Construct and fully subscribe the replacement before disconnecting the installed decoder.
         // Extended mode can fail while creating its scratch-file backend; if that happens, the old
         // decoder must remain both installed and observable so the failed swap is transactional.
-        var incoming = CreateInner();
+        AnalogFmSstvDecoder incoming;
+        try
+        {
+            incoming = CreateInner();
+        }
+        catch when (pending is not null)
+        {
+            // Round-2/round-3 plan-review B1: roll back to the previously-committed values and drop
+            // the pending marker -- ONE attempt only, never automatically retried. A PERSISTENT
+            // CreateInner failure (e.g. RxBufferMode.Extended's scratch-file creation failing on a
+            // full or read-only temp directory) must not re-arm this same idle-drain trigger on
+            // every subsequent push forever -- that would permanently and silently stop all RX
+            // decoding until the user happened to reopen Options and re-save the old value. A
+            // transient failure simply isn't retried until the user changes the setting again,
+            // matching how every other one-shot user action in this codebase behaves on failure (no
+            // hidden background retry loop). This `catch` deliberately only matches when a
+            // reconfiguration was actually pending (`when (pending is not null)`) -- with no pending
+            // change, a `CreateInner` failure propagates out of this method exactly as it always has,
+            // with no new failure mode for that case.
+            _rxBpfPreset = previousRxBpfPreset;
+            _demodType = previousDemodType;
+            _rxBufferMode = previousRxBufferMode;
+            _pendingReconfiguration = null;
+            reconfigurationRejected = true;
+
+            if (!mandatory)
+            {
+                // The old `outgoing` inner decoder is untouched and still decoding fine -- reject the
+                // reconfiguration this cycle instead of forcing a swap that isn't required.
+                return false;
+            }
+
+            // mandatory: this swap MUST happen -- the overflow/critical-overdue safety contract
+            // predates this feature and must not regress just because an unrelated reconfiguration
+            // request happened to be queued at the same moment. Retry once with the ROLLED-BACK
+            // (previous, known-good) values so the mandatory swap still completes; if this ALSO
+            // throws, that is the exact same unhandled-exception behavior CreateInner already has
+            // today for a mandatory swap with no pending change involved at all.
+            incoming = CreateInner();
+        }
+
         UnsubscribeFrom(outgoing);
         _inner = incoming;
 
@@ -900,8 +1147,14 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // swap's bookkeeping or maintenance notifications.
         outgoing.Dispose();
 
+        // Cleared on the commit path too (round-3 plan-review finding), not just inside the catch
+        // above -- otherwise a SUCCESSFUL drain of a pending reconfiguration would leave
+        // _pendingReconfiguration set, and the new idle-plus-pending branch in PushSamplesCore would
+        // re-arm and rebuild a fresh (identical) inner decoder on every subsequent idle push forever.
+        _pendingReconfiguration = null;
         _warningRaised = false;
         RestartCountForTests++;
+        return true;
     }
 
     private AnalogFmSstvDecoder CreateInner()

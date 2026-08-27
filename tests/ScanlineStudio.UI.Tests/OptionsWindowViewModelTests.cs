@@ -1442,6 +1442,69 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveCommand_AppliesAutoSyncStopSlantSyncRestartLive()
+    {
+        // Restart-required-settings backlog item 1 (2026-08-27): same reasoning as
+        // SaveCommand_AppliesSquelchLevelLive above -- these four now ALSO apply live on Save, not
+        // just SenseLevel. No separate PersistXAsync exists for these (see
+        // ISstvSessionService.RequestAutoSyncEnabled's own doc comment) -- persistence is already
+        // covered by the snapshot save asserted below.
+        var settingsStore = new FakeSettingsStore();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AutoSyncEnabled = false;
+        vm.AutoStopEnabled = true;
+        vm.AutoSlantEnabled = false;
+        vm.SyncRestartEnabled = false;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, sstvSession.RequestAutoSyncEnabledCallCount);
+        Assert.Equal(false, sstvSession.LastRequestedAutoSyncEnabled);
+        Assert.Equal(1, sstvSession.RequestAutoStopEnabledCallCount);
+        Assert.Equal(true, sstvSession.LastRequestedAutoStopEnabled);
+        Assert.Equal(1, sstvSession.RequestAutoSlantEnabledCallCount);
+        Assert.Equal(false, sstvSession.LastRequestedAutoSlantEnabled);
+        Assert.Equal(1, sstvSession.RequestSyncRestartEnabledCallCount);
+        Assert.Equal(false, sstvSession.LastRequestedSyncRestartEnabled);
+
+        var decoder = settingsStore.Settings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.Equal(false, decoder?.AutoSyncEnabled);
+        Assert.Equal(true, decoder?.AutoStopEnabled);
+        Assert.Equal(false, decoder?.AutoSlantEnabled);
+        Assert.Equal(false, decoder?.SyncRestartEnabled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RequestsReconfigurationUnconditionally()
+    {
+        // Restart-required-settings backlog item 2 (2026-08-27): RxBpfPreset/DemodType/RxBufferMode
+        // now ALSO request live (idle-gated) application on every Save, same unconditional-call
+        // convention as RequestSenseLevel/RequestAutoSyncEnabled above -- the equality guard against
+        // the currently-COMMITTED decoder value lives inside RestartableSstvDecoder itself, not here.
+        var settingsStore = new FakeSettingsStore();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.RxBpfPreset = RxBpfPreset.Narrow;
+        vm.DemodType = DemodType.Pll;
+        vm.RxBufferMode = RxBufferMode.Extended;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, sstvSession.RequestReconfigurationCallCount);
+        Assert.Equal((RxBpfPreset.Narrow, DemodType.Pll, RxBufferMode.Extended), sstvSession.LastRequestedReconfiguration);
+
+        var decoder = settingsStore.Settings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.Equal(RxBpfPreset.Narrow, decoder?.RxBpfPreset);
+        Assert.Equal(DemodType.Pll, decoder?.DemodType);
+        Assert.Equal(RxBufferMode.Extended, decoder?.RxBufferMode);
+    }
+
+    [AvaloniaFact]
     public async Task SaveCommand_OutOfRangeSampleRate_PreservesPreviousSupportedValue()
     {
         var settingsStore = new FakeSettingsStore
@@ -1591,8 +1654,7 @@ public sealed class OptionsWindowViewModelTests
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings()
-                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings)
-                .WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
+                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
@@ -1601,9 +1663,6 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(vm.IsCaptureChannelRightSelected);
         Assert.False(vm.IsCaptureChannelMonoSelected);
         Assert.True(vm.StereoTxEnabled);
-        Assert.True(vm.AppPriorityIsHigh);
-        Assert.True(vm.IsAppPriorityHighSelected);
-        Assert.False(vm.IsAppPriorityNormalSelected);
     }
 
     [AvaloniaFact]
@@ -1615,8 +1674,6 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(AudioChannelSource.Mono, vm.CaptureChannelSource);
         Assert.True(vm.IsCaptureChannelMonoSelected);
         Assert.False(vm.StereoTxEnabled);
-        Assert.False(vm.AppPriorityIsHigh);
-        Assert.True(vm.IsAppPriorityNormalSelected);
     }
 
     [AvaloniaFact]
@@ -1628,35 +1685,12 @@ public sealed class OptionsWindowViewModelTests
 
         vm.IsCaptureChannelLeftSelected = true;
         vm.StereoTxEnabled = true;
-        vm.IsAppPriorityHighSelected = true;
 
         await vm.SaveCommand.ExecuteAsync(null);
 
         var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
         Assert.Equal(AudioChannelSource.Left, audio?.CaptureChannelSource);
         Assert.True(audio?.StereoTxEnabled);
-
-        var appPerformance = settingsStore.Settings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
-        Assert.Equal(System.Diagnostics.ProcessPriorityClass.High, appPerformance?.ProcessPriority);
-    }
-
-    [AvaloniaFact]
-    public async Task SaveCommand_PersistsAppPriorityAsNull_NotExplicitNormal_WhenNormalSelected()
-    {
-        // AppPerformanceSettings.ProcessPriority's own contract: null means "don't touch the OS
-        // default," which is what "Normal" must save as, not ProcessPriorityClass.Normal explicitly.
-        var settingsStore = new FakeSettingsStore
-        {
-            Settings = new AppSettings().WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
-        };
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
-        Dispatcher.UIThread.RunJobs();
-
-        vm.IsAppPriorityNormalSelected = true;
-        await vm.SaveCommand.ExecuteAsync(null);
-
-        var appPerformance = settingsStore.Settings.GetSection(AppPerformanceSettings.SectionKey, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings);
-        Assert.Null(appPerformance?.ProcessPriority);
     }
 
     [AvaloniaFact]
@@ -1665,8 +1699,7 @@ public sealed class OptionsWindowViewModelTests
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings()
-                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings)
-                .WithSection(AppPerformanceSettings.SectionKey, new AppPerformanceSettings { ProcessPriority = System.Diagnostics.ProcessPriorityClass.High }, AppPerformanceSettingsJsonContext.Default.AppPerformanceSettings),
+                .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureChannelSource = AudioChannelSource.Right, StereoTxEnabled = true }, AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
@@ -1676,7 +1709,6 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal(AudioChannelSource.Mono, vm.CaptureChannelSource);
         Assert.False(vm.StereoTxEnabled);
-        Assert.False(vm.AppPriorityIsHigh);
     }
 
     [AvaloniaFact]
@@ -1807,6 +1839,77 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal(9600, radio?.BaudRate);
         Assert.Equal("RTS", radio?.PttType);
         Assert.Equal("/dev/ttyS1", radio?.PttPort);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RaisesRestartRequiredWarning_WhenHamlibLibraryPathChanged()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var warningRaised = false;
+        var closeRaised = false;
+        vm.RestartRequiredWarningRequested += () => { warningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        vm.HamlibLibraryPath = "/opt/homebrew/lib/libhamlib.4.dylib";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(warningRaised);
+        Assert.True(closeRaised);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_DoesNotRaiseRestartRequiredWarning_WhenNothingRestartRequiredChanged()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var warningRaised = false;
+        var closeRaised = false;
+        vm.RestartRequiredWarningRequested += () => { warningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        // Callsign is a plain live setting -- Save must still succeed and close normally, just
+        // without the restart warning, since neither HamlibLibraryPath nor the database directory
+        // relocation changed.
+        vm.Callsign = "PD3AN";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(warningRaised);
+        Assert.True(closeRaised);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RaisesRestartRequiredWarning_WhenDatabaseDirectoryRelocationPending()
+    {
+        var appLocationsService = new FakeAppLocationsService { PendingDatabaseDirectory = "/new/database" };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), appLocationsService, new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var warningRaised = false;
+        var closeRaised = false;
+        vm.RestartRequiredWarningRequested += () => { warningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        // No field touched at all -- the pending relocation alone (staged in an earlier dialog
+        // session, per PendingDatabaseDirectory's own load-time wiring) must still warn on Save.
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(warningRaised);
+        Assert.True(closeRaised);
     }
 
     [AvaloniaFact]
@@ -2932,7 +3035,6 @@ public sealed class OptionsWindowViewModelTests
         var appLocationsService = new FakeAppLocationsService
         {
             ConfigDirectory = "/config/current",
-            PendingConfigDirectory = "/config/pending",
             DatabaseDirectory = "/db/current",
             PendingDatabaseDirectory = "/db/pending",
             LogDirectory = "/logs/current",
@@ -2942,63 +3044,66 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal("/images/current", vm.ImagesDirectory);
         Assert.Equal("/config/current", vm.ConfigDirectory);
-        Assert.Equal("/config/pending", vm.PendingConfigDirectory);
         Assert.Equal("/db/current", vm.DatabaseDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
         Assert.Equal("/logs/current", vm.LogDirectory);
     }
 
     [AvaloniaFact]
-    public async Task BrowseConfigDirectoryCommand_UpdatesPendingConfigDirectory_OnAPick()
+    public async Task BrowseConfigDirectoryCommand_UpdatesConfigDirectoryInput_OnAPick()
     {
         var filePickerService = new FakeFilePickerService { FolderPathToReturn = "/config/browsed" };
         var vm = CreateViewModelForStorageTests(filePickerService: filePickerService);
 
         await vm.BrowseConfigDirectoryCommand.ExecuteAsync(null);
 
-        Assert.Equal("/config/browsed", vm.PendingConfigDirectory);
+        Assert.Equal("/config/browsed", vm.ConfigDirectoryInput);
     }
 
     [AvaloniaFact]
-    public async Task BrowseConfigDirectoryCommand_WhenTheUserCancels_LeavesPendingConfigDirectoryUnchanged()
+    public async Task BrowseConfigDirectoryCommand_WhenTheUserCancels_LeavesConfigDirectoryInputUnchanged()
     {
         var filePickerService = new FakeFilePickerService { FolderPathToReturn = null };
-        var appLocationsService = new FakeAppLocationsService { PendingConfigDirectory = "/config/already-pending" };
-        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService, filePickerService: filePickerService);
+        var vm = CreateViewModelForStorageTests(filePickerService: filePickerService);
+        vm.ConfigDirectoryInput = "/config/already-typed";
 
         await vm.BrowseConfigDirectoryCommand.ExecuteAsync(null);
 
-        Assert.Equal("/config/already-pending", vm.PendingConfigDirectory);
+        Assert.Equal("/config/already-typed", vm.ConfigDirectoryInput);
     }
 
     [AvaloniaFact]
-    public async Task ApplyConfigDirectoryCommand_CallsSetConfigDirectoryAsync_AndShowsTheRestartConfirm()
+    public async Task ApplyConfigDirectoryCommand_AppliesLiveImmediately_RefreshesConfigDirectory_ClearsTheInput()
     {
+        // Restart-required-settings backlog item 3 (2026-08-27): applies live now, same
+        // immediate-apply-then-refresh shape as ApplyLogDirectoryCommand below -- no more restart
+        // confirm.
         var appLocationsService = new FakeAppLocationsService();
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
-        vm.PendingConfigDirectory = "/config/new-target";
+        vm.ConfigDirectoryInput = "/config/new-target";
 
         await vm.ApplyConfigDirectoryCommand.ExecuteAsync(null);
 
-        Assert.Equal("/config/new-target", appLocationsService.PendingConfigDirectory);
-        Assert.True(vm.IsConfirmingConfigRestart);
+        Assert.Equal("/config/new-target", appLocationsService.ConfigDirectory);
+        Assert.Equal("/config/new-target", vm.ConfigDirectory);
+        Assert.Null(vm.ConfigDirectoryInput);
         Assert.Null(vm.ConfigDirectoryErrorMessage);
     }
 
     [AvaloniaFact]
     public async Task ApplyConfigDirectoryCommand_WhenTheFieldIsBlank_ShowsAValidationMessage_NeverCallsTheService()
     {
-        // Code-review round-1 finding: unlike Images/Log (pre-filled with the current value), this
-        // field is blank whenever nothing is staged yet -- clicking Apply without typing/browsing
+        // Code-review round-1 finding on the ORIGINAL staged version, kept deliberately (round-3
+        // plan-review): unlike Images/Log (pre-filled with the current value), this input field is
+        // blank whenever nothing has been typed/browsed yet -- clicking Apply without typing/browsing
         // anything used to silently stage "move back to default" instead of doing nothing.
-        var appLocationsService = new FakeAppLocationsService { PendingConfigDirectory = null };
+        var appLocationsService = new FakeAppLocationsService { ConfigDirectory = "/config/current" };
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
-        vm.PendingConfigDirectory = "   ";
+        vm.ConfigDirectoryInput = "   ";
 
         await vm.ApplyConfigDirectoryCommand.ExecuteAsync(null);
 
-        Assert.Null(appLocationsService.PendingConfigDirectory);
-        Assert.False(vm.IsConfirmingConfigRestart);
+        Assert.Equal("/config/current", appLocationsService.ConfigDirectory);
         Assert.NotNull(vm.ConfigDirectoryErrorMessage);
     }
 
@@ -3023,12 +3128,11 @@ public sealed class OptionsWindowViewModelTests
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
         var closeRequested = false;
         vm.RequestClose += () => closeRequested = true;
-        vm.PendingConfigDirectory = "/config/conflict";
+        vm.ConfigDirectoryInput = "/config/conflict";
 
         await vm.ApplyConfigDirectoryCommand.ExecuteAsync(null);
 
         Assert.Equal("a file already exists there", vm.ConfigDirectoryErrorMessage);
-        Assert.False(vm.IsConfirmingConfigRestart);
         Assert.False(closeRequested);
     }
 
@@ -3043,28 +3147,31 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal("/logs/new-target", appLocationsService.LogDirectory);
         Assert.Null(vm.LogDirectoryErrorMessage);
-        // No IsConfirming* flag exists for Log at all -- if this test were reflectively checking
-        // "no restart confirm shown," Config/Database's own flags are the only ones that could ever
-        // fire, and neither does for a Log-row Apply.
-        Assert.False(vm.IsConfirmingConfigRestart);
+        // No IsConfirming* flag exists for Log or Config any more (restart-required-settings backlog
+        // item 3, 2026-08-27) -- Database's own flag is the only one that could ever fire, and it
+        // doesn't for a Log-row Apply.
         Assert.False(vm.IsConfirmingDatabaseRestart);
     }
 
     [AvaloniaFact]
-    public async Task ConfirmConfigRestartCommand_WhenTheDialogHasNoUnsavedEdits_SetsRestartRequestedAndRaisesTheEvent()
+    public async Task ConfirmDatabaseRestartCommand_WhenTheDialogHasNoUnsavedEdits_SetsRestartRequestedAndRaisesTheEvent()
     {
+        // Retargeted from the removed ConfirmConfigRestartCommand test (Config no longer stages a
+        // restart -- restart-required-settings backlog item 3, round-3 plan-review risk-B: this was
+        // the ONLY success-path coverage of the shared RestartNowAsync helper, so it must survive on
+        // the row that still uses it).
         var applicationRestarter = new FakeApplicationRestarter();
-        var appLocationsService = new FakeAppLocationsService { PendingConfigDirectory = "/config/pending" };
+        var appLocationsService = new FakeAppLocationsService { PendingDatabaseDirectory = "/db/pending" };
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService, applicationRestarter: applicationRestarter);
-        vm.IsConfirmingConfigRestart = true;
+        vm.IsConfirmingDatabaseRestart = true;
         var restartRequestedRaised = false;
         vm.RestartRequested += () => restartRequestedRaised = true;
 
-        await vm.ConfirmConfigRestartCommand.ExecuteAsync(null);
+        await vm.ConfirmDatabaseRestartCommand.ExecuteAsync(null);
 
         Assert.True(applicationRestarter.RestartRequested);
         Assert.True(restartRequestedRaised);
-        Assert.False(vm.IsConfirmingConfigRestart);
+        Assert.False(vm.IsConfirmingDatabaseRestart);
         // Never spawns from the view-model itself -- only Program.cs's own shutdown sequence does,
         // strictly after this process's teardown completes.
         Assert.False(applicationRestarter.StartNewInstanceCalled);
@@ -3107,16 +3214,19 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public void CancelConfigRestartCommand_DismissesTheConfirm_WithoutLosingThePendingState()
+    public void CancelDatabaseRestartCommand_DismissesTheConfirm_WithoutLosingThePendingState()
     {
-        var appLocationsService = new FakeAppLocationsService { PendingConfigDirectory = "/config/pending" };
+        // Retargeted from the removed CancelConfigRestartCommand test (Config no longer stages a
+        // restart -- restart-required-settings backlog item 3, round-3 plan-review risk-B: this
+        // command had ZERO test coverage of its own before this change).
+        var appLocationsService = new FakeAppLocationsService { PendingDatabaseDirectory = "/db/pending" };
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
-        vm.IsConfirmingConfigRestart = true;
+        vm.IsConfirmingDatabaseRestart = true;
 
-        vm.CancelConfigRestartCommand.Execute(null);
+        vm.CancelDatabaseRestartCommand.Execute(null);
 
-        Assert.False(vm.IsConfirmingConfigRestart);
-        Assert.Equal("/config/pending", vm.PendingConfigDirectory);
+        Assert.False(vm.IsConfirmingDatabaseRestart);
+        Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
     }
 
     [AvaloniaFact]
@@ -3126,7 +3236,6 @@ public sealed class OptionsWindowViewModelTests
         var appLocationsService = new FakeAppLocationsService
         {
             ConfigDirectory = "/config/current",
-            PendingConfigDirectory = "/config/pending",
             DatabaseDirectory = "/db/current",
             PendingDatabaseDirectory = "/db/pending",
             LogDirectory = "/logs/current",
@@ -3134,17 +3243,14 @@ public sealed class OptionsWindowViewModelTests
         var vm = CreateViewModelForStorageTests(historyStore, appLocationsService);
 
         await vm.SaveCommand.ExecuteAsync(null);
-        Assert.Equal("/config/pending", vm.PendingConfigDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
 
         vm.CancelCommand.Execute(null);
-        Assert.Equal("/config/pending", vm.PendingConfigDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
 
         vm.ResetGeneralToDefaultCommand.Execute(null);
         Assert.Equal("/images/current", vm.ImagesDirectory);
         Assert.Equal("/config/current", vm.ConfigDirectory);
-        Assert.Equal("/config/pending", vm.PendingConfigDirectory);
         Assert.Equal("/db/current", vm.DatabaseDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
         Assert.Equal("/logs/current", vm.LogDirectory);

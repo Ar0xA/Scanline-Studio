@@ -160,6 +160,20 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <see cref="StartReceivingAsync"/> again.</summary>
     event Action? MaintenanceCriticalStopRaised;
 
+    /// <summary>Fires whenever the underlying decoder's inner instance is replaced by a swap -- BOTH
+    /// the periodic maintenance ones (same underlying signal as <see cref="ScanlineStudio.Core.Sstv.ISstvDecoderMaintenance.Restarted"/>)
+    /// AND a restart-required-settings backlog item 2 (2026-08-27) reconfiguration swap. Deliberately
+    /// NOT named "DecoderRestarted" (one letter away from <see cref="DecodeRestarted"/> above, a
+    /// semantically different mid-reception mode-abandonment event -- round-3 plan-review N1). Exists
+    /// so a UI-layer cache of anything read from the decoder (currently only
+    /// <c>RxImagePaneViewModel.RxBpfPreset</c>) can re-read it after whatever swap might have changed
+    /// it, without polling and without a second Options-Closed pull hook (round-2 plan-review
+    /// confirmed a pull would read the exact same value a push does here -- no reason to keep both).
+    /// Fires synchronously on the audio drain thread, same contract as <see cref="ModeDetected"/> --
+    /// a UI-layer subscriber must marshal to the UI thread itself before touching any bound
+    /// property.</summary>
+    event Action? DecoderInstanceReplaced;
+
     /// <summary>Requests a one-time manual sync correction from the decoder — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestReSync"/> for the full contract
     /// (the port of legacy's real "ReSync" button). Safe to call from any thread; a no-op if not
@@ -188,6 +202,53 @@ public interface ISstvSessionService : IAsyncDisposable
     /// one stays fast/synchronous/non-throwing (needed by <c>OptionsWindowViewModel</c>'s own save
     /// flow, which calls this as a plain statement, not awaited).</summary>
     void RequestSenseLevel(int level);
+
+    /// <summary>Requests a live Auto-Sync toggle -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AutoSyncEnabled"/> for the full
+    /// contract (2026-08-27, restart-required-settings backlog item 1). Unlike
+    /// <see cref="RequestSenseLevel"/>, this has no separate <c>PersistXAsync</c> counterpart --
+    /// this setting has no standalone out-of-dialog control, so <c>OptionsSettingsService.SaveAsync</c>
+    /// already persists it as part of the whole-dialog Save; this method is the live-apply half only.
+    /// Safe to call from any thread.</summary>
+    void RequestAutoSyncEnabled(bool enabled);
+
+    /// <summary>Requests a live Auto-Stop toggle -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AutoStopEnabled"/> for the full
+    /// contract, including a real behavioral note about counter accumulation while this flag is
+    /// off. See <see cref="RequestAutoSyncEnabled"/>'s own doc comment for why no separate persist
+    /// method exists. Safe to call from any thread.</summary>
+    void RequestAutoStopEnabled(bool enabled);
+
+    /// <summary>Requests a live Auto-Slant toggle -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AutoSlantEnabled"/> for the full
+    /// contract. See <see cref="RequestAutoSyncEnabled"/>'s own doc comment for why no separate
+    /// persist method exists. The Receive tab's own "Auto-correct" status text
+    /// (<c>RxImagePaneViewModel.AutoCorrectDisplay</c>) is refreshed separately, on the Options
+    /// window's own Closed event (see <c>MainWindow.axaml.cs</c>), the same pattern
+    /// <see cref="RequestSenseLevel"/>'s own Receive-tab dropdown already uses. Safe to call from
+    /// any thread.</summary>
+    void RequestAutoSlantEnabled(bool enabled);
+
+    /// <summary>Requests a live Sync-Restart ("Auto-restart") toggle -- see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SyncRestartEnabled"/> for the full
+    /// contract, including the RX-bandpass-filter-rebuild and VIS-lock-re-anchor side effects this
+    /// one setting has that its three siblings above don't. See
+    /// <see cref="RequestAutoSyncEnabled"/>'s own doc comment for why no separate persist method
+    /// exists. Safe to call from any thread.</summary>
+    void RequestSyncRestartEnabled(bool enabled);
+
+    /// <summary>Requests that RX BPF preset, Demod type, and RX buffer mode apply the next time the
+    /// decoder is idle -- restart-required-settings backlog item 2 (2026-08-27). Unlike
+    /// <see cref="RequestAutoSyncEnabled"/> and its siblings above, none of these three has any
+    /// in-place mutation path on the underlying decoder (each is read once, at construction) -- see
+    /// <c>ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.RequestReconfiguration</c>'s own doc
+    /// comment for the full idle-gating and failure-handling contract. A no-op if the real decoder
+    /// doesn't implement that optional side-channel (matches every <c>ISstvDecoderMaintenance</c>-gated
+    /// call in this class -- the various fake decoders used by other test projects don't implement it
+    /// either). Called unconditionally on every Options Save, same as
+    /// <see cref="RequestAutoSyncEnabled"/>'s own convention -- see that call site's own doc comment
+    /// for why no diff-against-current-value check is needed first. Safe to call from any thread.</summary>
+    void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
 
     /// <summary>Targeted single-field persist for the Receive tab's own live "Squelch level"
     /// dropdown (<c>RxImagePaneViewModel</c>) -- a real settings-file read-modify-write against
@@ -473,13 +534,18 @@ public interface ISstvSessionService : IAsyncDisposable
     bool IsLevelOverdriven { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AutoSlantEnabled"/>
-    /// -- restart-only, safe to read once at construction (no polling needed, this decoder is a DI
-    /// singleton with no live-reconfigure path).</summary>
+    /// -- genuinely LIVE now (2026-08-27, restart-required-settings backlog item 1): it can change
+    /// at runtime via Options Save, which is exactly why
+    /// <c>RxImagePaneViewModel.RefreshAutoSlantEnabledFromSession</c> exists to re-read it afterward,
+    /// same pattern as <see cref="SenseLevel"/>'s own refresh below. A caller that reads this once at
+    /// construction and never again will go stale -- see <see cref="RequestAutoSlantEnabled"/> for
+    /// the live-apply command (no separate persist method -- see that method's own doc comment for
+    /// why).</summary>
     bool AutoSlantEnabled { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SenseLevel"/>
-    /// -- unlike <see cref="AutoSlantEnabled"/> above, this one is genuinely LIVE: it can change at
-    /// runtime (Options Save, or the Receive-tab dropdown), which is exactly why
+    /// -- genuinely LIVE: it can change at runtime (Options Save, or the Receive-tab dropdown),
+    /// which is exactly why
     /// <c>RxImagePaneViewModel.RefreshSenseLevelFromSession</c> exists to re-read it after an
     /// Options-driven change. A caller that reads this once at construction and never again will go
     /// stale -- see <see cref="RequestSenseLevel"/> for the live-apply command and
@@ -487,7 +553,14 @@ public interface ISstvSessionService : IAsyncDisposable
     int SenseLevel { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RxBpfPreset"/>
-    /// -- restart-only, same reasoning as <see cref="AutoSlantEnabled"/> above.</summary>
+    /// -- genuinely LIVE now (2026-08-27, restart-required-settings backlog item 2), same shape as
+    /// <see cref="AutoSlantEnabled"/>/<see cref="SenseLevel"/> above, but idle-GATED (a requested
+    /// change only applies once the decoder next goes idle, see <see cref="RequestReconfiguration"/>)
+    /// rather than applied in-place immediately. A caller that reads this once at construction and
+    /// never again will go stale -- <c>RxImagePaneViewModel.RefreshRxBpfPresetFromSession</c> re-reads
+    /// it, triggered by <see cref="DecoderInstanceReplaced"/> rather than the Options window's own
+    /// Closed event (unlike <see cref="AutoSlantEnabled"/>/<see cref="SenseLevel"/>'s refresh hooks):
+    /// the value can't actually change until a swap happens, so that's the only correct trigger.</summary>
     RxBpfPreset RxBpfPreset { get; }
 
     double? SyncFrequencyCorrectionHz { get; }

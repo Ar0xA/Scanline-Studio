@@ -833,26 +833,38 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private readonly bool _afcEnabled;
 
     // Port of legacy's real m_SyncRestart (default 1, sstv.cpp:1486, toggled via the "Lock" toolbar
-    // button, Main.cpp:10907/11887's SBLKClick) -- see the mid-reception restart call site in
+    // button, Main.cpp:10907/11887's KRARClick) -- see the mid-reception restart call site in
     // TryProcessBuffer for the full citation trail on why this port previously hard-wired it on.
-    // Restart-only, same reasoning as _afcEnabled above.
-    private readonly bool _syncRestartEnabled;
+    // NOT readonly (2026-08-27, restart-required-settings backlog item 1) -- genuinely live now, see
+    // the SyncRestartEnabled property below and _desiredFlags/_appliedFlags's own doc comment for the
+    // deferred-latch mechanism (a plain write is NOT safe here, unlike StationIdDecodeEnabled -- see
+    // that property's own doc comment for why this field group specifically needs the latch).
+    private bool _syncRestartEnabled;
 
     // Port of legacy's real sys.m_AutoSync (default 1, Main.cpp:901) -- gates only the two Auto Sync
     // trigger branches (TryAutoSync's own doc comment), not the drift-detection bookkeeping that
     // Main.cpp:3886's own outer gate (constant-true in this port, see TryAutoSync) keeps running
-    // unconditionally either way. Restart-only, same reasoning as _afcEnabled above.
-    private readonly bool _autoSyncEnabled;
+    // unconditionally either way. NOT readonly (2026-08-27) -- see _syncRestartEnabled's own comment
+    // immediately above for why.
+    private bool _autoSyncEnabled;
 
-    // Port of legacy's real sys.m_AutoStop (Main.cpp:900) -- unlike _afcEnabled/_syncRestartEnabled/
-    // _autoSyncEnabled above, legacy's own FRESH default is OFF, not on. Caveat: SBLKClick
-    // (Main.cpp:10898-10907) ties sys.m_AutoStop to the same Lock toolbar button as the other two
-    // (`sys.m_AutoStop = !SBLK->Down`) -- Lock engaged means all three are off, Lock DISENGAGED
-    // (unlocked) means all three are on. Legacy's Lock button can never produce this port's own
-    // default combination (SyncRestart=true, AutoSync=true, AutoStop=false); default-false here is a
-    // deliberate, defensible startup default matching sys's own unmodified .ini default, not a claim
-    // that it matches any single real legacy Lock state.
-    private readonly bool _autoStopEnabled;
+    // Port of legacy's real sys.m_AutoStop (Main.cpp:900) -- unlike _afcEnabled above, legacy's own
+    // FRESH default is OFF, not on. Caveat: SBLKClick (Main.cpp:10898-10907) ties sys.m_AutoStop to
+    // the same Lock toolbar button as the other two (`sys.m_AutoStop = !SBLK->Down`) -- Lock engaged
+    // means all three are off, Lock DISENGAGED (unlocked) means all three are on. Legacy's Lock
+    // button can never produce this port's own default combination (SyncRestart=true, AutoSync=true,
+    // AutoStop=false); default-false here is a deliberate, defensible startup default matching sys's
+    // own unmodified .ini default, not a claim that it matches any single real legacy Lock state.
+    //
+    // Divergence, now independently live-toggleable (2026-08-27, plan-review round 2/3 finding): the
+    // counter this flag gates (see AutoStopEnabled property below) accumulates unconditionally in
+    // this port (justified at TryAutoSync's own call site as matching every reachable state WHILE
+    // these three flags were construction-time-only) -- legacy only accumulates it at all when
+    // `sys.m_AutoStop || sys.m_AutoSync || KRSA->Checked` (Main.cpp:3886). Now that the three are
+    // independently live, "all three off" is newly reachable, where legacy would not accumulate and
+    // this port does -- a real, tested divergence (see the AutoStop-divergence test), not ported here
+    // (the ripple into TryAutoSync's own history-ring/branch-1 bookkeeping was not measured as safe).
+    private bool _autoStopEnabled;
 
     // Port of legacy's real KRSA->Checked (Main.cpp:1863's Define/AutoSlant .ini key) -- gates only
     // SlantTracker's own correction-commit branch in ApplySlantTracking (KRSA->Checked's exact scope
@@ -861,8 +873,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // above. ALSO gates TryAutoSync's own branch-1 threshold (Main.cpp:3910/:3917's
     // `(KRSA->Checked ? 5 : 2)*m_Mult`) -- auditor plan-review finding: KRSA->Checked is read at that
     // SEPARATE call site too, not just the slant-commit block; this port previously hardcoded the `5`
-    // side only because this flag didn't exist yet. Restart-only, same reasoning as _afcEnabled above.
-    private readonly bool _autoSlantEnabled;
+    // side only because this flag didn't exist yet. NOT readonly (2026-08-27) -- see
+    // _syncRestartEnabled's own comment above for why.
+    private bool _autoSlantEnabled;
 
     // Clamped index actually used to select SenseLevelPresets below (senseLevel is >= 0 and <= 3 ?
     // senseLevel : 0) -- stored only for SenseLevelForTests; production code reads the derived
@@ -879,6 +892,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Interlocked.Exchange<T> requires a reference type -- there is no Nullable<T> overload.
     private SenseLevelRequest? _pendingSenseLevelRequest;
 
+    private sealed record DecoderFlagsRequest(bool AutoSyncEnabled, bool AutoStopEnabled, bool AutoSlantEnabled, bool SyncRestartEnabled);
+
+    // Deferred-request latch for AutoSyncEnabled/AutoStopEnabled/AutoSlantEnabled/SyncRestartEnabled
+    // (2026-08-27, restart-required-settings backlog item 1) -- a CAS-loop merge, not a bare
+    // Interlocked.Exchange like _pendingSenseLevelRequest above, because 4 INDEPENDENT property
+    // setters share this one record and must not lose each other's not-yet-drained changes (plan-
+    // review round 1 finding: a plain write is unsafe for these tight-loop-read fields for the same
+    // reason SenseLevel's own doc comment already gives for SenseLevel itself -- no memory-model
+    // ordering guarantee against the decode loop, and no atomicity across a multi-field group; plan-
+    // review round 2 finding: the FIRST fix attempt still lost updates because its CAS baseline was
+    // reconstructed from these very fields below, which only the DRAIN writes -- a UI setter racing a
+    // drain could rebuild its baseline from a stale pre-drain read and silently revert a sibling's
+    // just-applied change).
+    //
+    // _desiredFlags is UI-thread-owned: every setter CAS-updates it, the drain (ApplyPendingDecoderFlagsRequest)
+    // NEVER writes it. _appliedFlags is decode-thread-owned: ONLY the drain writes it, used purely for
+    // reference-equality edge detection ("has anything been requested since the last drain") -- no
+    // synchronization needed for _appliedFlags itself, since it has exactly one writer and one reader,
+    // both the same (decode) thread. Both start pointing at the SAME instance (constructor), so the
+    // drain's first no-op check correctly sees "nothing pending" until a setter is actually called.
+    //
+    // Getter contract (plan-review round 3, resolved per-layer, do not blur the two): THIS class's own
+    // four properties below return the DECODE-THREAD-OWNED, already-applied plain fields
+    // (_autoSyncEnabled/etc., last-drained) -- mirrors SenseLevel's own inner-layer getter (:1804,
+    // "the getter returns the already-CLAMPED value... currently in effect"). RestartableSstvDecoder's
+    // WRAPPER-layer properties must NOT simply forward to these getters -- they keep their OWN
+    // immediately-updated fields (last-REQUESTED), exactly like RestartableSstvDecoder.SenseLevel's own
+    // wrapper shape (see that property's doc comment for why: a wrapper getter that forwarded to this
+    // inner class's own deferred value could read stale for a moment after a set, and CreateInner needs
+    // the wrapper's own field as the seed for a rebuilt inner across a maintenance swap either way).
+    private DecoderFlagsRequest _desiredFlags; // assigned in the constructor, never null after that
+    private DecoderFlagsRequest _appliedFlags; // decode-thread-only; assigned in the constructor and by the drain
+
     /// <param name="sampleRate">Positive whole-Hz sample rate for this low-level decoder. Direct
     /// construction deliberately permits values outside <see cref="SstvSampleRate"/>'s configured
     /// 5000-48500 Hz policy for focused tests and low-level tools; those values do not carry the
@@ -889,26 +935,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="SenseLevelPresets"/>. Out-of-range values (e.g. a hand-edited settings.json) fall
     /// back to index 0, matching legacy's own SetSenseLvl switch `default:` branch -- deliberately
     /// NOT the same fallback as an absent/null setting (see SstvDecoderSettings.SenseLevel's own doc
-    /// comment). This constructor value is only the SEED -- unlike afcEnabled/autoStopEnabled/etc.
-    /// above, this one is genuinely live-settable after construction (user-reported 2026-08-27,
-    /// "Squelch level" live control), matching legacy's own Option.cpp:613 (which calls
-    /// SetSenseLvl() on the live CSSTVDEM instantly) -- see the <see cref="SenseLevel"/> property's
-    /// own doc comment.</param>
+    /// comment). This constructor value is only the SEED -- unlike afcEnabled above, this one is
+    /// genuinely live-settable after construction (user-reported 2026-08-27, "Squelch level" live
+    /// control), matching legacy's own Option.cpp:613 (which calls SetSenseLvl() on the live CSSTVDEM
+    /// instantly) -- see the <see cref="SenseLevel"/> property's own doc comment. (autoSyncEnabled/
+    /// autoStopEnabled/autoSlantEnabled/syncRestartEnabled below are ALSO now genuinely live-settable,
+    /// 2026-08-27 -- only afcEnabled/demodType/rxBpfPreset/rxBufferMode remain restart-only.)</param>
     /// <param name="demodType">Main-picture FM demodulator algorithm, mirrors legacy's
     /// <c>CSSTVDEM::m_Type</c> (`sstv.cpp:2256-2269`). Legacy's real compiled-in default is
     /// <see cref="DemodType.Hilbert"/> (`sstv.cpp:1492`), matching this port's own pre-existing
-    /// hardcoded behavior. Restart-only, same reasoning/limitation as every other parameter here.</param>
+    /// hardcoded behavior. Restart-only, same reasoning/limitation as afcEnabled/rxBpfPreset/
+    /// rxBufferMode -- unlike senseLevel/autoSyncEnabled/autoStopEnabled/autoSlantEnabled/
+    /// syncRestartEnabled above/below, this one has no live-apply path.</param>
     /// <param name="rxBpfPreset">RX bandpass-filter sharpness, mirrors legacy's real
     /// <c>CSSTVDEM::m_bpf</c> (`sstv.cpp:1522-1550`'s <c>CalcBPF</c>, `.ini` key <c>DEMBPF</c>).
     /// Legacy's real compiled-in default is <see cref="RxBpfPreset.Wide"/> (`sstv.cpp:1416`,
     /// `m_bpf=1`), matching this port's own pre-existing hardcoded behavior before the RX BPF
     /// runtime-dispatch subsystem made the other three live alternatives. Restart-only, same
-    /// reasoning/limitation as every other parameter here.</param>
+    /// reasoning/limitation as demodType above (see that parameter's own doc comment).</param>
     /// <param name="rxBufferMode">RX buffer mode, mirrors legacy's real <c>sys.m_UseRxBuff</c>
     /// (`sstv.cpp:1626-1644`'s <c>OpenCloseRxBuff</c>). Legacy's real compiled-in default is
     /// <see cref="RxBufferMode.On"/> (`Main.cpp:899`, `sys.m_UseRxBuff=1`). Gates real decode-path
     /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
-    /// Restart-only, same reasoning/limitation as every other parameter here.</param>
+    /// Restart-only, same reasoning/limitation as demodType above (see that parameter's own doc
+    /// comment).</param>
     public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
@@ -928,6 +978,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _autoStopEnabled = autoStopEnabled;
         _syncRestartEnabled = syncRestartEnabled;
         _autoSlantEnabled = autoSlantEnabled;
+        // Same reference initially -- see _desiredFlags/_appliedFlags's own doc comment for why this
+        // matters (the drain's first no-op check must correctly see "nothing pending" until a setter
+        // is actually called).
+        _desiredFlags = _appliedFlags = new DecoderFlagsRequest(autoSyncEnabled, autoStopEnabled, autoSlantEnabled, syncRestartEnabled);
         _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
         (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
         _demodType = demodType;
@@ -1582,9 +1636,156 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// bug to fix by coupling them.</summary>
     public bool IsLevelOverdriven => _levelAgc.CurMax >= 24578.0;
 
-    /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/>. Plain restart-only field readback --
-    /// see <see cref="_autoSlantEnabled"/>'s own doc comment for what this gates.</summary>
-    public bool AutoSlantEnabled => _autoSlantEnabled;
+    /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/> -- genuinely live now (2026-08-27,
+    /// restart-required-settings backlog item 1), same deferred-latch mechanism as
+    /// <see cref="AutoSyncEnabled"/>/<see cref="AutoStopEnabled"/>/<see cref="SyncRestartEnabled"/>
+    /// below -- see <see cref="_desiredFlags"/>'s own doc comment for the full design and the getter-
+    /// contract split between this class and <see cref="RestartableSstvDecoder"/>. The getter returns
+    /// the already-applied value currently in effect (last-drained, mirroring <see cref="SenseLevel"/>'s
+    /// own inner-layer getter), not the last-requested one.</summary>
+    public bool AutoSlantEnabled
+    {
+        get => _autoSlantEnabled;
+        set
+        {
+            DecoderFlagsRequest current, updated;
+            do
+            {
+                current = Volatile.Read(ref _desiredFlags);
+                updated = current with { AutoSlantEnabled = value };
+            } while (Interlocked.CompareExchange(ref _desiredFlags, updated, current) != current);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.AutoSyncEnabled"/> -- genuinely live now (2026-08-27).
+    /// See <see cref="AutoSlantEnabled"/>'s own doc comment immediately above for the shared
+    /// mechanism and getter contract.</summary>
+    public bool AutoSyncEnabled
+    {
+        get => _autoSyncEnabled;
+        set
+        {
+            DecoderFlagsRequest current, updated;
+            do
+            {
+                current = Volatile.Read(ref _desiredFlags);
+                updated = current with { AutoSyncEnabled = value };
+            } while (Interlocked.CompareExchange(ref _desiredFlags, updated, current) != current);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.AutoStopEnabled"/> -- genuinely live now (2026-08-27).
+    /// See <see cref="AutoSlantEnabled"/>'s own doc comment above for the shared mechanism and getter
+    /// contract. <b>Real behavioral note, not a bug</b>: the counter this flag gates
+    /// (<see cref="_autoStopCnt"/>, see <see cref="TryAutoSync"/>) accumulates regardless of this
+    /// flag's own value -- so enabling Auto-stop mid-reception can abort the CURRENT image on the
+    /// very next qualifying line if the counter already reached its threshold (8) before this flag
+    /// was turned on. Confirmed legacy-faithful for the counter's own accumulation-while-off shape
+    /// (`Main.cpp:3931`), but see <see cref="_autoStopEnabled"/>'s own doc comment for a related,
+    /// newly-reachable divergence once all three of this flag's sibling gates are independently
+    /// live.</summary>
+    public bool AutoStopEnabled
+    {
+        get => _autoStopEnabled;
+        set
+        {
+            DecoderFlagsRequest current, updated;
+            do
+            {
+                current = Volatile.Read(ref _desiredFlags);
+                updated = current with { AutoStopEnabled = value };
+            } while (Interlocked.CompareExchange(ref _desiredFlags, updated, current) != current);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.SyncRestartEnabled"/> -- genuinely live now (2026-08-27).
+    /// See <see cref="AutoSlantEnabled"/>'s own doc comment above for the shared deferred-latch
+    /// mechanism. UNLIKE its three siblings there, a change to THIS flag additionally rebuilds
+    /// <see cref="_searchBandpassFilter"/>'s H1 coefficients and, on the false-&gt;true edge only,
+    /// re-anchors <see cref="VisLockStateMachine"/> -- see <see cref="ApplyPendingDecoderFlagsRequest"/>
+    /// for why (a real, reachable decode-thread crash otherwise, found by plan-review round 1).</summary>
+    public bool SyncRestartEnabled
+    {
+        get => _syncRestartEnabled;
+        set
+        {
+            DecoderFlagsRequest current, updated;
+            do
+            {
+                current = Volatile.Read(ref _desiredFlags);
+                updated = current with { SyncRestartEnabled = value };
+            } while (Interlocked.CompareExchange(ref _desiredFlags, updated, current) != current);
+        }
+    }
+
+    /// <summary>Drains <see cref="_desiredFlags"/> -- see that field's own doc comment for the full
+    /// mechanism. Called from <see cref="PushSamplesCore"/> immediately after
+    /// <see cref="ApplyPendingSenseLevelRequest"/> (order between the two doesn't matter -- zero
+    /// field overlap, confirmed: that method touches <see cref="_senseLevel"/>/<see cref="_slvl"/>/
+    /// <see cref="_slvl2"/>/<see cref="_slvl3"/>/<see cref="VisLockStateMachine"/>'s thresholds only;
+    /// this one touches <see cref="_autoSyncEnabled"/>/<see cref="_autoStopEnabled"/>/
+    /// <see cref="_autoSlantEnabled"/>/<see cref="_syncRestartEnabled"/>/<see cref="_searchBandpassFilter"/>/
+    /// <see cref="_visLockProcessedUpTo"/>/<see cref="_visLockOriginSample"/>). MUST stay below the
+    /// abandon/ForceMode/ReSync/Notch block above in <see cref="PushSamplesCore"/> (plan-review round
+    /// 2 nit) -- that block can move <see cref="_consumedSamples"/>, which the re-anchor below
+    /// reads.</summary>
+    private void ApplyPendingDecoderFlagsRequest()
+    {
+        var desired = Volatile.Read(ref _desiredFlags);
+        if (ReferenceEquals(desired, _appliedFlags))
+        {
+            return; // nothing requested since the last drain
+        }
+
+        var previouslyAppliedSyncRestart = _appliedFlags.SyncRestartEnabled;
+        _appliedFlags = desired;
+
+        _autoSyncEnabled = desired.AutoSyncEnabled;
+        _autoStopEnabled = desired.AutoStopEnabled;
+        _autoSlantEnabled = desired.AutoSlantEnabled;
+        _syncRestartEnabled = desired.SyncRestartEnabled;
+
+        if (_syncRestartEnabled != previouslyAppliedSyncRestart)
+        {
+            // H1's fcl is the only tap-count-invariant coefficient this flag affects
+            // (SearchBandpassFilter's own doc comment) -- rebuilding it here on EVERY change (both
+            // directions) is a deliberate DIVERGENCE from legacy's own Options-OK path, which does
+            // NOT rebuild H1 for this specific change (Option.cpp:609-611 assigns m_SyncRestart
+            // AFTER SetBPF already ran, with no later CalcBPF call) -- it matches legacy's
+            // TOOLBAR-toggle path instead (Main.cpp:11887-11888's KRARClick, which DOES call
+            // CalcBPF) -- see SearchBandpassFilter.UpdateSyncRestart's own doc comment for the full
+            // reasoning, including why this call is safe with no Volatile.Write/lock (single writer,
+            // this same decode thread, no other reader in production).
+            _searchBandpassFilter?.UpdateSyncRestart(_syncRestartEnabled); // null-safe: RxBpfPreset.Off has no filter
+
+            // Gated on _mode is not null (plan-review round 2 correction -- round 1's "unconditional"
+            // framing was wrong): this re-anchor exists ONLY to fix one real hazard -- _visLockProcessedUpTo
+            // frozen behind the trim watermark while SyncRestart was off AND a mode was locked
+            // (TrimBuffers' own :2855-area comment). Pre-lock, _visLockProcessedUpTo is never frozen
+            // (included unconditionally in the pre-lock watermark branch) and
+            // _visLockStateMachine.Reset() would NOT be a no-op there -- it would discard in-flight
+            // VIS header detection state, silently dropping whatever is arriving. Legacy has no
+            // equivalent to gate against: it feeds its own sync-search state every sample
+            // unconditionally (sstv.cpp:1847-1858) and NEVER resets anything on a flag flip
+            // (Main.cpp:11887-11888) -- it simply resumes the frozen m_sint* state. This Reset() is a
+            // mitigation for THIS PORT's own frozen-state-machine architecture across a discontinuous
+            // sample jump, not a ported legacy behavior -- say so, don't claim parity. Re-anchor
+            // target reuses Commit()'s own established triple verbatim (see that method's re-anchor
+            // for the identical pattern at a mode-lock boundary).
+            if (_mode is not null && !previouslyAppliedSyncRestart && _syncRestartEnabled)
+            {
+                _visLockStateMachine.Reset();
+                _visLockProcessedUpTo = Math.Max(_visLockProcessedUpTo, _consumedSamples);
+                _visLockOriginSample = _visLockProcessedUpTo;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: exposes <see cref="_searchBandpassFilter"/> so a test can prove
+    /// <see cref="SyncRestartEnabled"/>'s live setter actually rebuilt H1's coefficients (see
+    /// <see cref="SearchBandpassFilter.H1ForTests"/>), not just that it ran without throwing.
+    /// <see langword="null"/> under <see cref="RxBpfPreset.Off"/>, same as the field itself.</summary>
+    internal SearchBandpassFilter? SearchBandpassFilterForTests => _searchBandpassFilter;
 
     /// <summary>See <see cref="ISstvDecoder.SenseLevel"/> for the full contract. The getter returns
     /// the already-CLAMPED value (0-3) currently in effect. The setter does NOT write <see cref="_senseLevel"/>
@@ -1741,6 +1942,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // both: notch touches _notchFilter/_notchFrequencyHz/sync-correction bookkeeping, scope
         // capture touches its own arm/fill state, neither touches _slvl*/VisLockStateMachine).
         ApplyPendingSenseLevelRequest();
+        // Order vs. the call above doesn't matter (zero field overlap, see this method's own doc
+        // comment) -- but this one MUST stay below the abandon/ForceMode/ReSync/Notch block above,
+        // not just below ApplyPendingSenseLevelRequest -- see that method's own doc comment for why.
+        ApplyPendingDecoderFlagsRequest();
 
         var span = samples.Span;
         for (var i = 0; i < span.Length; i++)

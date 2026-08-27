@@ -2044,9 +2044,12 @@ verb for it.
 ## Explicitly deferred beyond v1
 
 > **Folded into Tier 3 of "Path to 0.9 beta / road to 1.0" above**, which also adds the Phase 5
-> plugin system and waterfall's 3 deferred sub-items (notch-filter marker, signal-strength meter,
-> debug scope) to this same "parked, no near-term plan" bucket. This list stays as the citation
-> detail for the original 8.
+> plugin system and waterfall's deferred sub-items (notch-filter marker, signal-strength meter) to
+> this same "parked, no near-term plan" bucket. This list stays as the citation detail for the
+> original 8. **Correction 2026-08-27**: the "debug scope" sub-item listed here previously is done
+> — it shipped as `DecoderTracePaneViewModel`/`DecoderTraceControl`, an explicit port of legacy's
+> `TTScope` (`Scope.cpp`), verified directly against source during a menu-bar audit. This list
+> entry was stale, not a real remaining gap.
 
 - Perspective correction / webcam capture ([[07-image-pipeline]]).
 - Full Hamlib extended command-set coverage beyond frequency/mode/PTT ([[04-rigctld]]).
@@ -2074,6 +2077,25 @@ verb for it.
 - Gallery tab's own Sort and Size chips (filter toolbar) — user decision 2026-08-26: "maybe one day," surfaced while scoping items outside the Options menu after the app-wide stub survey's Tiers 1-4 closed. Both were static `Border`s (no `Command`, no `IsEnabled="False"`, no tooltip) reading "SORT NEWEST"/"SIZE M" next to the real filter `RadioButton`/`ToggleButton` controls — a genuine FAKE-LIVE pair (`spec/16-gui-wiring-survey.md`'s own prior finding, never previously actioned), not caught by a search for the app's disabled-stub marker since neither chip was ever disabled. No sort-order or thumbnail-size-selection concept exists anywhere in `RxHistoryPaneViewModel`. **Removed from the UI 2026-08-26** — both chips and the `Panes.RxHistory.SortChip`/`SizeChip` locale keys deleted.
 - Gallery tab's own "Selected Frame" card Grid/dist row — user decision 2026-08-26: "maybe one day," same session as the Sort/Size chips above. Was a static two-value placeholder — distinct from the Receive tab's own real Grid/dist row (`RxImagePaneViewModel.GridDisplay`, wired 2026-08-25), which is NOT simply un-wired here: that row's grid value comes from a live FSK station-ID decode captured only at reception time (`LookupGrid`, reset to null at the start of the next reception), and `ReceiveHistoryEntry` (`Core.Logbook`) has no grid field at all — so there is nothing to display for a past history entry without a real persistence change (either a new `ReceiveHistoryEntry` field captured at record time, or falling back to the logged QSO's own `GridSquare` via `LinkedQsoId` for entries that have actually been logged). Real design work, not bounded UI wiring. **Removed from the UI 2026-08-26** — row and the `Panes.RxHistory.GridDistLabel`/`GridDistValue` locale keys deleted.
 - **SNR readout** (status-bar chip, tab-strip chip, Gallery selected-frame suffix — all three the same underlying feature) — user decision 2026-08-26: scoped as a real backlog item, not "maybe one day." Legacy has no SNR concept either (`sstv.cpp`/`Main.cpp`/`sstv.h`: zero hits for "snr"), so there's no port target — but unlike the "no legacy concept, no clear intent" removals above, this is a genuinely useful, well-understood operator feature (see the session discussion: quick pre/mid-decode "is this worth sticking with" signal, antenna/propagation troubleshooting, per-past-frame quality triage in Gallery), just real new DSP work. What exists today: `AnalogFmSstvDecoder.SignalPeakLevel` (`_levelAgc.CurMax / 32768.0`) and `RxImagePaneViewModel.AgcGainDisplay` are both real, already-wired *signal-level* measurements — the missing half is a noise-floor estimate, which nothing in this port computes (would need sampling an out-of-band/inter-tone segment of the spectrum, or a similar technique, not just reading an existing field). Scope for whoever picks this up: (1) design the noise-floor estimation approach (no legacy formula to port — this would be genuinely invented DSP, so needs its own plan-review before coding, not a "port first" job per CLAUDE.md §2); (2) a real `SnrDb`-shaped property on `RxImagePaneViewModel`, live during reception; (3) persistence onto `ReceiveHistoryEntry` if the Gallery/history use case matters (currently has no such field, same gap as Grid/dist above); (4) re-wire the three now-removed placeholder sites. **Removed from the UI 2026-08-26** — status-bar chip (`MainWindow.StatusBar.SnrValue`), tab-strip chip (`MainWindow.TabStrip.SnrValue`), and Gallery's Mode/SNR row suffix (`Panes.RxHistory.SnrSuffixValue`, row relabeled "Mode / SNR" → "Mode") all deleted. `Panes.RxDecodeLog.ColSnr` (the still-unbuilt Decode-activity table's own SNR column header) was deliberately left alone — that's the separate, already-tracked "Structured per-decode event log" backlog item (`:1446`, `:1549`), not this one.
+- **Demodulator/mode settings profile system** — legacy's Profile menu (`Main.dfm`'s `KP`, 8 named
+  slots `KP1`-`KP8`, `KPA`/`KPD` save/delete per slot, `KPDef` restore-default, `KPInit`
+  reset-all), confirmed real and working directly against `Main.dfm`/`Main.cpp` (`SetProFile`) —
+  not the earlier, separately-debunked `PRODEM` per-mode-speed idea (see the correction above,
+  which was about a different, nonexistent thing). No equivalent exists anywhere in this port
+  today: nothing saves/reloads a named snapshot of the current demod/mode configuration. The
+  existing "preset" systems in the port (`RadioStatusViewModel`'s frequency/mode memories,
+  `TxImageEditorPaneViewModel`'s font/color presets, the fixed `RxBpfPreset` enum) are all
+  unrelated. Surfaced 2026-08-27 during a menu-bar audit; needs a product decision — is this still
+  worth building given the port's smaller surface of manually-tunable demod knobs versus
+  legacy's — before it's scoped.
+- **Launch the TX image in an external editor** — legacy's `KEE`/`ExecPB` mspaint shortcut. No
+  equivalent `Process.Start`-based external-editor launch exists in this port; every `OpenEditor*`
+  method on `TxControlsPaneViewModel` opens the in-app `TxImageEditorPaneViewModel` crop/resize/
+  overlay editor instead. Likely an intentional supersession — the in-app editor is materially
+  more capable than legacy's raw mspaint handoff — but that decision was never written down, and
+  `docs/removed-features.md` has no entry for it. Surfaced 2026-08-27 during the same audit; needs
+  either a removed-features.md entry confirming the supersession, or a scoped "open in external
+  app" feature if an escape hatch to the user's own image tool is still wanted.
 
 ## Verify later with human — items neither the agent nor the auditor could resolve alone
 
