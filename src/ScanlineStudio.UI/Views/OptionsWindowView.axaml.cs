@@ -13,6 +13,14 @@ public partial class OptionsWindowView : Window
             if (DataContext is OptionsWindowViewModel vm)
             {
                 vm.RequestClose += Close;
+                // See OptionsWindowViewModel.RestartRequiredWarningRequested's own doc comment --
+                // Save awaits this before actually closing, so the acknowledgement is seen first.
+                vm.RestartRequiredWarningRequested += async () =>
+                {
+                    var dialogVm = new RestartRequiredDialogViewModel();
+                    var dialog = new RestartRequiredDialogView { DataContext = dialogVm };
+                    await dialog.ShowDialog(this);
+                };
                 // Tier C audit finding (risk): unguarded before this fix -- RequestClose can fire
                 // AFTER the window already closed (e.g. the user closes it manually while the
                 // settings-save/SetCultureAsync await is still in flight; the continuation then

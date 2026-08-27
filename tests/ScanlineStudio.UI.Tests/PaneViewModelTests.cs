@@ -1440,6 +1440,54 @@ public sealed class PaneViewModelTests
         Assert.Equal(0, sstvSession.PersistSenseLevelCallCount);
     }
 
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RefreshAutoSlantEnabledFromSession_PicksUpAnOptionsWindowChange()
+    {
+        // Restart-required-settings backlog item 1 (2026-08-27): AutoSlantEnabled is now ALSO live
+        // via Options -- same reasoning and refresh-on-Options-Closed convention as
+        // RefreshSenseLevelFromSession above. This is what keeps the Receive tab's "Auto-correct"
+        // status text from going stale after an Options-driven change.
+        var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.True(vm.AutoSlantEnabled);
+
+        // Simulates Options changing the value out from under this VM (its own save flow calling
+        // RequestAutoSlantEnabled, which the fake also reflects onto its own AutoSlantEnabled property).
+        sstvSession.AutoSlantEnabled = false;
+
+        vm.RefreshAutoSlantEnabledFromSession();
+
+        Assert.False(vm.AutoSlantEnabled);
+        // AutoCorrectDisplay reads AutoSlantEnabled directly -- proves the refresh's value actually
+        // reaches that computed property (FakeLocalizationService.GetString echoes its key back
+        // unchanged, so this pins the exact locale key AutoCorrectDisplay's "off" branch reads).
+        Assert.Equal("Panes.RxSync.AutoCorrectValue.Off", vm.AutoCorrectDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RefreshRxBpfPresetFromSession_PicksUpADecoderInstanceReplacedEvent()
+    {
+        // Restart-required-settings backlog item 2 (2026-08-27): RxBpfPreset is now ALSO live, but
+        // refreshed by ISstvSessionService.DecoderInstanceReplaced (a decoder swap actually
+        // happening), NOT the Options window's own Closed event AutoSlantEnabled/SenseLevel use above
+        // -- see RxBpfPreset's own doc comment for why a pull-based Closed-event refresh would be
+        // redundant here. Fires synchronously on (what production treats as) the audio drain thread,
+        // so the handler must marshal via Dispatcher.UIThread.Post -- this proves that marshaling
+        // actually reaches the bound property, not just that the underlying field changed.
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+
+        // Simulates a queued RequestReconfiguration finally applying on the decoder's next idle swap.
+        sstvSession.RxBpfPreset = RxBpfPreset.Narrow;
+        sstvSession.RaiseDecoderInstanceReplaced();
+
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RxBpfPreset.Narrow, vm.RxBpfPreset);
+        Assert.Equal("Options.Decode.RxBpf.Sharp", vm.RxBpfDisplay);
+    }
+
     [AvaloniaTheory]
     [InlineData(RxBpfPreset.Off, "Options.Decode.RxBpf.Normal")]
     [InlineData(RxBpfPreset.Wide, "Options.Decode.RxBpf.Wide")]

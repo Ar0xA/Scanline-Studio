@@ -58,7 +58,6 @@ public sealed record OptionsSnapshot(
     int SenseLevel,
     AudioChannelSource CaptureChannelSource,
     bool StereoTxEnabled,
-    bool AppPriorityIsHigh,
     CwIdMode CwIdMode,
     string? CwText,
     int CwWpm,

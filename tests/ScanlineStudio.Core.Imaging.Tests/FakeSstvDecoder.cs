@@ -60,7 +60,13 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public int BufferedSampleCount => 0;
 
-    public bool AutoSlantEnabled => true;
+    public bool AutoSlantEnabled { get; set; } = true;
+
+    public bool AutoSyncEnabled { get; set; } = true;
+
+    public bool AutoStopEnabled { get; set; }
+
+    public bool SyncRestartEnabled { get; set; } = true;
 
     public int SenseLevel { get; set; } = 1;
 

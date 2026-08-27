@@ -63,10 +63,10 @@
 
                             <!-- Storage section: 4 rows, moved in from the former standalone
                                  "Configurations > Storage" dialog (Images) plus 3 new rows
-                                 (Config/Database/Log). Each row commits (Images/Log, immediately)
-                                 or stages (Config/Database, applied on next restart) on its OWN
-                                 Apply — none of these 4 rows are staged behind this dialog's own
-                                 Save/Cancel/Reset flow below. -->
+                                 (Config/Database/Log). Each row commits (Images/Config/Log,
+                                 immediately) or stages (Database only, restart-required by standing
+                                 user decision) on its OWN Apply — none of these 4 rows are staged
+                                 behind this dialog's own Save/Cancel/Reset flow below. -->
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.General.Storage.Header}" />
@@ -88,8 +88,10 @@
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyImagesDirectoryCommand}" />
                                     </StackPanel>
 
-                                    <!-- Config: settings.json's directory. Stages a pending target;
-                                         Apply shows this row's own Restart-Now/Not-Now confirm. -->
+                                    <!-- Config: settings.json's directory. Applies live, no restart
+                                         needed (restart-required-settings backlog item 3, 2026-08-27)
+                                         — same shape as Log below, not Database's staged/Restart-Now
+                                         shape any more. -->
                                     <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Label}" />
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
@@ -97,28 +99,25 @@
                                             <TextBlock Classes="IndustryRowLabel" Text="{Binding ConfigDirectory}" TextWrapping="Wrap" />
                                         </StackPanel>
                                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                                            <TextBox Classes="Industry IndustryInput" Text="{Binding PendingConfigDirectory}"
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding ConfigDirectoryInput}"
                                                      Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
                                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseConfigDirectoryCommand}" />
                                         </Grid>
-                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Caption}" TextWrapping="Wrap" />
                                         <TextBlock Text="{Binding ConfigDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding ConfigDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
-                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyConfigDirectoryCommand}"
-                                                IsVisible="{Binding !IsConfirmingConfigRestart}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}" IsVisible="{Binding IsConfirmingConfigRestart}">
-                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartConfirmPrompt}" TextWrapping="Wrap" MaxWidth="300" VerticalAlignment="Center" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
-                                                    Content="{loc:Translate Options.General.Storage.RestartNowButton}" Command="{Binding ConfirmConfigRestartCommand}" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
-                                                    Content="{loc:Translate Options.General.Storage.NotNowButton}" Command="{Binding CancelConfigRestartCommand}" />
-                                        </StackPanel>
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyConfigDirectoryCommand}" />
                                     </StackPanel>
 
                                     <!-- Database: history.db's directory (shared by Logbook + Receive
-                                         History). Same staged/Restart-Now shape as Config above. -->
+                                         History). Stages a pending target; Apply shows this row's own
+                                         Restart-Now/Not-Now confirm — permanently restart-required by
+                                         standing user decision (SQLite's pooled native handles make a
+                                         live relocation unsafe), unlike Config above, which used to
+                                         share this exact shape before restart-required-settings
+                                         backlog item 3 (2026-08-27). -->
                                     <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Database.Label}" />
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
@@ -131,7 +130,7 @@
                                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseDatabaseDirectoryCommand}" />
                                         </Grid>
-                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" FontWeight="Bold" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
                                         <TextBlock Text="{Binding DatabaseDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding DatabaseDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
@@ -220,7 +219,11 @@
                                     <Grid ColumnDefinitions="Auto,Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.SampleRate}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.SampleRate.Help}" />
-                                        <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding SampleRate}" />
+                                        <!-- Legacy's real EditSamp control (Option.h:97) is a TComboBox
+                                             with a static preset list, still editable — see
+                                             OptionsWindowViewModel.AvailableSampleRates' own doc comment. -->
+                                        <ComboBox Grid.Column="2" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableSampleRates}"
+                                                  Text="{Binding SampleRate}" IsEditable="True" />
                                     </Grid>
 
                                     <!-- Stub survey Tier 3, "Clock calibration" piece 1 (2026-08-26):
@@ -234,54 +237,29 @@
                                     <Grid ColumnDefinitions="Auto,Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.TxSampleRateOffset}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.TxSampleRateOffset.Help}" />
-                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding TxSampleRateOffsetHz}" Increment="0.02" Minimum="-1500" Maximum="1500" FormatString="0.00" />
+                                        <NumericUpDown Grid.Column="2" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding TxSampleRateOffsetHz}" Increment="0.02" Minimum="-1500" Maximum="1500" FormatString="0.00" HorizontalAlignment="Left" />
                                     </Grid>
                                 </StackPanel>
                             </ContentControl>
 
-                            <!-- Wired 2026-08-12: AppPriority (AppPerformanceSettings.ProcessPriority),
-                                 Source/stereo (AudioDeviceSettings.CaptureChannelSource), CBSTX/StereoTx
-                                 (AudioDeviceSettings.StereoTxEnabled): all three had a real, already
-                                 wired backend with zero UI path. RxFifo/TxFifo stay disabled: legacy's
-                                 Win32 waveIn/waveOut buffer count concept has no analog in this port's
-                                 MiniAudio-based engine (superseded by its own automatic buffering, not
-                                 a gap). SoundPriority stays disabled too: legacy's own m_SoundPriority
-                                 is read/persisted but never actually applied to anything (dead control
-                                 in legacy itself, verified directly); this port's real capture-thread
-                                 priority knob (AudioDeviceSettings.CaptureThreadPriority) has different
-                                 enum semantics and deserves its own correctly-labeled control, not a
-                                 relabel of this mismatched one; left for a future pass. -->
+                            <!-- Wired 2026-08-12: Source/stereo (AudioDeviceSettings.CaptureChannelSource),
+                                 CBSTX/StereoTx (AudioDeviceSettings.StereoTxEnabled): both had a real,
+                                 already wired backend with zero UI path.
+                                 RxFifo/TxFifo/SoundPriority/AppPriority removed 2026-08-27 (Options
+                                 restart-required audit, "no significant modern benefit" finding):
+                                 RxFifo/TxFifo's legacy Win32 waveIn/waveOut buffer-count concept has no
+                                 analog in this port's MiniAudio-based engine, superseded by its own
+                                 automatic buffering; SoundPriority was a dead control even in legacy
+                                 itself (m_SoundPriority was read/persisted but never applied to
+                                 anything); AppPriority (Process.PriorityClass) worked but real
+                                 anti-glitch scheduling on a modern OS happens elsewhere (Windows MMCSS,
+                                 Linux PipeWire/JACK RT threads, macOS Core Audio thread policies), not
+                                 whole-process priority class — see docs/removed-features.md. -->
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Audio.PerformanceHeader}" />
                                 </HeaderedContentControl.Header>
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.RxFifo}" />
-                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="16" Minimum="4" Maximum="64" HorizontalAlignment="Left"
-                                                       IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </Grid>
-
-                                    <Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.TxFifo}" />
-                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="16" Minimum="4" Maximum="64" HorizontalAlignment="Left"
-                                                       IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </Grid>
-
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.SoundPriority}" />
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Normal}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.High}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.VeryHigh}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="SoundPriorityPlaceholder" Content="{loc:Translate Options.Audio.SoundPriority.Critical}" />
-                                    </WrapPanel>
-
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Audio.AppPriority}" />
-                                    <WrapPanel>
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriority" Content="{loc:Translate Options.Audio.AppPriority.Normal}" IsChecked="{Binding IsAppPriorityNormalSelected}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppPriority" Content="{loc:Translate Options.Audio.AppPriority.High}" IsChecked="{Binding IsAppPriorityHighSelected}" />
-                                    </WrapPanel>
-
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Audio.StereoSource}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Audio.StereoSource.Help}" />
@@ -406,6 +384,8 @@
                                             <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibLibraryPath}"
                                                       Watermark="{loc:Translate Options.Radio.Hamlib.LibraryPath.Watermark}" IsEnabled="{Binding !IsProbingHamlib}" />
                                         </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" FontWeight="Bold"
+                                                   Text="{loc:Translate Options.Radio.Hamlib.LibraryPath.RestartRequiredCaption}" TextWrapping="Wrap" />
                                         <WrapPanel>
                                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,0,4,0"
                                                     Content="{loc:Translate Options.Radio.Hamlib.Browse}"
@@ -758,8 +738,9 @@
                                          stopping on erratic/WEAK signal; AutoRestart said "on loss", the field
                                          really gates restarting onto a STRONGER sync found mid-reception): fixed
                                          both labels to match SstvDecoderSettings.cs's own verified doc comments
-                                         before wiring, not shipping a control that still lies. Same "takes effect
-                                         on next app restart" caveat as every other Options-dialog setting. -->
+                                         before wiring, not shipping a control that still lies. Genuinely LIVE now
+                                         (2026-08-27, restart-required-settings backlog item 1) — see
+                                         OptionsWindowViewModel.AutoSyncEnabled's own doc comment. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoStop}"
                                               IsChecked="{Binding AutoStopEnabled}" />
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoRestart}"
@@ -767,8 +748,9 @@
                                     <!-- Wired 2026-08-11: SstvDecoderSettings.AutoSyncEnabled/AutoSlantEnabled are real,
                                          already-consumed decoder settings (RestartableSstvDecoder via
                                          ScanlineStudio.Host.Program's ISstvDecoder registration); this dialog was the
-                                         only missing piece. Takes effect on next app restart (see OptionsWindowViewModel's
-                                         own doc comment on these two properties). -->
+                                         only missing piece. Genuinely LIVE now (2026-08-27, restart-required-settings
+                                         backlog item 1) — see OptionsWindowViewModel.AutoSyncEnabled's own doc
+                                         comment. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSync}"
                                               IsChecked="{Binding AutoSyncEnabled}" />
                                     <!-- IsEnabled gating added RX buffer subsystem Phase 9: legacy's own
@@ -953,8 +935,11 @@
                                     </WrapPanel>
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.PolynomialCalibration}"
                                               IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <!-- ClockAdjustWizard button removed 2026-08-27: a leftover twin
+                                         of the Calibration-menu clock-calibration wizard already
+                                         removed 2026-08-26 (superseded by Auto Slant's live per-line
+                                         correction) — see docs/removed-features.md. -->
                                     <WrapPanel>
-                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Options.Advanced.ClockAdjustWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Options.Advanced.LevelCalibrationWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
                                     </WrapPanel>
                                 </StackPanel>

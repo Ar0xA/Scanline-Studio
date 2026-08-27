@@ -2,20 +2,22 @@ using Microsoft.Extensions.Logging;
 
 namespace ScanlineStudio.Settings;
 
-/// <summary>See <see cref="IAppLocationsService"/>. Needs no <c>ISettingsStore</c>/
-/// <c>IReceiveHistoryStore</c> dependency for Config/Database -- both the "currently applied" and
-/// "pending target" values come from <see cref="AppLocationOverrides"/> directly, via the same
-/// <see cref="AppConfigPaths"/>/<see cref="AppDatabasePaths"/> helpers <c>Program.cs</c> uses. Log
-/// needs <see cref="ILogFileRelocator"/>, since that row applies live rather than staging a
-/// pending move.</summary>
+/// <summary>See <see cref="IAppLocationsService"/>. Needs no <c>IReceiveHistoryStore</c> dependency
+/// for Database -- both its "currently applied" and "pending target" values come from
+/// <see cref="AppLocationOverrides"/> directly, via <see cref="AppDatabasePaths"/>, the same as
+/// <c>Program.cs</c> uses. Config and Log both need a live relocator instead
+/// (<see cref="ISettingsFileRelocator"/>/<see cref="ILogFileRelocator"/>), since both rows apply
+/// immediately rather than staging a pending move.</summary>
 public sealed partial class AppLocationsService : IAppLocationsService
 {
+    private readonly ISettingsFileRelocator _settingsFileRelocator;
     private readonly ILogFileRelocator _logFileRelocator;
     private readonly ILogger<AppLocationsService> _logger;
     private readonly string? _overridesFilePath;
 
-    public AppLocationsService(ILogFileRelocator logFileRelocator, ILogger<AppLocationsService> logger, string? overridesFilePath = null)
+    public AppLocationsService(ISettingsFileRelocator settingsFileRelocator, ILogFileRelocator logFileRelocator, ILogger<AppLocationsService> logger, string? overridesFilePath = null)
     {
+        _settingsFileRelocator = settingsFileRelocator;
         _logFileRelocator = logFileRelocator;
         _logger = logger;
         _overridesFilePath = overridesFilePath;
@@ -24,16 +26,59 @@ public sealed partial class AppLocationsService : IAppLocationsService
     public Task<string> GetConfigDirectoryAsync(CancellationToken ct = default) =>
         Task.FromResult(AppConfigPaths.GetConfigDirectory(_overridesFilePath));
 
-    public Task<string?> GetPendingConfigDirectoryAsync(CancellationToken ct = default) =>
-        Task.FromResult(AppLocationOverrides.LoadForBootstrap(_overridesFilePath).PendingConfigDirectory);
-
+    /// <summary>Code-review finding: a process kill between the physical move committing and the
+    /// override-file write below (not a THROWN failure -- the rollback below only covers that case)
+    /// strands settings.json at <c>normalized</c> while the next launch's bootstrap still resolves
+    /// the old directory -- no reconciliation exists for that specific window, on either ordering of
+    /// the two steps. Accepted, not fixed: the window is narrow (one file move plus one small JSON
+    /// write, not a long-running operation) and this is the exact same shape
+    /// <see cref="SetLogDirectoryAsync"/> already has, unremediated, for <c>app.log</c>.</summary>
     public async Task SetConfigDirectoryAsync(string? directory, CancellationToken ct = default)
     {
+        var normalized = NormalizeTargetDirectory(directory, AppConfigPaths.GetDefaultConfigDirectory());
+
+        var (moved, previousDirectory) = await _settingsFileRelocator.RelocateAsync(normalized, ct);
+        if (!moved)
+        {
+            throw new InvalidOperationException($"Could not move settings to '{normalized}': a settings file already exists there, or the move failed. Choose a different folder.");
+        }
+
+        // ALWAYS persisted, even when RelocateAsync's own no-op guard found nothing to move (round-3
+        // plan-review risk-1) -- self-heals a prior store/overrides divergence (e.g. a previous
+        // rollback that failed to re-save the override record after its physical move succeeded)
+        // instead of silently preserving it, and unconditionally clears a stale PendingConfigDirectory
+        // (whether left over from a retry-pending failure, or from an older, pre-this-feature build
+        // that staged a move and hasn't restarted since upgrading -- Program.cs's own bootstrap-time
+        // migration code still applies that ONE leftover value on the bridging restart, but nothing
+        // new ever writes to it again after this ships).
         var overrides = AppLocationOverrides.LoadForBootstrap(_overridesFilePath);
-        var currentDirectory = overrides.ConfigDirectory ?? AppConfigPaths.GetDefaultConfigDirectory();
-        var pending = StagePendingDirectory(currentDirectory, directory, "settings.json", AppConfigPaths.GetDefaultConfigDirectory());
-        await AppLocationOverrides.SaveAsync(overrides with { PendingConfigDirectory = pending }, _overridesFilePath, ct);
-        Log.ConfigDirectoryStaged(_logger, pending);
+        try
+        {
+            await AppLocationOverrides.SaveAsync(overrides with { ConfigDirectory = normalized, PendingConfigDirectory = null }, _overridesFilePath, ct);
+        }
+        catch (Exception)
+        {
+            // Round-2 finding: deliberately CancellationToken.None, not `ct` -- if the save above
+            // failed BECAUSE `ct` was cancelled, passing it here would make the rollback itself a
+            // no-op and silently strand the file at `normalized` while the override record (and every
+            // future launch's default-path resolution) still points at `previousDirectory`. A
+            // rollback must run to completion regardless of why the save failed.
+            var (rolledBack, _) = await _settingsFileRelocator.RelocateAsync(previousDirectory, CancellationToken.None);
+            if (!rolledBack)
+            {
+                // User-data-visible, unlike Log's equivalent failure (that one is cosmetic -- app.log
+                // just keeps writing wherever it actually is). Here the RUNNING process keeps reading/
+                // writing settings.json at `normalized` while the NEXT launch would look for it at
+                // `previousDirectory` -- the classic silent "my settings reset" report. Surfaced with
+                // its own distinct message rather than folded into the generic move-failed one above.
+                Log.ConfigDirectoryRollbackFailed(_logger, normalized, previousDirectory);
+                throw new InvalidOperationException($"Settings were moved to '{normalized}' but the change could not be recorded, and rolling back to '{previousDirectory}' also failed. Your settings may not be found on the next launch -- check both folders.");
+            }
+
+            throw;
+        }
+
+        Log.ConfigDirectoryRelocated(_logger, normalized);
     }
 
     public Task<string> GetDatabaseDirectoryAsync(CancellationToken ct = default) =>
@@ -154,8 +199,11 @@ public sealed partial class AppLocationsService : IAppLocationsService
 
     private static partial class Log
     {
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Config directory staged: {Directory}")]
-        public static partial void ConfigDirectoryStaged(ILogger logger, string? directory);
+        [LoggerMessage(Level = LogLevel.Information, Message = "Config directory relocated to: {Directory}")]
+        public static partial void ConfigDirectoryRelocated(ILogger logger, string directory);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to roll back the config directory relocate from {NewDirectory} back to {OldDirectory} after persisting the override failed")]
+        public static partial void ConfigDirectoryRollbackFailed(ILogger logger, string newDirectory, string oldDirectory);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Database directory staged: {Directory}")]
         public static partial void DatabaseDirectoryStaged(ILogger logger, string? directory);
