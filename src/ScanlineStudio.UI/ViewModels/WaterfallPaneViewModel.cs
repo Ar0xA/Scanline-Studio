@@ -117,15 +117,18 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
         ? _localization.GetString("Panes.RxInput.NotchValueFormat", NotchFrequencyHz)
         : _localization.GetString("Panes.RxInput.NotchValue");
 
-    /// <summary>The toggle chip's own label -- user-reported (2026-08-27): this used to be a static
-    /// "On" loc-key literal in the AXAML (<c>Panes.RxInput.NotchToggle</c>) that never changed, so
-    /// the chip always read "On" regardless of <see cref="NotchEnabled"/>, misleadingly implying the
-    /// notch was always active. Reuses <see cref="NotchStatusDisplay"/>'s own two existing loc keys
-    /// (<c>Panes.RxInput.NotchToggle</c>="On" / <c>Panes.RxInput.NotchValue</c>="Off") rather than
-    /// adding new ones -- same two words, no need for a second pair of keys.</summary>
+    /// <summary>The toggle chip's own label -- user-reported (2026-08-27, then corrected the same
+    /// day): this used to be a static "On" loc-key literal in the AXAML that never changed. An
+    /// initial fix made it mirror <see cref="NotchStatusDisplay"/> (show "On" while enabled), but
+    /// the user's real intent is an ACTION label, not a state label -- it names what clicking the
+    /// chip will DO next, the opposite of the current state (same convention as a play/pause
+    /// button showing "Pause" while playing): "On" while disabled (click to turn it on), "Off"
+    /// while enabled (click to turn it off). Reuses <see cref="NotchStatusDisplay"/>'s own two
+    /// existing loc keys (<c>Panes.RxInput.NotchToggle</c>="On" / <c>Panes.RxInput.NotchValue</c>=
+    /// "Off") rather than adding new ones -- same two words, no need for a second pair of keys.</summary>
     public string NotchToggleLabel => NotchEnabled
-        ? _localization.GetString("Panes.RxInput.NotchToggle")
-        : _localization.GetString("Panes.RxInput.NotchValue");
+        ? _localization.GetString("Panes.RxInput.NotchValue")
+        : _localization.GetString("Panes.RxInput.NotchToggle");
 
     /// <summary>Toggle-chip path -- see <see cref="NotchEnabled"/>'s own doc comment for why this VM
     /// forwards rather than <c>RxImagePaneViewModel</c>. <see langword="null"/> frequency on disable
