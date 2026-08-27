@@ -77,7 +77,7 @@
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1"
                                     Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}">
                                 <Button.ContextMenu>
-                                    <ContextMenu Classes="Industry" ItemsSource="{Binding MenuEntries}" ItemContainerTheme="{StaticResource QuickModeGridMenuItemTheme}" />
+                                    <ContextMenu Classes="Industry" ItemsSource="{Binding MenuEntries}" ItemContainerTheme="{StaticResource QuickModeGridMenuItemThemeWithDuration}" />
                                 </Button.ContextMenu>
                             </Button>
                         </DataTemplate>
@@ -88,8 +88,14 @@
                           IsEnabled="{Binding CanChangeSourceOrMode}"
                           HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
+                        <!-- Duration column added 2026-08-27 (direct user request) — whole seconds,
+                             right-aligned, via SstvModeDurationSecondsConverter (same formula the
+                             card's own "Duration" row below already uses). -->
                         <DataTemplate x:DataType="sstv:SstvModeDefinition">
-                            <TextBlock Text="{Binding DisplayName}" />
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Text="{Binding DisplayName}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Converter={x:Static conv:SstvModeDurationSecondsConverter.Instance}}" HorizontalAlignment="Right" Margin="12,0,0,0" />
+                            </Grid>
                         </DataTemplate>
                     </ComboBox.ItemTemplate>
                 </ComboBox>

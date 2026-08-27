@@ -393,9 +393,12 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
                                             <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Notch}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding $parent[Window].DataContext.Waterfall.NotchStatusDisplay}" />
+                                            <!-- Content bound to NotchToggleLabel, not a static loc-key
+                                                 literal (user-reported fix, 2026-08-27): the chip used to
+                                                 always read "On" regardless of NotchEnabled. -->
                                             <ToggleButton Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="4,0,0,0"
                                                           IsChecked="{Binding $parent[Window].DataContext.Waterfall.NotchEnabled}"
-                                                          Content="{loc:Translate Panes.RxInput.NotchToggle}"
+                                                          Content="{Binding $parent[Window].DataContext.Waterfall.NotchToggleLabel}"
                                                           ToolTip.Tip="{loc:Translate Panes.RxInput.NotchTooltip}" />
                                         </Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Agc}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AgcGainDisplay}" /></Grid></Border>
@@ -943,7 +946,13 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
                             </HeaderedContentControl.Header>
                             <DockPanel LastChildFill="True">
-                                <Button DockPanel.Dock="Top" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Margin="0,0,0,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                <!-- Padding="7,0" (user-reported fix, 2026-08-27): same clipping bug
+                                     class as the Resync/Correct-slant buttons above — IndustryBtn22's
+                                     fixed 22px box was clipping this label against Fluent's own
+                                     default Button padding, since this was the one IndustryBtn22 call
+                                     site in this file that omitted the Padding override every sibling
+                                     already carries. -->
+                                <Button DockPanel.Dock="Top" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,0,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.RxDecodeLog.TraceCapture}" Command="{Binding DecoderTrace.CaptureCommand}" />
                                 <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*" ColumnSpacing="2" Margin="0,0,0,4">
                                     <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
