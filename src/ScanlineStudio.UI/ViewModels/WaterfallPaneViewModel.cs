@@ -89,6 +89,7 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     /// for "what does the user currently want," not a poll of decoder state.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NotchStatusDisplay))]
+    [NotifyPropertyChangedFor(nameof(NotchToggleLabel))]
     private bool _notchEnabled;
 
     /// <summary>Default matches <c>NotchFilter</c>/<c>AnalogFmSstvDecoder._notchFrequencyHz</c>'s own
@@ -114,6 +115,16 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     /// showed before Piece A3.</summary>
     public string NotchStatusDisplay => NotchEnabled
         ? _localization.GetString("Panes.RxInput.NotchValueFormat", NotchFrequencyHz)
+        : _localization.GetString("Panes.RxInput.NotchValue");
+
+    /// <summary>The toggle chip's own label -- user-reported (2026-08-27): this used to be a static
+    /// "On" loc-key literal in the AXAML (<c>Panes.RxInput.NotchToggle</c>) that never changed, so
+    /// the chip always read "On" regardless of <see cref="NotchEnabled"/>, misleadingly implying the
+    /// notch was always active. Reuses <see cref="NotchStatusDisplay"/>'s own two existing loc keys
+    /// (<c>Panes.RxInput.NotchToggle</c>="On" / <c>Panes.RxInput.NotchValue</c>="Off") rather than
+    /// adding new ones -- same two words, no need for a second pair of keys.</summary>
+    public string NotchToggleLabel => NotchEnabled
+        ? _localization.GetString("Panes.RxInput.NotchToggle")
         : _localization.GetString("Panes.RxInput.NotchValue");
 
     /// <summary>Toggle-chip path -- see <see cref="NotchEnabled"/>'s own doc comment for why this VM
