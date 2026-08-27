@@ -170,6 +170,93 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void SenseLevel_ConstructorValue_SurvivesAPeriodicSwap()
+    {
+        // User-reported (2026-08-27, "Squelch level" live control): SenseLevel is deliberately
+        // LIVE-settable now, same shape as StationIdDecodeEnabled -- same non-vacuous proof
+        // requirement as that property's own swap-survival tests above: InnerSenseLevelForTests/
+        // InnerVisLockThresholdsForTests read the LIVE inner decoder's own state post-swap, not just
+        // the wrapper's stored field.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, senseLevel: 3);
+        Assert.Equal(3, decoder.SenseLevel);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        Assert.Equal(3, decoder.SenseLevel);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
+        var expected = AnalogFmSstvDecoder.SenseLevelPresets[3];
+        Assert.Equal((expected.SLvl, expected.SLvl2), decoder.InnerVisLockThresholdsForTests);
+    }
+
+    [Fact]
+    public void SenseLevel_SetLiveAfterConstruction_AlsoSurvivesAPeriodicSwap()
+    {
+        // Same finding as SenseLevel_ConstructorValue_SurvivesAPeriodicSwap above, but for the
+        // property SETTER path -- proves the setter updates the wrapper's STORED field, not just the
+        // current inner instance directly (the only way a later swap could know to re-apply it). An
+        // earlier draft of this feature forwarded straight to the inner decoder with no wrapper-level
+        // storage, which this exact test would have caught: the value would have silently reverted
+        // to the constructor default (1) at the swap below.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, senseLevel: 1);
+        Assert.Equal(1, decoder.SenseLevel);
+
+        decoder.SenseLevel = 3;
+        Assert.Equal(3, decoder.SenseLevel); // wrapper's own stored field, immediate
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // 1st call also drains the deferred inner request; 3rd crosses warningThresholdSamples=100
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(3, decoder.SenseLevel);
+        Assert.Equal(3, decoder.InnerSenseLevelForTests);
+        var expected = AnalogFmSstvDecoder.SenseLevelPresets[3];
+        Assert.Equal((expected.SLvl, expected.SLvl2), decoder.InnerVisLockThresholdsForTests);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    [InlineData(99)]
+    public void SenseLevel_ConstructorOutOfRangeValue_ClampsToZero(int outOfRangeValue)
+    {
+        // Auditor round-2 finding: SstvDecoderSettings.Resolve() does NOT actually clamp an
+        // out-of-range SenseLevel despite its own doc comment claiming it does (a pre-existing bug
+        // that became load-bearing once this wrapper's OWN getter became authoritative, reading its
+        // stored field instead of forwarding to _inner). This wrapper must clamp itself in the
+        // constructor -- dropping that clamp leaves the rest of this suite green (nothing else
+        // exercises an out-of-range constructor value), so it needs its own direct test.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, senseLevel: outOfRangeValue);
+
+        Assert.Equal(0, decoder.SenseLevel);
+        Assert.Equal(0, decoder.InnerSenseLevelForTests);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    public void SenseLevel_SetterOutOfRangeValue_ClampsToZero(int outOfRangeValue)
+    {
+        // Same reasoning as SenseLevel_ConstructorOutOfRangeValue_ClampsToZero above, for the
+        // setter path -- the production caller (RxImagePaneViewModel.OnSenseLevelChanged) already
+        // guards against this, but this wrapper's own defensive clamp is a separate layer that
+        // needs its own direct proof, not just an implication from the VM-layer test.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, senseLevel: 1);
+
+        decoder.SenseLevel = outOfRangeValue;
+        decoder.PushSamples(new float[8]); // drains AnalogFmSstvDecoder's own deferred SenseLevel request
+
+        Assert.Equal(0, decoder.SenseLevel);
+        Assert.Equal(0, decoder.InnerSenseLevelForTests);
+    }
+
+    [Fact]
     public void ArmScopeCapture_Channel0_SurvivesAPeriodicSwap()
     {
         // Un-stub-RX-tab Piece B: unlike RequestNotch above, there is no wrapper-level "re-seed on

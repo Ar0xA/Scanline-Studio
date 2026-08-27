@@ -267,6 +267,35 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public double[]? TryGetScopeCaptureChannel0() => ScopeCaptureChannel0ToReturn;
 
+    public int RequestSenseLevelCallCount { get; private set; }
+
+    public int? LastRequestedSenseLevel { get; private set; }
+
+    public void RequestSenseLevel(int level)
+    {
+        RequestSenseLevelCallCount++;
+        LastRequestedSenseLevel = level;
+        SenseLevel = level;
+    }
+
+    public int PersistSenseLevelCallCount { get; private set; }
+
+    public int? LastPersistedSenseLevel { get; private set; }
+
+    public Exception? PersistSenseLevelException { get; set; }
+
+    public Task PersistSenseLevelAsync(int level, CancellationToken ct = default)
+    {
+        if (PersistSenseLevelException is { } ex)
+        {
+            throw ex;
+        }
+
+        PersistSenseLevelCallCount++;
+        LastPersistedSenseLevel = level;
+        return Task.CompletedTask;
+    }
+
     public double[]? ScopeCaptureChannel1ToReturn { get; set; }
 
     public double[]? TryGetScopeCaptureChannel1() => ScopeCaptureChannel1ToReturn;

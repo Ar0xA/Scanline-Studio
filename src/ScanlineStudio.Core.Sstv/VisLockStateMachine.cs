@@ -85,8 +85,17 @@ internal sealed class VisLockStateMachine
     private enum LockState { Search, ConfirmLock, DecodeVis, DecodeExtendedVis, Verify }
 
     private readonly double _sampleRate;
-    private readonly double _slvl; // m_SLvl -- see AnalogFmSstvDecoder.SLvl for value/citation
-    private readonly double _slvl2; // m_SLvl2 -- see AnalogFmSstvDecoder.SLvl2
+
+    // NOT readonly (user-reported 2026-08-27, "Squelch level" live control): live-updated in place
+    // by UpdateThresholds, called from AnalogFmSstvDecoder.ApplyPendingSenseLevelRequest whenever
+    // the user changes the Squelch level while a session is running -- matching legacy's own
+    // CSSTVDEM::SetSenseLvl (sstv.cpp:1793-1817), a bare field reassignment with no other side
+    // effect. UpdateThresholds is ONLY ever a two-field assignment -- never Reset(), never touching
+    // _state/_visData/_visCount/_triggerFireSample/_resolvedMode or the 4 SyncEnvelopeDetectors
+    // below, since legacy's own SetSenseLvl doesn't touch m_SyncMode or any detector either. This is
+    // the one invariant every caller of UpdateThresholds depends on for safety.
+    private double _slvl; // m_SLvl -- see AnalogFmSstvDecoder.SLvl for value/citation
+    private double _slvl2; // m_SLvl2 -- see AnalogFmSstvDecoder.SLvl2
     private readonly SyncEnvelopeDetector _d11Detector; // m_iir11/m_lpf11, 1080Hz/80Hz BW (sstv.cpp:1446/1451)
     private readonly SyncEnvelopeDetector _d12Detector; // m_iir12/m_lpf12, 1200Hz/100Hz BW (sstv.cpp:1447/1452)
     private readonly SyncEnvelopeDetector _d13Detector; // m_iir13/m_lpf13, 1320Hz/80Hz BW (sstv.cpp:1448/1453) -- only stepped in DecodeVis/DecodeExtendedVis, see ProcessSample
@@ -111,6 +120,20 @@ internal sealed class VisLockStateMachine
         _d13Detector = new SyncEnvelopeDetector(sampleRate, 1320.0, bandwidthHz: 80.0);
         _d19Detector = new SyncEnvelopeDetector(sampleRate, 1900.0);
     }
+
+    /// <summary>Live-updates the threshold pair in place -- see <see cref="_slvl"/>'s own doc comment
+    /// for the exact invariant this method must uphold (a bare two-field reassignment, nothing
+    /// else).</summary>
+    internal void UpdateThresholds(double slvl, double slvl2)
+    {
+        _slvl = slvl;
+        _slvl2 = slvl2;
+    }
+
+    /// <summary>Diagnostic-only, mirrors <c>AnalogFmSstvDecoder.SenseLevelForTests</c>'s own
+    /// reasoning -- lets a test prove <see cref="UpdateThresholds"/> actually reached this class'
+    /// own copies, not just the decoder's.</summary>
+    internal (double Slvl, double Slvl2) ThresholdsForTests => (_slvl, _slvl2);
 
     /// <summary>Resets the logical lock state (mirrors legacy's own <c>Stop()</c>, `sstv.cpp:1769-1791`,
     /// resetting <c>m_SyncMode</c>/<c>m_sint1</c> but leaving the envelope resonators' own filter state

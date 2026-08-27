@@ -59,7 +59,12 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly bool _autoSyncEnabled;
     private readonly bool _autoStopEnabled;
     private readonly bool _autoSlantEnabled;
-    private readonly int _senseLevel;
+
+    // NOT readonly (user-reported 2026-08-27, "Squelch level" live control) -- same shape as
+    // _stationIdDecodeEnabled below: both the seed for a freshly-(re)built inner AND the current
+    // live value, kept in sync with _inner.SenseLevel by the constructor, property setter, and
+    // CreateInner under _gate.
+    private int _senseLevel;
     private readonly DemodType _demodType;
     private readonly RxBpfPreset _rxBpfPreset;
     private readonly RxBufferMode _rxBufferMode;
@@ -384,7 +389,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _autoSyncEnabled = autoSyncEnabled;
         _autoStopEnabled = autoStopEnabled;
         _autoSlantEnabled = autoSlantEnabled;
-        _senseLevel = senseLevel;
+        // Clamped here too (round-2 plan-review finding), not just left to AnalogFmSstvDecoder's own
+        // constructor clamp -- this wrapper's own SenseLevel getter now reads THIS field directly
+        // (see that property's own doc comment), so an unclamped seed would leak an out-of-range
+        // value (e.g. a hand-edited settings.json) straight out to callers, even though the inner
+        // decoder itself would have silently clamped to 0. Same clamp/fallback as
+        // AnalogFmSstvDecoder's own constructor.
+        _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
         _demodType = demodType;
         _rxBpfPreset = rxBpfPreset;
         _rxBufferMode = rxBufferMode;
@@ -727,20 +738,48 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// document and no need to take <see cref="_gate"/> to read it.</summary>
     public bool AutoSlantEnabled => _autoSlantEnabled;
 
-    /// <summary>Forwards to whichever inner instance is current, under the same lock as
-    /// <see cref="InnerRxBpfPresetForTests"/>-style diagnostics -- deliberately NOT this wrapper's
-    /// own raw <see cref="_senseLevel"/> constructor field (that field is unclamped; the inner
-    /// decoder's own <see cref="AnalogFmSstvDecoder.SenseLevel"/> is the already-clamped value
-    /// actually in effect). A restart swap always reconstructs the fresh inner with this same
-    /// constructor value (<see cref="CreateInner"/>), so this is stable across restarts despite the
-    /// forward.</summary>
+    /// <summary>See <see cref="ISstvDecoder.SenseLevel"/> for the full contract -- genuinely live
+    /// now (user-reported 2026-08-27, "Squelch level" live control), same shape as
+    /// <see cref="StationIdDecodeEnabled"/> below: a set value is applied to the CURRENT inner
+    /// instance immediately, under <see cref="_gate"/>, and also stored (already clamped 0-3, same
+    /// as the constructor) so <see cref="CreateInner"/> seeds a future (re)built inner with the last
+    /// value set, not the constructor default -- fixes a real defect an earlier draft of this change
+    /// had: forwarding straight to <c>_inner.SenseLevel</c> with no wrapper-level storage meant a
+    /// live change was silently reverted at the next periodic maintenance swap. The getter reads
+    /// THIS wrapper's own stored field, not <c>_inner.SenseLevel</c> -- immediate and restart-stable,
+    /// unlike forwarding through to the inner decoder's own deferred (apply-on-next-PushSamples)
+    /// value, which could read stale for a moment after a set.</summary>
     public int SenseLevel
     {
         get
         {
             lock (_gate)
             {
-                return _inner.SenseLevel;
+                return _senseLevel;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                var clamped = value is >= 0 and <= 3 ? value : 0;
+                _senseLevel = clamped;
+                _inner.SenseLevel = clamped;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.VisLockThresholdsForTests"/> directly -- same reasoning as
+    /// <see cref="InnerSenseLevelForTests"/> above, extended to prove a live change reached
+    /// <see cref="VisLockStateMachine"/>'s own copies too, including post-restart-swap.</summary>
+    internal (double Slvl, double Slvl2) InnerVisLockThresholdsForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.VisLockThresholdsForTests;
             }
         }
     }

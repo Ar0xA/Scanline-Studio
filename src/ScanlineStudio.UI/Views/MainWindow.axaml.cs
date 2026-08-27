@@ -242,6 +242,13 @@ public partial class MainWindow : Window
                             // effect immediately without an app restart, same reasoning as every
                             // other refresh-on-close call in this block.
                             _ = vm.RxImage.LoadQrzLookupConfiguredAsync();
+                            // Receive tab's own live "Squelch level" dropdown -- Options' own
+                            // Squelch level control now ALSO applies live (OptionsWindowViewModel's
+                            // save flow), so re-sync this pane's dropdown here too, same reasoning
+                            // as every other refresh-on-close call in this block. A no-op if
+                            // unchanged (RxImagePaneViewModel.RefreshSenseLevelFromSession's own doc
+                            // comment).
+                            vm.RxImage.RefreshSenseLevelFromSession();
                         };
                         // Options > General's Config/Database "Restart Now" -- closes THIS dialog
                         // first, then (from that window's own Closed event, not inline right after

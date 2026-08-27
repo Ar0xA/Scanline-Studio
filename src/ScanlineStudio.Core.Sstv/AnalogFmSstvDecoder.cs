@@ -100,9 +100,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // toward a target level regardless of input amplitude once settled, so scaling a synthetic
     // tone's input amplitude down does not reliably produce a proportionally scaled steady-state
     // envelope to assert against).
-    internal readonly double _slvl;
-    internal readonly double _slvl2;
-    internal readonly double _slvl3;
+    // NOT readonly (user-reported 2026-08-27, "Squelch level" live control): live-updated by
+    // ApplyPendingSenseLevelRequest, drained from PushSamplesCore -- see _pendingSenseLevelRequest's
+    // own doc comment for the full deferred-request mechanism, mirroring RequestNotch's own shape.
+    internal double _slvl;
+    internal double _slvl2;
+    internal double _slvl3;
 
     private readonly int _sampleRate;
 
@@ -863,9 +866,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
     // Clamped index actually used to select SenseLevelPresets below (senseLevel is >= 0 and <= 3 ?
     // senseLevel : 0) -- stored only for SenseLevelForTests; production code reads the derived
-    // _slvl/_slvl2/_slvl3 thresholds, never this raw index. Restart-only, same reasoning as
-    // _afcEnabled above.
-    private readonly int _senseLevel;
+    // _slvl/_slvl2/_slvl3 thresholds, never this raw index. NOT readonly (user-reported 2026-08-27,
+    // "Squelch level" live control) -- unlike its sibling fields above, this one is now genuinely
+    // live-settable, see the SenseLevel property and _pendingSenseLevelRequest below.
+    private int _senseLevel;
+
+    private sealed record SenseLevelRequest(int Level);
+
+    // Deferred-request latch, exact same shape as _pendingNotchRequest (see that field's own doc
+    // comment) -- safe to set from any thread, drained by ApplyPendingSenseLevelRequest at the same
+    // PushSamplesCore point notch/scope-capture already are. A record class (not `int?`) because
+    // Interlocked.Exchange<T> requires a reference type -- there is no Nullable<T> overload.
+    private SenseLevelRequest? _pendingSenseLevelRequest;
 
     /// <param name="sampleRate">Positive whole-Hz sample rate for this low-level decoder. Direct
     /// construction deliberately permits values outside <see cref="SstvSampleRate"/>'s configured
@@ -877,10 +889,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <see cref="SenseLevelPresets"/>. Out-of-range values (e.g. a hand-edited settings.json) fall
     /// back to index 0, matching legacy's own SetSenseLvl switch `default:` branch -- deliberately
     /// NOT the same fallback as an absent/null setting (see SstvDecoderSettings.SenseLevel's own doc
-    /// comment). Restart-only: unlike legacy's Option.cpp:613 (which calls SetSenseLvl() on the live
-    /// CSSTVDEM instantly), this is read once at DI construction (ScanlineStudio.Host.Program), same
-    /// limitation as afcEnabled/autoStopEnabled/etc. above -- most user-visible for this particular
-    /// field since squelch is the control most likely to be adjusted while actively chasing a signal.</param>
+    /// comment). This constructor value is only the SEED -- unlike afcEnabled/autoStopEnabled/etc.
+    /// above, this one is genuinely live-settable after construction (user-reported 2026-08-27,
+    /// "Squelch level" live control), matching legacy's own Option.cpp:613 (which calls
+    /// SetSenseLvl() on the live CSSTVDEM instantly) -- see the <see cref="SenseLevel"/> property's
+    /// own doc comment.</param>
     /// <param name="demodType">Main-picture FM demodulator algorithm, mirrors legacy's
     /// <c>CSSTVDEM::m_Type</c> (`sstv.cpp:2256-2269`). Legacy's real compiled-in default is
     /// <see cref="DemodType.Hilbert"/> (`sstv.cpp:1492`), matching this port's own pre-existing
@@ -1573,11 +1586,51 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// see <see cref="_autoSlantEnabled"/>'s own doc comment for what this gates.</summary>
     public bool AutoSlantEnabled => _autoSlantEnabled;
 
-    /// <summary>See <see cref="ISstvDecoder.SenseLevel"/>. Plain restart-only field readback -- the
-    /// already-CLAMPED value (0-3), see <see cref="_senseLevel"/>'s own doc comment. Previously only
-    /// exposed test-only as <see cref="SenseLevelForTests"/>; this is the same field, now a real
-    /// public member for the Sync &amp; Slant card's "VIS threshold" row.</summary>
-    public int SenseLevel => _senseLevel;
+    /// <summary>See <see cref="ISstvDecoder.SenseLevel"/> for the full contract. The getter returns
+    /// the already-CLAMPED value (0-3) currently in effect. The setter does NOT write <see cref="_senseLevel"/>
+    /// directly (unlike the constructor) -- it stores a <see cref="SenseLevelRequest"/> via
+    /// <see cref="Interlocked.Exchange{T}(ref T, T)"/> (safe from any thread), applied by
+    /// <see cref="ApplyPendingSenseLevelRequest"/> on whichever thread next calls
+    /// <see cref="PushSamples"/>, the same deferred shape <see cref="RequestNotch"/> already uses.
+    /// A deferred latch (not a direct cross-thread write) is required here, unlike the single-bool
+    /// <see cref="StationIdDecodeEnabled"/>: (1) a plain write gives the push thread no memory-model
+    /// ordering guarantee against these tight-loop-read fields; (2) <see cref="_slvl"/>/
+    /// <see cref="_slvl2"/>/<see cref="_slvl3"/> plus <see cref="VisLockStateMachine"/>'s own copies
+    /// are 5 separate writes with no atomicity across the group -- a decode function reading a mixed
+    /// old/new preset pair mid-update would make a genuinely wrong, untestable decision; (3) draining
+    /// only at a fixed point in <see cref="PushSamplesCore"/> keeps a decode a pure function of
+    /// (samples, settings at chunk boundaries), not of OS thread scheduling.</summary>
+    public int SenseLevel
+    {
+        get => _senseLevel;
+        set => Interlocked.Exchange(ref _pendingSenseLevelRequest, new SenseLevelRequest(value));
+    }
+
+    /// <summary>Drains <see cref="_pendingSenseLevelRequest"/> -- see that field's own doc comment
+    /// for the mechanism. A bare reassignment of <see cref="_senseLevel"/>/<see cref="_slvl"/>/
+    /// <see cref="_slvl2"/>/<see cref="_slvl3"/> plus <see cref="VisLockStateMachine.UpdateThresholds"/>,
+    /// deliberately nothing else -- matches legacy's own SetSenseLvl (`sstv.cpp:1793-1817`), a bare
+    /// field reassignment with no state reset, called unconditionally on every Options OK
+    /// (`Option.cpp:612-613`) regardless of whether the value actually changed. Re-applying the same
+    /// value this way (e.g. the UI-layer guard reverting an invalid selection back to the last valid
+    /// one) is therefore a safe no-op, not a special case to avoid.</summary>
+    private void ApplyPendingSenseLevelRequest()
+    {
+        var request = Interlocked.Exchange(ref _pendingSenseLevelRequest, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        _senseLevel = request.Level is >= 0 and <= 3 ? request.Level : 0;
+        (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
+        _visLockStateMachine.UpdateThresholds(_slvl, _slvl2);
+    }
+
+    /// <summary>Diagnostic-only: exposes <see cref="VisLockStateMachine.ThresholdsForTests"/> so a
+    /// test can prove <see cref="ApplyPendingSenseLevelRequest"/> actually reached that class' own
+    /// copies, not just this decoder's.</summary>
+    internal (double Slvl, double Slvl2) VisLockThresholdsForTests => _visLockStateMachine.ThresholdsForTests;
 
     /// <summary>See <see cref="ISstvDecoder.RxBpfPreset"/>. Plain restart-only field readback.
     /// Previously only exposed test-only as <see cref="RxBpfPresetForTests"/>; this is the same
@@ -1684,6 +1737,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // batch's toggle state for every sample in it.
         ApplyPendingNotchRequest();
         ApplyPendingScopeCaptureArm();
+        // Order vs. the two calls above doesn't matter -- zero field overlap (confirmed by reading
+        // both: notch touches _notchFilter/_notchFrequencyHz/sync-correction bookkeeping, scope
+        // capture touches its own arm/fill state, neither touches _slvl*/VisLockStateMachine).
+        ApplyPendingSenseLevelRequest();
 
         var span = samples.Span;
         for (var i = 0; i < span.Length; i++)
