@@ -313,6 +313,37 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void WaterfallPaneViewModel_TogglingNotchEnabled_RaisesPropertyChangedForNotchToggleLabel()
+    {
+        // User-reported regression (2026-08-27): the toggle chip's Content used to be a static
+        // "On" loc-key literal in the AXAML, so it never changed regardless of NotchEnabled --
+        // fixed by binding it to this new property instead. Same "only a real PropertyChanged
+        // subscription proves it" reasoning as the sibling NotchStatusDisplay test above.
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        vm.NotchEnabled = true;
+
+        Assert.Contains(nameof(WaterfallPaneViewModel.NotchToggleLabel), raisedProperties);
+    }
+
+    [AvaloniaFact]
+    public void WaterfallPaneViewModel_NotchToggleLabel_IsOnWhenEnabled_AndOffWhenNot()
+    {
+        var localization = new FakeLocalizationService();
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+
+        _ = vm.NotchToggleLabel;
+        Assert.Equal("Panes.RxInput.NotchValue", localization.LastKey); // "Off"
+
+        vm.NotchEnabled = true;
+        _ = vm.NotchToggleLabel;
+
+        Assert.Equal("Panes.RxInput.NotchToggle", localization.LastKey); // "On"
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();

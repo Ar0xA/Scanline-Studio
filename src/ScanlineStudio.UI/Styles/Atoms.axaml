@@ -1,5 +1,7 @@
 <Styles xmlns="https://github.com/avaloniaui"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        xmlns:conv="using:ScanlineStudio.UI.Converters">
 
     <!-- Reusable primitive layer for the "Industry" wireframe design system
          (mockups/guidance/LAYOUT-SPEC.md, mockups/guidance/PHASE1-ATOM-DESIGN.md — the fully
@@ -605,6 +607,24 @@
                 <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
                 <Setter Property="Command" Value="{Binding ReassignCommand}" />
                 <Setter Property="CommandParameter" Value="{Binding CommandParameter}" />
+            </ControlTheme>
+
+            <!-- TX-only variant (direct user request, 2026-08-27: RX's own popup explicitly
+                 excluded) — adds a right-aligned whole-seconds duration column next to the mode
+                 name. BasedOn the theme above (not the raw Fluent default) so ToggleType/IsChecked/
+                 IsEnabled/Command/CommandParameter stay identical; only Header/HeaderTemplate differ
+                 — Header rebound to the whole entry (not just Mode.DisplayName) so HeaderTemplate
+                 has both Mode.DisplayName and Mode itself (for the duration converter) to work with. -->
+            <ControlTheme x:Key="QuickModeGridMenuItemThemeWithDuration" TargetType="MenuItem" BasedOn="{StaticResource QuickModeGridMenuItemTheme}">
+                <Setter Property="Header" Value="{Binding}" />
+                <Setter Property="HeaderTemplate">
+                    <DataTemplate x:DataType="vm:QuickModeMenuEntryViewModel">
+                        <Grid ColumnDefinitions="*,Auto" MinWidth="160">
+                            <TextBlock Text="{Binding Mode.DisplayName}" />
+                            <TextBlock Grid.Column="1" Text="{Binding Mode, Converter={x:Static conv:SstvModeDurationSecondsConverter.Instance}}" HorizontalAlignment="Right" Margin="12,0,0,0" />
+                        </Grid>
+                    </DataTemplate>
+                </Setter>
             </ControlTheme>
 
             <!-- ═══════════════════════ 17. Focus ring — DEFERRED to Phase 2 ═══════════════════════
