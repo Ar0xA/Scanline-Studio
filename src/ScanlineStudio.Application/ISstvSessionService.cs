@@ -177,6 +177,32 @@ public interface ISstvSessionService : IAsyncDisposable
     /// contract (the port of legacy's real oscilloscope trigger). Safe to call from any thread.</summary>
     void ArmScopeCapture(int size);
 
+    /// <summary>Requests a live "Squelch level" (VIS-lock sense-level) change — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SenseLevel"/> for the full contract
+    /// (the port of legacy's real <c>Option.cpp:612-613</c> live-apply). A method here, not a
+    /// property setter, matching this facade's own established convention: anything the UI actively
+    /// REQUESTS is a method (<see cref="RequestNotch"/>/<see cref="RequestReSync"/>/
+    /// <see cref="ArmScopeCapture"/>), while <see cref="SenseLevel"/> below stays a read-only
+    /// reflection of current state. Safe to call from any thread. Deliberately does NOT persist
+    /// anything to disk -- see <see cref="PersistSenseLevelAsync"/> for that, a separate call so this
+    /// one stays fast/synchronous/non-throwing (needed by <c>OptionsWindowViewModel</c>'s own save
+    /// flow, which calls this as a plain statement, not awaited).</summary>
+    void RequestSenseLevel(int level);
+
+    /// <summary>Targeted single-field persist for the Receive tab's own live "Squelch level"
+    /// dropdown (<c>RxImagePaneViewModel</c>) -- a real settings-file read-modify-write against
+    /// <c>SstvDecoderSettings.SenseLevel</c> ONLY, preserving whatever else is currently persisted in
+    /// that section. Lives here (Application layer), not in <c>RxImagePaneViewModel</c> itself,
+    /// because <c>ScanlineStudio.UI</c> is never allowed to reference a <c>ScanlineStudio.Core.*</c>
+    /// project directly (`UiLayeringArchitectureTests`) and <c>SstvDecoderSettings</c> lives in
+    /// <c>ScanlineStudio.Core.Sstv</c>. Distinct from <c>OptionsWindowViewModel</c>'s own whole-dialog
+    /// save (via <c>OptionsSettingsService.SaveAsync</c>), which also writes this same section for
+    /// its other 8 fields -- both are real read-modify-writes against the current on-disk state, so
+    /// neither clobbers the other's OTHER fields; the two writers briefly disagreeing about
+    /// SenseLevel specifically if both are used in close succession is an accepted, narrow race (see
+    /// this feature's own plan-review), not solved further here.</summary>
+    Task PersistSenseLevelAsync(int level, CancellationToken ct = default);
+
     /// <summary>Returns the completed channel-0 Decoder Trace capture, or <see langword="null"/> if
     /// not yet complete — see <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.TryGetScopeCaptureChannel0"/>
     /// for the full contract. Safe to call from any thread, at any time.</summary>
@@ -452,7 +478,12 @@ public interface ISstvSessionService : IAsyncDisposable
     bool AutoSlantEnabled { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SenseLevel"/>
-    /// -- restart-only, same reasoning as <see cref="AutoSlantEnabled"/> above.</summary>
+    /// -- unlike <see cref="AutoSlantEnabled"/> above, this one is genuinely LIVE: it can change at
+    /// runtime (Options Save, or the Receive-tab dropdown), which is exactly why
+    /// <c>RxImagePaneViewModel.RefreshSenseLevelFromSession</c> exists to re-read it after an
+    /// Options-driven change. A caller that reads this once at construction and never again will go
+    /// stale -- see <see cref="RequestSenseLevel"/> for the live-apply command and
+    /// <see cref="PersistSenseLevelAsync"/> for persistence.</summary>
     int SenseLevel { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RxBpfPreset"/>

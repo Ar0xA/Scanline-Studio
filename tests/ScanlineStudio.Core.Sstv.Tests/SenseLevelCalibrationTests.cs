@@ -77,9 +77,9 @@ public class SenseLevelCalibrationTests
         (double SLvl, double SLvl2, double SLvl3)[] expected =
         [
             (2400.0, 1200.0, 5000.0), // 0 -- switch default: (sstv.cpp:1812-1814)
-            (3500.0, 1750.0, 5700.0), // 1 -- case 1, the real shipped default (sstv.cpp:1794-1797)
-            (4800.0, 2400.0, 6800.0), // 2 -- case 2 (sstv.cpp:1799-1802)
-            (6000.0, 3000.0, 8000.0), // 3 -- case 3 (sstv.cpp:1804-1807)
+            (3500.0, 1750.0, 5700.0), // 1 -- case 1, the real shipped default (sstv.cpp:1796-1800)
+            (4800.0, 2400.0, 6800.0), // 2 -- case 2 (sstv.cpp:1801-1805)
+            (6000.0, 3000.0, 8000.0), // 3 -- case 3 (sstv.cpp:1806-1810)
         ];
 
         Assert.Equal(expected, AnalogFmSstvDecoder.SenseLevelPresets);
@@ -120,6 +120,78 @@ public class SenseLevelCalibrationTests
         Assert.Equal(preset0.SLvl, decoder._slvl);
         Assert.Equal(preset0.SLvl2, decoder._slvl2);
         Assert.Equal(preset0.SLvl3, decoder._slvl3);
+    }
+
+    /// <summary>User-reported (2026-08-27, "Squelch level" live control): <see cref="AnalogFmSstvDecoder.SenseLevel"/>
+    /// is genuinely live-settable now (deferred, same shape as <c>RequestNotch</c>). Field-level
+    /// assertions, not an amplitude-based behavioral probe -- see this file's own class doc comment
+    /// for why (LevelAgc normalizes; per this feature's own plan-review, a deterministic lock/no-lock
+    /// construction was investigated and not confirmed constructible with real margin on both gates,
+    /// so field-level proof is the deliberate, sufficient bar here, not a placeholder for a missing
+    /// behavioral test).</summary>
+    [Theory]
+    [InlineData(1, 3)]
+    [InlineData(3, 0)]
+    [InlineData(0, 2)]
+    public void SenseLevel_SetterIsDeferred_AppliesOnNextPushSamples_ReachesVisLockStateMachineToo(int initialPreset, int newPreset)
+    {
+        var decoder = new AnalogFmSstvDecoder(sampleRate: SampleRate, senseLevel: initialPreset);
+        var initialExpected = AnalogFmSstvDecoder.SenseLevelPresets[initialPreset];
+        var newExpected = AnalogFmSstvDecoder.SenseLevelPresets[newPreset];
+
+        decoder.SenseLevel = newPreset;
+
+        // Not yet applied -- still the OLD preset, both on the decoder's own fields and (via the
+        // getter) as the reported SenseLevel, until a PushSamples call drains the pending request.
+        Assert.Equal(initialPreset, decoder.SenseLevel);
+        Assert.Equal(initialExpected.SLvl, decoder._slvl);
+        Assert.Equal(initialExpected.SLvl2, decoder._slvl2);
+        Assert.Equal(initialExpected.SLvl3, decoder._slvl3);
+        Assert.Equal((initialExpected.SLvl, initialExpected.SLvl2), decoder.VisLockThresholdsForTests);
+
+        decoder.PushSamples(ReadOnlyMemory<float>.Empty);
+
+        Assert.Equal(newPreset, decoder.SenseLevel);
+        Assert.Equal(newExpected.SLvl, decoder._slvl);
+        Assert.Equal(newExpected.SLvl2, decoder._slvl2);
+        Assert.Equal(newExpected.SLvl3, decoder._slvl3);
+        // Proves the update reached VisLockStateMachine's own separate copies too, not just the
+        // decoder's -- the one port-specific wrinkle legacy's single-class CSSTVDEM doesn't have.
+        Assert.Equal((newExpected.SLvl, newExpected.SLvl2), decoder.VisLockThresholdsForTests);
+    }
+
+    [Fact]
+    public void SenseLevel_SetterOutOfRange_FallsBackToPreset0OnDrain()
+    {
+        var decoder = new AnalogFmSstvDecoder(sampleRate: SampleRate, senseLevel: 3);
+
+        decoder.SenseLevel = 99;
+        decoder.PushSamples(ReadOnlyMemory<float>.Empty);
+
+        var preset0 = AnalogFmSstvDecoder.SenseLevelPresets[0];
+        Assert.Equal(0, decoder.SenseLevel);
+        Assert.Equal(preset0.SLvl, decoder._slvl);
+        Assert.Equal(preset0.SLvl2, decoder._slvl2);
+        Assert.Equal(preset0.SLvl3, decoder._slvl3);
+    }
+
+    [Fact]
+    public void SenseLevel_ReappliedWithTheSameValue_IsANoOp()
+    {
+        // Matches legacy's own Option.cpp:612-613 (SetSenseLvl() called on every OK, unconditionally,
+        // regardless of whether the value actually changed) -- the OnSenseLevelChanged revert path in
+        // RxImagePaneViewModel relies on this being safe, not a special case to avoid.
+        var decoder = new AnalogFmSstvDecoder(sampleRate: SampleRate, senseLevel: 2);
+        var expected = AnalogFmSstvDecoder.SenseLevelPresets[2];
+
+        decoder.SenseLevel = 2;
+        decoder.PushSamples(ReadOnlyMemory<float>.Empty);
+
+        Assert.Equal(2, decoder.SenseLevel);
+        Assert.Equal(expected.SLvl, decoder._slvl);
+        Assert.Equal(expected.SLvl2, decoder._slvl2);
+        Assert.Equal(expected.SLvl3, decoder._slvl3);
+        Assert.Equal((expected.SLvl, expected.SLvl2), decoder.VisLockThresholdsForTests);
     }
 
     /// <summary>Mirrors <c>AnalogFmSstvDecoder.AgcSampleAt</c>'s exact math (LevelAgc.Do/Fix/Agc, the

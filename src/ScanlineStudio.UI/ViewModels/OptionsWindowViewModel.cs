@@ -2354,6 +2354,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             await _optionsSettingsService.SaveAsync(snapshot);
 
+            // Squelch level (user-reported 2026-08-27, "Squelch level" live control): unlike every
+            // OTHER SstvDecoderSettings field this dialog owns, SenseLevel is now genuinely live --
+            // matches legacy's own Option.cpp:612-613 (SetSenseLvl() called on the live demodulator
+            // on every OK, unconditionally). A plain synchronous call, not fire-and-forget: this is
+            // Interlocked.Exchange plus a short lock, effectively non-throwing, unlike the real async
+            // I/O just above/below it. Idempotent if unchanged (re-applying the same value is a safe
+            // no-op, see AnalogFmSstvDecoder.ApplyPendingSenseLevelRequest's own doc comment), so no
+            // need to diff against the previously-saved value first. The Receive tab's own "Squelch
+            // level" dropdown (RxImagePaneViewModel) is refreshed separately, on this window's own
+            // Closed event (see MainWindow.axaml.cs) -- this call is what keeps the running decoder
+            // itself in sync with an Options-driven change.
+            _sstvSession.RequestSenseLevel(SenseLevel);
+
             // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
             // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync
             // (which does its own independent fresh load-modify-save round trip, verified safe against
