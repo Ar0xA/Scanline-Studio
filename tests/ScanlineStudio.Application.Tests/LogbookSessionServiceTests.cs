@@ -374,6 +374,72 @@ public sealed class LogbookSessionServiceTests
     }
 
     [Fact]
+    public async Task IsQrzLookupConfiguredAsync_NotConfigured_ReturnsFalse()
+    {
+        var service = CreateService(); // default FakeSettingsStore has no QrzLookup section
+
+        Assert.False(await service.IsQrzLookupConfiguredAsync());
+    }
+
+    [Fact]
+    public async Task IsQrzLookupConfiguredAsync_EnabledButNoUsername_ReturnsFalse()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = null, Password = "pass" },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(settingsStore: settingsStore);
+
+        Assert.False(await service.IsQrzLookupConfiguredAsync());
+    }
+
+    [Fact]
+    public async Task IsQrzLookupConfiguredAsync_EnabledWithCredentials_ReturnsTrue()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = "user", Password = "pass" },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(settingsStore: settingsStore);
+
+        Assert.True(await service.IsQrzLookupConfiguredAsync());
+    }
+
+    [Fact]
+    public async Task IsQrzLookupConfiguredAsync_SavedButDisabled_ReturnsFalse()
+    {
+        // Same reasoning as LookupCallsignAsync_EnabledButNoUsername_... above -- credentials
+        // being saved doesn't mean the user actually turned lookup on.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = false, Username = "user", Password = "pass" },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(settingsStore: settingsStore);
+
+        Assert.False(await service.IsQrzLookupConfiguredAsync());
+    }
+
+    [Fact]
+    public async Task IsQrzLookupConfiguredAsync_SettingsLoadThrows_ReturnsFalseInsteadOfThrowing()
+    {
+        // Same "never throws" contract as LookupCallsignAsync_SettingsLoadThrows_... above -- a
+        // settings-read failure must resolve to "not configured", not propagate to a UI gate.
+        var settingsStore = new FakeSettingsStore { LoadAsyncException = new UnauthorizedAccessException("access denied") };
+        var service = CreateService(settingsStore: settingsStore);
+
+        Assert.False(await service.IsQrzLookupConfiguredAsync());
+    }
+
+    [Fact]
     public async Task TestQrzLookupCredentialsAsync_UngatedByEnabledSetting_AlwaysDelegatesToTheLookupClient()
     {
         // Deliberately ungated -- this IS the settings-configuration flow itself, testing values

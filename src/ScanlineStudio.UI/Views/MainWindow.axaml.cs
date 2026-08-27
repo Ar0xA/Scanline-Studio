@@ -237,6 +237,11 @@ public partial class MainWindow : Window
                             // refresh-the-Gallery-Storage-card-on-close behavior, now for General
                             // tab's Images row instead.
                             _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                            // Receive tab's "Lookup QRZ" button gate -- re-checks whether QRZ
+                            // lookup is configured, so enabling/disabling it in Options takes
+                            // effect immediately without an app restart, same reasoning as every
+                            // other refresh-on-close call in this block.
+                            _ = vm.RxImage.LoadQrzLookupConfiguredAsync();
                         };
                         // Options > General's Config/Database "Restart Now" -- closes THIS dialog
                         // first, then (from that window's own Closed event, not inline right after

@@ -1762,6 +1762,61 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_LookupQrzCommand_DisabledWhenQrzLookupNotConfigured()
+    {
+        // Round-2 fix: the button used to stay enabled with a real callsign typed in, only
+        // failing after the click, when QRZ lookup wasn't actually configured in Options.
+        var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = false };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "W1AW";
+
+        Assert.False(vm.LookupQrzCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_Constructor_LoadsIsQrzLookupConfigured_FromLogbookSession()
+    {
+        var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = false };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.False(vm.IsQrzLookupConfigured);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_LoadQrzLookupConfiguredAsync_RefreshesTheGate()
+    {
+        // Exercises the same refresh path MainWindow.axaml.cs calls on Options close, so
+        // toggling QRZ lookup on/off while the app is running takes effect without a restart.
+        var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = true };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.True(vm.IsQrzLookupConfigured);
+
+        logbookSession.IsQrzLookupConfiguredResult = false;
+        await vm.LoadQrzLookupConfiguredAsync();
+
+        Assert.False(vm.IsQrzLookupConfigured);
+        vm.OverrideCallsign = "W1AW";
+        Assert.False(vm.LookupQrzCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_LoadQrzLookupConfiguredAsync_WhenTheCallThrows_LeavesTheGateAtItsCurrentValue()
+    {
+        // Best-effort, same reasoning as LoadCaptureDeviceNameAsync/LoadOperatorGridAsync's own
+        // catch blocks -- a failure here must not throw out of a fire-and-forget constructor call
+        // or block a later refresh; the gate just stays at whatever it already was.
+        var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = true };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.True(vm.IsQrzLookupConfigured);
+
+        logbookSession.ThrowOnIsQrzLookupConfigured = new InvalidOperationException("boom");
+        var exception = await Record.ExceptionAsync(() => vm.LoadQrzLookupConfiguredAsync());
+
+        Assert.Null(exception);
+        Assert.True(vm.IsQrzLookupConfigured);
+    }
+
+    [AvaloniaFact]
     public async Task RxImagePaneViewModel_LookupQrzAsync_Success_PopulatesNameQthGrid_ClearsError()
     {
         var logbookSession = new FakeLogbookSessionService

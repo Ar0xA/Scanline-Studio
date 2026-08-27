@@ -37,6 +37,14 @@ public interface ILogbookSessionService
     /// "never throws, always returns a result" contract as <see cref="LogQsoAsync"/>.</summary>
     Task<QrzCallsignLookupResult> LookupCallsignAsync(string callsign, CancellationToken ct = default);
 
+    /// <summary>Whether <see cref="LookupCallsignAsync"/> would actually attempt a network call
+    /// right now (lookup enabled AND a username/password are saved) — the same check
+    /// <see cref="LookupCallsignAsync"/> already makes internally, exposed separately so the
+    /// Receive tab's "Lookup QRZ" button can be disabled ahead of time instead of only failing
+    /// after the click. Never throws — a settings-read failure resolves to <c>false</c>, same
+    /// "not configured" outcome as a genuinely unconfigured lookup.</summary>
+    Task<bool> IsQrzLookupConfiguredAsync(CancellationToken ct = default);
+
     /// <summary>Validates a username/password pair against QRZ.com — the Options window's "Test"
     /// button, testing credentials the user hasn't saved yet. Deliberately ungated (no
     /// <c>QrzLookupSettings.Enabled</c> check): this IS the settings-configuration flow itself.

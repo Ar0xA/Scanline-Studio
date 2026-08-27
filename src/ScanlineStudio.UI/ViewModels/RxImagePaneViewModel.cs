@@ -380,6 +380,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private bool _isLookingUpQrz;
 
+    /// <summary>Whether QRZ lookup is actually configured (enabled + credentials saved in
+    /// Options) -- gates <see cref="LookupQrzCommand"/> ahead of time instead of only failing
+    /// after the click. Defaults <c>true</c> (optimistic) until <see cref="LoadQrzLookupConfiguredAsync"/>
+    /// resolves in the constructor, matching every other Load*Async property's own "don't flash a
+    /// wrong state before the real one loads" convention in this class.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
+    private bool _isQrzLookupConfigured = true;
+
     public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, IReceiveHistoryStore historyStore, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
@@ -405,6 +414,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         _ = LoadCaptureDeviceNameAsync();
         _ = LoadOperatorGridAsync();
+        _ = LoadQrzLookupConfiguredAsync();
     }
 
     public string DetectedModeText => DetectedMode?.DisplayName ?? "—";
@@ -1319,14 +1329,35 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
     }
 
-    private bool CanLookupQrz() => !IsLookingUpQrz && !string.IsNullOrWhiteSpace(OverrideCallsign);
+    private bool CanLookupQrz() => !IsLookingUpQrz && !string.IsNullOrWhiteSpace(OverrideCallsign) && IsQrzLookupConfigured;
 
-    /// <summary>Does NOT also check <c>QrzLookupSettings.Enabled</c> -- that would need a new
-    /// settings-read path in a <c>ScanlineStudio.UI</c> class (this pane only ever talks to
-    /// <see cref="ILogbookSessionService"/>, never <c>ISettingsStore</c> directly, per this
-    /// project's layering rule). The disabled/unconfigured case is covered by
+    /// <summary>Refreshable, not just constructor-loaded -- <c>MainWindow.axaml.cs</c>'s
+    /// Options-closed handler calls this again alongside its other pane-refresh calls, so
+    /// enabling/disabling QRZ lookup in Options takes effect immediately without an app
+    /// restart.</summary>
+    public async Task LoadQrzLookupConfiguredAsync()
+    {
+        try
+        {
+            IsQrzLookupConfigured = await _logbookSession.IsQrzLookupConfiguredAsync();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadCaptureDeviceNameAsync/LoadOperatorGridAsync
+            // above -- a failure here leaves the button in its current (optimistic-default)
+            // state rather than blocking construction. IsQrzLookupConfiguredAsync's own contract
+            // already treats a settings-read failure as "not configured", so this catch is only
+            // reached if something more unexpected (e.g. the call itself) goes wrong.
+            Log.LoadQrzLookupConfiguredFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Round-2 fix: this button used to rely ENTIRELY on
     /// <see cref="ILogbookSessionService.LookupCallsignAsync"/>'s own "not configured" result,
-    /// surfaced via <see cref="QrzLookupErrorMessage"/> below, not by graying out this button.</summary>
+    /// surfaced via <see cref="QrzLookupErrorMessage"/> AFTER a click -- <see cref="IsQrzLookupConfigured"/>
+    /// (backed by <see cref="ILogbookSessionService.IsQrzLookupConfiguredAsync"/>, no new
+    /// <c>ScanlineStudio.Core.Logbook</c>/<c>ISettingsStore</c> dependency added to this
+    /// <c>ScanlineStudio.UI</c> class) now gates the button ahead of time instead.</summary>
     [RelayCommand(CanExecute = nameof(CanLookupQrz))]
     private async Task LookupQrzAsync(CancellationToken ct)
     {
@@ -1543,6 +1574,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading operator's own grid square failed")]
         public static partial void LoadOperatorGridFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading whether QRZ lookup is configured failed")]
+        public static partial void LoadQrzLookupConfiguredFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading Previous-frames strip thumbnail failed for entry {EntryId}")]
         public static partial void LoadPreviousFrameThumbnailFailed(ILogger logger, string entryId, Exception ex);
