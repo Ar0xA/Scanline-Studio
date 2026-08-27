@@ -80,16 +80,11 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.Exit}" Command="{Binding ExitCommand}" />
             </MenuItem>
             <!-- Station/Audio-devices pruned (now redundant with Options' TX/Audio tabs, which
-                 have the real fields this stub only ever pointed at); Storage and Macros both
-                 wired 2026-08-26 (stub survey Tier 2/Tier 3, see below) — no Options equivalent
-                 exists for either (Gallery's own Storage panel is read-only display, not an
-                 editable settings section). -->
+                 have the real fields this stub only ever pointed at). Storage's own former entry
+                 here (stub survey Tier 2, wired 2026-08-26) was removed 2026-08-27 — its one
+                 setting (the RX images folder) moved into Options > General's new Storage section
+                 alongside the new Config/Database/Log rows, so this menu now only covers Macros. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations}">
-                <!-- Stub survey Tier 2 (2026-08-26): "naming" dropped, auditor's own recommendation
-                     over shipping a promised-but-absent section — no filename-pattern setting
-                     exists anywhere (ReceiveHistoryRecorder hardcodes it), so the label and the
-                     dialog it opens only ever cover Storage. -->
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations.StorageNaming}" Command="{Binding OpenStorageSettingsCommand}" />
                 <!-- Stub survey Tier 3 (2026-08-26): user narrowed this to a read-only token
                      reference + live preview (AskUserQuestion) — IMacroTextResolver has no
                      user-extensible macro list, only fixed known tokens, so there is nothing to

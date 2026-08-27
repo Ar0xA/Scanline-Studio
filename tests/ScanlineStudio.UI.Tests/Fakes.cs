@@ -1405,3 +1405,84 @@ internal sealed class FakeLogger<T> : ILogger<T>
         Entries.Add((logLevel, formatter(state, exception)));
     }
 }
+
+/// <summary>Backs <c>OptionsWindowViewModel</c>'s Storage-section Config/Database/Log rows in
+/// tests -- in-memory only, no real file at any of the returned paths. Set the corresponding
+/// <c>*ToThrow</c> to make the matching Set* call fail, mirroring the real
+/// <c>AppLocationsService</c>'s own validation-failure/conflict shape (an exception, not a bool).</summary>
+internal sealed class FakeAppLocationsService : IAppLocationsService
+{
+    public string ConfigDirectory { get; set; } = "/config/current";
+    public string? PendingConfigDirectory { get; set; }
+    public Exception? ConfigDirectoryToThrow { get; set; }
+
+    public string DatabaseDirectory { get; set; } = "/database/current";
+    public string? PendingDatabaseDirectory { get; set; }
+    public Exception? DatabaseDirectoryToThrow { get; set; }
+
+    public string LogDirectory { get; set; } = "/logs/current";
+    public Exception? LogDirectoryToThrow { get; set; }
+
+    public Task<string> GetConfigDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ConfigDirectory);
+
+    public Task<string?> GetPendingConfigDirectoryAsync(CancellationToken ct = default) => Task.FromResult(PendingConfigDirectory);
+
+    public Task SetConfigDirectoryAsync(string? directory, CancellationToken ct = default)
+    {
+        if (ConfigDirectoryToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        PendingConfigDirectory = string.IsNullOrWhiteSpace(directory) || directory == ConfigDirectory ? null : directory;
+        return Task.CompletedTask;
+    }
+
+    public Task<string> GetDatabaseDirectoryAsync(CancellationToken ct = default) => Task.FromResult(DatabaseDirectory);
+
+    public Task<string?> GetPendingDatabaseDirectoryAsync(CancellationToken ct = default) => Task.FromResult(PendingDatabaseDirectory);
+
+    public Task SetDatabaseDirectoryAsync(string? directory, CancellationToken ct = default)
+    {
+        if (DatabaseDirectoryToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        PendingDatabaseDirectory = string.IsNullOrWhiteSpace(directory) || directory == DatabaseDirectory ? null : directory;
+        return Task.CompletedTask;
+    }
+
+    public Task<string> GetLogDirectoryAsync(CancellationToken ct = default) => Task.FromResult(LogDirectory);
+
+    public Task SetLogDirectoryAsync(string? directory, CancellationToken ct = default)
+    {
+        if (LogDirectoryToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            LogDirectory = directory;
+        }
+
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>Never actually spawns a process or sets a real flag's process-wide effect -- just
+/// records what <c>OptionsWindowViewModel</c>'s Restart Now path asked for, so a test can assert
+/// on it without touching <see cref="System.Diagnostics.Process"/>.</summary>
+internal sealed class FakeApplicationRestarter : IApplicationRestarter
+{
+    public bool RestartRequested { get; set; }
+
+    public bool StartNewInstanceCalled { get; private set; }
+
+    public bool StartNewInstance()
+    {
+        StartNewInstanceCalled = true;
+        return true;
+    }
+}

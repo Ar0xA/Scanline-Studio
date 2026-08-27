@@ -194,20 +194,11 @@ public partial class MainViewModel : ViewModelBase
         OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
     }
 
-    /// <summary>Configurations &gt; Storage (stub survey Tier 2) -- same
+    /// <summary>Configurations &gt; Macros (stub survey Tier 3) -- same
     /// view-model-never-touches-a-Window/DI-resolved-via-IServiceProvider shape as
-    /// <see cref="OpenOptions"/> above.</summary>
-    public event Action<StorageSettingsWindowViewModel>? StorageSettingsRequested;
-
-    [RelayCommand]
-    private void OpenStorageSettings()
-    {
-        Log.OpenStorageSettingsInvoked(_logger);
-        StorageSettingsRequested?.Invoke(_services.GetRequiredService<StorageSettingsWindowViewModel>());
-    }
-
-    /// <summary>Configurations &gt; Macros (stub survey Tier 3) -- same shape as
-    /// <see cref="OpenStorageSettings"/> above.</summary>
+    /// <see cref="OpenOptions"/> above. Storage's own former entry here (stub survey Tier 2) was
+    /// removed once its one setting (the RX images folder) moved into Options &gt; General
+    /// alongside the new Config/Database/Log rows.</summary>
     public event Action<MacrosReferenceWindowViewModel>? MacrosReferenceRequested;
 
     [RelayCommand]
@@ -299,9 +290,6 @@ public partial class MainViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
         public static partial void OpenOptionsInvoked(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenStorageSettings command invoked")]
-        public static partial void OpenStorageSettingsInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenMacrosReference command invoked")]
         public static partial void OpenMacrosReferenceInvoked(ILogger logger);
