@@ -238,8 +238,7 @@ remains — Queue/TX-log/Recently-sent (removed 2026-08-25, "maybe one day") and
 | Mode `ComboBox` | REAL | `:77-86` | `AvailableModes` / `SelectedMode` (`.cs:163`), `IsEnabled="{Binding CanChangeSourceOrMode}"` (`.cs:775`). Genuinely drives the encode pipeline. |
 | Selected | REAL | `:93` | `SelectedMode.DisplayName`. |
 | Duration / Geometry / VOX tone / VIS header | REAL (2026-08-25) | `:97`, `:101`, `:105`, `:109` | `DurationText`/`GeometryText`/`VoxToneText`/`VisHeaderText` (`.cs`), all off `SelectedMode`; VOX tone and VIS header route through new `ISstvSessionService.GetLeaderToneDurationMs`/`GetVisHeaderInfo` (backed by `AnalogFmSstvEncoder`/`VisHeader`). |
-| Favorites row | REAL | `:113-128` | `FavoriteModes` (`.cs:454`), each with a real `SelectCommand`. |
-| "Edit favorites…" flyout | REAL | `:129-141` | `FavoriteModeOptions` (`.cs:444`) `CheckBox` list; persisted as `TxPaneUiSettings.FavoriteModeIds` (`.cs:543`). |
+| Favorites row / "Edit favorites…" flyout | REMOVED (2026-08-27) | — | Direct user request, once the quick-mode grid itself became right-click-reassignable (`ReassignQuickModeSlotCommand`) it had no remaining use. `TxPaneUiSettings.FavoriteModeIds` and the `FavoriteModeOptionViewModel`/`FavoriteModeButtonViewModel` types are gone too. |
 
 **Identification card** (`:149-167`) — **REAL.**
 

@@ -10,8 +10,10 @@ using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Imaging;
 using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -54,9 +56,25 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private readonly ILogbookSessionService _logbookSession;
     private readonly IFilePickerService _filePickerService;
     private readonly IReceiveHistoryStore _historyStore;
+    private readonly ISettingsStore _settingsStore;
     private readonly ILogger<RxImagePaneViewModel> _logger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
+
+    /// <summary>Captured (not fire-and-forget-discarded, unlike this class's other Load*Async
+    /// calls) so <see cref="ReassignQuickModeSlotAsync"/> can await it first -- reassigning a slot
+    /// before the persisted grid has loaded must not race the load's own later write. Awaiting the
+    /// SAME task instance the load itself is running as makes the ordering deterministic: the load
+    /// always finishes applying its result before a concurrent reassignment continues past this
+    /// await, so a reassignment can never be reverted by, or race, the load's own write (round-2
+    /// plan-review finding). An earlier draft of this fix ALSO gated the load's continuation behind
+    /// a "user already touched this" flag as a second guard -- removed after it broke exactly the
+    /// scenario it was meant to protect: both the load and a racing reassignment were parked on the
+    /// same test gate, the flag was set (synchronously, before the reassignment's own await) the
+    /// moment the reassignment command started, and by the time the gate released, the load's
+    /// continuation saw the flag already set and skipped applying its own legitimately-pending
+    /// result. The await alone is sufficient and doesn't have this failure mode.</summary>
+    private Task _loadQuickModeGridTask = Task.CompletedTask;
     private bool _postScheduled;
 
     /// <summary>Path most recently handed to <see cref="OnSaved"/> -- correlation key for
@@ -389,7 +407,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private bool _isQrzLookupConfigured = true;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, IReceiveHistoryStore historyStore, ILogger<RxImagePaneViewModel> logger)
+    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, IReceiveHistoryStore historyStore, ISettingsStore settingsStore, ILogger<RxImagePaneViewModel> logger)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
@@ -397,6 +415,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _logbookSession = logbookSession;
         _filePickerService = filePickerService;
         _historyStore = historyStore;
+        _settingsStore = settingsStore;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
         SenseLevel = sstvSession.SenseLevel;
@@ -411,6 +430,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
+
+        BuildQuickModeSlots(QuickModeGridDefaults.Ids);
+        _loadQuickModeGridTask = LoadQuickModeGridAsync();
 
         _ = LoadCaptureDeviceNameAsync();
         _ = LoadOperatorGridAsync();
@@ -748,6 +770,129 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         // updates.
         IsAutoDetectPaused = false;
         _sstvSession.ForceMode(mode);
+    }
+
+    /// <summary>The 16-slot quick-mode grid -- one entry per grid button, independent of the TX
+    /// pane's own grid by design (confirmed with the user: reassigning here never touches
+    /// <c>TxControlsPaneViewModel.QuickModeSlots</c>). Built synchronously from
+    /// <see cref="QuickModeGridDefaults"/> in the constructor (never empty, even before
+    /// <see cref="LoadQuickModeGridAsync"/> resolves), then mutated in place -- never
+    /// cleared/repopulated -- once the persisted assignment loads or a slot is reassigned.</summary>
+    public ObservableCollection<QuickModeSlotViewModel> QuickModeSlots { get; } = [];
+
+    private void BuildQuickModeSlots(IReadOnlyList<string> ids)
+    {
+        var resolved = QuickModeGridAssignment.Resolve(ids, _sstvSession.AvailableModes);
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var slot = new QuickModeSlotViewModel(i, resolved[i], QuickSelectModeCommand);
+            foreach (var mode in _sstvSession.AvailableModes)
+            {
+                slot.MenuEntries.Add(new QuickModeMenuEntryViewModel(mode, ReassignQuickModeSlotCommand, i));
+            }
+
+            QuickModeSlots.Add(slot);
+        }
+
+        RecomputeQuickModeMenuEntryStates();
+    }
+
+    /// <summary>Refreshes every slot's <see cref="QuickModeMenuEntryViewModel.IsChecked"/>/
+    /// <see cref="QuickModeMenuEntryViewModel.IsEnabled"/> in place -- called after construction, a
+    /// successful load, and every reassignment, since one slot's assignment changes what's
+    /// checked/available in every OTHER slot's popup too (a mode may only occupy one slot at a
+    /// time).</summary>
+    private void RecomputeQuickModeMenuEntryStates()
+    {
+        foreach (var slot in QuickModeSlots)
+        {
+            foreach (var entry in slot.MenuEntries)
+            {
+                entry.IsChecked = entry.Mode.Id == slot.CurrentMode.Id;
+                entry.IsEnabled = entry.Mode.Id == slot.CurrentMode.Id
+                    || QuickModeSlots.All(other => other.SlotIndex == slot.SlotIndex || other.CurrentMode.Id != entry.Mode.Id);
+            }
+        }
+    }
+
+    private async Task LoadQuickModeGridAsync()
+    {
+        try
+        {
+            var settings = await _settingsStore.LoadAsync();
+            var rxPaneUi = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
+
+            var resolved = QuickModeGridAssignment.Resolve(rxPaneUi.QuickModeGridIds, _sstvSession.AvailableModes);
+            for (var i = 0; i < resolved.Count; i++)
+            {
+                QuickModeSlots[i].CurrentMode = resolved[i];
+            }
+
+            RecomputeQuickModeMenuEntryStates();
+        }
+        catch (Exception ex)
+        {
+            // Best-effort, same reasoning as LoadCaptureDeviceNameAsync/LoadOperatorGridAsync above
+            // -- a failure here leaves the grid at its already-built default assignment rather than
+            // blocking construction.
+            Log.LoadQuickModeGridFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Read-modify-write against whatever is currently persisted for this section, same
+    /// reasoning as <c>TxControlsPaneViewModel.PersistTxPaneUiSettingsAsync</c>'s own doc
+    /// comment.</summary>
+    private async Task PersistQuickModeGridAsync()
+    {
+        try
+        {
+            var settings = await _settingsStore.LoadAsync();
+            var current = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
+            var updated = current with { QuickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray() };
+
+            await _settingsStore.SaveAsync(settings.WithSection(RxPaneUiSettings.SectionKey, updated, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings));
+        }
+        catch (Exception ex)
+        {
+            Log.PersistQuickModeGridFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Backs the quick-mode grid's right-click popup -- reassigns which mode a slot targets
+    /// going forward. Deliberately does NOT also apply/select <paramref name="reassignment"/>'s mode
+    /// (no <see cref="ISstvSessionService.ForceMode"/> call): this is a passive relabel, matching the
+    /// user's own framing ("from that point on the fast-select button is for that mode"), not a live
+    /// mode change -- see the feature's plan-review for the full reasoning on why legacy's own
+    /// active-apply behavior isn't ported here. Awaits <see cref="_loadQuickModeGridTask"/> FIRST
+    /// (round-2 plan-review fix, see that field's own doc comment for why this await alone is
+    /// sufficient): reassigning before the persisted grid has loaded must not race that load, which
+    /// would otherwise either revert this reassignment or have the load's unrelated persist
+    /// silently overwrite the user's own previously-saved OTHER slots.</summary>
+    [RelayCommand]
+    private async Task ReassignQuickModeSlotAsync(QuickModeReassignment reassignment)
+    {
+        await _loadQuickModeGridTask;
+
+        if (reassignment.SlotIndex < 0 || reassignment.SlotIndex >= QuickModeSlots.Count)
+        {
+            Log.ReassignQuickModeSlotOutOfRange(_logger, reassignment.SlotIndex);
+            return;
+        }
+
+        // Defensive re-check, same reasoning as QuickSelectMode's unknown-id guard above -- the
+        // popup already disables any mode claimed by a DIFFERENT slot, so this should be
+        // unreachable via the UI, but a direct/raced call must not be trusted to honor that.
+        var alreadyUsedElsewhere = QuickModeSlots.Any(s => s.SlotIndex != reassignment.SlotIndex && s.CurrentMode.Id == reassignment.Mode.Id);
+        if (alreadyUsedElsewhere)
+        {
+            Log.ReassignQuickModeSlotAlreadyUsedElsewhere(_logger, reassignment.SlotIndex, reassignment.Mode.Id);
+            return;
+        }
+
+        Log.ReassignQuickModeSlotInvoked(_logger, reassignment.SlotIndex, reassignment.Mode.Id);
+        QuickModeSlots[reassignment.SlotIndex].CurrentMode = reassignment.Mode;
+        RecomputeQuickModeMenuEntryStates();
+        _ = PersistQuickModeGridAsync();
     }
 
     /// <summary>Normally invoked only by <see cref="_telemetryTimer"/>'s own tick -- public so tests
@@ -1634,5 +1779,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetFlaggedAsync: entry {EntryId} no longer exists")]
         public static partial void SetFlaggedEntryMissing(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the persisted quick-mode grid failed")]
+        public static partial void LoadQuickModeGridFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the quick-mode grid failed")]
+        public static partial void PersistQuickModeGridFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Quick-mode grid slot {SlotIndex} reassigned to mode {ModeId}")]
+        public static partial void ReassignQuickModeSlotInvoked(ILogger logger, int slotIndex, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: slot index {SlotIndex} is out of range")]
+        public static partial void ReassignQuickModeSlotOutOfRange(ILogger logger, int slotIndex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: mode {ModeId} is already used by a different slot than {SlotIndex}")]
+        public static partial void ReassignQuickModeSlotAlreadyUsedElsewhere(ILogger logger, int slotIndex, string modeId);
     }
 }

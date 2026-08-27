@@ -39,6 +39,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private readonly ILogger<TxControlsPaneViewModel> _logger;
     private readonly ILogger<TxImageEditorPaneViewModel> _imageEditorLogger;
 
+    /// <summary>Captured (not fire-and-forget-discarded) so <see cref="ReassignQuickModeSlotAsync"/>
+    /// can await it first -- see <c>RxImagePaneViewModel</c>'s own identically-named field for the
+    /// full race/why-a-flag-was-tried-and-removed reasoning, which applies here unchanged.</summary>
+    private Task _loadTxPaneUiSettingsTask = Task.CompletedTask;
+
     // Phase 2 (spec/15-template-designer.md) -- threaded through to TxImageEditorPaneViewModel's own
     // constructor at both construction sites below; this VM doesn't otherwise consume either itself.
     private readonly IReceivedImageBuffer _receivedImageBuffer;
@@ -93,7 +98,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private IImageSource? _loadedImage;
 
     /// <summary>Backlog item (user request, 2026-08-17) -- tracks the currently-open editor (null
-    /// while none is open) so <see cref="CanSelectFavoriteMode"/>/<see cref="CanQuickSelectMode"/>
+    /// while none is open) so <see cref="CanQuickSelectMode"/>
     /// can distinguish a BLANK/untouched editor (safe to silently replace on a mode switch) from a
     /// real photo pick or an in-progress edit (never silently discarded). Set in
     /// <see cref="OpenEditorWithLoadedSourceAsync"/>, cleared in
@@ -467,10 +472,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         radioSession.StateChanges.Subscribe(OnRadioStateChanged);
         radioSession.SafetySettingsChanged += OnSafetySettingsChanged;
 
+        BuildQuickModeSlots(QuickModeGridDefaults.Ids);
+
         // Best-effort initial load, same reasoning as RxHistoryPaneViewModel's constructor -- a
         // failure here leaves the strip empty rather than blocking construction.
         _ = RefreshStockLibraryAsync();
-        _ = LoadTxPaneUiSettingsAsync();
+        _loadTxPaneUiSettingsTask = LoadTxPaneUiSettingsAsync();
         _ = LoadSafetySettingsAsync();
         _ = LoadOutputDeviceNameAsync();
         _ = LoadIdentificationSummaryAsync();
@@ -498,7 +505,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// realized, since this project uses classic (non-compiled) bindings and inline type casts in a
     /// binding path force a runtime type-resolution step that doesn't reliably find sibling
     /// view-model types. A plain reference assigned once from the parent is the established safe
-    /// pattern here (see FavoriteModeButtonViewModel/StockEntryViewModel/
+    /// pattern here (see QuickModeSlotViewModel/StockEntryViewModel/
     /// FrequencyPresetButtonViewModel, each carrying its own pre-resolved command for the same
     /// reason).</summary>
     public RadioStatusViewModel? RadioStatus { get; set; }
@@ -523,21 +530,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     public ObservableCollection<StockEntryViewModel> StockEntries { get; } = [];
 
-    /// <summary>Every available mode as a checkable option, for the "Edit favorites..." popup --
-    /// membership never changes after construction, only <see cref="FavoriteModeOptionViewModel.IsSelected"/>
-    /// does.</summary>
-    public ObservableCollection<FavoriteModeOptionViewModel> FavoriteModeOptions { get; } = [];
-
-    /// <summary>The selected subset of <see cref="FavoriteModeOptions"/>, in <see cref="AvailableModes"/>'s
-    /// own order -- the actual quick-select button row. Simpler than a separate user-reorderable list;
-    /// revisit only if fixed ordering turns out to matter in practice. Each entry carries its own
-    /// <see cref="FavoriteModeButtonViewModel.SelectCommand"/> rather than the View reaching back
-    /// into an ancestor's DataContext with a cross-DataTemplate type-cast binding -- that exact
-    /// pattern (<c>$parent[ItemsControl].((vm:TxControlsPaneViewModel)DataContext)</c>) already
-    /// crashed this app at runtime once, for <see cref="StockEntryViewModel"/> (see that type's own
-    /// doc comment) -- same fix applied here up front, not repeated by hand-editing later.</summary>
-    public ObservableCollection<FavoriteModeButtonViewModel> FavoriteModes { get; } = [];
-
     private async Task LoadTxPaneUiSettingsAsync()
     {
         try
@@ -547,14 +539,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
             AutoFollowRxMode = txPaneUi.AutoFollowRxMode;
 
-            foreach (var mode in AvailableModes)
+            var resolved = QuickModeGridAssignment.Resolve(txPaneUi.QuickModeGridIds, AvailableModes);
+            for (var i = 0; i < resolved.Count; i++)
             {
-                var option = new FavoriteModeOptionViewModel(mode, txPaneUi.FavoriteModeIds.Contains(mode.Id));
-                option.PropertyChanged += OnFavoriteModeOptionChanged;
-                FavoriteModeOptions.Add(option);
+                QuickModeSlots[i].CurrentMode = resolved[i];
             }
 
-            RebuildFavoriteModes();
+            RecomputeQuickModeMenuEntryStates();
         }
         catch (Exception ex)
         {
@@ -595,27 +586,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void OnFavoriteModeOptionChanged(object? sender, PropertyChangedEventArgs e)
-    {
-        RebuildFavoriteModes();
-        _ = PersistTxPaneUiSettingsAsync();
-    }
-
-    private void RebuildFavoriteModes()
-    {
-        FavoriteModes.Clear();
-        foreach (var option in FavoriteModeOptions)
-        {
-            if (option.IsSelected)
-            {
-                FavoriteModes.Add(new FavoriteModeButtonViewModel(option.Mode, SelectFavoriteModeCommand));
-            }
-        }
-    }
-
     /// <summary>Read-modify-write against whatever is currently persisted for this section, not a
     /// fresh <c>new TxPaneUiSettings { ... }</c> -- a from-scratch write here would silently clobber
-    /// whichever of <see cref="TxPaneUiSettings.FavoriteModeIds"/>/<see cref="TxPaneUiSettings.AutoFollowRxMode"/>
+    /// whichever of <see cref="TxPaneUiSettings.QuickModeGridIds"/>/<see cref="TxPaneUiSettings.AutoFollowRxMode"/>
     /// this particular call isn't updating.</summary>
     private async Task PersistTxPaneUiSettingsAsync()
     {
@@ -625,8 +598,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var current = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
             var updated = current with
             {
-                FavoriteModeIds = FavoriteModeOptions.Where(o => o.IsSelected).Select(o => o.Mode.Id).ToArray(),
                 AutoFollowRxMode = AutoFollowRxMode,
+                QuickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray(),
             };
 
             await _settingsStore.SaveAsync(settings.WithSection(TxPaneUiSettings.SectionKey, updated, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings));
@@ -828,8 +801,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>Auditor-found regression (2026-08-17, usability-gap review): the mode ComboBox and
     /// Browse/STOCK were still hard-gated on a plain <c>!IsEditorOpen</c> binding in AXAML, which
-    /// <see cref="CanSelectFavoriteMode"/>/<see cref="CanQuickSelectMode"/>'s own relaxation never
-    /// reached (those drive <c>Command.CanExecute</c>, not a separate <c>IsEnabled</c> binding) --
+    /// <see cref="CanQuickSelectMode"/>'s own relaxation never
+    /// reached (that drives <c>Command.CanExecute</c>, not a separate <c>IsEnabled</c> binding) --
     /// with the editor now always open by default, this made mode-select-via-dropdown and Browse/
     /// STOCK permanently unreachable after the very first blank auto-open. Bindable form of the
     /// same <see cref="IsCurrentEditorBlankAndUntouched"/> relaxation for controls with no
@@ -840,33 +813,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// false and nothing else overrides it.</summary>
     public bool CanChangeSourceOrMode => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
 
-    private bool CanSelectFavoriteMode() => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
-
-    [RelayCommand(CanExecute = nameof(CanSelectFavoriteMode))]
-    private void SelectFavoriteMode(SstvModeDefinition mode)
-    {
-        // CanExecute alone isn't a hard gate -- CommunityToolkit's RelayCommand<T>.Execute doesn't
-        // consult it, only Avalonia's Button.OnClick does (code-review finding). This body-level
-        // check is the real backstop, matching the doctrine IsEditorOpen's own doc comment already
-        // states ("the view is expected to disable picking while an editor is open; this is the
-        // view-model-level backstop") and OpenEditorForSourceAsync already honors.
-        if (IsEditorOpen && !IsCurrentEditorBlankAndUntouched())
-        {
-            return;
-        }
-
-        Log.SelectFavoriteModeInvoked(_logger, mode.Id);
-        SelectedMode = mode;
-    }
-
     private bool CanQuickSelectMode() => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
 
-    /// <summary>Backs the fixed 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7) --
-    /// distinct from <see cref="SelectFavoriteMode"/> above (the user-configurable Favorites row);
-    /// the roadmap's own plan-review explicitly calls for wiring both, even though they do the
-    /// same thing to <see cref="SelectedMode"/>, since the fixed grid is what the mockup shows.
-    /// Mirrors <see cref="SelectFavoriteMode"/>'s own triple guard exactly, for the identical
-    /// reason: <c>CanExecute</c> alone isn't a hard gate for a direct <c>Execute()</c> call, only
+    /// <summary>Backs the 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7).
+    /// <c>CanExecute</c> alone isn't a hard gate for a direct <c>Execute()</c> call, only
     /// <c>Button.OnClick</c> consults it -- this body-level check is the real backstop. A
     /// <paramref name="modeId"/> with no matching entry in <see cref="AvailableModes"/> logs a
     /// warning and no-ops (mistyped XAML <c>CommandParameter</c> defense, matching this file's
@@ -890,17 +840,88 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         SelectedMode = mode;
     }
 
-    /// <summary>Keeps the favorite-mode AND quick-mode-grid buttons' enabled state in sync with
-    /// <see cref="IsEditorOpen"/> -- <see cref="CanSelectFavoriteMode"/>/
-    /// <see cref="CanQuickSelectMode"/> alone only re-evaluate when something explicitly requests
-    /// it. <see cref="EditCurrentImageCommand"/> piggybacks on this same hook (round-1 plan-review
-    /// finding) -- <see cref="_editState"/> is a plain field, not observable, so nothing else would
-    /// ever re-evaluate its own CanExecute; this fires after BOTH <see cref="OnEditorApplied"/>
-    /// (which just set <see cref="_editState"/>) and <see cref="OnEditorCancelled"/>, since both set
-    /// <see cref="IsEditorOpen"/> = <see langword="false"/>.</summary>
+    /// <summary>The 16-slot quick-mode grid -- independent of the RX pane's own grid by design
+    /// (confirmed with the user: reassigning here never touches
+    /// <c>RxImagePaneViewModel.QuickModeSlots</c>). Built synchronously from
+    /// <see cref="QuickModeGridDefaults"/> in the constructor, then mutated in place once the
+    /// persisted assignment loads or a slot is reassigned -- see <c>RxImagePaneViewModel</c>'s
+    /// identically-shaped property for the full reasoning, which applies here unchanged.</summary>
+    public ObservableCollection<QuickModeSlotViewModel> QuickModeSlots { get; } = [];
+
+    private void BuildQuickModeSlots(IReadOnlyList<string> ids)
+    {
+        var resolved = QuickModeGridAssignment.Resolve(ids, AvailableModes);
+        for (var i = 0; i < resolved.Count; i++)
+        {
+            var slot = new QuickModeSlotViewModel(i, resolved[i], QuickSelectModeCommand);
+            foreach (var mode in AvailableModes)
+            {
+                slot.MenuEntries.Add(new QuickModeMenuEntryViewModel(mode, ReassignQuickModeSlotCommand, i));
+            }
+
+            QuickModeSlots.Add(slot);
+        }
+
+        RecomputeQuickModeMenuEntryStates();
+    }
+
+    /// <summary>See <c>RxImagePaneViewModel.RecomputeQuickModeMenuEntryStates</c>'s own doc
+    /// comment -- identical reasoning, independent grid.</summary>
+    private void RecomputeQuickModeMenuEntryStates()
+    {
+        foreach (var slot in QuickModeSlots)
+        {
+            foreach (var entry in slot.MenuEntries)
+            {
+                entry.IsChecked = entry.Mode.Id == slot.CurrentMode.Id;
+                entry.IsEnabled = entry.Mode.Id == slot.CurrentMode.Id
+                    || QuickModeSlots.All(other => other.SlotIndex == slot.SlotIndex || other.CurrentMode.Id != entry.Mode.Id);
+            }
+        }
+    }
+
+    /// <summary>Backs the quick-mode grid's right-click popup -- see
+    /// <c>RxImagePaneViewModel.ReassignQuickModeSlotAsync</c>'s own doc comment for the full
+    /// reasoning (passive relabel, never applies/selects the mode; awaits
+    /// <see cref="_loadTxPaneUiSettingsTask"/> first to avoid racing that load), which applies here
+    /// unchanged. Persists via the shared <see cref="PersistTxPaneUiSettingsAsync"/> (read-modify-
+    /// write against the same <see cref="TxPaneUiSettings"/> section <see cref="AutoFollowRxMode"/>
+    /// already uses) rather than a separate writer, so there is only ever one read-modify-write path
+    /// for this settings section.</summary>
+    [RelayCommand]
+    private async Task ReassignQuickModeSlotAsync(QuickModeReassignment reassignment)
+    {
+        await _loadTxPaneUiSettingsTask;
+
+        if (reassignment.SlotIndex < 0 || reassignment.SlotIndex >= QuickModeSlots.Count)
+        {
+            Log.ReassignQuickModeSlotOutOfRange(_logger, reassignment.SlotIndex);
+            return;
+        }
+
+        var alreadyUsedElsewhere = QuickModeSlots.Any(s => s.SlotIndex != reassignment.SlotIndex && s.CurrentMode.Id == reassignment.Mode.Id);
+        if (alreadyUsedElsewhere)
+        {
+            Log.ReassignQuickModeSlotAlreadyUsedElsewhere(_logger, reassignment.SlotIndex, reassignment.Mode.Id);
+            return;
+        }
+
+        Log.ReassignQuickModeSlotInvoked(_logger, reassignment.SlotIndex, reassignment.Mode.Id);
+        QuickModeSlots[reassignment.SlotIndex].CurrentMode = reassignment.Mode;
+        RecomputeQuickModeMenuEntryStates();
+        _ = PersistTxPaneUiSettingsAsync();
+    }
+
+    /// <summary>Keeps the quick-mode-grid buttons' enabled state in sync with
+    /// <see cref="IsEditorOpen"/> -- <see cref="CanQuickSelectMode"/> alone only re-evaluates when
+    /// something explicitly requests it. <see cref="EditCurrentImageCommand"/> piggybacks on this
+    /// same hook (round-1 plan-review finding) -- <see cref="_editState"/> is a plain field, not
+    /// observable, so nothing else would ever re-evaluate its own CanExecute; this fires after BOTH
+    /// <see cref="OnEditorApplied"/> (which just set <see cref="_editState"/>) and
+    /// <see cref="OnEditorCancelled"/>, since both set <see cref="IsEditorOpen"/> =
+    /// <see langword="false"/>.</summary>
     partial void OnIsEditorOpenChanged(bool value)
     {
-        SelectFavoriteModeCommand.NotifyCanExecuteChanged();
         QuickSelectModeCommand.NotifyCanExecuteChanged();
         EditCurrentImageCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(CanChangeSourceOrMode));
@@ -1172,11 +1193,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
             // -- always false at that instant, regardless of whether this editor turns out to be
             // blank). Nothing else re-notifies once _currentEditor actually gets attached, so
-            // SelectFavoriteMode/QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
+            // QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
             // bindable value would silently stay stuck at their pre-open (disabled) reading forever
             // -- confirmed live: the mode ComboBox stayed visibly greyed out after Cancel
             // auto-reopened a fresh blank editor, even though the underlying state was correct.
-            SelectFavoriteModeCommand.NotifyCanExecuteChanged();
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
             EditorOpened?.Invoke(editor);
@@ -1260,7 +1280,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Re-evaluates <see cref="SelectFavoriteModeCommand"/>/<see cref="QuickSelectModeCommand"/>'s
+    /// <summary>Re-evaluates <see cref="QuickSelectModeCommand"/>'s
     /// own <c>CanExecute</c> the moment the currently-open editor's <see cref="TxImageEditorPaneViewModel.HasUnsavedEdits"/>
     /// flips (typically false-&gt;true, the first real edit) -- <see cref="OnIsEditorOpenChanged"/>
     /// alone only re-evaluates on open/close, not on this finer-grained transition
@@ -1269,7 +1289,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasUnsavedEdits))
         {
-            SelectFavoriteModeCommand.NotifyCanExecuteChanged();
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
         }
@@ -1287,14 +1306,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// finding: <c>BuildWorkingCopy</c>/<c>ToBitmap</c> inside the editor's own constructor can
     /// still throw, and an uncaught throw here would leave <see cref="IsEditorOpen"/> stuck
     /// <see langword="true"/> forever with no editor to Cancel, permanently freezing
-    /// <see cref="SelectedMode"/>/favorites/quick-grid/RX auto-follow (see
+    /// <see cref="SelectedMode"/>/quick-grid/RX auto-follow (see
     /// <see cref="IsEditorOpen"/>'s own doc comment).</summary>
     [RelayCommand(CanExecute = nameof(CanEditCurrentImage))]
     private async Task EditCurrentImageAsync()
     {
         // CanExecute alone isn't a hard gate -- CommunityToolkit's IAsyncRelayCommand.ExecuteAsync
         // doesn't consult it, only Avalonia's Button.OnClick does (code-review finding, same
-        // doctrine SelectFavoriteMode/QuickSelectMode already follow above). This body-level
+        // doctrine QuickSelectMode already follows above). This body-level
         // IsEditorOpen check is the real backstop -- without it, a direct ExecuteAsync call while
         // an editor is already open would construct a SECOND editor and orphan the first (the
         // first's own Applied/Cancelled handlers would still fire into a now-stale closure).
@@ -1331,11 +1350,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
             // -- always false at that instant, regardless of whether this editor turns out to be
             // blank). Nothing else re-notifies once _currentEditor actually gets attached, so
-            // SelectFavoriteMode/QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
+            // QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
             // bindable value would silently stay stuck at their pre-open (disabled) reading forever
             // -- confirmed live: the mode ComboBox stayed visibly greyed out after Cancel
             // auto-reopened a fresh blank editor, even though the underlying state was correct.
-            SelectFavoriteModeCommand.NotifyCanExecuteChanged();
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
             EditorOpened?.Invoke(editor);
@@ -1588,14 +1606,20 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loopback self-test failed: {ModeId}")]
         public static partial void LoopbackSelfTestFailed(ILogger logger, string modeId, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "SelectFavoriteMode invoked: {ModeId}")]
-        public static partial void SelectFavoriteModeInvoked(ILogger logger, string modeId);
-
         [LoggerMessage(Level = LogLevel.Debug, Message = "QuickSelectMode invoked: {ModeId}")]
         public static partial void QuickSelectModeInvoked(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QuickSelectMode pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
         public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Quick-mode grid slot {SlotIndex} reassigned to mode {ModeId}")]
+        public static partial void ReassignQuickModeSlotInvoked(ILogger logger, int slotIndex, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: slot index {SlotIndex} is out of range")]
+        public static partial void ReassignQuickModeSlotOutOfRange(ILogger logger, int slotIndex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: mode {ModeId} is already used by a different slot than {SlotIndex}")]
+        public static partial void ReassignQuickModeSlotAlreadyUsedElsewhere(ILogger logger, int slotIndex, string modeId);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "RefreshStockLibrary invoked")]
         public static partial void RefreshStockLibraryInvoked(ILogger logger);
@@ -1654,28 +1678,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 /// and that resolver couldn't find the type). Found and fixed during Piece 5c's own hands-on
 /// verification, not part of that piece's original scope.</summary>
 public sealed record StockEntryViewModel(StockImageEntry Entry, Bitmap? Thumbnail, System.Windows.Input.ICommand SelectCommand);
-
-/// <summary>One checkable row in the "Edit favorites..." popup -- <see cref="Mode"/> never changes
-/// after construction, only <see cref="IsSelected"/> does (toggled by the checkbox).</summary>
-public sealed partial class FavoriteModeOptionViewModel : ObservableObject
-{
-    public FavoriteModeOptionViewModel(SstvModeDefinition mode, bool isSelected)
-    {
-        Mode = mode;
-        _isSelected = isSelected;
-    }
-
-    public SstvModeDefinition Mode { get; }
-
-    [ObservableProperty]
-    private bool _isSelected;
-}
-
-/// <summary>One quick-select button in the favorites row -- carries its own <see cref="SelectCommand"/>
-/// (the parent's <see cref="TxControlsPaneViewModel.SelectFavoriteModeCommand"/>, set once at
-/// construction), same shape as <see cref="StockEntryViewModel"/> and for the identical reason (see
-/// that type's own doc comment).</summary>
-public sealed record FavoriteModeButtonViewModel(SstvModeDefinition Mode, System.Windows.Input.ICommand SelectCommand);
 
 /// <summary>One appended sample of <see cref="TxControlsPaneViewModel.TelemetryHistory"/> -- see that
 /// property's own doc comment.</summary>

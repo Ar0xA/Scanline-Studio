@@ -9,10 +9,11 @@ public sealed record TxPaneUiSettings
 {
     public const string SectionKey = "TxPaneUi";
 
-    /// <summary>Ordered <c>SstvModeDefinition.Id</c> values shown as quick-select buttons in the
-    /// TX pane -- empty by default (no built-in favorites assumed).</summary>
-    public IReadOnlyList<string> FavoriteModeIds { get; init; } = [];
-
     /// <summary>When true, a detected RX mode automatically becomes the selected TX mode.</summary>
     public bool AutoFollowRxMode { get; init; }
+
+    /// <summary>Ordered <c>SstvModeDefinition.Id</c> values shown as quick-select buttons in the TX
+    /// pane -- defaults to <see cref="QuickModeGridDefaults.Ids"/>. Independent of
+    /// <see cref="RxPaneUiSettings.QuickModeGridIds"/> by design.</summary>
+    public IReadOnlyList<string> QuickModeGridIds { get; init; } = QuickModeGridDefaults.Ids;
 }

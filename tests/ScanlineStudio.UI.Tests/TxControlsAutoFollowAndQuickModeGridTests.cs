@@ -5,13 +5,14 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Tests;
 
-public sealed class TxControlsFavoritesAndAutoFollowTests
+public sealed class TxControlsAutoFollowAndQuickModeGridTests
 {
     private static readonly SstvModeDefinition ModeA = new(
         Id: "robot36", DisplayName: "Robot 36", VisCode: 8, ImageWidth: 1, ImageHeight: 1, ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
@@ -40,13 +41,13 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
             new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
     [AvaloniaFact]
-    public void Constructor_LoadsFavoritesAndAutoFollowFromPersistedSettings()
+    public void Constructor_LoadsAutoFollowFromPersistedSettings()
     {
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(
                 TxPaneUiSettings.SectionKey,
-                new TxPaneUiSettings { FavoriteModeIds = ["martin-m1"], AutoFollowRxMode = true },
+                new TxPaneUiSettings { AutoFollowRxMode = true },
                 TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
         };
 
@@ -54,48 +55,6 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.AutoFollowRxMode);
-        Assert.Equal(2, vm.FavoriteModeOptions.Count);
-        Assert.False(vm.FavoriteModeOptions.Single(o => o.Mode.Id == "robot36").IsSelected);
-        Assert.True(vm.FavoriteModeOptions.Single(o => o.Mode.Id == "martin-m1").IsSelected);
-        var favorite = Assert.Single(vm.FavoriteModes);
-        Assert.Equal("martin-m1", favorite.Mode.Id);
-    }
-
-    [AvaloniaFact]
-    public void TogglingAFavoriteModeOption_UpdatesFavoriteModesAndPersists()
-    {
-        var settingsStore = new FakeSettingsStore();
-        var vm = CreateViewModel(settingsStore);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Empty(vm.FavoriteModes);
-
-        vm.FavoriteModeOptions.Single(o => o.Mode.Id == "robot36").IsSelected = true;
-        Dispatcher.UIThread.RunJobs();
-
-        var favorite = Assert.Single(vm.FavoriteModes);
-        Assert.Equal("robot36", favorite.Mode.Id);
-
-        var persisted = settingsStore.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
-        Assert.Equal(["robot36"], persisted?.FavoriteModeIds);
-    }
-
-    [AvaloniaFact]
-    public void SelectFavoriteModeCommand_SetsSelectedMode()
-    {
-        var settingsStore = new FakeSettingsStore
-        {
-            Settings = new AppSettings().WithSection(
-                TxPaneUiSettings.SectionKey,
-                new TxPaneUiSettings { FavoriteModeIds = ["martin-m1"] },
-                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
-        };
-        var vm = CreateViewModel(settingsStore);
-        Dispatcher.UIThread.RunJobs();
-        var favorite = Assert.Single(vm.FavoriteModes);
-
-        favorite.SelectCommand.Execute(favorite.Mode);
-
-        Assert.Equal("martin-m1", vm.SelectedMode?.Id);
     }
 
     [AvaloniaFact]
@@ -261,7 +220,7 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
     [AvaloniaFact]
     public void TogglingAutoFollowRxMode_LeavesAnUnrelatedSiblingSectionUntouched()
     {
-        // TxPaneUiSettings only owns FavoriteModeIds/AutoFollowRxMode today. This test's real target
+        // TxPaneUiSettings owns AutoFollowRxMode/QuickModeGridIds today. This test's real target
         // is the `settings.WithSection(...)` mechanism itself: saving one section must never disturb
         // a completely different section already present in the same AppSettings -- AudioDeviceSettings
         // (an arbitrary unrelated section) with a distinctive SampleRate sentinel stands in for that.
@@ -283,5 +242,101 @@ public sealed class TxControlsFavoritesAndAutoFollowTests
 
         var txPaneUi = settingsStore.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
         Assert.True(txPaneUi?.AutoFollowRxMode);
+    }
+
+    [AvaloniaFact]
+    public void QuickModeSlots_DefaultsTo16SlotsFromQuickModeGridDefaults()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = CreateViewModel(settingsStore, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(16, vm.QuickModeSlots.Count);
+        for (var i = 0; i < QuickModeGridDefaults.Ids.Count; i++)
+        {
+            Assert.Equal(QuickModeGridDefaults.Ids[i], vm.QuickModeSlots[i].CurrentMode.Id);
+            Assert.Equal(43, vm.QuickModeSlots[i].MenuEntries.Count);
+        }
+    }
+
+    [AvaloniaFact]
+    public void QuickModeSlots_LoadsAValidPersistedAssignment()
+    {
+        var customIds = QuickModeGridDefaults.Ids.Reverse().ToArray();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                TxPaneUiSettings.SectionKey,
+                new TxPaneUiSettings { QuickModeGridIds = customIds },
+                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
+        };
+
+        var vm = CreateViewModel(settingsStore, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+        Dispatcher.UIThread.RunJobs();
+
+        for (var i = 0; i < customIds.Length; i++)
+        {
+            Assert.Equal(customIds[i], vm.QuickModeSlots[i].CurrentMode.Id);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ReassignQuickModeSlot_UpdatesCurrentModeAndPersists_WithoutClobberingAutoFollowRxMode()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                TxPaneUiSettings.SectionKey,
+                new TxPaneUiSettings { AutoFollowRxMode = true },
+                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
+        };
+        var vm = CreateViewModel(settingsStore, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+        Dispatcher.UIThread.RunJobs();
+        var newMode = SstvModeRegistry.Mn73; // not one of the default 16
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(newMode.Id, vm.QuickModeSlots[0].CurrentMode.Id);
+
+        var persisted = settingsStore.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
+        Assert.Equal(newMode.Id, persisted!.QuickModeGridIds[0]);
+        // The reassignment's own persist is a read-modify-write against the same section --
+        // AutoFollowRxMode (already loaded by the time this awaited-first reassignment runs) must survive.
+        Assert.True(persisted.AutoFollowRxMode);
+    }
+
+    [AvaloniaFact]
+    public async Task ReassignQuickModeSlot_ToModeAlreadyUsedElsewhere_IsASafeNoOp()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = CreateViewModel(settingsStore, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+        Dispatcher.UIThread.RunJobs();
+        var slot1Mode = vm.QuickModeSlots[1].CurrentMode;
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, slot1Mode));
+
+        Assert.Equal(QuickModeGridDefaults.Ids[0], vm.QuickModeSlots[0].CurrentMode.Id);
+    }
+
+    [AvaloniaFact]
+    public async Task ReassignQuickModeSlot_IsIndependentOfRxImagePaneViewModelsOwnGrid()
+    {
+        // Confirmed with the user: reassigning here must never touch RxImagePaneViewModel's own
+        // grid -- there is no shared state between the two beyond the pure QuickModeGridAssignment
+        // algorithm and view-model shapes, so this asserts the TX-side persisted section alone
+        // carries the change, under its OWN section key.
+        var settingsStore = new FakeSettingsStore();
+        var vm = CreateViewModel(settingsStore, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+        Dispatcher.UIThread.RunJobs();
+        var newMode = SstvModeRegistry.Mn73;
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+        Dispatcher.UIThread.RunJobs();
+
+        var txPersisted = settingsStore.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
+        var rxPersisted = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        Assert.Equal(newMode.Id, txPersisted!.QuickModeGridIds[0]);
+        Assert.Null(rxPersisted); // no RX section was ever written by a TX-side reassignment
     }
 }
