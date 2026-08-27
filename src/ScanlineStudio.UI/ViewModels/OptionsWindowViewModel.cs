@@ -6,6 +6,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
@@ -40,6 +41,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private readonly IFilePickerService _filePickerService;
     private readonly ISstvSessionService _sstvSession;
     private readonly ISerialPortEnumerator _serialPortEnumerator;
+    private readonly IReceiveHistoryStore _historyStore;
+    private readonly IAppLocationsService _appLocationsService;
+    private readonly IApplicationRestarter _applicationRestarter;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     private static readonly TimeSpan TxVolumePersistDebounce = TimeSpan.FromMilliseconds(400);
@@ -223,6 +227,49 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isConfirmingResetAll;
 
+    /// <summary>General tab's Storage section -- 4 rows (Images/Config/Database/Log), moved in
+    /// from the former standalone "Configurations &gt; Storage" dialog (Images) plus 3 new rows.
+    /// Deliberately NOT part of <see cref="OptionsSnapshot"/>/staged-until-Save like every field
+    /// above -- each row commits (Images/Log) or stages (Config/Database) immediately on its own
+    /// Apply, and <see cref="SaveCommand"/>/<see cref="CancelCommand"/>/
+    /// <see cref="ResetGeneralToDefaultCommand"/> must never touch any of them (see those methods'
+    /// own bodies -- none reference these fields at all, by omission, not a guard).</summary>
+    [ObservableProperty]
+    private string _imagesDirectory = string.Empty;
+
+    [ObservableProperty]
+    private string? _imagesDirectoryErrorMessage;
+
+    [ObservableProperty]
+    private string _configDirectory = string.Empty;
+
+    [ObservableProperty]
+    private string? _pendingConfigDirectory;
+
+    [ObservableProperty]
+    private string? _configDirectoryErrorMessage;
+
+    [ObservableProperty]
+    private bool _isConfirmingConfigRestart;
+
+    [ObservableProperty]
+    private string _databaseDirectory = string.Empty;
+
+    [ObservableProperty]
+    private string? _pendingDatabaseDirectory;
+
+    [ObservableProperty]
+    private string? _databaseDirectoryErrorMessage;
+
+    [ObservableProperty]
+    private bool _isConfirmingDatabaseRestart;
+
+    [ObservableProperty]
+    private string _logDirectory = string.Empty;
+
+    [ObservableProperty]
+    private string? _logDirectoryErrorMessage;
+
     /// <summary>Backs the Decode tab's real toggles -- see <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSyncEnabled"/>/
     /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.AutoSlantEnabled"/>'s own doc comments
     /// for what each genuinely gates in <c>AnalogFmSstvDecoder</c>. Deliberately NOT the tab's other
@@ -365,6 +412,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         IFilePickerService filePickerService,
         ISstvSessionService sstvSession,
         ISerialPortEnumerator serialPortEnumerator,
+        IReceiveHistoryStore historyStore,
+        IAppLocationsService appLocationsService,
+        IApplicationRestarter applicationRestarter,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
@@ -377,6 +427,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         _filePickerService = filePickerService;
         _sstvSession = sstvSession;
         _serialPortEnumerator = serialPortEnumerator;
+        _historyStore = historyStore;
+        _appLocationsService = appLocationsService;
+        _applicationRestarter = applicationRestarter;
         _logger = logger;
 
         _isRadioConnected = radioSession.RigId != "none";
@@ -384,6 +437,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         _ = LoadSafeAsync();
         _ = LoadTxVolumeSafeAsync();
+        _ = LoadStorageLocationsSafeAsync();
     }
 
     private readonly IDisposable _connectionEventsSubscription;
@@ -1849,6 +1903,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
 
+    /// <summary>Fired by Restart Now (Config/Database rows), after any dirty edit elsewhere in this
+    /// dialog has already been saved successfully -- see <see cref="RestartNowAsync"/>. Distinct
+    /// from <see cref="RequestClose"/>: this must close the WHOLE app, not just this dialog, so
+    /// <c>MainWindow.axaml.cs</c>'s handler closes the Options window first, then the main window
+    /// itself, reusing the exact same shutdown path <c>MainViewModel.ExitRequested</c> already
+    /// uses for File &gt; Exit. No process is spawned from here or from that handler -- only
+    /// <see cref="IApplicationRestarter.RestartRequested"/> is set; the actual spawn happens from
+    /// <c>Program.cs</c>'s own shutdown sequence, strictly after its existing teardown completes
+    /// (see <c>Program.HandleLifetimeExit</c>'s own doc comment for why).</summary>
+    public event Action? RestartRequested;
+
     /// <summary>Gates <see cref="SaveCommand"/> -- see <see cref="CanSave"/>.</summary>
     private bool _loadSucceeded;
 
@@ -1934,6 +1999,189 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         finally
         {
             SaveCommand.NotifyCanExecuteChanged();
+        }
+    }
+
+    /// <summary>Pre-fills all 4 Storage rows with their REAL effective values (current directory,
+    /// plus any already-staged pending target for Config/Database) -- never left blank just
+    /// because the underlying setting happens to be unset, same reasoning as
+    /// <see cref="IReceiveHistoryStore.SetImagesDirectoryAsync"/>'s own doc comment (this row's
+    /// original source, from the former standalone "Configurations &gt; Storage" dialog). A
+    /// failure here must not take down the rest of the dialog's own load -- own try/catch,
+    /// separate from <see cref="LoadSafeAsync"/>.</summary>
+    private async Task LoadStorageLocationsSafeAsync()
+    {
+        try
+        {
+            ImagesDirectory = await _historyStore.GetImagesDirectoryAsync();
+            ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
+            PendingConfigDirectory = await _appLocationsService.GetPendingConfigDirectoryAsync();
+            DatabaseDirectory = await _appLocationsService.GetDatabaseDirectoryAsync();
+            PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
+            LogDirectory = await _appLocationsService.GetLogDirectoryAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.StorageLocationsLoadFailed(_logger, ex);
+        }
+    }
+
+    [RelayCommand]
+    private async Task BrowseImagesDirectoryAsync()
+    {
+        var picked = await _filePickerService.PickFolderAsync(ImagesDirectory);
+        if (picked is not null)
+        {
+            ImagesDirectory = picked;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyImagesDirectoryAsync()
+    {
+        try
+        {
+            ImagesDirectoryErrorMessage = null;
+            await _historyStore.SetImagesDirectoryAsync(ImagesDirectory);
+        }
+        catch (Exception ex)
+        {
+            Log.ImagesDirectorySaveFailed(_logger, ex);
+            ImagesDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.SaveFailed", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private async Task BrowseConfigDirectoryAsync()
+    {
+        var picked = await _filePickerService.PickFolderAsync(PendingConfigDirectory ?? ConfigDirectory);
+        if (picked is not null)
+        {
+            PendingConfigDirectory = picked;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyConfigDirectoryAsync()
+    {
+        // Code-review round-1 finding: unlike Images/Log (pre-filled with the CURRENT value, so
+        // blanking them is a deliberate act), this field is null/blank whenever nothing is staged
+        // yet -- passing that straight through used to silently stage "move back to default" for
+        // a user who clicked Apply without typing or browsing anything at all.
+        if (string.IsNullOrWhiteSpace(PendingConfigDirectory))
+        {
+            ConfigDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.NoFolderChosen");
+            return;
+        }
+
+        try
+        {
+            ConfigDirectoryErrorMessage = null;
+            await _appLocationsService.SetConfigDirectoryAsync(PendingConfigDirectory);
+            PendingConfigDirectory = await _appLocationsService.GetPendingConfigDirectoryAsync();
+            IsConfirmingConfigRestart = PendingConfigDirectory is not null;
+        }
+        catch (Exception ex)
+        {
+            Log.ConfigDirectorySaveFailed(_logger, ex);
+            ConfigDirectoryErrorMessage = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private Task ConfirmConfigRestartAsync() => RestartNowAsync(
+        dismissConfirm: () => IsConfirmingConfigRestart = false,
+        setError: message => ConfigDirectoryErrorMessage = message);
+
+    [RelayCommand]
+    private void CancelConfigRestart() => IsConfirmingConfigRestart = false;
+
+    [RelayCommand]
+    private async Task BrowseDatabaseDirectoryAsync()
+    {
+        var picked = await _filePickerService.PickFolderAsync(PendingDatabaseDirectory ?? DatabaseDirectory);
+        if (picked is not null)
+        {
+            PendingDatabaseDirectory = picked;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyDatabaseDirectoryAsync()
+    {
+        // Same round-1 finding as ApplyConfigDirectoryAsync above.
+        if (string.IsNullOrWhiteSpace(PendingDatabaseDirectory))
+        {
+            DatabaseDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.NoFolderChosen");
+            return;
+        }
+
+        try
+        {
+            DatabaseDirectoryErrorMessage = null;
+            await _appLocationsService.SetDatabaseDirectoryAsync(PendingDatabaseDirectory);
+            PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
+            IsConfirmingDatabaseRestart = PendingDatabaseDirectory is not null;
+        }
+        catch (Exception ex)
+        {
+            Log.DatabaseDirectorySaveFailed(_logger, ex);
+            DatabaseDirectoryErrorMessage = ex.Message;
+        }
+    }
+
+    [RelayCommand]
+    private Task ConfirmDatabaseRestartAsync() => RestartNowAsync(
+        dismissConfirm: () => IsConfirmingDatabaseRestart = false,
+        setError: message => DatabaseDirectoryErrorMessage = message);
+
+    [RelayCommand]
+    private void CancelDatabaseRestart() => IsConfirmingDatabaseRestart = false;
+
+    /// <summary>Shared by both Config and Database rows' Restart Now action -- see
+    /// <see cref="RestartRequested"/>'s own doc comment for the full ordering rationale. Saves any
+    /// dirty edit elsewhere in the dialog FIRST (only if a load actually succeeded, mirroring
+    /// <see cref="CanSave"/>'s own guard -- a dialog that failed to load has no real snapshot to
+    /// save) and aborts the restart entirely on failure, rather than silently discarding whatever
+    /// the user typed. Never calls <see cref="IApplicationRestarter.StartNewInstance"/> directly --
+    /// only sets the flag; the actual spawn happens from <c>Program.cs</c>, after this process's
+    /// own teardown completes.</summary>
+    private async Task RestartNowAsync(Action dismissConfirm, Action<string?> setError)
+    {
+        if (_loadSucceeded && !await SaveCoreAsync())
+        {
+            setError(_localization.GetString("Options.General.Storage.Error.SaveBeforeRestartFailed"));
+            return;
+        }
+
+        dismissConfirm();
+        _applicationRestarter.RestartRequested = true;
+        RestartRequested?.Invoke();
+    }
+
+    [RelayCommand]
+    private async Task BrowseLogDirectoryAsync()
+    {
+        var picked = await _filePickerService.PickFolderAsync(LogDirectory);
+        if (picked is not null)
+        {
+            LogDirectory = picked;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyLogDirectoryAsync()
+    {
+        try
+        {
+            LogDirectoryErrorMessage = null;
+            await _appLocationsService.SetLogDirectoryAsync(LogDirectory);
+            LogDirectory = await _appLocationsService.GetLogDirectoryAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.LogDirectorySaveFailed(_logger, ex);
+            LogDirectoryErrorMessage = ex.Message;
         }
     }
 
@@ -2033,6 +2281,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task SaveAsync()
     {
+        if (await SaveCoreAsync())
+        {
+            RequestClose?.Invoke();
+        }
+    }
+
+    /// <summary>Extracted from <see cref="SaveAsync"/> (mechanical, behavior-preserving split) so
+    /// <see cref="RestartNowAsync"/> (Config/Database rows' Restart Now) can save any dirty edit
+    /// elsewhere in this dialog WITHOUT closing the window itself, and can check whether it
+    /// actually succeeded -- the real <see cref="SaveAsync"/> used to signal failure only by
+    /// silently not closing, with no way for another caller to observe that. Returns whether the
+    /// save succeeded; <see cref="SaveAsync"/> itself still only closes the window on
+    /// <c>true</c>, identical to its own prior externally-observable behavior.</summary>
+    private async Task<bool> SaveCoreAsync()
+    {
         // The single most useful Debug line in the app for "why didn't my settings take effect"
         // bugs -- logs only the fields that are actually safe to log as-is (host/port/device ids/
         // sample rate/culture/backend id). Code-review correction: an earlier version of this
@@ -2128,10 +2391,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.SaveFailed(_logger, ex);
-            return;
+            return false;
         }
 
-        RequestClose?.Invoke();
+        return true;
     }
 
     [RelayCommand]
@@ -2424,6 +2687,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetCultureAsync({Culture}) failed after a successful settings save")]
         public static partial void SetCultureFailed(ILogger logger, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the Storage section's current locations failed")]
+        public static partial void StorageLocationsLoadFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Saving the RX images directory failed")]
+        public static partial void ImagesDirectorySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Staging the config directory failed")]
+        public static partial void ConfigDirectorySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Staging the database directory failed")]
+        public static partial void DatabaseDirectorySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Relocating the log directory failed")]
+        public static partial void LogDirectorySaveFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "TestRigctldConnection invoked: host={Host}, port={Port}")]
         public static partial void TestRigctldConnectionInvoked(ILogger logger, string host, int port);

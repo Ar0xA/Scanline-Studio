@@ -82,14 +82,29 @@ internal static partial class Program
         // An unwritable log directory (e.g. a read-only profile, a permissions issue) must not
         // crash the app before a single log line exists -- fall back to console-only in that case,
         // via the console provider CreateApplicationBuilder already registered above.
+        //
+        // Named (not the previous inline `new FileLoggerProvider(logPath)`) so the SAME instance
+        // can also be registered as ILogFileRelocator below and disposed from lifetime.Exit before
+        // a restart spawns a new instance (see HandleLifetimeExit's own comment for why).
+        FileLoggerProvider? fileLoggerProvider = null;
         try
         {
-            hostBuilder.Logging.AddProvider(new FileLoggerProvider(logPath));
+            fileLoggerProvider = new FileLoggerProvider(logPath);
+            hostBuilder.Logging.AddProvider(fileLoggerProvider);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Failed to open log file at '{logPath}': {ex}. Continuing with console logging only.");
         }
+
+        // Physically applies any Config/Database directory move staged via Options > General,
+        // before RegisterServices/hostBuilder.Build() -- the one point in the process guaranteed
+        // to run before any SqliteConnection or ISettingsStore could ever have been opened. Moving
+        // either file later would race a live connection (SQLite's own connection pooling keeps a
+        // native handle open past SqliteConnection.Dispose() -- see AppLocationOverrides' own doc
+        // comment). No logger exists yet -- failures go to Console.Error, same as every other
+        // pre-host startup step in this file.
+        ApplyPendingRelocations();
 
         // Tier C audit finding: extracted from Main into its own testable method (previously all
         // ~150 lines of pure `IServiceCollection` registration lived inline in Main, structurally
@@ -99,6 +114,16 @@ internal static partial class Program
         // real resolve in a real run. Same extraction shape RegisterSstvServices already established
         // for the SSTV DSP core registrations below.
         RegisterServices(hostBuilder.Services);
+
+        // RegisterServices above already registered NoneLogFileRelocator as the ILogFileRelocator
+        // default (so SstvCompositionRootTests, which calls RegisterServices alone, always has one
+        // to resolve); this overwrites it with the real provider, last-registration-wins, same
+        // substitution convention that test documents for this DI graph elsewhere. Must come AFTER
+        // RegisterServices, not before -- registering it earlier would get shadowed instead.
+        if (fileLoggerProvider is not null)
+        {
+            hostBuilder.Services.AddSingleton<ILogFileRelocator>(fileLoggerProvider);
+        }
 
         // A DI-graph error (a missing registration, a bad factory lambda) here is otherwise an
         // unlogged crash before the window ever appears -- there is no logger to report through
@@ -251,27 +276,12 @@ internal static partial class Program
         // If disposeTask is the one that completed (as opposed to the 10s Delay winning instead),
         // re-observing it via GetAwaiter().GetResult() is a no-op on success and rethrows -- into
         // the catch below -- on fault, actually giving the try/catch something to do.
-        lifetime.Exit += (_, _) =>
-        {
-            Log.ShuttingDown(logger);
-            try
-            {
-                var disposeTask = ((IAsyncDisposable)host).DisposeAsync().AsTask();
-                var completed = Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
-                if (completed == disposeTask)
-                {
-                    disposeTask.GetAwaiter().GetResult();
-                }
-                else
-                {
-                    Log.TeardownTimedOut(logger);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.TeardownThrew(logger, ex);
-            }
-        };
+        //
+        // Extracted into HandleLifetimeExit (mirroring RegisterServices's own extraction) so the
+        // dispose-then-ClearAllPools-then-conditional-restart-spawn ordering this feature adds is
+        // directly unit-testable, not a documented manual step.
+        var applicationRestarter = host.Services.GetRequiredService<IApplicationRestarter>();
+        lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider);
 
         try
         {
@@ -282,6 +292,306 @@ internal static partial class Program
             Log.LifetimeStartThrew(logger, ex);
             throw;
         }
+    }
+
+    /// <summary>Runs on the <c>ClassicDesktopStyleApplicationLifetime.Exit</c> event -- extracted
+    /// from <c>Main</c> so the dispose-then-<c>ClearAllPools</c>-then-conditional-restart-spawn
+    /// ordering is directly unit-testable, mirroring <see cref="RegisterServices"/>'s own
+    /// extraction.
+    ///
+    /// <paramref name="logger"/> stays safe to log through even after <paramref name="host"/>'s
+    /// own <c>DisposeAsync</c> completes: the file provider is registered as a pre-built instance
+    /// (<c>hostBuilder.Logging.AddProvider(fileLoggerProvider)</c> in <c>Main</c>), which neither
+    /// the DI container (it doesn't dispose instances it didn't create) nor
+    /// <c>ILoggerFactory</c> (DI-supplied providers are registered <c>dispose: false</c>) ever
+    /// disposes on the host's behalf -- the existing <see cref="Log.TeardownThrew"/>/
+    /// <see cref="Log.TeardownTimedOut"/> calls below already relied on this before this feature
+    /// existed. <paramref name="fileLoggerProvider"/> is disposed explicitly, deliberately, right
+    /// before a restart spawn -- from that point on, logging through <paramref name="logger"/>
+    /// still reaches the console provider (unaffected by disposing just this one provider
+    /// instance) but no longer the file, an accepted narrow gap for this last shutdown step
+    /// alone.</summary>
+    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider)
+    {
+        Log.ShuttingDown(logger);
+        var disposedCleanly = true;
+        try
+        {
+            var disposeTask = host.DisposeAsync().AsTask();
+            var completed = Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
+            if (completed == disposeTask)
+            {
+                disposeTask.GetAwaiter().GetResult();
+            }
+            else
+            {
+                disposedCleanly = false;
+                Log.TeardownTimedOut(logger);
+            }
+        }
+        catch (Exception ex)
+        {
+            disposedCleanly = false;
+            Log.TeardownThrew(logger, ex);
+        }
+
+        // Round-3 finding: DisposeAsync above does NOT release SQLite's pooled `history.db`
+        // handle -- neither Sqlite store implements IDisposable, so the pool otherwise only
+        // empties at real process exit, strictly after a restarted child process has already
+        // tried (and possibly failed, on Windows) to move the file. Safe to call unconditionally,
+        // restart or not -- a no-op if no pool exists.
+        try
+        {
+            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+        }
+        catch (Exception ex)
+        {
+            Log.ClearPoolsThrew(logger, ex);
+        }
+
+        if (!restarter.RestartRequested)
+        {
+            return;
+        }
+
+        if (!disposedCleanly)
+        {
+            // Audio/CAT may still be held by this process -- the restarted instance may come up
+            // with no radio/no audio this one time. Still restart: the user explicitly asked for
+            // one, and there is no live UI left at this point to ask again.
+            Log.RestartingAfterIncompleteTeardown(logger);
+        }
+
+        // Code-review round-1 finding: logged BEFORE disposing fileLoggerProvider below, so this
+        // line is the last one guaranteed to reach app.log itself -- its absence from a prior
+        // run's log (paired with no matching "Scanline Studio starting" from a new process) is
+        // the only file-based way to diagnose a failed spawn, since a GUI launch has no attached
+        // console for Log.RestartSpawnFailed/the Console.Error fallback below to actually reach.
+        Log.RestartSpawning(logger);
+        fileLoggerProvider?.Dispose();
+
+        if (!restarter.StartNewInstance())
+        {
+            Log.RestartSpawnFailed(logger);
+            Console.Error.WriteLine("Failed to spawn a new Scanline Studio instance for restart; the application will need to be relaunched manually.");
+        }
+    }
+
+    /// <summary>See the call site's own comment for why this must run before
+    /// <see cref="RegisterServices"/>/<c>hostBuilder.Build()</c>. Testable via
+    /// <paramref name="overridesFilePath"/> -- the real call site always passes <c>null</c> (the
+    /// real fixed overrides path).</summary>
+    internal static void ApplyPendingRelocations(string? overridesFilePath = null)
+    {
+        var overrides = AppLocationOverrides.LoadForBootstrap(overridesFilePath);
+        var originalConfigDirectory = overrides.ConfigDirectory ?? AppConfigPaths.GetConfigDirectory(overridesFilePath);
+        var originalDatabaseDirectory = overrides.DatabaseDirectory ?? AppDatabasePaths.GetDatabaseDirectory(overridesFilePath);
+
+        var configResult = TryApplyPendingMove(
+            currentDirectory: originalConfigDirectory,
+            pendingDirectory: overrides.PendingConfigDirectory,
+            fileName: "settings.json");
+
+        var databaseResult = TryApplyPendingMove(
+            currentDirectory: originalDatabaseDirectory,
+            pendingDirectory: overrides.PendingDatabaseDirectory,
+            fileName: "history.db",
+            extraSidecarFileNames: ["history.db-journal"]);
+
+        if (configResult is null && databaseResult is null)
+        {
+            return;
+        }
+
+        var updated = overrides;
+        if (configResult is { } config)
+        {
+            updated = updated with { ConfigDirectory = config.AppliedDirectory, PendingConfigDirectory = config.StillPendingDirectory };
+        }
+
+        if (databaseResult is { } database)
+        {
+            updated = updated with { DatabaseDirectory = database.AppliedDirectory, PendingDatabaseDirectory = database.StillPendingDirectory };
+        }
+
+        try
+        {
+            AppLocationOverrides.SaveAsync(updated, overridesFilePath).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to persist location-overrides.json after applying a pending relocation: {ex}");
+
+            // Code-review round-1 finding: the physical move(s) above may have already succeeded
+            // even though the override record describing them didn't save -- roll each one back so
+            // the file and the (unsaved, still-old) override record stay in agreement. Otherwise
+            // settings.json/history.db end up stranded at the new location while every future
+            // launch keeps looking for them at the old one (silent "my settings reset" / "my
+            // logbook is empty" reports).
+            if (configResult is { } configToRollBack)
+            {
+                RollBackAppliedMove(configToRollBack.AppliedDirectory, originalConfigDirectory, "settings.json", null);
+            }
+
+            if (databaseResult is { } databaseToRollBack)
+            {
+                RollBackAppliedMove(databaseToRollBack.AppliedDirectory, originalDatabaseDirectory, "history.db", ["history.db-journal"]);
+            }
+        }
+    }
+
+    /// <summary>Reverses a move <see cref="TryApplyPendingMove"/> already performed, when the
+    /// override save describing it subsequently failed -- a no-op if nothing actually moved (the
+    /// applied directory already equals the original one, e.g. the pending-equals-current case).
+    /// Best-effort: a failed rollback is logged, not thrown, since the caller is already inside a
+    /// failure-handling path with no further recovery available.</summary>
+    private static void RollBackAppliedMove(string appliedDirectory, string originalDirectory, string fileName, string[]? extraSidecarFileNames)
+    {
+        // Code-review round-2 finding: this whole body used to run unguarded -- DirectoryPathComparer.AreEqual
+        // (via Path.GetFullPath) throws ArgumentException for an empty/embedded-null directory
+        // string, reachable from a hand-edited/corrupt location-overrides.json. That would
+        // reproduce the exact round-1 blocker (an unhandled exception straight out of Main, before
+        // any window or logger exists) from inside what's supposed to be this feature's own
+        // failure-recovery path. This method's own doc comment already promises "logged, not
+        // thrown" -- now actually true for every failure mode, not just a missing destination.
+        try
+        {
+            if (DirectoryPathComparer.AreEqual(appliedDirectory, originalDirectory))
+            {
+                return;
+            }
+
+            var fileNames = extraSidecarFileNames is null ? [fileName] : new[] { fileName }.Concat(extraSidecarFileNames).ToArray();
+            if (!TryMoveAllOrRollBack(appliedDirectory, originalDirectory, fileNames))
+            {
+                Console.Error.WriteLine($"Failed to roll back '{fileName}' from '{appliedDirectory}' to '{originalDirectory}' after the settings save failed. " +
+                    $"The file may now be at '{appliedDirectory}' while location-overrides.json still points at '{originalDirectory}'.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to roll back '{fileName}' from '{appliedDirectory}' to '{originalDirectory}' after the settings save failed: {ex}. " +
+                $"The file may now be at '{appliedDirectory}' while location-overrides.json still points at '{originalDirectory}'.");
+        }
+    }
+
+    /// <summary>Returns <c>null</c> when there is no pending target to act on (no override update
+    /// needed at all). Otherwise returns the directory the file actually ends up in
+    /// (<c>AppliedDirectory</c>) and, if the move didn't fully succeed, the same pending target to
+    /// retry next launch (<c>StillPendingDirectory</c>, <c>null</c> on success).</summary>
+    private static (string AppliedDirectory, string? StillPendingDirectory)? TryApplyPendingMove(
+        string currentDirectory, string? pendingDirectory, string fileName, string[]? extraSidecarFileNames = null)
+    {
+        if (pendingDirectory is null)
+        {
+            return null;
+        }
+
+        // Code-review round-1 finding (blocker): everything below used to run unguarded, so an
+        // unusable pending target (a removable/network drive gone missing, a permission revoked,
+        // a parent directory deleted, or simply a garbage path from a hand-edited
+        // location-overrides.json) threw straight out of Main before any window or logger
+        // existed -- this method's own contract ("must never brick startup") demands the opposite:
+        // fall back to the old, still-valid directory and retry next launch, exactly like every
+        // named failure path below already does.
+        try
+        {
+            if (DirectoryPathComparer.AreEqual(currentDirectory, pendingDirectory))
+            {
+                // Already there (or the user picked the same directory back) -- clear the pending
+                // field as a no-op rather than leaving a stale "will move on restart" showing forever.
+                return (currentDirectory, null);
+            }
+
+            var fileNames = extraSidecarFileNames is null
+                ? [fileName]
+                : new[] { fileName }.Concat(extraSidecarFileNames).ToArray();
+
+            Directory.CreateDirectory(pendingDirectory);
+
+            // All-or-nothing conflict check up front -- refuse rather than overwrite/merge an
+            // unrelated existing file at the destination.
+            foreach (var name in fileNames)
+            {
+                if (File.Exists(Path.Combine(pendingDirectory, name)))
+                {
+                    Console.Error.WriteLine($"Cannot move '{name}' to '{pendingDirectory}': a file already exists there. Will retry on next launch.");
+                    return (currentDirectory, pendingDirectory);
+                }
+            }
+
+            // Short bounded retry -- even past the conflict check above, this is real cross-process/
+            // antivirus/filesystem-indexer I/O; a transient lock shouldn't need a whole extra restart
+            // to clear.
+            const int maxAttempts = 5;
+            for (var attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                if (TryMoveAllOrRollBack(currentDirectory, pendingDirectory, fileNames))
+                {
+                    return (pendingDirectory, null);
+                }
+
+                if (attempt < maxAttempts)
+                {
+                    Thread.Sleep(TimeSpan.FromSeconds(1));
+                }
+            }
+
+            Console.Error.WriteLine($"Failed to move '{fileName}' to '{pendingDirectory}' after {maxAttempts} attempts. Will retry on next launch.");
+            return (currentDirectory, pendingDirectory);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Failed to apply the pending move of '{fileName}' to '{pendingDirectory}': {ex}. Will retry on next launch.");
+            return (currentDirectory, pendingDirectory);
+        }
+    }
+
+    /// <summary>Moves every named file that still exists at <paramref name="sourceDirectory"/>
+    /// into <paramref name="destinationDirectory"/>, rolling back whatever already moved this
+    /// attempt if any individual move fails partway -- these are independent files (e.g.
+    /// <c>history.db</c> + its <c>-journal</c> sidecar) with no atomic multi-file move primitive,
+    /// so a failed attempt must leave them exactly where they started rather than half-migrated. A
+    /// file already missing from the source (moved by a previous attempt, or never existed -- a
+    /// fresh install) is skipped, not an error -- makes repeated attempts/launches idempotent.</summary>
+    private static bool TryMoveAllOrRollBack(string sourceDirectory, string destinationDirectory, IReadOnlyList<string> fileNames)
+    {
+        var moved = new List<(string Source, string Destination)>();
+        foreach (var name in fileNames)
+        {
+            var source = Path.Combine(sourceDirectory, name);
+            if (!File.Exists(source))
+            {
+                continue;
+            }
+
+            var destination = Path.Combine(destinationDirectory, name);
+            try
+            {
+                File.Move(source, destination);
+                moved.Add((source, destination));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                foreach (var (rollbackSource, rollbackDestination) in moved)
+                {
+                    try
+                    {
+                        if (File.Exists(rollbackDestination))
+                        {
+                            File.Move(rollbackDestination, rollbackSource);
+                        }
+                    }
+                    catch (Exception rollbackEx) when (rollbackEx is IOException or UnauthorizedAccessException)
+                    {
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        return true;
     }
 
     internal static void RegisterServices(IServiceCollection services)
@@ -306,11 +616,6 @@ internal static partial class Program
         services.AddTransient<OptionsSettingsService>();
         services.AddTransient<OptionsWindowViewModel>();
 
-        // Storage settings dialog (stub survey Tier 2) -- transient, same reasoning as
-        // OptionsWindowViewModel: no existing pane already holds IReceiveHistoryStore for whatever
-        // menu opens this, and a fresh instance re-reads the persisted directory each open.
-        services.AddTransient<StorageSettingsWindowViewModel>();
-
         // Macros reference/preview dialog (stub survey Tier 3) -- transient, same reasoning: a
         // fresh instance re-reads OperatorSettings (Name/Grid/Callsign) each open.
         services.AddTransient<MacrosReferenceWindowViewModel>();
@@ -326,6 +631,20 @@ internal static partial class Program
 
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
+
+        // Options > General's Config/Database/Log storage-location rows (see AppLocationOverrides'
+        // own doc comment). IApplicationRestarter backs the Config/Database "Restart Now" action --
+        // Program.cs's own lifetime.Exit handler resolves it and checks RestartRequested only after
+        // its existing teardown completes, see that handler's own comment for why.
+        //
+        // NoneLogFileRelocator is the default so this registration alone (as
+        // SstvCompositionRootTests exercises) always has something to resolve; Main overwrites it
+        // with the real FileLoggerProvider instance on success, AFTER this call, last-registration-
+        // wins (see that call site's own comment -- registering it before RegisterServices instead
+        // would get shadowed).
+        services.AddSingleton<ILogFileRelocator, NoneLogFileRelocator>();
+        services.AddTransient<IAppLocationsService, AppLocationsService>();
+        services.AddSingleton<IApplicationRestarter, ApplicationRestarter>();
 
         // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
         // automatically by DI straight into MainViewModel's constructor (replaces the former
@@ -619,6 +938,18 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Host teardown (DisposeAsync) threw; exiting anyway")]
         public static partial void TeardownThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SqliteConnection.ClearAllPools threw during shutdown")]
+        public static partial void ClearPoolsThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Restarting after teardown did not complete cleanly; the new instance may start with no radio/audio connection")]
+        public static partial void RestartingAfterIncompleteTeardown(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Spawning a new instance for restart")]
+        public static partial void RestartSpawning(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to spawn a new instance for restart; Scanline Studio will need to be relaunched manually")]
+        public static partial void RestartSpawnFailed(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Restored persisted UI culture '{CultureCode}'")]
         public static partial void CultureRestored(ILogger logger, string cultureCode);

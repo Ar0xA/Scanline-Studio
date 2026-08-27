@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Host;
 
@@ -25,9 +26,9 @@ namespace ScanlineStudio.Host;
 /// against the still-oversized live file; only a failure to reopen the live path at all disables
 /// further writes (silently, matching this type's own "must not crash the app" contract at the
 /// Program.cs call site).</summary>
-public sealed class FileLoggerProvider : ILoggerProvider
+public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
 {
-    private readonly string _filePath;
+    private string _filePath;
     private readonly long _maxFileSizeBytes;
     private readonly int _maxBackupFileCount;
     private readonly object _lock = new();
@@ -119,6 +120,183 @@ public sealed class FileLoggerProvider : ILoggerProvider
                     _disposed = true;
                 }
             }
+        }
+    }
+
+    /// <summary>See <see cref="ILogFileRelocator.RelocateAsync"/>. The actual file I/O runs on a
+    /// background thread (a multi-MB log plus up to 5 backups is real I/O -- must never block the
+    /// UI thread Apply is clicked from), but the whole dispose-move-reopen sequence happens under
+    /// <see cref="_lock"/>, same as <see cref="WriteLine"/>'s own rotation. Nothing in the locked
+    /// section may log or call anything that could re-enter <see cref="WriteLine"/> -- that
+    /// method's own <see cref="ObjectDisposedException"/> catch would otherwise misfire on a
+    /// reentrant call while the writer is mid-swap and permanently disable file logging.</summary>
+    public Task<bool> RelocateAsync(string newDirectory, CancellationToken ct = default) =>
+        Task.Run(() => RelocateCore(newDirectory), ct);
+
+    private bool RelocateCore(string newDirectory)
+    {
+        lock (_lock)
+        {
+            if (_disposed)
+            {
+                // Nothing left to relocate once shutting down -- not a failure.
+                return true;
+            }
+
+            if (DirectoryPathComparer.AreEqual(Path.GetDirectoryName(_filePath)!, newDirectory))
+            {
+                return true;
+            }
+
+            var sourceFiles = CollectExistingLogFiles();
+
+            try
+            {
+                Directory.CreateDirectory(newDirectory);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Code-review round-1 finding: an unusable target (unwritable parent, invalid
+                // path) used to throw a raw exception out of RelocateAsync instead of the clean
+                // "refuse" IAppLocationsService.SetLogDirectoryAsync's contract promises -- the
+                // writer is still untouched at this point, same as a destination conflict below.
+                return false;
+            }
+
+            // All-or-nothing conflict check, before the first move -- a partial conflict check
+            // (checking as we go) could move some files before discovering a later one can't move,
+            // leaving a half-relocated set behind for no reason. The live file's own destination
+            // is always checked, even when the live file no longer exists at the source (round-2
+            // finding): OpenWriter below always reopens at this exact destination regardless, so a
+            // foreign file already sitting there must still refuse the relocate, not get silently
+            // appended into.
+            var liveDestination = Path.Combine(newDirectory, Path.GetFileName(_filePath));
+            if (File.Exists(liveDestination))
+            {
+                return false;
+            }
+
+            foreach (var source in sourceFiles)
+            {
+                var destination = Path.Combine(newDirectory, Path.GetFileName(source));
+                if (File.Exists(destination))
+                {
+                    return false;
+                }
+            }
+
+            _writer.Dispose();
+
+            var newFilePath = Path.Combine(newDirectory, Path.GetFileName(_filePath));
+            var moved = TryMoveAll(sourceFiles, newDirectory);
+            if (moved)
+            {
+                _filePath = newFilePath;
+            }
+
+            // Reopen at whichever path is now correct -- the new one on success, the old one
+            // (files rolled back there by TryMoveAll) on failure -- so a failed relocate never
+            // leaves logging permanently dead. Only a failure to reopen at all disables further
+            // writes, matching WriteLine's own existing failure contract.
+            try
+            {
+                _writer = OpenWriter(_filePath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                _disposed = true;
+            }
+
+            return moved;
+        }
+    }
+
+    private List<string> CollectExistingLogFiles()
+    {
+        // Code-review round-1 finding: the live file must be conflict/move-checked only when it
+        // actually still exists -- an externally deleted app.log (a tmp cleaner, logrotate) used
+        // to always be included here, so RelocateAsync's own File.Move for it threw
+        // FileNotFoundException, failing the whole relocate with a misleading "already exists in
+        // that folder" message even though nothing was actually in conflict.
+        var files = new List<string>();
+        if (File.Exists(_filePath))
+        {
+            files.Add(_filePath);
+        }
+
+        for (var i = 1; i <= _maxBackupFileCount; i++)
+        {
+            var backup = $"{_filePath}.{i}";
+            if (File.Exists(backup))
+            {
+                files.Add(backup);
+            }
+        }
+
+        return files;
+    }
+
+    /// <summary>Moves every file in <paramref name="sourceFiles"/> into <paramref name="newDirectory"/>,
+    /// rolling back whatever already moved if any individual move fails partway -- these are
+    /// independent files with no atomic multi-file move primitive, so a failed relocate must leave
+    /// them exactly where they started rather than half-migrated (a retry, or the caller's
+    /// reopen-at-old-path fallback, would otherwise have to reason about a mixed state).</summary>
+    private static bool TryMoveAll(IReadOnlyList<string> sourceFiles, string newDirectory)
+    {
+        var completed = new List<(string Source, string Destination)>();
+        foreach (var source in sourceFiles)
+        {
+            var destination = Path.Combine(newDirectory, Path.GetFileName(source));
+            try
+            {
+                File.Move(source, destination);
+                completed.Add((source, destination));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // File.Move's cross-volume copy+delete fallback can leave a partial destination
+                // file if the copy step itself fails partway -- clean that up before rolling the
+                // rest back, so a retry isn't blocked by a false conflict against our own debris.
+                TryDeleteIfExists(destination);
+                RollBack(completed);
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static void RollBack(IReadOnlyList<(string Source, string Destination)> completed)
+    {
+        foreach (var (source, destination) in completed)
+        {
+            try
+            {
+                if (File.Exists(destination))
+                {
+                    File.Move(destination, source);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort -- if even the rollback fails, the live file (always sourceFiles[0])
+                // making it back is what matters for logging to keep working; a stranded backup at
+                // the new location is a cosmetic loss, not a functional one.
+            }
+        }
+    }
+
+    private static void TryDeleteIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
         }
     }
 

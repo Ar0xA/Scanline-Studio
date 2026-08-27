@@ -231,4 +231,141 @@ public sealed class FileLoggerProviderTests : IDisposable
 
         Assert.True(File.Exists(nestedPath));
     }
+
+    [Fact]
+    public async Task RelocateAsync_MovesTheLiveFileAndBackups_AndAWriteAfterLandsInTheNewLocation()
+    {
+        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 200, maxBackupFileCount: 5);
+        WriteLines(provider, "Cat", count: 20, message: new string('x', 20));
+        Assert.True(File.Exists($"{_logPath}.1"), "test setup: expected a rotated backup to exist before relocating");
+
+        var newDirectory = Path.Combine(_directory, "relocated");
+        var result = await provider.RelocateAsync(newDirectory);
+
+        Assert.True(result);
+        Assert.True(File.Exists(Path.Combine(newDirectory, "app.log")));
+        Assert.True(File.Exists(Path.Combine(newDirectory, "app.log.1")));
+        Assert.False(File.Exists(_logPath), "the old live file must not be left behind");
+        Assert.False(File.Exists($"{_logPath}.1"), "the old backup must not be left behind");
+
+        WriteLines(provider, "Cat", count: 1, message: "after relocate");
+        provider.Dispose();
+
+        Assert.Contains("after relocate", File.ReadAllText(Path.Combine(newDirectory, "app.log")));
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenNoLogFilesExistYet_IsANoOpSuccess()
+    {
+        // Constructor already created _logPath (an empty live file), so delete it to simulate the
+        // "nothing written yet" case this fresh-install scenario needs.
+        var provider = new FileLoggerProvider(_logPath);
+        provider.Dispose();
+        File.Delete(_logPath);
+        var freshProvider = new FileLoggerProvider(Path.Combine(_directory, "unused-does-not-matter.log"));
+
+        var result = await freshProvider.RelocateAsync(Path.Combine(_directory, "elsewhere"));
+
+        Assert.True(result);
+        freshProvider.Dispose();
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenTargetAlreadyHasASameNamedFile_RefusesAndLeavesTheWriterUsableAtTheOldPath()
+    {
+        using var provider = new FileLoggerProvider(_logPath);
+        var conflictingDirectory = Path.Combine(_directory, "conflict");
+        Directory.CreateDirectory(conflictingDirectory);
+        File.WriteAllText(Path.Combine(conflictingDirectory, "app.log"), "someone else's file");
+
+        var result = await provider.RelocateAsync(conflictingDirectory);
+
+        Assert.False(result);
+        Assert.True(File.Exists(_logPath), "the writer must still be usable at the old path after a refused relocate");
+
+        var exception = Record.Exception(() => WriteLines(provider, "Cat", 1, "still alive"));
+        Assert.Null(exception);
+        Assert.Contains("still alive", File.ReadAllText(_logPath));
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenTargetEqualsCurrentDirectory_IsANoOpSuccess()
+    {
+        using var provider = new FileLoggerProvider(_logPath);
+
+        var result = await provider.RelocateAsync(_directory);
+
+        Assert.True(result);
+        Assert.True(File.Exists(_logPath));
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenTheLiveFileWasDeletedExternally_StillRelocatesTheBackups()
+    {
+        // Code-review round-1 finding: an externally deleted live file (a tmp cleaner, logrotate)
+        // used to always be treated as an existing source, so File.Move on it threw
+        // FileNotFoundException and failed the whole relocate.
+        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 200, maxBackupFileCount: 5);
+        WriteLines(provider, "Cat", count: 20, message: new string('x', 20));
+        Assert.True(File.Exists($"{_logPath}.1"), "test setup: expected a rotated backup to exist before relocating");
+        File.Delete(_logPath);
+
+        var newDirectory = Path.Combine(_directory, "live-file-deleted");
+        var result = await provider.RelocateAsync(newDirectory);
+
+        Assert.True(result);
+        Assert.True(File.Exists(Path.Combine(newDirectory, "app.log.1")));
+
+        WriteLines(provider, "Cat", count: 1, message: "after relocate");
+        provider.Dispose();
+
+        Assert.Contains("after relocate", File.ReadAllText(Path.Combine(newDirectory, "app.log")));
+    }
+
+    [Fact]
+    public async Task RelocateAsync_OnADisposedProvider_IsANoOpSuccess()
+    {
+        var provider = new FileLoggerProvider(_logPath);
+        provider.Dispose();
+
+        var result = await provider.RelocateAsync(Path.Combine(_directory, "elsewhere"));
+
+        Assert.True(result);
+    }
+
+    [Fact]
+    public async Task RelocateAsync_WhenTheMoveFailsPartway_RollsBackAndReopensAtTheOldPath()
+    {
+        // A file (not a directory) sitting where the ".1" backup's DESTINATION directory would go
+        // makes the second File.Move throw, simulating a mid-sequence failure after the live file
+        // (sourceFiles[0]) has already moved -- proves rollback restores it, rather than leaving
+        // the live file relocated while a backup failed.
+        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 200, maxBackupFileCount: 5);
+        WriteLines(provider, "Cat", count: 20, message: new string('x', 20));
+        Assert.True(File.Exists($"{_logPath}.1"), "test setup: expected a rotated backup to exist before relocating");
+
+        var newDirectory = Path.Combine(_directory, "partial-failure");
+        Directory.CreateDirectory(newDirectory);
+        // Pre-create a read-only file at the backup's destination path so File.Move for THAT one
+        // file throws, without the up-front conflict check catching it first (the conflict check
+        // only looks at whether a file with that name already exists at the destination -- delete
+        // it only after the check would have run isn't practical here, so instead make the live
+        // file's own destination directory temporarily unwritable is avoided in favor of a
+        // deterministic per-file trick): make ".1"'s destination a directory, which File.Exists
+        // treats as "no conflicting FILE" (File.Exists is false for directories) but File.Move
+        // still fails against.
+        Directory.CreateDirectory(Path.Combine(newDirectory, "app.log.1"));
+
+        var result = await provider.RelocateAsync(newDirectory);
+
+        Assert.False(result);
+        Assert.True(File.Exists(_logPath), "the live file must be rolled back to the old path");
+        Assert.True(File.Exists($"{_logPath}.1"), "the backup must be rolled back to the old path");
+
+        var exception = Record.Exception(() => WriteLines(provider, "Cat", 1, "still alive after rollback"));
+        Assert.Null(exception);
+        Assert.Contains("still alive after rollback", File.ReadAllText(_logPath));
+
+        provider.Dispose();
+    }
 }

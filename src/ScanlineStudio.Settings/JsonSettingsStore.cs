@@ -70,11 +70,7 @@ public sealed partial class JsonSettingsStore : ISettingsStore, IDisposable
 
     public void Dispose() => _changes.Dispose();
 
-    private static string GetDefaultSettingsFilePath()
-    {
-        var appDataDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return Path.Combine(appDataDirectory, "ScanlineStudio", "settings.json");
-    }
+    private static string GetDefaultSettingsFilePath() => Path.Combine(AppConfigPaths.ConfigDirectory, "settings.json");
 
     private static partial class Log
     {
