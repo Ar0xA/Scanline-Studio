@@ -83,7 +83,7 @@ public sealed class StationIdEndToEndTests
         Assert.Contains(decodedEvents, e => e.CompactNr == 123);
 
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" }; // operator B, different from A
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         foreach (var info in decodedEvents)
         {
@@ -114,7 +114,7 @@ public sealed class StationIdEndToEndTests
         var decodedEvents = await EncodeThenDecodeAsync(stationId);
 
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" }; // same operator as TX
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         foreach (var info in decodedEvents)
         {

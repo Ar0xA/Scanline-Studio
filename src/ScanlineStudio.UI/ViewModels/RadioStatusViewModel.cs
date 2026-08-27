@@ -1159,7 +1159,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
 /// <summary>One frequency memory button -- carries its own <see cref="SelectCommand"/> (the parent's
 /// <see cref="RadioStatusViewModel.ApplyPresetCommand"/>, set once at construction), same shape as
-/// <c>FavoriteModeButtonViewModel</c> and for the identical reason (avoids a cross-DataTemplate
+/// <c>StockEntryViewModel</c> and for the identical reason (avoids a cross-DataTemplate
 /// binding cast, which crashes at runtime the first time it renders with real data -- see that
 /// type's own doc comment).</summary>
 public sealed record FrequencyPresetButtonViewModel(FrequencyPreset Preset, System.Windows.Input.ICommand SelectCommand)

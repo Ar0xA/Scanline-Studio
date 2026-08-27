@@ -10,6 +10,7 @@ using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
@@ -315,7 +316,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_RefreshesImageOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.Image);
         ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).RaiseUpdated();
@@ -328,7 +329,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_ModeDetectedEvent_UpdatesModeCardTextsOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.DetectedModeText);
         Assert.Equal("—", vm.LineTimeText);
@@ -351,7 +352,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.RemainingText);
 
@@ -389,7 +390,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var mode = new SstvModeDefinition(
             Id: "line-paired", DisplayName: "Line Paired", VisCode: 0, ImageWidth: 4, ImageHeight: 4,
@@ -421,7 +422,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var logger = new FakeLogger<RxImagePaneViewModel>();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), logger);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), logger);
 
         var mode = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
@@ -443,7 +444,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_LogQsoCommand_DisabledUntilAModeHasBeenDetected()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.False(vm.LogQsoCommand.CanExecute(null));
 
         var mode = new SstvModeDefinition(
@@ -463,7 +464,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_LogQsoCommand_FiresLogQsoRequestedWithNoPayload()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var mode = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
@@ -483,7 +484,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_SaveFrameCommand_DisabledUntilAModeHasBeenDetected()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.False(vm.SaveFrameCommand.CanExecute(null));
 
         var mode = new SstvModeDefinition(
@@ -503,7 +504,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { SaveImagePathToReturn = ("/tmp/chosen.png", ImageExportFormat.Png) };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var mode = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
@@ -525,7 +526,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { SaveImagePathToReturn = null };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var mode = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
@@ -546,7 +547,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { SaveWavPathToReturn = "/tmp/chosen.wav" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.ToggleRecordingCommand.ExecuteAsync(null);
 
@@ -565,7 +566,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { SaveWavPathToReturn = null };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.ToggleRecordingCommand.ExecuteAsync(null);
 
@@ -578,7 +579,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService { ThrowOnStartRecording = new InvalidOperationException("Cannot start recording while not receiving.") };
         var filePicker = new FakeFilePickerService { SaveWavPathToReturn = "/tmp/chosen.wav" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.ToggleRecordingCommand.ExecuteAsync(null);
 
@@ -591,7 +592,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { OpenWavPathToReturn = "/tmp/chosen.wav" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.RedecodeCommand.ExecuteAsync(null);
 
@@ -605,7 +606,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var filePicker = new FakeFilePickerService { OpenWavPathToReturn = null };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.RedecodeCommand.ExecuteAsync(null);
 
@@ -617,7 +618,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService { ThrowOnDecodeFromFile = new InvalidOperationException("File sample rate mismatch.") };
         var filePicker = new FakeFilePickerService { OpenWavPathToReturn = "/tmp/chosen.wav" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         await vm.RedecodeCommand.ExecuteAsync(null);
 
@@ -635,7 +636,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.False(vm.CanEditFrameMetadata);
 
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
@@ -665,7 +666,7 @@ public sealed class PaneViewModelTests
         // else entirely.
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         receivedImage.RaiseSaved("/tmp/current-frame.png", receivedImage.Generation);
@@ -686,7 +687,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.Empty(vm.PreviousFrames);
 
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
@@ -703,7 +704,7 @@ public sealed class PaneViewModelTests
         // An aborted/partial attempt isn't what an operator means by "a previous frame."
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Abandoned));
         Dispatcher.UIThread.RunJobs();
@@ -716,7 +717,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var now = DateTimeOffset.UtcNow;
 
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", now, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
@@ -735,7 +736,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore(); // ThumbnailToReturn left null -> throws
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
         Dispatcher.UIThread.RunJobs();
@@ -755,7 +756,7 @@ public sealed class PaneViewModelTests
         // second.
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var now = DateTimeOffset.UtcNow;
 
         var gateOlder = new TaskCompletionSource<IImageSource>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -801,7 +802,7 @@ public sealed class PaneViewModelTests
         {
             EntriesToReturn = [new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame.png", null, ReceiveDecodeState.Completed)],
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         receivedImage.RaiseSaved("/tmp/frame.png", receivedImage.Generation);
         Dispatcher.UIThread.RunJobs();
@@ -827,7 +828,7 @@ public sealed class PaneViewModelTests
         {
             EntriesToReturn = [new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame.png", null, ReceiveDecodeState.Completed)],
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         receivedImage.RaiseSaved("/tmp/frame.png", receivedImage.Generation);
         Dispatcher.UIThread.RunJobs();
@@ -847,7 +848,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         receivedImage.RaiseSaved("/tmp/frame.png", receivedImage.Generation);
         Dispatcher.UIThread.RunJobs();
@@ -891,7 +892,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStalePerReceptionCallsignAndLookupFields()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var modeA = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
@@ -925,7 +926,7 @@ public sealed class PaneViewModelTests
     {
         var sstvSession = new FakeSstvSessionService();
         var localization = new FakeLocalizationService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.StartedDisplay);
 
@@ -948,7 +949,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignDifferentFromOwn_AutoFillsOverrideCallsign()
     {
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.OverrideCallsign);
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
@@ -964,7 +965,7 @@ public sealed class PaneViewModelTests
         // own callsign must NOT auto-fill "his callsign" with it (e.g. another station repeating the
         // operator's own callsign back).
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
         Dispatcher.UIThread.RunJobs();
@@ -980,7 +981,7 @@ public sealed class PaneViewModelTests
         // auto-fills. A real, if unusual, station-ID decode could plausibly differ only by case since
         // the wire protocol itself doesn't enforce a single canonical case.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "w1aw"));
         Dispatcher.UIThread.RunJobs();
@@ -994,7 +995,7 @@ public sealed class PaneViewModelTests
         // Main.cpp:3648's sprintf(bf, "595%s", pDem->m_fskNRS) -- compact NR is rendered via the RX
         // decoder's own "%03u"-equivalent zero-pad before the "595" prefix is applied.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 12));
         Dispatcher.UIThread.RunJobs();
@@ -1011,7 +1012,7 @@ public sealed class PaneViewModelTests
         // regression tests already guard against (a value-only assert would pass identically even
         // with the attribute deleted, since DecodedNrRstDisplay is a pure computed getter).
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var raisedProperties = new List<string?>();
         vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
@@ -1026,7 +1027,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_StationIdDecodedEvent_NrText_FormatsAsMyRstDirectly()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "0012"));
         Dispatcher.UIThread.RunJobs();
@@ -1041,7 +1042,7 @@ public sealed class PaneViewModelTests
         // OverrideCallsign only, never an automatic network lookup on decode.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
         var logbookSession = new FakeLogbookSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
         Dispatcher.UIThread.RunJobs();
@@ -1062,7 +1063,7 @@ public sealed class PaneViewModelTests
         // write site didn't have the equivalent before this fix.
         var gate = new TaskCompletionSource<string?>();
         var sstvSession = new FakeSstvSessionService { OperatorCallsignGate = gate };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
@@ -1083,7 +1084,7 @@ public sealed class PaneViewModelTests
         // category as OverrideCallsign/Lookup* (also decoded from the previous station's FSK
         // sub-packet) but was the one left out of OnModeDetected's reset.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "0012"));
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("5950012", vm.DecodedNrRst);
@@ -1111,7 +1112,7 @@ public sealed class PaneViewModelTests
         // to pin this specific staleness bug without depending on the command paths that would
         // normally populate them.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var modeA = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
@@ -1139,7 +1140,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("MainWindow.StatusBar.LineProgressValueNoLock", vm.LineProgressText);
 
@@ -1171,7 +1172,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_PollTelemetry_NoLockYet_ShowsPlaceholders()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -1195,7 +1196,7 @@ public sealed class PaneViewModelTests
         // gate is correctly wired, but the VM's own display logic must not silently relabel it
         // "locked" if it somehow were).
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false, SlantPpm = 3.4 };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
 
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Off", vm.AutoCorrectDisplay);
@@ -1210,7 +1211,7 @@ public sealed class PaneViewModelTests
         // proved AVT wins over "Locked" specifically, only over "on, not locked yet" by omission). Must
         // win regardless.
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = true, SlantPpm = 3.4 };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay); // sanity: locked before AVT
 
@@ -1231,7 +1232,7 @@ public sealed class PaneViewModelTests
         // into/out of AVT wouldn't refresh AutoCorrectDisplay's "—" case until some OTHER property
         // change happened to fire first.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var raisedProperties = new List<string?>();
         vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
@@ -1250,7 +1251,7 @@ public sealed class PaneViewModelTests
     {
         // Same reasoning as the sibling test above, for the OTHER state AVT must win over: "Off".
         var sstvSession = new FakeSstvSessionService { AutoSlantEnabled = false };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var avtMode = new SstvModeDefinition(
             Id: "avt", DisplayName: "AVT", VisCode: 68, ImageWidth: 320, ImageHeight: 240,
@@ -1273,7 +1274,7 @@ public sealed class PaneViewModelTests
             IsLevelOverdriven = true,
             BufferedSampleCount = 1583,
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -1292,7 +1293,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_PollTelemetry_SyncSourceDisplay_ReflectsAllThreeStates(SstvSyncSource source, string expectedKey)
     {
         var sstvSession = new FakeSstvSessionService { SyncSource = source };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
 
@@ -1308,7 +1309,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_VisThresholdDisplay_ReflectsSenseLevel_ConstructionTimeRead(int senseLevel, string expectedKey)
     {
         var sstvSession = new FakeSstvSessionService { SenseLevel = senseLevel };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal(expectedKey, vm.VisThresholdDisplay);
     }
@@ -1321,7 +1322,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_RxBpfDisplay_ReflectsRxBpfPreset_ConstructionTimeRead(RxBpfPreset preset, string expectedKey)
     {
         var sstvSession = new FakeSstvSessionService { RxBpfPreset = preset };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal(expectedKey, vm.RxBpfDisplay);
     }
@@ -1331,7 +1332,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountStatusBarDisplay;
@@ -1345,7 +1346,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { BufferedSampleCount = 1583, CaptureOverrunCount = 7 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.BufferedSampleCountDisplay;
@@ -1363,7 +1364,7 @@ public sealed class PaneViewModelTests
         // precisely rather than fighting floating-point rounding on an arbitrary input.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.5 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.AgcGainDisplay;
@@ -1380,7 +1381,7 @@ public sealed class PaneViewModelTests
         // curMax approaches zero.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.0 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.PollTelemetry();
         _ = vm.AgcGainDisplay;
@@ -1392,7 +1393,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_Constructed_LoadsTheConfiguredCaptureDeviceName()
     {
         var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = "hw:2,0 L" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("hw:2,0 L", vm.CaptureDeviceName);
@@ -1403,7 +1404,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_NoCaptureDeviceConfigured_CaptureDeviceNameDisplayShowsPlaceholder()
     {
         var sstvSession = new FakeSstvSessionService { ConfiguredCaptureDeviceName = null };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.CaptureDeviceName);
@@ -1415,7 +1416,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Equal("—", vm.FileSizeDisplay);
 
@@ -1446,7 +1447,7 @@ public sealed class PaneViewModelTests
         // see OnSaved's own doc comment for why the comparison is against the BUFFER's generation,
         // not a second counter tracked independently on this class.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         buffer.Generation = 5; // a newer image has since started
 
@@ -1472,7 +1473,7 @@ public sealed class PaneViewModelTests
         // A fresh/restarted decode has no saved file of its own yet -- a stale size from the
         // PREVIOUS frame must not linger next to the new frame's "Started" time.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var path = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}.png");
         File.WriteAllBytes(path, new byte[100]);
@@ -1502,7 +1503,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_UpdatedEvent_ComputesClipFractions_FromTheDecodedRowsOnly()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         // 2x2 image: row 0 = 1 pure-black + 1 pure-white pixel; row 1 = 2 mid-gray. Progress=1.0
         // (fully decoded) -- both rows count, so 25% clipped each way.
@@ -1532,7 +1533,7 @@ public sealed class PaneViewModelTests
         // With Progress=0.5 (only row 0 "decoded"), the clip stats must reflect ONLY row 0 -- 0% black,
         // 100% white -- not the whole-canvas 50%/50% (or worse, 100% black if row 1 dominated).
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         var image = new ArrayImageSource(1, 2,
         [
@@ -1553,7 +1554,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_NoProgressYet_ClipLoHiDisplayShowsPlaceholder_NotAMisleadingReading()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.Null(vm.Progress);
         Assert.Equal("—", vm.ClipLoHiDisplay);
@@ -1563,7 +1564,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_RequestReSyncCommand_DelegatesToTheSessionService()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.RequestReSyncCommand.Execute(null);
 
@@ -1574,7 +1575,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_RequestCorrectSlantCommand_DelegatesToTheSessionService()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.RequestCorrectSlantCommand.Execute(null);
 
@@ -1585,7 +1586,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_AbortCommand_WhileReceiving_DelegatesToTheSessionService()
     {
         var sstvSession = new FakeSstvSessionService { IsReceiving = true };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.AbortCommand.Execute(null);
 
@@ -1596,7 +1597,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_AbortCommand_WhileNotReceiving_IsASafeNoOp()
     {
         var sstvSession = new FakeSstvSessionService { IsReceiving = false };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.AbortCommand.Execute(null);
 
@@ -1609,7 +1610,7 @@ public sealed class PaneViewModelTests
         // spec/18-path-to-1.0.md High item 7.
         var mode = TestMode;
         var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = true };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.QuickSelectModeCommand.Execute(mode.Id);
 
@@ -1626,7 +1627,7 @@ public sealed class PaneViewModelTests
         // click silently queue a surprise for later.
         var mode = TestMode;
         var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = false };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.QuickSelectModeCommand.Execute(mode.Id);
 
@@ -1637,7 +1638,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_QuickSelectMode_UnknownModeId_IsASafeNoOp()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], IsReceiving = true };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         vm.QuickSelectModeCommand.Execute("no-such-mode");
 
@@ -1648,7 +1649,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_IsAutoDetectPaused_Toggle_CallsSetAutoDetectPausedOnSession()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.False(vm.IsAutoDetectPaused); // defaults to "Listening", matching legacy's own default
 
@@ -1672,7 +1673,7 @@ public sealed class PaneViewModelTests
         // visibly flips back to "Listening" too.
         var mode = TestMode;
         var sstvSession = new FakeSstvSessionService { AvailableModes = [mode], IsReceiving = true };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.IsAutoDetectPaused = true;
 
         vm.QuickSelectModeCommand.Execute(mode.Id);
@@ -1680,6 +1681,153 @@ public sealed class PaneViewModelTests
         Assert.False(vm.IsAutoDetectPaused);
         Assert.False(sstvSession.IsAutoDetectPaused);
         Assert.Equal(1, sstvSession.ForceModeCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickModeSlots_DefaultsTo16SlotsFromQuickModeGridDefaults()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal(16, vm.QuickModeSlots.Count);
+        for (var i = 0; i < QuickModeGridDefaults.Ids.Count; i++)
+        {
+            Assert.Equal(QuickModeGridDefaults.Ids[i], vm.QuickModeSlots[i].CurrentMode.Id);
+            Assert.Equal(43, vm.QuickModeSlots[i].MenuEntries.Count);
+        }
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickModeSlots_LoadsAValidPersistedAssignment()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var customIds = QuickModeGridDefaults.Ids.Reverse().ToArray(); // any valid permutation, distinct from the defaults
+        settingsStore.Settings = settingsStore.Settings.WithSection(RxPaneUiSettings.SectionKey, new RxPaneUiSettings { QuickModeGridIds = customIds }, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), settingsStore, NullLogger<RxImagePaneViewModel>.Instance);
+
+        for (var i = 0; i < customIds.Length; i++)
+        {
+            Assert.Equal(customIds[i], vm.QuickModeSlots[i].CurrentMode.Id);
+        }
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickModeSlots_InvalidPersistedList_FallsBackPerSlotWithoutDuplicates()
+    {
+        // Wrong length (not 16) -> QuickModeGridAssignment.Resolve treats it as "no persisted list",
+        // same as a fresh install -- must not throw and must not duplicate any mode across slots.
+        var settingsStore = new FakeSettingsStore();
+        settingsStore.Settings = settingsStore.Settings.WithSection(RxPaneUiSettings.SectionKey, new RxPaneUiSettings { QuickModeGridIds = ["not-a-real-id", "scottie-s1"] }, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), settingsStore, NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal(16, vm.QuickModeSlots.Count);
+        Assert.Equal(16, vm.QuickModeSlots.Select(s => s.CurrentMode.Id).Distinct().Count());
+        for (var i = 0; i < QuickModeGridDefaults.Ids.Count; i++)
+        {
+            Assert.Equal(QuickModeGridDefaults.Ids[i], vm.QuickModeSlots[i].CurrentMode.Id);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ReassignQuickModeSlot_UpdatesCurrentModeAndPersists()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), settingsStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var newMode = SstvModeRegistry.Mn73; // not one of the default 16
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+
+        Assert.Equal(newMode.Id, vm.QuickModeSlots[0].CurrentMode.Id);
+        Assert.Equal("mn73", vm.QuickModeSlots[0].CurrentMode.Id);
+
+        var persisted = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        Assert.Equal(newMode.Id, persisted!.QuickModeGridIds[0]);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ReassignQuickModeSlot_ToModeAlreadyUsedElsewhere_IsASafeNoOp()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var slot1Mode = vm.QuickModeSlots[1].CurrentMode; // already assigned to slot 1
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, slot1Mode));
+
+        Assert.Equal(QuickModeGridDefaults.Ids[0], vm.QuickModeSlots[0].CurrentMode.Id); // unchanged
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ReassignQuickModeSlot_UpdatesOtherSlotsMenuEntryStates()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var oldMode = vm.QuickModeSlots[0].CurrentMode; // scottie-s1, freed up by the reassignment below
+        var newMode = SstvModeRegistry.Mn73;
+
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+
+        // The old mode is now unclaimed -- every OTHER slot's popup should offer it again.
+        var slot1EntryForOldMode = vm.QuickModeSlots[1].MenuEntries.Single(e => e.Mode.Id == oldMode.Id);
+        Assert.True(slot1EntryForOldMode.IsEnabled);
+        Assert.False(slot1EntryForOldMode.IsChecked);
+
+        // The new mode is now claimed by slot 0 -- every OTHER slot's popup should gray it out.
+        var slot1EntryForNewMode = vm.QuickModeSlots[1].MenuEntries.Single(e => e.Mode.Id == newMode.Id);
+        Assert.False(slot1EntryForNewMode.IsEnabled);
+        Assert.False(slot1EntryForNewMode.IsChecked);
+
+        // Slot 0's own entry for its new mode is checked and (as the current holder) still enabled.
+        var slot0EntryForNewMode = vm.QuickModeSlots[0].MenuEntries.Single(e => e.Mode.Id == newMode.Id);
+        Assert.True(slot0EntryForNewMode.IsEnabled);
+        Assert.True(slot0EntryForNewMode.IsChecked);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_QuickSelectModeCommand_StillWorksWithAReassignedSlotsId()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All, IsReceiving = true };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var newMode = SstvModeRegistry.Mn73;
+        await vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+
+        vm.QuickSelectModeCommand.Execute(vm.QuickModeSlots[0].CurrentMode.Id);
+
+        Assert.Equal(1, sstvSession.ForceModeCallCount);
+        Assert.Equal(newMode.Id, sstvSession.LastForcedMode?.Id);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_ReassignQuickModeSlot_WhileLoadIsPending_AwaitsTheLoad_ThenAppliesCleanly()
+    {
+        // Round-2 plan-review fix: reassigning before the persisted grid finishes loading must not
+        // race that load -- awaiting the stored load task at the top of the reassign command is the
+        // fix, not a flag that could otherwise let the user's own save wipe their OTHER already-saved
+        // slots (round-1/round-2 finding). Gate is a real controllable TaskCompletionSource, not an
+        // assumption about scheduling order (this project's own "deterministic gates" convention).
+        var settingsStore = new FakeSettingsStore();
+        var customIds = QuickModeGridDefaults.Ids.ToArray();
+        customIds[5] = "mc110"; // a mode outside the default 16, so no collision with any other slot's default
+        settingsStore.Settings = settingsStore.Settings.WithSection(RxPaneUiSettings.SectionKey, new RxPaneUiSettings { QuickModeGridIds = customIds }, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        var gate = new TaskCompletionSource();
+        settingsStore.Gate = gate.Task;
+        var sstvSession = new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All };
+
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), settingsStore, NullLogger<RxImagePaneViewModel>.Instance);
+        var newMode = SstvModeRegistry.Mn73;
+        var reassignTask = vm.ReassignQuickModeSlotCommand.ExecuteAsync(new QuickModeReassignment(0, newMode));
+
+        gate.SetResult();
+        await reassignTask;
+
+        Assert.Equal(newMode.Id, vm.QuickModeSlots[0].CurrentMode.Id);
+        // Slot 5's persisted assignment must have survived the load that resolved AFTER the
+        // reassignment was requested -- not been clobbered by a stale in-flight write.
+        Assert.Equal("mc110", vm.QuickModeSlots[5].CurrentMode.Id);
     }
 
     [AvaloniaFact]
@@ -1699,7 +1847,7 @@ public sealed class PaneViewModelTests
         // locked-frequency value (1213.125) an earlier version of this fix stopped one step short at.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = -13.125 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.PollTelemetry();
 
         _ = vm.SyncToneDisplay;
@@ -1718,7 +1866,7 @@ public sealed class PaneViewModelTests
         // no mode tag, so this pane must derive both from DetectedMode.NarrowModeCode.
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService { SyncFrequencyCorrectionHz = 0.0 };
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var narrowMode = new SstvModeDefinition(
             Id: "mn73", DisplayName: "MN73", VisCode: 55, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.YCbCrSequential, LineSegments: [], NarrowModeCode: 0x11);
@@ -1750,7 +1898,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void RxImagePaneViewModel_LookupQrzCommand_DisabledWithNoOverrideCallsign_EnabledOnceTyped()
     {
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.False(vm.LookupQrzCommand.CanExecute(null));
 
@@ -1767,7 +1915,7 @@ public sealed class PaneViewModelTests
         // Round-2 fix: the button used to stay enabled with a real callsign typed in, only
         // failing after the click, when QRZ lookup wasn't actually configured in Options.
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = false };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.OverrideCallsign = "W1AW";
 
         Assert.False(vm.LookupQrzCommand.CanExecute(null));
@@ -1777,7 +1925,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_Constructor_LoadsIsQrzLookupConfigured_FromLogbookSession()
     {
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = false };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         Assert.False(vm.IsQrzLookupConfigured);
     }
@@ -1788,7 +1936,7 @@ public sealed class PaneViewModelTests
         // Exercises the same refresh path MainWindow.axaml.cs calls on Options close, so
         // toggling QRZ lookup on/off while the app is running takes effect without a restart.
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = true };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.True(vm.IsQrzLookupConfigured);
 
         logbookSession.IsQrzLookupConfiguredResult = false;
@@ -1806,7 +1954,7 @@ public sealed class PaneViewModelTests
         // catch blocks -- a failure here must not throw out of a fire-and-forget constructor call
         // or block a later refresh; the gate just stays at whatever it already was.
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = true };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.True(vm.IsQrzLookupConfigured);
 
         logbookSession.ThrowOnIsQrzLookupConfigured = new InvalidOperationException("boom");
@@ -1823,7 +1971,7 @@ public sealed class PaneViewModelTests
         {
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.OverrideCallsign = "  W1AW  ";
 
         await vm.LookupQrzCommand.ExecuteAsync(null);
@@ -1850,7 +1998,7 @@ public sealed class PaneViewModelTests
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
         var sstvSession = new FakeSstvSessionService { OperatorGrid = "EM12" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         // OperatorGrid is loaded via a construction-time fire-and-forget (LoadOperatorGridAsync) --
         // give it a turn to complete before asserting, same reasoning as any other async-in-ctor field.
         await Task.Yield();
@@ -1873,7 +2021,7 @@ public sealed class PaneViewModelTests
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
         var localization = new FakeLocalizationService();
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         vm.OverrideCallsign = "W1AW";
         await vm.LookupQrzCommand.ExecuteAsync(null);
         Assert.Equal("Hiram Maxim", vm.LookupName);
@@ -1894,7 +2042,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void RxImagePaneViewModel_NoLookupYet_AllDisplaysShowPlaceholders()
     {
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
         // "—" matches this pane's own established placeholder convention (StartedDisplay/
         // FileSizeDisplay). The distance half ("--") is GridDisplay's own real fallback for
@@ -2464,11 +2612,11 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_SelectFavoriteMode_AllowedWhileTheBlankPlaceholderEditorIsOpenAndUntouched()
+    public async Task TxControlsPaneViewModel_QuickSelectMode_AllowedWhileTheBlankPlaceholderEditorIsOpenAndUntouched()
     {
         // AskUserQuestion decision (2026-08-17, recommended option): a BLANK auto-opened editor is
         // safe to switch mode away from, unlike a manually-picked real photo (see the sibling
-        // "DisablesTheFavoriteModeCommand" test below, which still asserts CanExecute false for
+        // "DisablesTheQuickSelectModeCommand" test below, which still asserts CanExecute false for
         // exactly that SelectImageCommand case).
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
@@ -2477,8 +2625,8 @@ public sealed class PaneViewModelTests
         vm.SelectedMode = modeA;
         await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
 
-        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
-        vm.SelectFavoriteModeCommand.Execute(modeB);
+        Assert.True(vm.QuickSelectModeCommand.CanExecute(modeB.Id));
+        vm.QuickSelectModeCommand.Execute(modeB.Id);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("other", vm.SelectedMode?.Id);
@@ -2488,7 +2636,7 @@ public sealed class PaneViewModelTests
     // Auditor-found regression (2026-08-17, usability-gap review): with the editor now open by
     // default, a bare IsEditorOpen guard made Browse/STOCK/the mode ComboBox permanently
     // unreachable after the very first blank auto-open -- there was no way to ever load a real
-    // photo or change SSTV mode via the dropdown. Fixed the same way the FAVORITES row already
+    // photo or change SSTV mode via the dropdown. Fixed the same way the quick-mode grid already
     // was: relaxed while the currently-open editor is blank/untouched.
 
     [AvaloniaFact]
@@ -2526,7 +2674,7 @@ public sealed class PaneViewModelTests
         Assert.False(vm.CanChangeSourceOrMode);
 
         // SelectImageCommand is a bare [RelayCommand] with no CanExecute predicate (its own
-        // established "body-level check is the real backstop" pattern, matching SelectFavoriteMode/
+        // established "body-level check is the real backstop" pattern, matching
         // QuickSelectMode's own documented reasoning) -- CanChangeSourceOrMode is the real gate
         // (drives the AXAML IsEnabled binding); a direct Execute call must still be a safe no-op.
         await vm.SelectImageCommand.ExecuteAsync(null);
@@ -2538,7 +2686,7 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_SelectFavoriteMode_DisallowedOnceTheBlankEditorHasARealEdit()
+    public async Task TxControlsPaneViewModel_QuickSelectMode_DisallowedOnceTheBlankEditorHasARealEdit()
     {
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
@@ -2547,12 +2695,12 @@ public sealed class PaneViewModelTests
         vm.SelectedMode = modeA;
         var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
         var canExecuteChangedCount = 0;
-        vm.SelectFavoriteModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
+        vm.QuickSelectModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
 
         editor.AddOverlayElementCommand.Execute(null);
 
         Assert.True(editor.HasUnsavedEdits);
-        Assert.False(vm.SelectFavoriteModeCommand.CanExecute(modeB));
+        Assert.False(vm.QuickSelectModeCommand.CanExecute(modeB.Id));
         Assert.True(canExecuteChangedCount > 0, "HasUnsavedEdits flipping must re-notify CanExecute via OnCurrentEditorPropertyChanged, or a bound Button would never actually disable.");
     }
 
@@ -2978,47 +3126,6 @@ public sealed class PaneViewModelTests
     // Three tests below cover the three real SelectedMode-mutation paths this fix gates.
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand()
-    {
-        var modeA = TestMode;
-        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        vm.SelectedMode = modeA;
-        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
-
-        // CanExecute alone would still pass this test even if OnIsEditorOpenChanged's
-        // NotifyCanExecuteChanged() call were deleted (CanExecute always re-evaluates live) --
-        // subscribing to CanExecuteChanged is what actually proves the button's bound IsEnabled
-        // would visually update without something else forcing a re-query (code-review nit).
-        var canExecuteChangedCount = 0;
-        vm.SelectFavoriteModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
-
-        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-
-        Assert.True(vm.IsEditorOpen);
-        Assert.False(vm.SelectFavoriteModeCommand.CanExecute(modeB));
-        Assert.True(canExecuteChangedCount > 0);
-
-        // Also exercises SelectFavoriteMode's own body-level IsEditorOpen guard (code-review
-        // finding: CanExecute isn't a hard gate -- RelayCommand<T>.Execute doesn't consult it,
-        // only Avalonia's Button.OnClick does) by force-invoking through ICommand.Execute directly.
-        vm.SelectFavoriteModeCommand.Execute(modeB);
-        Assert.Equal("test", vm.SelectedMode?.Id);
-
-        editor.CancelCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        // Backlog item (user request, 2026-08-17): Cancel now auto-reopens a fresh BLANK editor
-        // (nothing was ever applied here) rather than leaving the column empty -- IsEditorOpen goes
-        // back to true, but CanExecute stays true too, since the freshly reopened editor is itself
-        // blank/untouched (IsCurrentEditorBlankAndUntouched).
-        Assert.True(vm.IsEditorOpen);
-        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeB));
-    }
-
-    [AvaloniaFact]
     public void TxControlsPaneViewModel_QuickSelectMode_SetsSelectedMode()
     {
         // spec/18-path-to-1.0.md High item 7.
@@ -3049,10 +3156,8 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_EditorOpen_DisablesTheQuickSelectModeCommand()
     {
-        // Mirrors TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand above --
-        // QuickSelectMode is a separate command with its own CanExecute/body-level guard, not a
-        // wrapper around SelectFavoriteMode, so this session's own High item 2 fix needs its own
-        // regression coverage here, not an inherited assumption.
+        // High item 2 fix's own regression coverage for QuickSelectMode's CanExecute/body-level
+        // guard (a separate command, not a wrapper around anything else).
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
         var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
@@ -3070,18 +3175,17 @@ public sealed class PaneViewModelTests
         Assert.False(vm.QuickSelectModeCommand.CanExecute("other"));
         Assert.True(canExecuteChangedCount > 0);
 
-        // Also exercises QuickSelectMode's own body-level IsEditorOpen guard directly, the same
-        // way SelectFavoriteMode's own sibling test does (CanExecute isn't a hard gate --
-        // RelayCommand<T>.Execute doesn't consult it, only Avalonia's Button.OnClick does).
+        // Also exercises QuickSelectMode's own body-level IsEditorOpen guard directly
+        // (CanExecute isn't a hard gate -- RelayCommand<T>.Execute doesn't consult it, only
+        // Avalonia's Button.OnClick does).
         vm.QuickSelectModeCommand.Execute("other");
         Assert.Equal("test", vm.SelectedMode?.Id);
 
         editor.CancelCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        // Backlog item (user request, 2026-08-17): same reasoning as
-        // TxControlsPaneViewModel_EditorOpen_DisablesTheFavoriteModeCommand's own sibling assertion
-        // -- Cancel now auto-reopens a fresh BLANK editor rather than leaving the column empty.
+        // Backlog item (user request, 2026-08-17): Cancel now auto-reopens a fresh BLANK editor
+        // rather than leaving the column empty.
         Assert.True(vm.IsEditorOpen);
         Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
     }
@@ -3149,7 +3253,7 @@ public sealed class PaneViewModelTests
     {
         // Code-review finding on spec/18-path-to-1.0.md High item 2: the settings-load-and-construct
         // block used to sit outside any try/catch. Since IsEditorOpen now also gates the mode
-        // ComboBox/favorite buttons/RX auto-follow (not just re-entrant picking), an unhandled throw
+        // ComboBox/quick-grid buttons/RX auto-follow (not just re-entrant picking), an unhandled throw
         // here would previously have left the whole pane's mode-selection permanently disabled, with
         // no editor ever open to Cancel out of.
         var modeA = TestMode;
@@ -3173,7 +3277,7 @@ public sealed class PaneViewModelTests
         Assert.Equal(0, editorOpenedCount);
         Assert.Equal(1, editorClosedCount);
         Assert.False(vm.IsEditorOpen);
-        Assert.True(vm.SelectFavoriteModeCommand.CanExecute(modeA));
+        Assert.True(vm.QuickSelectModeCommand.CanExecute(modeA.Id));
         Assert.NotNull(vm.ErrorMessage);
     }
 
