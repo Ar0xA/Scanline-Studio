@@ -62,7 +62,7 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public bool AutoSlantEnabled => true;
 
-    public int SenseLevel => 1;
+    public int SenseLevel { get; set; } = 1;
 
     public RxBpfPreset RxBpfPreset => RxBpfPreset.Wide;
 

@@ -362,17 +362,26 @@ public interface ISstvDecoder
     /// the same value. Safe to read from any thread.</summary>
     bool AutoSlantEnabled { get; }
 
-    /// <summary>VIS-lock envelope-amplitude sense-level preset currently in effect, as the clamped
-    /// 0-3 index (0=Very low, 1=Low [the real shipped default], 2=High, 3=Very high) -- NOT a raw
-    /// threshold value in any physical unit; the underlying <c>SLvl</c>/<c>SLvl2</c>/<c>SLvl3</c>
-    /// thresholds this selects live in the same clamped AGC-envelope domain as
-    /// <see cref="SignalPeakLevel"/>'s pre-division reads, not dB (an earlier UI stub's "−26 dB"
-    /// placeholder was a fake, decorative literal with no real conversion behind it). For the Sync
-    /// &amp; Slant card's "VIS threshold" row -- a consumer should display the preset NAME (this
-    /// port's Options window already has real locale keys for the 4 names), not this raw index.
-    /// Restart-only, same limitation as <see cref="AutoSlantEnabled"/> above. Safe to read from any
-    /// thread.</summary>
-    int SenseLevel { get; }
+    /// <summary>VIS-lock envelope-amplitude sense-level ("Squelch level") preset currently in
+    /// effect, as the clamped 0-3 index (0=Very low, 1=Low [the real shipped default], 2=High,
+    /// 3=Very high) -- NOT a raw threshold value in any physical unit; the underlying <c>SLvl</c>/
+    /// <c>SLvl2</c>/<c>SLvl3</c> thresholds this selects live in the same clamped AGC-envelope
+    /// domain as <see cref="SignalPeakLevel"/>'s pre-division reads, not dB (an earlier UI stub's
+    /// "−26 dB" placeholder was a fake, decorative literal with no real conversion behind it). For
+    /// the Sync &amp; Slant card's "Squelch level" row -- a consumer should display the preset NAME
+    /// (this port's Options window already has real locale keys for the 4 names), not this raw
+    /// index.
+    ///
+    /// Genuinely live-settable (user-reported 2026-08-27, "Squelch level" live control) -- unlike
+    /// <see cref="AutoSlantEnabled"/> above, matching legacy's own <c>Option.cpp:612-613</c>
+    /// (<c>CSSTVDEM::SetSenseLvl</c> called on the live demodulator instantly, unconditionally, no
+    /// state reset). Safe to set from any thread; the request is deferred (last-request-wins) and
+    /// applied on whichever thread next calls <see cref="PushSamples"/>, the same deferred shape as
+    /// <see cref="RequestNotch"/>. Getter is always the already-clamped 0-3 value currently in
+    /// effect -- safe to read from any thread, though a just-set value may not be visible via the
+    /// getter until the next <see cref="PushSamples"/> call has drained it (eventual, not
+    /// immediate).</summary>
+    int SenseLevel { get; set; }
 
     /// <summary>RX bandpass-filter sharpness currently in effect, mirrors legacy's real
     /// <c>CSSTVDEM::m_bpf</c> -- see <see cref="RxBpfPreset"/>'s own doc comment for the full

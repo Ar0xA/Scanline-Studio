@@ -329,18 +329,21 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void WaterfallPaneViewModel_NotchToggleLabel_IsOnWhenEnabled_AndOffWhenNot()
+    public void WaterfallPaneViewModel_NotchToggleLabel_IsAnActionLabel_OppositeOfCurrentState()
     {
+        // User-corrected (2026-08-27, same day as the initial fix): this is an ACTION label (what
+        // clicking the chip will DO next), not a state label -- "On" while disabled (click to turn
+        // it on), "Off" while enabled (click to turn it off).
         var localization = new FakeLocalizationService();
         var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
 
         _ = vm.NotchToggleLabel;
-        Assert.Equal("Panes.RxInput.NotchValue", localization.LastKey); // "Off"
+        Assert.Equal("Panes.RxInput.NotchToggle", localization.LastKey); // "On" -- disabled, click to enable
 
         vm.NotchEnabled = true;
         _ = vm.NotchToggleLabel;
 
-        Assert.Equal("Panes.RxInput.NotchToggle", localization.LastKey); // "On"
+        Assert.Equal("Panes.RxInput.NotchValue", localization.LastKey); // "Off" -- enabled, click to disable
     }
 
     [AvaloniaFact]
@@ -1332,17 +1335,109 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaTheory]
-    [InlineData(0, "Options.Decode.SenseLevel.VeryLow")]
-    [InlineData(1, "Options.Decode.SenseLevel.Low")]
-    [InlineData(2, "Options.Decode.SenseLevel.High")]
-    [InlineData(3, "Options.Decode.SenseLevel.VeryHigh")]
-    [InlineData(99, "Options.Decode.SenseLevel.VeryLow")]
-    public void RxImagePaneViewModel_VisThresholdDisplay_ReflectsSenseLevel_ConstructionTimeRead(int senseLevel, string expectedKey)
+    [InlineData(0, 0)]
+    [InlineData(1, 1)]
+    [InlineData(2, 2)]
+    [InlineData(3, 3)]
+    [InlineData(99, 0)] // out-of-range construction-time seed clamps to 0 ("Very low"), same as every other layer
+    public void RxImagePaneViewModel_SenseLevel_ConstructionTimeRead_ClampsOutOfRange(int sessionSenseLevel, int expectedSenseLevel)
     {
-        var sstvSession = new FakeSstvSessionService { SenseLevel = senseLevel };
+        var sstvSession = new FakeSstvSessionService { SenseLevel = sessionSenseLevel };
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
-        Assert.Equal(expectedKey, vm.VisThresholdDisplay);
+        Assert.Equal(expectedSenseLevel, vm.SenseLevel);
+        Assert.Equal(4, vm.SenseLevelOptions.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_SettingSenseLevel_AppliesLiveAndPersists()
+    {
+        var sstvSession = new FakeSstvSessionService { SenseLevel = 1 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.SenseLevel = 3;
+        await Task.Delay(1); // let the fire-and-forget persist actually run
+
+        Assert.Equal(3, vm.SenseLevel);
+        Assert.Equal(1, sstvSession.RequestSenseLevelCallCount);
+        Assert.Equal(3, sstvSession.LastRequestedSenseLevel);
+        Assert.Equal(1, sstvSession.PersistSenseLevelCallCount);
+        Assert.Equal(3, sstvSession.LastPersistedSenseLevel);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    public async Task RxImagePaneViewModel_SettingSenseLevelOutOfRange_RevertsWithoutApplyingOrPersisting(int outOfRangeValue)
+    {
+        // Real-app regression this guards against: a ComboBox's SelectedIndex briefly going -1 when
+        // its selection is cleared must not silently drop the squelch level to "Very low" and
+        // PERSIST that -- see OnSenseLevelChanged's own doc comment.
+        var sstvSession = new FakeSstvSessionService { SenseLevel = 2 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.SenseLevel = outOfRangeValue;
+        await Task.Delay(1);
+
+        Assert.Equal(2, vm.SenseLevel); // reverted to the last valid value
+        // The revert itself re-applies/re-persists the SAME (already-correct) value EXACTLY once --
+        // see OnSenseLevelChanged's own doc comment for why that's accepted -- but the invalid value
+        // itself must never be the one forwarded or persisted. Asserting the CALL COUNT (not just
+        // the Last* value) matters here: a buggy implementation that forwards the invalid value
+        // first and THEN reverts would also end on LastRequestedSenseLevel == 2, but would call
+        // RequestSenseLevel/PersistSenseLevelAsync twice, not once (auditor round-1 finding).
+        Assert.Equal(1, sstvSession.RequestSenseLevelCallCount);
+        Assert.Equal(2, sstvSession.LastRequestedSenseLevel);
+        Assert.Equal(1, sstvSession.PersistSenseLevelCallCount);
+        Assert.Equal(2, sstvSession.LastPersistedSenseLevel);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_PersistSenseLevelAsync_WhenItThrows_LogsInsteadOfCrashing()
+    {
+        var sstvSession = new FakeSstvSessionService { SenseLevel = 1, PersistSenseLevelException = new InvalidOperationException("boom") };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.SenseLevel = 3;
+        await Task.Delay(1);
+
+        Assert.Equal(3, vm.SenseLevel); // live-apply still happened; only the persist failed
+        Assert.Equal(1, sstvSession.RequestSenseLevelCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RefreshSenseLevelFromSession_PicksUpAnOptionsWindowChange()
+    {
+        // Options' own Squelch level control now ALSO applies live (OptionsWindowViewModel's save
+        // flow) -- this is the Receive tab's own re-sync, called from the app's Options-Closed
+        // refresh hook (MainWindow.axaml.cs), same convention as every other refresh-on-close call
+        // there.
+        var sstvSession = new FakeSstvSessionService { SenseLevel = 1 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.Equal(1, vm.SenseLevel);
+
+        // Simulates Options changing the value out from under this VM (its own save flow calling
+        // RequestSenseLevel, which the fake also reflects onto its own SenseLevel property).
+        sstvSession.SenseLevel = 3;
+
+        vm.RefreshSenseLevelFromSession();
+
+        Assert.Equal(3, vm.SenseLevel);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RefreshSenseLevelFromSession_WhenUnchanged_IsANoOp()
+    {
+        var sstvSession = new FakeSstvSessionService { SenseLevel = 2 };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RefreshSenseLevelFromSession();
+        await Task.Delay(1);
+
+        // The generated property setter's own equality check skips OnSenseLevelChanged entirely when
+        // the value doesn't actually change -- no redundant live-apply/persist.
+        Assert.Equal(0, sstvSession.RequestSenseLevelCallCount);
+        Assert.Equal(0, sstvSession.PersistSenseLevelCallCount);
     }
 
     [AvaloniaTheory]

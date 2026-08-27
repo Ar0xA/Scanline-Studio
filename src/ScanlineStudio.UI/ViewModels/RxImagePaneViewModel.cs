@@ -125,6 +125,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// double-toggle can't complete out of order (no per-write ordering guarantee otherwise).</summary>
     private Task _pendingFlagPersist = Task.CompletedTask;
 
+    /// <summary>Same ordering-safety shape as <see cref="_pendingFlagPersist"/> immediately above --
+    /// see <see cref="OnSenseLevelChanged"/>'s own doc comment.</summary>
+    private Task _pendingSenseLevelPersist = Task.CompletedTask;
+
     /// <summary>True once <see cref="_currentEntryId"/> is known -- gates the Note/Flag controls'
     /// <c>IsEnabled</c>. See <see cref="_currentEntryId"/>'s own doc comment for why this can be
     /// false even for a fully-decoded, on-screen image (the save+record round-trip hasn't completed
@@ -418,7 +422,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _settingsStore = settingsStore;
         _logger = logger;
         AutoSlantEnabled = sstvSession.AutoSlantEnabled;
-        SenseLevel = sstvSession.SenseLevel;
+        // Direct field assignment, NOT the generated property setter (round-2 plan-review finding):
+        // going through the setter would fire OnSenseLevelChanged for a value that's already correct
+        // and already saved, spuriously re-requesting/re-persisting it at construction. See
+        // SenseLevel's own doc comment. Clamped defensively here too, matching every other layer in
+        // this feature (AnalogFmSstvDecoder's own constructor, RestartableSstvDecoder's) -- in
+        // production sstvSession.SenseLevel is always already 0-3 (RestartableSstvDecoder's own
+        // getter clamps), but this VM shouldn't silently trust that invariant across a layer
+        // boundary when the fix is one ternary.
+        _senseLevel = sstvSession.SenseLevel is >= 0 and <= 3 ? sstvSession.SenseLevel : 0;
+        _lastValidSenseLevel = _senseLevel;
+        SenseLevelOptions =
+        [
+            _localization.GetString("Options.Decode.SenseLevel.VeryLow"),
+            _localization.GetString("Options.Decode.SenseLevel.Low"),
+            _localization.GetString("Options.Decode.SenseLevel.High"),
+            _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
+        ];
         RxBpfPreset = sstvSession.RxBpfPreset;
 
         _receivedImage.Updated += OnUpdated;
@@ -534,29 +554,90 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// the genuinely-live telemetry polled every 250ms elsewhere in this pane.</summary>
     public bool AutoSlantEnabled { get; }
 
-    /// <summary>Same restart-only construction-time-read shape as <see cref="AutoSlantEnabled"/>
-    /// above -- see <see cref="ISstvSessionService.SenseLevel"/> for the full contract.</summary>
-    public int SenseLevel { get; }
+    /// <summary>Sync &amp; Slant card's "Squelch level" row (renamed from "VIS threshold"
+    /// 2026-08-27 to match the Options window's own naming for this same setting) -- genuinely
+    /// live and user-editable now (a ComboBox bound to <see cref="SenseLevelOptions"/>), not the
+    /// restart-only construction-time-read shape <see cref="AutoSlantEnabled"/>/<see cref="RxBpfPreset"/>
+    /// still have. Seeded directly from the backing field in the constructor (NOT the generated
+    /// property setter -- see the constructor's own comment) so construction itself never fires a
+    /// spurious live-apply/persist round-trip. See <see cref="OnSenseLevelChanged"/> for what a real
+    /// user-driven change actually does.</summary>
+    [ObservableProperty]
+    private int _senseLevel;
 
-    /// <summary>Sync &amp; Slant card's "VIS threshold" row -- the preset NAME, not a raw number
-    /// (see <see cref="ISstvDecoder.SenseLevel"/>'s own doc comment for why a raw value would be
-    /// dishonest: it's an AGC-domain amplitude, not dB). Reuses the Options window's own real
-    /// "Options.Decode.SenseLevel.*" locale keys for the same underlying setting, rather than a
-    /// second duplicate copy of the same 4 strings under a Panes.* key.
-    ///
-    /// Auditor finding, 2026-08-25: the fallback arm matches legacy's own out-of-range semantic
-    /// (<c>SetSenseLvl</c>'s <c>default:</c> branch, `sstv.cpp:1811-1815`, falls back to preset 0
-    /// "Very low", not "Low") -- <c>1</c> is explicit here rather than folded into the default, so
-    /// this can't silently drift to the wrong fallback if a future caller ever bypasses the
-    /// decoder's own clamp (unreachable today: <see cref="ISstvDecoder.SenseLevel"/> is always
-    /// pre-clamped 0-3 through the real production DI chain).</summary>
-    public string VisThresholdDisplay => SenseLevel switch
+    /// <summary>The last value actually forwarded to <see cref="ISstvSessionService.RequestSenseLevel"/>
+    /// and persisted -- <see cref="OnSenseLevelChanged"/> reverts to this whenever an out-of-range
+    /// value reaches <see cref="SenseLevel"/> (e.g. a ComboBox's <c>SelectedIndex</c> briefly going
+    /// <c>-1</c> when its selection is cleared), rather than clamping-and-forwarding it like the
+    /// decoder's own defensive clamp does. Clamping here would silently drop the user's real squelch
+    /// setting to "Very low" and PERSIST that -- the decoder-level clamp is a backstop for
+    /// genuinely-malformed input (e.g. a hand-edited settings.json), never meant to be reachable via
+    /// this UI, and must not be relied on to prevent that.</summary>
+    private int _lastValidSenseLevel;
+
+    /// <summary>Sync &amp; Slant card's "Squelch level" dropdown's own item labels, in the exact
+    /// index order <c>AnalogFmSstvDecoder.SenseLevelPresets</c> uses (0=Very low..3=Very high) --
+    /// reuses the Options window's own real "Options.Decode.SenseLevel.*" locale keys for the same
+    /// underlying setting, rather than a second duplicate copy of the same 4 strings under a
+    /// Panes.* key. Built once at construction; the 4 options themselves never change.</summary>
+    public IReadOnlyList<string> SenseLevelOptions { get; }
+
+    /// <summary>Fires on every <see cref="SenseLevel"/> PROPERTY assignment -- NOT the constructor's
+    /// own direct field write above (a real ComboBox selection, or <see cref="RefreshSenseLevelFromSession"/>
+    /// below, are the only things that reach this). Guards against an out-of-range value (see
+    /// <see cref="_lastValidSenseLevel"/>'s
+    /// own doc comment) by reverting without forwarding/persisting anywhere -- this re-enters
+    /// <see cref="OnSenseLevelChanged"/> once more with the reverted (valid) value, causing one
+    /// harmless redundant re-apply/re-persist of the SAME value already in effect (safe: see
+    /// <c>AnalogFmSstvDecoder.ApplyPendingSenseLevelRequest</c>'s own doc comment for why a bare
+    /// re-application of an unchanged value is a legacy-matching no-op, not a special case to
+    /// avoid).</summary>
+    partial void OnSenseLevelChanged(int value)
     {
-        1 => _localization.GetString("Options.Decode.SenseLevel.Low"),
-        2 => _localization.GetString("Options.Decode.SenseLevel.High"),
-        3 => _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
-        _ => _localization.GetString("Options.Decode.SenseLevel.VeryLow"),
-    };
+        if (value is < 0 or > 3)
+        {
+            SenseLevel = _lastValidSenseLevel;
+            return;
+        }
+
+        _lastValidSenseLevel = value;
+        _sstvSession.RequestSenseLevel(value);
+        _pendingSenseLevelPersist = PersistSenseLevelAsync(value, _pendingSenseLevelPersist);
+    }
+
+    /// <summary>Same ordering-safety shape as <see cref="_pendingFlagPersist"/> above -- chained
+    /// onto whatever's currently pending rather than fired independently, so rapid arrow-key/scroll
+    /// changes on the ComboBox can't complete their settings-file writes out of order.</summary>
+    private async Task PersistSenseLevelAsync(int value, Task previous)
+    {
+        // Entire body inside one try/catch, including `await previous` -- same reasoning as
+        // PersistFlaggedAsync's own doc comment: a fault must not propagate into
+        // _pendingSenseLevelPersist and permanently break every LATER change's own `await previous`.
+        // Delegates the actual settings-file read-modify-write to _sstvSession (Application layer),
+        // not ISettingsStore/SstvDecoderSettings directly -- this class (ScanlineStudio.UI) is never
+        // allowed to reference a ScanlineStudio.Core.* project directly (UiLayeringArchitectureTests),
+        // and SstvDecoderSettings lives in ScanlineStudio.Core.Sstv. See
+        // ISstvSessionService.PersistSenseLevelAsync's own doc comment for the full reasoning.
+        try
+        {
+            await previous.ConfigureAwait(false);
+            await _sstvSession.PersistSenseLevelAsync(value).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistSenseLevelFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Options window's own "Squelch level" control also applies live now (see
+    /// <c>OptionsWindowViewModel</c>'s save flow) -- called from this pane's own Options-Closed
+    /// refresh hook (<c>MainWindow.axaml.cs</c>, same convention as every other refresh-on-close call
+    /// in that block) so this dropdown reflects a change made in Options instead of showing a stale
+    /// selection until the next app restart. A no-op if unchanged: the generated property setter's
+    /// own equality check skips <see cref="OnSenseLevelChanged"/> entirely when the value didn't
+    /// actually change, so this never fires a redundant persist/live-apply when Options was
+    /// Cancelled, or Saved without touching Squelch level.</summary>
+    public void RefreshSenseLevelFromSession() => SenseLevel = _sstvSession.SenseLevel;
 
     /// <summary>Same restart-only construction-time-read shape as <see cref="AutoSlantEnabled"/>
     /// above -- see <see cref="ISstvSessionService.RxBpfPreset"/> for the full contract.</summary>
@@ -1785,6 +1866,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the quick-mode grid failed")]
         public static partial void PersistQuickModeGridFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the Squelch level failed")]
+        public static partial void PersistSenseLevelFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Quick-mode grid slot {SlotIndex} reassigned to mode {ModeId}")]
         public static partial void ReassignQuickModeSlotInvoked(ILogger logger, int slotIndex, string modeId);

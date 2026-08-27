@@ -320,13 +320,25 @@
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SlantPpm}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SlantPpmDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SyncOffset}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncOffsetSamplesDisplay}" /></Grid></Border>
                                         <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.AutoCorrect}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AutoCorrectDisplay}" /></Grid></Border>
-                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 6): a
-                                             plain row, not behind the removed Advanced Timing
-                                             disclosure — VisThresholdDisplay shows the preset NAME
-                                             (Very low/Low/High/Very high), not a raw number; see that
-                                             property's own doc comment for why a raw value or the
-                                             original stub's fake "−26 dB" would both be dishonest. -->
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.VisThreshold}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VisThresholdDisplay}" /></Grid></Border>
+                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 6), renamed
+                                             "VIS threshold" -> "Squelch level" + [?] help icon added
+                                             2026-08-27 (matches the Options window's own naming/help text
+                                             for the SAME underlying setting), then made genuinely LIVE and
+                                             editable (direct user request, full decode-path plan-review):
+                                             a real ComboBox now, not a read-only label — SelectedIndex
+                                             TwoWay-bound to SenseLevel, which both applies live
+                                             (RequestSenseLevel) and persists (PersistSenseLevelAsync) on
+                                             every real selection, see RxImagePaneViewModel.OnSenseLevelChanged.
+                                             SenseLevelOptions supplies the 4 item labels in the exact
+                                             index order AnalogFmSstvDecoder.SenseLevelPresets uses. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSync.SquelchLevel}" />
+                                                <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.SenseLevel.Help}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="100"
+                                                      ItemsSource="{Binding SenseLevelOptions}" SelectedIndex="{Binding SenseLevel, Mode=TwoWay}" />
+                                        </Grid></Border>
                                     </StackPanel>
                                     <!-- "Reset" button removed 2026-08-25: legacy DOES have a real
                                          Slant-Reset (Main.cpp:13186-13193, cited in ISstvDecoder.cs's

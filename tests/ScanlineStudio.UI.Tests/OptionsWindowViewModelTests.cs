@@ -1417,6 +1417,31 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveCommand_AppliesSquelchLevelLive()
+    {
+        // User-reported (2026-08-27, "Squelch level" live control): unlike every OTHER
+        // SstvDecoderSettings field this dialog owns, SenseLevel now ALSO applies live on Save --
+        // matches legacy's own Option.cpp:612-613 (SetSenseLvl() called on the live demodulator on
+        // every OK, unconditionally). This is what keeps the running decoder in sync with an
+        // Options-driven change; the Receive tab's own dropdown re-syncs separately, on this
+        // window's own Closed event (MainWindow.axaml.cs), not tested here.
+        var settingsStore = new FakeSettingsStore();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SenseLevel = 3;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, sstvSession.RequestSenseLevelCallCount);
+        Assert.Equal(3, sstvSession.LastRequestedSenseLevel);
+
+        var decoder = settingsStore.Settings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.Equal(3, decoder?.SenseLevel);
+    }
+
+    [AvaloniaFact]
     public async Task SaveCommand_OutOfRangeSampleRate_PreservesPreviousSupportedValue()
     {
         var settingsStore = new FakeSettingsStore

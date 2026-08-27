@@ -1245,6 +1245,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.ArmScopeCapture(size);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestSenseLevel"/>.</summary>
+    public void RequestSenseLevel(int level)
+    {
+        Log.SenseLevelRequested(_logger, level);
+        _decoder.SenseLevel = level;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.PersistSenseLevelAsync"/>. Read-modify-write
+    /// against whatever is currently persisted for this section, not a fresh
+    /// <c>new SstvDecoderSettings { ... }</c> -- matches this codebase's own established convention
+    /// for a targeted single-field settings write (e.g. <c>RxImagePaneViewModel.PersistQuickModeGridAsync</c>).</summary>
+    public async Task PersistSenseLevelAsync(int level, CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+        var updated = current with { SenseLevel = level };
+        await _settingsStore.SaveAsync(appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings), ct).ConfigureAwait(false);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.TryGetScopeCaptureChannel0"/>. A plain read, no
     /// logging -- matches this class's own established convention of only logging COMMANDS
     /// (RequestNotch/ArmScopeCapture above), not polled getters.</summary>
@@ -4109,6 +4128,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Decoder Trace capture armed ({Size} samples)")]
         public static partial void ScopeCaptureArmed(ILogger logger, int size);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Squelch level requested: {Level}")]
+        public static partial void SenseLevelRequested(ILogger logger, int level);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);

@@ -5,6 +5,7 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Application.Tests;
@@ -1092,6 +1093,55 @@ public sealed class SstvSessionServiceTests
         deviceMuteQuery.MarkUnsupported("playback-1", isCapture: false);
 
         Assert.False(await service.GetTxDeviceMutedAsync());
+    }
+
+    [Fact]
+    public void RequestSenseLevel_ForwardsToTheDecoderLiveProperty()
+    {
+        var (service, _, decoder, _, _, _, _) = CreateService();
+
+        service.RequestSenseLevel(2);
+
+        Assert.Equal(2, decoder.SenseLevel);
+    }
+
+    [Fact]
+    public async Task PersistSenseLevelAsync_WritesTheNewValueAndPreservesOtherSiblingFields()
+    {
+        var (service, _, _, _, _, settingsStore, _) = CreateService();
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            SstvDecoderSettings.SectionKey,
+            new SstvDecoderSettings
+            {
+                AutoSyncEnabled = false,
+                AutoStopEnabled = true,
+                DemodType = DemodType.Pll,
+                SenseLevel = 1,
+            },
+            SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+
+        await service.PersistSenseLevelAsync(3);
+
+        var saved = settingsStore.Settings.GetSection(
+            SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.NotNull(saved);
+        Assert.Equal(3, saved!.SenseLevel);
+        Assert.False(saved.AutoSyncEnabled);
+        Assert.True(saved.AutoStopEnabled);
+        Assert.Equal(DemodType.Pll, saved.DemodType);
+    }
+
+    [Fact]
+    public async Task PersistSenseLevelAsync_NoExistingSection_CreatesOneWithJustTheNewValue()
+    {
+        var (service, _, _, _, _, settingsStore, _) = CreateService();
+
+        await service.PersistSenseLevelAsync(0);
+
+        var saved = settingsStore.Settings.GetSection(
+            SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.NotNull(saved);
+        Assert.Equal(0, saved!.SenseLevel);
     }
 
     [Fact]
