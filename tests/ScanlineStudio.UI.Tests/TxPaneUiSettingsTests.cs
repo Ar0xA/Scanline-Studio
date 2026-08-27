@@ -10,14 +10,14 @@ public sealed class TxPaneUiSettingsTests
     {
         var settings = new TxPaneUiSettings
         {
-            FavoriteModeIds = ["robot36", "martin-m1"],
+            QuickModeGridIds = ["robot36", "martin-m1"],
             AutoFollowRxMode = true,
         };
 
         var json = JsonSerializer.Serialize(settings, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
         var roundTripped = JsonSerializer.Deserialize(json, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
 
-        Assert.Equal(settings.FavoriteModeIds, roundTripped!.FavoriteModeIds);
+        Assert.Equal(settings.QuickModeGridIds, roundTripped!.QuickModeGridIds);
         Assert.Equal(settings.AutoFollowRxMode, roundTripped.AutoFollowRxMode);
     }
 }

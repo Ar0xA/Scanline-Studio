@@ -584,6 +584,29 @@
                 </Setter>
             </ControlTheme>
 
+            <!-- Quick-mode-grid popup (Receive/Transmit tabs, right-click a fast-select button) —
+                 ItemContainerTheme for a ContextMenu whose ItemsSource is bound to
+                 vm:QuickModeMenuEntryViewModel, one per mode. Header/ToggleType/IsChecked/IsEnabled/
+                 Command/CommandParameter are all Setters here rather than a nested MenuItem in
+                 ContextMenu.ItemTemplate: an ItemTemplate on a Menu-family control becomes the
+                 generated container's HeaderTemplate, not a replacement for the container itself, so
+                 a MenuItem placed there would end up nested INSIDE another auto-generated MenuItem
+                 — the outer one owning hit-testing/Command/IsEnabled with no bindings set on it at
+                 all, the inner one bound but inert. IsChecked explicitly Mode=OneWay (not the
+                 property's TwoWay default): with ToggleType=Radio, Avalonia's own click handling
+                 writes IsChecked back on click, and a bound Setter must keep tracking this VM's
+                 own IsChecked (recomputed by RecomputeQuickModeMenuEntryStates whenever ANY slot's
+                 assignment changes, not just this entry's own click) rather than being permanently
+                 overridden by that first write-back. -->
+            <ControlTheme x:Key="QuickModeGridMenuItemTheme" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+                <Setter Property="Header" Value="{Binding Mode.DisplayName}" />
+                <Setter Property="ToggleType" Value="Radio" />
+                <Setter Property="IsChecked" Value="{Binding IsChecked, Mode=OneWay}" />
+                <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                <Setter Property="Command" Value="{Binding ReassignCommand}" />
+                <Setter Property="CommandParameter" Value="{Binding CommandParameter}" />
+            </ControlTheme>
+
             <!-- ═══════════════════════ 17. Focus ring — DEFERRED to Phase 2 ═══════════════════════
                  CODE-REVIEW FIX: an earlier pass defined ControlTemplate resources here and called
                  the item done, but never wired them (no Setter Property="FocusAdorner" anywhere) —
