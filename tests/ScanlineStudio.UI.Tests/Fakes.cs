@@ -1344,6 +1344,22 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
 
     public Exception? ThrowOnLookup { get; set; }
 
+    /// <summary>Defaults to configured (true) so every EXISTING test that doesn't care about this
+    /// gate keeps behaving as it did before the gate was added.</summary>
+    public bool IsQrzLookupConfiguredResult { get; set; } = true;
+
+    public Exception? ThrowOnIsQrzLookupConfigured { get; set; }
+
+    public Task<bool> IsQrzLookupConfiguredAsync(CancellationToken ct = default)
+    {
+        if (ThrowOnIsQrzLookupConfigured is not null)
+        {
+            throw ThrowOnIsQrzLookupConfigured;
+        }
+
+        return Task.FromResult(IsQrzLookupConfiguredResult);
+    }
+
     public string? LastLookupCallsign { get; private set; }
 
     public int LookupCallCount { get; private set; }
