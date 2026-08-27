@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Core.Logbook;
 
@@ -208,11 +209,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         command.ExecuteNonQuery();
     }
 
-    private static string GetDefaultDbFilePath()
-    {
-        var appDataDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return Path.Combine(appDataDirectory, "ScanlineStudio", "history.db");
-    }
+    private static string GetDefaultDbFilePath() => Path.Combine(AppDatabasePaths.DatabaseDirectory, "history.db");
 
     private static partial class Log
     {

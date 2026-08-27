@@ -232,6 +232,30 @@ public partial class MainWindow : Window
                             _ = vm.LoadCallsignAsync();
                             _ = vm.TxControls.LoadOutputDeviceNameAsync();
                             _ = vm.TxControls.LoadIdentificationSummaryAsync();
+                            // Storage section moved in from the former standalone "Configurations >
+                            // Storage" dialog (2026-08-27) -- carries over that dialog's own
+                            // refresh-the-Gallery-Storage-card-on-close behavior, now for General
+                            // tab's Images row instead.
+                            _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                        };
+                        // Options > General's Config/Database "Restart Now" -- closes THIS dialog
+                        // first, then (from that window's own Closed event, not inline right after
+                        // Close() -- Avalonia's Close() raising Closed synchronously isn't something
+                        // this codebase can verify against its own vendored sources) closes
+                        // MainWindow itself, reaching the exact same shutdown path
+                        // MainViewModel.ExitRequested's own handler below uses for File > Exit. No
+                        // process is spawned from here -- OptionsWindowViewModel.RestartNowAsync
+                        // already set IApplicationRestarter.RestartRequested; the actual spawn only
+                        // happens from Program.cs, after this process's own teardown completes.
+                        optionsViewModel.RestartRequested += () =>
+                        {
+                            if (logger is not null)
+                            {
+                                Log.RestartRequested(logger);
+                            }
+
+                            window.Closed += (_, _) => Close();
+                            window.Close();
                         };
                         window.ShowDialog(this);
                         if (logger is not null)
@@ -329,36 +353,10 @@ public partial class MainWindow : Window
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 
-                // Stub survey Tier 2 (2026-08-26). Same shape as OptionsRequested above --
-                // DI-resolved view-model, refreshes the Gallery Storage card on close (matching
-                // OptionsRequested's own re-run-the-load-unconditionally-on-close precedent).
-                vm.StorageSettingsRequested += storageViewModel =>
-                {
-                    if (logger is not null)
-                    {
-                        Log.ConstructingStorageSettingsWindow(logger);
-                    }
-
-                    try
-                    {
-                        var window = new StorageSettingsWindowView { DataContext = storageViewModel };
-                        window.Closed += (_, _) => _ = vm.RxHistory.LoadImagesDirectoryAsync();
-                        window.ShowDialog(this);
-                        if (logger is not null)
-                        {
-                            Log.StorageSettingsShowDialogReturned(logger);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (logger is not null)
-                        {
-                            Log.StorageSettingsWindowFailed(logger, ex);
-                        }
-                    }
-                };
-
-                // Stub survey Tier 3 (2026-08-26). Same shape as StorageSettingsRequested above.
+                // Stub survey Tier 3 (2026-08-26). Same shape as OptionsRequested above --
+                // DI-resolved view-model. Storage's own former entry here (stub survey Tier 2) was
+                // removed once its one setting (the RX images folder) moved into Options > General
+                // alongside the new Config/Database/Log rows.
                 vm.MacrosReferenceRequested += macrosViewModel =>
                 {
                     if (logger is not null)
@@ -491,14 +489,8 @@ public partial class MainWindow : Window
         [LoggerMessage(Level = LogLevel.Debug, Message = "OptionsWindowView.ShowDialog returned")]
         public static partial void ShowDialogReturned(ILogger logger);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing StorageSettingsWindowView")]
-        public static partial void ConstructingStorageSettingsWindow(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "StorageSettingsWindowView.ShowDialog returned")]
-        public static partial void StorageSettingsShowDialogReturned(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Warning, Message = "StorageSettingsWindowView failed to open or show")]
-        public static partial void StorageSettingsWindowFailed(ILogger logger, Exception ex);
+        [LoggerMessage(Level = LogLevel.Information, Message = "Restart requested from Options > General (Config/Database Restart Now) -- closing Options, then the main window")]
+        public static partial void RestartRequested(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing MacrosReferenceWindowView")]
         public static partial void ConstructingMacrosReferenceWindow(ILogger logger);

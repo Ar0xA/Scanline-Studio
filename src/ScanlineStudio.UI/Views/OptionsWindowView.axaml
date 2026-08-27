@@ -61,6 +61,109 @@
                                 </StackPanel>
                             </ContentControl>
 
+                            <!-- Storage section: 4 rows, moved in from the former standalone
+                                 "Configurations > Storage" dialog (Images) plus 3 new rows
+                                 (Config/Database/Log). Each row commits (Images/Log, immediately)
+                                 or stages (Config/Database, applied on next restart) on its OWN
+                                 Apply — none of these 4 rows are staged behind this dialog's own
+                                 Save/Cancel/Reset flow below. -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.General.Storage.Header}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Spacing="{StaticResource IndustrySpacingGroup}">
+
+                                    <!-- Images: unchanged behavior from the former standalone dialog. -->
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Images.Label}" />
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding ImagesDirectory}" />
+                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseImagesDirectoryCommand}" />
+                                        </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Images.Caption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding ImagesDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding ImagesDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyImagesDirectoryCommand}" />
+                                    </StackPanel>
+
+                                    <!-- Config: settings.json's directory. Stages a pending target;
+                                         Apply shows this row's own Restart-Now/Not-Now confirm. -->
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Label}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.CurrentlyUsingLabel}" />
+                                            <TextBlock Classes="IndustryRowLabel" Text="{Binding ConfigDirectory}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding PendingConfigDirectory}"
+                                                     Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
+                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseConfigDirectoryCommand}" />
+                                        </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding ConfigDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding ConfigDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyConfigDirectoryCommand}"
+                                                IsVisible="{Binding !IsConfirmingConfigRestart}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}" IsVisible="{Binding IsConfirmingConfigRestart}">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartConfirmPrompt}" TextWrapping="Wrap" MaxWidth="300" VerticalAlignment="Center" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.RestartNowButton}" Command="{Binding ConfirmConfigRestartCommand}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.NotNowButton}" Command="{Binding CancelConfigRestartCommand}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- Database: history.db's directory (shared by Logbook + Receive
+                                         History). Same staged/Restart-Now shape as Config above. -->
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Database.Label}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.CurrentlyUsingLabel}" />
+                                            <TextBlock Classes="IndustryRowLabel" Text="{Binding DatabaseDirectory}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding PendingDatabaseDirectory}"
+                                                     Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
+                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseDatabaseDirectoryCommand}" />
+                                        </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding DatabaseDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding DatabaseDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyDatabaseDirectoryCommand}"
+                                                IsVisible="{Binding !IsConfirmingDatabaseRestart}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}" IsVisible="{Binding IsConfirmingDatabaseRestart}">
+                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.RestartConfirmPrompt}" TextWrapping="Wrap" MaxWidth="300" VerticalAlignment="Center" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.RestartNowButton}" Command="{Binding ConfirmDatabaseRestartCommand}" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.NotNowButton}" Command="{Binding CancelDatabaseRestartCommand}" />
+                                        </StackPanel>
+                                    </StackPanel>
+
+                                    <!-- Log: applies live, no restart needed. -->
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Log.Label}" />
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding LogDirectory}" />
+                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseLogDirectoryCommand}" />
+                                        </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Log.Caption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding LogDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding LogDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyLogDirectoryCommand}" />
+                                    </StackPanel>
+
+                                </StackPanel>
+                            </HeaderedContentControl>
+
                             <!-- Disabled placeholder: legacy's 7 waterfall/spectrum colors (PCLow,
                                  PCHigh, PCFFTB/PCFFT/PCFFTStg/PCSync/PCFreq); the new flat
                                  design's palette isn't per-element customizable yet. -->

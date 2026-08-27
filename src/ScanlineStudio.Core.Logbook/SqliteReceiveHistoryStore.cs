@@ -500,11 +500,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         return (Math.Max(1, (int)Math.Round(width * scale)), Math.Max(1, (int)Math.Round(height * scale)));
     }
 
-    private static string GetDefaultDbFilePath()
-    {
-        var appDataDirectory = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-        return Path.Combine(appDataDirectory, "ScanlineStudio", "history.db");
-    }
+    private static string GetDefaultDbFilePath() => Path.Combine(AppDatabasePaths.DatabaseDirectory, "history.db");
 
     private sealed class HistoryThumbnailImageSource : IImageSource
     {
