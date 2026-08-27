@@ -1476,12 +1476,17 @@
              AutosaveOn was a plain affirmative "AUTOSAVE ON" claim with zero backing property,
              genuinely fake-live at the time — un-stubbed 2026-08-26 (stub survey Tier 1) once
              confirmed RX images ARE unconditionally auto-saved by ReceiveHistoryRecorder (no
-             setting gates it), so the claim is simply true and needs no backing property at all. -->
+             setting gates it), so the claim was simply true. Removed outright 2026-08-27 (direct
+             user request, after confirming no toggle exists anywhere — legacy MMSSTV has no
+             autosave toggle either, spec/14-roadmap.md's own "confirmed not a gap" entry): the
+             chip itself, not the underlying always-on save behavior, which is unchanged.
+             AutoDetect (this tab-strip chip, distinct from the Receive tab's own real
+             Listening/Paused card) was the exact same class of issue — a plain "AUTO-DETECT"
+             label with no binding at all, unconnected to the real
+             RxImagePaneViewModel.IsAutoDetectPaused toggle that already lives on that card.
+             Removed outright 2026-08-27, same direct user request. -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
                     Height="26" Margin="0,0,6,0" Spacing="5">
-            <Border Classes="Industry IndustryMini" BorderThickness="1">
-                <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutoDetect}" />
-            </Border>
             <Border Classes="Industry IndustryStatus">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RxImage.DetectedMode, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />
@@ -1493,9 +1498,6 @@
             </Border>
             <Border Classes="Industry IndustryMini" BorderThickness="1">
                 <TextBlock Text="{Binding RxImage.SlantPpmStatusBarDisplay}" />
-            </Border>
-            <Border Classes="Industry IndustryMini" BorderThickness="1">
-                <TextBlock Text="{loc:Translate MainWindow.TabStrip.AutosaveOn}" />
             </Border>
         </StackPanel>
         </Grid>
