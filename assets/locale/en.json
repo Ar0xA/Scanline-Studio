@@ -29,8 +29,6 @@
   "MainWindow.StatusBar.BufferValueFormat": "buffer {0} samples · {1} XRUN",
   "MainWindow.StatusBar.FramesTodayValueFormat": "frames today {0}",
   "MainWindow.StatusBar.LogSizeValueFormat": "log {0} entries",
-  "MainWindow.TabStrip.AutoDetect": "AUTO-DETECT",
-  "MainWindow.TabStrip.AutosaveOn": "AUTOSAVE ON",
   "RadioStatus.NoFrequency": "000.000.000",
   "RadioStatus.FrequencyPlaceholder": "MHz",
   "RadioStatus.SetFrequency": "Set",
