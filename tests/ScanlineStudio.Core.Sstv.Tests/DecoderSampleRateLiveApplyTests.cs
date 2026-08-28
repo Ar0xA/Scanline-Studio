@@ -115,6 +115,46 @@ public class DecoderSampleRateLiveApplyTests
     }
 
     [Fact]
+    public void RequestSampleRate_ThenRequestRxBpfPreset_NeitherErasesTheOther()
+    {
+        // Code-review round-1 finding (RX BPF Receive-tab live dropdown, 2026-08-28):
+        // RequestRxBpfPreset's own `preservedSampleRate` line had no test combining the two --
+        // mirrors QueuingRateAndSiblingFromSeparateCalls_NeitherErasesTheOther above, but through the
+        // new per-field entry point instead of RequestReconfiguration.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            sampleRate: InitialSampleRate, demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        // Order matters for this test's own coverage claim: RequestSampleRate must come FIRST so the
+        // pending record already has a SampleRate queued before RequestRxBpfPreset runs -- only then
+        // does RequestRxBpfPreset's own `preservedSampleRate` read actually get exercised (the
+        // reverse order would let RequestSampleRate's own unconditional field write mask a broken
+        // preserve in RequestRxBpfPreset, since it runs second and always wins that field).
+        decoder.RequestSampleRate(NewSampleRate);
+        decoder.RequestRxBpfPreset(RxBpfPreset.Narrow);
+
+        var result = decoder.ApplyPendingReconfigurationNow();
+
+        Assert.Equal(SwapResult.Committed, result);
+        Assert.Equal(NewSampleRate, decoder.SampleRate);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+    }
+
+    [Fact]
+    public void RequestRxBpfPreset_NoOpCall_DoesNotEraseSeparatelyQueuedRate()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            sampleRate: InitialSampleRate, demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestSampleRate(NewSampleRate);
+        decoder.RequestRxBpfPreset(RxBpfPreset.Wide); // no-op vs. current value
+
+        var result = decoder.ApplyPendingReconfigurationNow();
+
+        Assert.Equal(SwapResult.Committed, result);
+        Assert.Equal(NewSampleRate, decoder.SampleRate); // survived the sibling no-op call
+    }
+
+    [Fact]
     public void RequestSampleRate_NoOpSiblingRequestClearedByReRequestingCurrentRate_DoesNotEraseSiblingChange()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,

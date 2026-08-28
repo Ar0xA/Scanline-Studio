@@ -1062,6 +1062,31 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>See <see cref="ISstvDecoderReconfiguration.RequestRxBpfPreset"/> -- restart-required-
+    /// settings backlog item 6 (RX BPF Receive-tab live dropdown, 2026-08-28). Same per-field-merge
+    /// shape as <see cref="RequestSampleRate"/> below (preserve whatever's currently PENDING for the
+    /// other two fields, no-op-check only against this wrapper's own committed <see cref="_rxBpfPreset"/>)
+    /// -- deliberately NOT <see cref="RequestReconfiguration"/> called with the current DemodType/
+    /// RxBufferMode read back from somewhere: that would replace the WHOLE pending group, silently
+    /// discarding a separately-queued DemodType/RxBufferMode change (or getting silently discarded by
+    /// one), the exact defect class <see cref="RequestSampleRate"/>'s own preserve-the-others shape
+    /// already exists to prevent.</summary>
+    public void RequestRxBpfPreset(RxBpfPreset rxBpfPreset)
+    {
+        lock (_gate)
+        {
+            var preservedDemodType = _pendingReconfiguration?.DemodType;
+            var preservedRxBufferMode = _pendingReconfiguration?.RxBufferMode;
+            var preservedSampleRate = _pendingReconfiguration?.SampleRate;
+            var isNoOp = rxBpfPreset == _rxBpfPreset;
+            _pendingReconfiguration = Normalize(new PendingReconfiguration(
+                isNoOp ? null : rxBpfPreset,
+                preservedDemodType,
+                preservedRxBufferMode,
+                preservedSampleRate));
+        }
+    }
+
     /// <summary>Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27): queues
     /// a sample-rate change, same per-group merge shape as <see cref="RequestReconfiguration"/>
     /// (preserves any separately-queued RxBpfPreset/DemodType/RxBufferMode change untouched).

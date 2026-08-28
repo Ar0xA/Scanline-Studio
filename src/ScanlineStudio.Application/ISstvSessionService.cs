@@ -250,6 +250,20 @@ public interface ISstvSessionService : IAsyncDisposable
     /// for why no diff-against-current-value check is needed first. Safe to call from any thread.</summary>
     void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
 
+    /// <summary>Requests an RxBpfPreset-only change for the Receive tab's own live "BPF" dropdown
+    /// (<c>RxImagePaneViewModel</c>) -- restart-required-settings backlog item 6 (2026-08-28). Same
+    /// idle-gated-until-drained contract as <see cref="RequestReconfiguration"/>, but forwards to
+    /// <c>ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.RequestRxBpfPreset</c>, NOT
+    /// <see cref="RequestReconfiguration"/> called with some "current" DemodType/RxBufferMode read
+    /// back from somewhere -- that would silently discard a separately-queued Options change to
+    /// either of those two fields, or get silently discarded by one; see that method's own doc
+    /// comment for the full per-field-preservation reasoning. A no-op if the real decoder doesn't
+    /// implement the optional side-channel, matching <see cref="RequestReconfiguration"/>'s own
+    /// convention. NOTE: a LATER <see cref="RequestReconfiguration"/> call (e.g. an Options Save)
+    /// overwrites whatever this queues -- that call writes all three fields unconditionally, by
+    /// design. Safe to call from any thread.</summary>
+    void RequestRxBpfPreset(RxBpfPreset rxBpfPreset);
+
     /// <summary>Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27) --
     /// applies a new sample rate live, without an app restart. Different in kind from
     /// <see cref="RequestReconfiguration"/> and every other <c>Request*</c> method on this interface:
@@ -290,6 +304,47 @@ public interface ISstvSessionService : IAsyncDisposable
     /// SenseLevel specifically if both are used in close succession is an accepted, narrow race (see
     /// this feature's own plan-review), not solved further here.</summary>
     Task PersistSenseLevelAsync(int level, CancellationToken ct = default);
+
+    /// <summary>Targeted single-field persist for the Receive tab's own live "BPF" dropdown, same
+    /// read-modify-write shape as <see cref="PersistSenseLevelAsync"/> (against
+    /// <c>SstvDecoderSettings.RxBpfPreset</c> only). Restart-required-settings backlog item 6
+    /// (2026-08-28). Also called when an Options-originated BPF change is rejected (via
+    /// <see cref="ReconfigurationRejected"/>'s own refresh path), so settings.json comes back in sync
+    /// with whatever's actually applied -- deliberate: <c>RequestReconfiguration</c>'s own contract
+    /// already says a rejected request is dropped, not retried, so there is no "try again later"
+    /// state this write could clobber. Same accepted narrow disagreement-with-Options'-own-Save race
+    /// as <see cref="PersistSenseLevelAsync"/>'s own doc comment describes -- not solved further
+    /// here.
+    ///
+    /// Code-review round-1 finding: this is now the SECOND independent live-persist chain in this
+    /// class (alongside <see cref="PersistSenseLevelAsync"/>'s own), each doing its own whole-
+    /// <c>AppSettings</c> load/modify/save -- <c>JsonSettingsStore</c> holds its file lock per call,
+    /// not across a chain's own read-modify-write, so two dropdown changes landing within the same
+    /// few milliseconds could interleave and the loser's write is dropped (never a corrupted file --
+    /// <c>JsonSettingsStore</c> writes to a temp file and atomically renames it, so the only failure
+    /// mode is a lost write, not a torn one). This is the SAME pre-existing whole-<c>AppSettings</c>
+    /// last-write-wins race <c>JsonSettingsStore</c>'s own class doc already documents across its
+    /// ~30 call sites app-wide -- NOT scoped to just the <c>SstvDecoderSettings</c> section, and a
+    /// losing write can revert an unrelated section too. Narrow (needs near-simultaneous changes to
+    /// two different Receive-tab dropdowns) and self-correcting FOR THE LOSING DROPDOWN specifically
+    /// (its own next change re-reads and re-writes the current state) -- a change to the OTHER
+    /// dropdown instead just re-persists the already-stale value, not a fix. Not solved further here,
+    /// same accepted-risk class as the race above, one more participant.</summary>
+    Task PersistRxBpfPresetAsync(RxBpfPreset preset, CancellationToken ct = default);
+
+    /// <summary>Fires when a queued RxBpfPreset/DemodType/RxBufferMode/SampleRate reconfiguration
+    /// request (from ANY source -- <see cref="RequestReconfiguration"/>, <see cref="RequestRxBpfPreset"/>,
+    /// or a rejected <see cref="RequestSampleRateAsync"/> commit) could not be applied --
+    /// restart-required-settings backlog item 6 (2026-08-28). Forwards
+    /// <c>ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.ReconfigurationRejected</c>. Exists so
+    /// <c>RxImagePaneViewModel</c>'s "BPF" row -- now a live EDITOR, not a read-only mirror -- can
+    /// re-sync back to whatever's actually applied instead of permanently showing a preset that was
+    /// requested but never took effect (already fires unconditionally for every rejection, not just a
+    /// BPF-driven one -- a rejected sample-rate commit clears the WHOLE pending record, including any
+    /// separately-queued BPF change, so any rejection can leave this row stale). Fires synchronously
+    /// on whichever thread the swap ran on -- a UI-layer subscriber must marshal to the UI thread
+    /// itself before touching any bound property, same contract as <see cref="DecoderInstanceReplaced"/>.</summary>
+    event Action? ReconfigurationRejected;
 
     /// <summary>Returns the completed channel-0 Decoder Trace capture, or <see langword="null"/> if
     /// not yet complete — see <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.TryGetScopeCaptureChannel0"/>

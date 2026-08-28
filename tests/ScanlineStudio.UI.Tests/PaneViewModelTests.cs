@@ -1501,6 +1501,149 @@ public sealed class PaneViewModelTests
         Assert.Equal(expectedKey, vm.RxBpfDisplay);
     }
 
+    // Restart-required-settings backlog item 6 (RX BPF Receive-tab live dropdown, 2026-08-28) --
+    // same shapes as the SenseLevel tests above, but proving RequestRxBpfPreset is called (a
+    // per-field-merge sibling of RequestReconfiguration, never that combined call), and with the
+    // corrected (round-2 plan-review) out-of-range/redundant-refresh expectations documented on
+    // RxBpfPresetIndex/OnRxBpfPresetChanged's own doc comments.
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_RxBpfPresetIndex_ConstructionTimeRead_MatchesEnumOrdinal()
+    {
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Narrow };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal((int)RxBpfPreset.Narrow, vm.RxBpfPresetIndex);
+        Assert.Equal(4, vm.RxBpfPresetOptions.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_SettingRxBpfPresetIndex_AppliesLiveAndPersists()
+    {
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RxBpfPresetIndex = (int)RxBpfPreset.VeryNarrow;
+        await Task.Delay(1); // let the fire-and-forget persist actually run
+
+        Assert.Equal(RxBpfPreset.VeryNarrow, vm.RxBpfPreset);
+        Assert.Equal((int)RxBpfPreset.VeryNarrow, vm.RxBpfPresetIndex);
+        Assert.Equal(1, sstvSession.RequestRxBpfPresetCallCount);
+        Assert.Equal(RxBpfPreset.VeryNarrow, sstvSession.LastRequestedRxBpfPreset);
+        Assert.Equal(1, sstvSession.PersistRxBpfPresetCallCount);
+        Assert.Equal(RxBpfPreset.VeryNarrow, sstvSession.LastPersistedRxBpfPreset);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(-1)]
+    [InlineData(4)]
+    public async Task RxImagePaneViewModel_SettingRxBpfPresetIndexOutOfRange_RevertsWithoutApplyingOrPersisting(int outOfRangeValue)
+    {
+        // Round-2 plan-review correction: unlike SenseLevel's own out-of-range guard (which reverts
+        // THROUGH its own canonical property, causing one redundant re-apply/re-persist),
+        // RxBpfPresetIndex's guard never touches RxBpfPreset at all -- there is no valid enum value
+        // to revert through. Zero RequestRxBpfPreset/persist calls must result, not one.
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Narrow };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        // Code-review round-1 finding: the snapback mechanism itself (re-raising PropertyChanged for
+        // RxBpfPresetIndex so a real bound ComboBox visually snaps back) was previously unproven --
+        // the call-count/getter assertions below would stay green even if that re-raise were deleted,
+        // since RxBpfPresetIndex's getter always reflects the unchanged RxBpfPreset field regardless.
+        var raisedProperties = new List<string?>();
+        vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        vm.RxBpfPresetIndex = outOfRangeValue;
+        await Task.Delay(1);
+
+        Assert.Contains(nameof(RxImagePaneViewModel.RxBpfPresetIndex), raisedProperties);
+
+        Assert.Equal((int)RxBpfPreset.Narrow, vm.RxBpfPresetIndex); // snapped back to the last real value
+        Assert.Equal(RxBpfPreset.Narrow, vm.RxBpfPreset);
+        Assert.Equal(0, sstvSession.RequestRxBpfPresetCallCount);
+        Assert.Equal(0, sstvSession.PersistRxBpfPresetCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_PersistRxBpfPresetAsync_WhenItThrows_LogsInsteadOfCrashing()
+    {
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide, PersistRxBpfPresetException = new InvalidOperationException("boom") };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RxBpfPresetIndex = (int)RxBpfPreset.Narrow;
+        await Task.Delay(1);
+
+        Assert.Equal(RxBpfPreset.Narrow, vm.RxBpfPreset); // live-apply still happened; only the persist failed
+        Assert.Equal(1, sstvSession.RequestRxBpfPresetCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RefreshRxBpfPresetFromSession_ReceiveTabOriginated_DoesNotReapply()
+    {
+        // Round-2 plan-review correction of an inverted round-1 claim: when THIS row originated the
+        // change, RxBpfPreset already holds the new value by the time a post-swap refresh runs -- the
+        // generated property setter's own equality check skips OnRxBpfPresetChanged entirely, so no
+        // redundant RequestRxBpfPreset/persist call results.
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RxBpfPresetIndex = (int)RxBpfPreset.Narrow;
+        await Task.Delay(1);
+        Assert.Equal(1, sstvSession.RequestRxBpfPresetCallCount); // sanity: the initial change did apply
+
+        // Simulates the queued change actually landing (the fake's own RequestRxBpfPreset does NOT
+        // auto-update RxBpfPreset, matching real idle-gated semantics) -- the swap makes the session
+        // agree with what this VM already holds.
+        sstvSession.RxBpfPreset = RxBpfPreset.Narrow;
+        sstvSession.RaiseDecoderInstanceReplaced();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RxBpfPreset.Narrow, vm.RxBpfPreset);
+        Assert.Equal(1, sstvSession.RequestRxBpfPresetCallCount); // unchanged -- no redundant re-fire
+        Assert.Equal(1, sstvSession.PersistRxBpfPresetCallCount); // unchanged
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RefreshRxBpfPresetFromSession_OptionsOriginated_ReappliesOnceHarmlessly()
+    {
+        // The genuine redundant-refresh case: Options changed BPF preset (this VM's own field is
+        // stale), so the post-swap refresh assigns a DIFFERENT value -- OnRxBpfPresetChanged DOES
+        // fire once more here, a documented-accepted no-op re-apply/re-persist (same accepted cost as
+        // SenseLevel's own revert case).
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+
+        // Simulates an Options Save changing BPF preset out from under this VM.
+        sstvSession.RxBpfPreset = RxBpfPreset.VeryNarrow;
+        sstvSession.RaiseDecoderInstanceReplaced();
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(1);
+
+        Assert.Equal(RxBpfPreset.VeryNarrow, vm.RxBpfPreset);
+        Assert.Equal(1, sstvSession.RequestRxBpfPresetCallCount); // the redundant, harmless re-apply
+        Assert.Equal(RxBpfPreset.VeryNarrow, sstvSession.LastRequestedRxBpfPreset);
+        Assert.Equal(1, sstvSession.PersistRxBpfPresetCallCount); // the redundant, harmless re-persist
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ReconfigurationRejected_RevertsToWhatIsActuallyApplied()
+    {
+        // The BPF row is now a live EDITOR (restart-required-settings backlog item 6) -- without
+        // this, a rejected Receive-tab-originated change would leave the row permanently showing a
+        // preset that was requested but never took effect.
+        var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.RxBpfPresetIndex = (int)RxBpfPreset.VeryNarrow; // requested, but never actually applied
+        // sstvSession.RxBpfPreset deliberately left at Wide -- the swap never happened.
+
+        sstvSession.RaiseReconfigurationRejected();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset); // reverted to what's actually applied
+        Assert.Equal((int)RxBpfPreset.Wide, vm.RxBpfPresetIndex);
+    }
+
     [AvaloniaFact]
     public void RxImagePaneViewModel_BufferedSampleCountStatusBarDisplay_ReflectsSessionValue()
     {

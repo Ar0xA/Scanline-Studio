@@ -23,10 +23,27 @@ public interface ISstvDecoderReconfiguration
     /// than queuing a pointless swap. Safe to call from any thread.</summary>
     void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
 
-    /// <summary>Fires when a queued <see cref="RequestReconfiguration"/> request could NOT be
-    /// applied because <c>CreateInner</c> threw while draining it -- the request was rolled back and
-    /// dropped, not retried (see <see cref="RequestReconfiguration"/>'s own doc comment for why one
-    /// attempt only). Can fire alongside <see cref="ISstvDecoderMaintenance.Restarted"/> on the SAME
+    /// <summary>Requests an RxBpfPreset-only change, same idle-gated-until-drained contract as
+    /// <see cref="RequestReconfiguration"/> -- restart-required-settings backlog item 6 (RX BPF
+    /// Receive-tab live dropdown, 2026-08-28). A separate method, not a convenience overload of
+    /// <see cref="RequestReconfiguration"/> that reads back current DemodType/RxBufferMode: this
+    /// preserves whatever's currently PENDING for those two fields untouched (same per-field-merge
+    /// shape <see cref="RequestSampleRate"/> already uses to preserve a separately-queued
+    /// RxBpfPreset/DemodType/RxBufferMode change) -- reading back "current" values instead would
+    /// silently clobber a separately-queued Options change, or get silently cleared by one, the exact
+    /// defect class <see cref="RequestSampleRate"/>'s own per-field design exists to prevent. A no-op
+    /// request (the given preset already equals what's currently applied) clears only its own field
+    /// rather than queuing a pointless swap -- it does NOT touch a separately-pending DemodType/
+    /// RxBufferMode change. NOTE: a LATER <see cref="RequestReconfiguration"/> call overwrites
+    /// whatever this method queued -- that method writes all three fields unconditionally on every
+    /// Options Save, by design. Safe to call from any thread.</summary>
+    void RequestRxBpfPreset(RxBpfPreset rxBpfPreset);
+
+    /// <summary>Fires when a queued <see cref="RequestReconfiguration"/> or
+    /// <see cref="RequestRxBpfPreset"/> request could NOT be applied because <c>CreateInner</c> threw
+    /// while draining it -- the request was rolled back and dropped, not retried (see
+    /// <see cref="RequestReconfiguration"/>'s own doc comment for why one attempt only). Can fire
+    /// alongside <see cref="ISstvDecoderMaintenance.Restarted"/> on the SAME
     /// swap (a mandatory overflow/critical swap that happened to have a pending, but failing,
     /// reconfiguration queued still completes -- using the previous, known-good settings -- and
     /// reports the drop here). Same threading/ordering contract as

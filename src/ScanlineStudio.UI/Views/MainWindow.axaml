@@ -388,14 +388,35 @@
                                              from that other row. Noise floor has zero legacy equivalent
                                              anywhere, same undefined-measurement class as the SNR rows
                                              already removed from Signal Quality. -->
-                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 7):
-                                             RxBpfDisplay shows the preset NAME only, not a cutoff
-                                             figure — the locked-filter cutoff differs from the
-                                             search/pre-lock cutoff, so a single number would be wrong
-                                             whenever this reads while unlocked (see
-                                             ISstvDecoder.RxBpfPreset's own doc comment). Reuses the
-                                             Options window's own real preset names. -->
-                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RxBpfDisplay}" /></Grid></Border>
+                                        <!-- Wired 2026-08-25 (elegant-wondering-hinton.md item 7),
+                                             made a live editable ComboBox 2026-08-28
+                                             (restart-required-settings backlog item 6, direct user
+                                             request, full decode-path plan-review): SelectedIndex
+                                             TwoWay-bound to RxBpfPresetIndex, which applies live
+                                             (RequestRxBpfPreset, a per-field-merge request that never
+                                             clobbers a separately-queued Options change to DemodType/
+                                             RxBufferMode) and persists (PersistRxBpfPresetAsync) on
+                                             every real selection — see
+                                             RxImagePaneViewModel.OnRxBpfPresetChanged. Preset NAME
+                                             only, not a cutoff figure — the locked-filter cutoff
+                                             differs from the search/pre-lock cutoff, so a single
+                                             number would be wrong whenever this reads while unlocked
+                                             (see ISstvDecoder.RxBpfPreset's own doc comment).
+                                             RxBpfPresetOptions supplies the 4 item labels in the exact
+                                             index order RxBpfPreset's own enum uses, reusing the
+                                             Options window's own real preset names. Help text is a
+                                             dedicated Panes.RxInput.Bpf.Help key, not a reuse of
+                                             Options.Decode.RxBpf.Help — that one ends "Applies live on
+                                             Save," accurate on the Options dialog's own row, wrong on
+                                             a row with no Save button. -->
+                                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                            <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxInput.Bpf}" />
+                                                <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.RxInput.Bpf.Help}" />
+                                            </StackPanel>
+                                            <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="120"
+                                                      ItemsSource="{Binding RxBpfPresetOptions}" SelectedIndex="{Binding RxBpfPresetIndex, Mode=TwoWay}" />
+                                        </Grid></Border>
                                         <!-- Un-stub-RX-tab Piece A3: canonical state lives on WaterfallPaneViewModel
                                              (see its own NotchEnabled doc comment for why), reached from this
                                              row's own RxImage-scoped DataContext via $parent[Window].DataContext,

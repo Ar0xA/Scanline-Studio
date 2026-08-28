@@ -238,6 +238,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action? DecoderInstanceReplaced;
 
+    public event Action? ReconfigurationRejected;
+
     public int RequestReSyncCallCount { get; private set; }
 
     public void RequestReSync() => RequestReSyncCallCount++;
@@ -331,6 +333,21 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         LastRequestedReconfiguration = (rxBpfPreset, demodType, rxBufferMode);
     }
 
+    // Restart-required-settings backlog item 6 (2026-08-28): deliberately does NOT update the
+    // settable RxBpfPreset property below -- same idle-gated shape RequestReconfiguration's own fake
+    // implementation above already has (a request doesn't immediately change what's "applied"; a
+    // test drives RxBpfPreset directly to simulate a swap actually landing, or calls
+    // RaiseReconfigurationRejected to simulate one being dropped).
+    public int RequestRxBpfPresetCallCount { get; private set; }
+
+    public RxBpfPreset? LastRequestedRxBpfPreset { get; private set; }
+
+    public void RequestRxBpfPreset(RxBpfPreset preset)
+    {
+        RequestRxBpfPresetCallCount++;
+        LastRequestedRxBpfPreset = preset;
+    }
+
     public int RequestSampleRateCallCount { get; private set; }
 
     public int? LastRequestedSampleRate { get; private set; }
@@ -359,6 +376,24 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
         PersistSenseLevelCallCount++;
         LastPersistedSenseLevel = level;
+        return Task.CompletedTask;
+    }
+
+    public int PersistRxBpfPresetCallCount { get; private set; }
+
+    public RxBpfPreset? LastPersistedRxBpfPreset { get; private set; }
+
+    public Exception? PersistRxBpfPresetException { get; set; }
+
+    public Task PersistRxBpfPresetAsync(RxBpfPreset preset, CancellationToken ct = default)
+    {
+        if (PersistRxBpfPresetException is { } ex)
+        {
+            throw ex;
+        }
+
+        PersistRxBpfPresetCallCount++;
+        LastPersistedRxBpfPreset = preset;
         return Task.CompletedTask;
     }
 
@@ -591,6 +626,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public void RaiseMaintenanceCriticalStopRaised() => MaintenanceCriticalStopRaised?.Invoke();
 
     public void RaiseDecoderInstanceReplaced() => DecoderInstanceReplaced?.Invoke();
+
+    public void RaiseReconfigurationRejected() => ReconfigurationRejected?.Invoke();
 }
 
 internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposable
