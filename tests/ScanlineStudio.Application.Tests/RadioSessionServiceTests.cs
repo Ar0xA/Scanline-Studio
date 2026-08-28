@@ -411,4 +411,87 @@ public sealed class RadioSessionServiceTests
         var firstResult = await firstCall;
         Assert.True(firstResult.Success);
     }
+
+    // Restart-required-settings backlog item 5 (2026-08-28): code-review round-1 finding --
+    // RequestHamlibLibraryPathAsync's own OfType<IHamlibLibraryReconfiguration>().FirstOrDefault()
+    // resolution across the registered factories was previously untested.
+
+    [Fact]
+    public async Task RequestHamlibLibraryPathAsync_ReconfigurableFactoryRegistered_ForwardsTheCall()
+    {
+        var controller = new FakeRadioController();
+        var rigctldFactory = new FakeRadioProtocolFactory(new FakeRadioProtocol()); // does NOT implement the reconfiguration side-channel
+        var hamlibFactory = new FakeHamlibReconfigurableProtocolFactory
+        {
+            ResultToReturn = new HamlibLibraryReloadResult(true, "/opt/homebrew/lib/libhamlib.4.dylib", "Hamlib 4.6.0", []),
+        };
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [rigctldFactory, hamlibFactory], NullLogger<RadioSessionService>.Instance);
+
+        var result = await service.RequestHamlibLibraryPathAsync("/opt/homebrew/lib/libhamlib.4.dylib");
+
+        Assert.NotNull(result);
+        Assert.True(result.Applied);
+        Assert.Equal(1, hamlibFactory.ReloadLibraryCallCount);
+        Assert.Equal("/opt/homebrew/lib/libhamlib.4.dylib", hamlibFactory.LastRequestedOverridePath);
+    }
+
+    [Fact]
+    public async Task RequestHamlibLibraryPathAsync_NoReconfigurableFactoryRegistered_ReturnsNull()
+    {
+        var controller = new FakeRadioController();
+        var rigctldFactory = new FakeRadioProtocolFactory(new FakeRadioProtocol());
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [rigctldFactory], NullLogger<RadioSessionService>.Instance);
+
+        var result = await service.RequestHamlibLibraryPathAsync("/some/path.so");
+
+        Assert.Null(result); // matches every other optional-side-channel convention in this backlog
+    }
+
+    // Code-review round-2 finding: RequestHamlibLibraryPathAsync's Applied:false/rejected arm
+    // (ReloadHamlibLibraryAsync's own `else` branch, RadioSessionService.cs:313-316) and its
+    // FirstOrDefault-among-many resolution were untested at this layer.
+
+    [Fact]
+    public async Task RequestHamlibLibraryPathAsync_ReloadRejected_ReturnsAppliedFalseResult()
+    {
+        var controller = new FakeRadioController();
+        var hamlibFactory = new FakeHamlibReconfigurableProtocolFactory
+        {
+            ResultToReturn = new HamlibLibraryReloadResult(false, "/bad/path.so", null, ["candidate not found"]),
+        };
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [hamlibFactory], NullLogger<RadioSessionService>.Instance);
+
+        var result = await service.RequestHamlibLibraryPathAsync("/bad/path.so");
+
+        // Proves the else branch (the rejected-logging arm) runs to completion and surfaces the
+        // rejected result unchanged, rather than throwing or silently dropping the failure detail.
+        Assert.NotNull(result);
+        Assert.False(result.Applied);
+        Assert.Equal("/bad/path.so", result.ResolvedPath);
+        Assert.Contains("candidate not found", result.Attempts);
+    }
+
+    [Fact]
+    public async Task RequestHamlibLibraryPathAsync_MultipleReconfigurableFactoriesRegistered_UsesOnlyTheFirst()
+    {
+        var controller = new FakeRadioController();
+        var firstFactory = new FakeHamlibReconfigurableProtocolFactory
+        {
+            ResultToReturn = new HamlibLibraryReloadResult(true, "/first/libhamlib.so", "Hamlib 4.5.5", []),
+        };
+        var secondFactory = new FakeHamlibReconfigurableProtocolFactory
+        {
+            ResultToReturn = new HamlibLibraryReloadResult(true, "/second/libhamlib.so", "Hamlib 4.6.0", []),
+        };
+        var service = new RadioSessionService(controller, new FakeSettingsStore(), [firstFactory, secondFactory], NullLogger<RadioSessionService>.Instance);
+
+        var result = await service.RequestHamlibLibraryPathAsync("/some/path.so");
+
+        // FirstOrDefault picks registration order -- only the first-registered reconfigurable
+        // factory is ever called, never both.
+        Assert.NotNull(result);
+        Assert.Equal("/first/libhamlib.so", result.ResolvedPath);
+        Assert.Equal(1, firstFactory.ReloadLibraryCallCount);
+        Assert.Equal(0, secondFactory.ReloadLibraryCallCount);
+    }
 }

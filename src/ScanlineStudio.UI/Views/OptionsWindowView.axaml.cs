@@ -29,6 +29,16 @@ public partial class OptionsWindowView : Window
                     var dialog = new SampleRateChangeDeferredDialogView { DataContext = dialogVm };
                     await dialog.ShowDialog(this);
                 };
+                // See OptionsWindowViewModel.HamlibLibraryReloadFailedWarningRequested's own doc
+                // comment -- same await-before-close shape as the two dialogs above, but this one's
+                // message carries a real per-attempt failure detail (HamlibLibraryReloadFailedMessage),
+                // not a static locale string.
+                vm.HamlibLibraryReloadFailedWarningRequested += async () =>
+                {
+                    var dialogVm = new HamlibLibraryReloadFailedDialogViewModel(vm.HamlibLibraryReloadFailedMessage ?? string.Empty);
+                    var dialog = new HamlibLibraryReloadFailedDialogView { DataContext = dialogVm };
+                    await dialog.ShowDialog(this);
+                };
                 // Tier C audit finding (risk): unguarded before this fix -- RequestClose can fire
                 // AFTER the window already closed (e.g. the user closes it manually while the
                 // settings-save/SetCultureAsync await is still in flight; the continuation then

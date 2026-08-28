@@ -677,6 +677,26 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
         return TestPttResultToReturn;
     }
 
+    public int RequestHamlibLibraryPathCallCount { get; private set; }
+
+    public string? LastRequestedHamlibLibraryPath { get; private set; }
+
+    public HamlibLibraryReloadResult? HamlibLibraryReloadResultToReturn { get; set; } = new(true, "/fake/libhamlib.so.4", "Hamlib 4.5.5", []);
+
+    public Exception? HamlibLibraryReloadException { get; set; }
+
+    public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default)
+    {
+        RequestHamlibLibraryPathCallCount++;
+        LastRequestedHamlibLibraryPath = overridePath;
+        if (HamlibLibraryReloadException is { } ex)
+        {
+            throw ex;
+        }
+
+        return Task.FromResult(HamlibLibraryReloadResultToReturn);
+    }
+
     public int DisconnectCallCount { get; private set; }
 
     public Task DisconnectAsync()

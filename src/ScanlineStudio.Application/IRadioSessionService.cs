@@ -62,6 +62,18 @@ public interface IRadioSessionService
     /// At most one call runs at a time -- a concurrent call is rejected, not queued.</summary>
     Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default);
 
+    /// <summary>Restart-required-settings backlog item 5 (2026-08-28): applies a new Hamlib library
+    /// path LIVE, without an app restart. Resolves the registered <see cref="IRadioProtocolFactory"/>
+    /// that implements <c>ScanlineStudio.Abstractions.Radio.IHamlibLibraryReconfiguration</c> (a
+    /// no-op if none does -- returns <see langword="null"/>, matching every other optional-side-channel
+    /// convention in this backlog) and forwards the call. See that interface's own doc comment for
+    /// the full contract: an already-open Hamlib connection is unaffected and keeps running on the
+    /// previous library until it naturally reconnects; each call performs a fresh native load that is
+    /// never unloaded, so a caller must not invoke this unless the configured path actually changed.
+    /// Can throw <see cref="TimeoutException"/> if a concurrent reload is still in progress -- not
+    /// swallowed here, a caller must treat that as a real failure.</summary>
+    Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default);
+
     Task DisconnectAsync();
 
     Task SetFrequencyAsync(long hz, CancellationToken ct = default);

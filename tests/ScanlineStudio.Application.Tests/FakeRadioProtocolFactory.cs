@@ -112,3 +112,30 @@ internal sealed class FakeRadioProtocolFactory(FakeRadioProtocol protocol, Type?
         return protocol;
     }
 }
+
+/// <summary>Restart-required-settings backlog item 5 (2026-08-28): a minimal
+/// <see cref="IRadioProtocolFactory"/> that ALSO implements <see cref="IHamlibLibraryReconfiguration"/>
+/// -- lets <c>RadioSessionServiceTests</c> exercise <c>RadioSessionService.RequestHamlibLibraryPathAsync</c>'s
+/// own <c>_protocolFactories.OfType&lt;IHamlibLibraryReconfiguration&gt;().FirstOrDefault()</c>
+/// resolution without a real Hamlib module. Never claims any <see cref="RadioConnectionSpec"/> (this
+/// side-channel is orthogonal to normal connect-spec resolution, same as the real
+/// <c>HamlibProtocolFactory</c>'s own shape).</summary>
+internal sealed class FakeHamlibReconfigurableProtocolFactory : IRadioProtocolFactory, IHamlibLibraryReconfiguration
+{
+    public bool CanHandle(RadioConnectionSpec spec) => false;
+
+    public IRadioProtocol Create(RadioConnectionSpec spec) => throw new InvalidOperationException("Never called -- CanHandle always returns false.");
+
+    public int ReloadLibraryCallCount { get; private set; }
+
+    public string? LastRequestedOverridePath { get; private set; }
+
+    public HamlibLibraryReloadResult ResultToReturn { get; set; } = new(true, "/fake/libhamlib.so.4", "Hamlib 4.5.5", []);
+
+    public Task<HamlibLibraryReloadResult> ReloadLibraryAsync(string? overridePath, CancellationToken ct = default)
+    {
+        ReloadLibraryCallCount++;
+        LastRequestedOverridePath = overridePath;
+        return Task.FromResult(ResultToReturn);
+    }
+}

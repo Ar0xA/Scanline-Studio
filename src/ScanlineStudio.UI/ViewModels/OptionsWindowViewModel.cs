@@ -175,8 +175,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _hamlibLibraryPath;
 
-    /// <summary>Value of <see cref="HamlibLibraryPath"/> when this dialog was loaded -- see
-    /// <see cref="RestartRequiredWarningRequested"/>'s own doc comment.</summary>
+    /// <summary>Value of <see cref="HamlibLibraryPath"/> at dialog-load time -- restart-required-
+    /// settings backlog item 5 (2026-08-28): now ALSO the no-op guard baseline for the live Hamlib
+    /// library reload (see <see cref="SaveCoreAsync"/>'s own comment at that call site), not just the
+    /// old restart-warning comparison. Refreshed to the just-saved value on a SUCCESSFUL reload
+    /// (never on a failed one, so a later Save legitimately retries) -- without that refresh, every
+    /// subsequent Save in the same dialog session would re-trigger a real native library reload (and
+    /// permanent leak, see <c>IHamlibLibraryReconfiguration</c>'s own doc comment) even though
+    /// nothing changed.</summary>
     private string? _originalHamlibLibraryPath;
 
     /// <summary>Set inside <see cref="SaveCoreAsync"/> (reset to <see langword="false"/> at its own
@@ -187,6 +193,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// it directly (that method's own <c>bool</c> return already means something else: whether the
     /// whole save succeeded).</summary>
     private bool _sampleRateChangeDeferred;
+
+    /// <summary>Restart-required-settings backlog item 5 (2026-08-28): same shape/reset contract as
+    /// <see cref="_sampleRateChangeDeferred"/> immediately above, set when this Save's Hamlib
+    /// library-path reload request came back <c>Applied: false</c>, OR threw
+    /// <see cref="TimeoutException"/> (a concurrent reload still in progress -- treated as a failure,
+    /// NOT silently swallowed the way <see cref="SetCultureAsync"/>'s nearest-shaped catch below
+    /// would if copied naively; see <see cref="HamlibLibraryReloadFailedWarningRequested"/>'s own
+    /// doc comment).</summary>
+    private bool _hamlibLibraryReloadFailed;
+
+    /// <summary>The composed failure message for <see cref="HamlibLibraryReloadFailedWarningRequested"/>
+    /// -- unlike <see cref="SampleRateChangeDeferredWarningRequested"/>'s fully-static sibling dialog,
+    /// this one carries a real per-attempt failure detail, so it can't be a plain locale string
+    /// translated directly in the View. Set alongside <see cref="_hamlibLibraryReloadFailed"/>,
+    /// read by <c>OptionsWindowView.axaml.cs</c>'s own event handler to construct the dialog's
+    /// ViewModel.</summary>
+    public string? HamlibLibraryReloadFailedMessage { get; private set; }
 
     [ObservableProperty]
     private string? _hamlibDiscoveryStatusMessage;
@@ -1460,6 +1483,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             : _localization.GetString("Options.Radio.Hamlib.Probe.FoundNoModels", result.Version ?? string.Empty, result.ResolvedPath ?? string.Empty);
     }
 
+    /// <summary>Restart-required-settings backlog item 5 (2026-08-28): treats any blank value
+    /// (<see langword="null"/>, empty, or whitespace-only) as equal to any other blank value before
+    /// comparing -- a plain <c>!=</c> would count clearing an already-blank field (a TextBox binding
+    /// yields <c>""</c>, not <see langword="null"/>) as a real change, triggering a pointless native
+    /// reload + permanent leak for a no-op. Matches <c>HamlibLibraryLocator</c>'s own
+    /// <c>!string.IsNullOrWhiteSpace</c> blank test exactly (`:45`) -- NOT a stricter rule invented
+    /// here, so a genuine "clear the field to fall back to auto-detection" case (non-blank -> blank)
+    /// still correctly counts as a change and still reloads.</summary>
+    private static bool HamlibPathsAreEquivalent(string? a, string? b) =>
+        string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b) || a == b;
+
     partial void OnIsProbingHamlibChanged(bool value)
     {
         BrowseHamlibLibraryCommand.NotifyCanExecuteChanged();
@@ -1906,14 +1940,33 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     public event Action? RequestClose;
 
     /// <summary>Fired from <see cref="SaveAsync"/> only (not <see cref="RestartNowAsync"/>, which
-    /// already has its own explicit Restart Now/Not Now confirm) when a Save persisted a change to
-    /// <see cref="HamlibLibraryPath"/> or leaves a database-directory relocation still pending --
-    /// both genuinely restart-required (2026-08-27 audit, see <c>PROJECT_BRIEF.md</c>), with no
-    /// live-apply planned for either. The View awaits this before actually closing the dialog, so
-    /// the acknowledgement is seen before the window disappears. <c>Func&lt;Task&gt;</c>, not
+    /// already has its own explicit Restart Now/Not Now confirm) when a Save leaves a
+    /// database-directory relocation still pending -- genuinely restart-required (2026-08-27 audit,
+    /// see <c>PROJECT_BRIEF.md</c>), with no live-apply planned. Round-2 correction (2026-08-28,
+    /// restart-required-settings backlog item 5): this used to ALSO fire for a changed
+    /// <see cref="HamlibLibraryPath"/> -- that setting is now genuinely live, see
+    /// <see cref="HamlibLibraryReloadFailedWarningRequested"/> for its own (differently-shaped)
+    /// notice instead. The View awaits this before actually closing the dialog, so the
+    /// acknowledgement is seen before the window disappears. <c>Func&lt;Task&gt;</c>, not
     /// <c>Action</c>, specifically so the View can show a real modal dialog and have Save wait for
     /// the user's OK -- restarting itself stays entirely up to the user, this only informs them.</summary>
     public event Func<Task>? RestartRequiredWarningRequested;
+
+    /// <summary>Fired from <see cref="SaveAsync"/> only, when this Save's own
+    /// <see cref="IRadioSessionService.RequestHamlibLibraryPathAsync"/> call returned
+    /// <c>Applied: false</c>, or threw <see cref="TimeoutException"/> (a concurrent reload still in
+    /// progress). Same shape/placement as <see cref="SampleRateChangeDeferredWarningRequested"/>
+    /// immediately below -- independent of every other check in <see cref="SaveAsync"/>, all three
+    /// can fire on the same Save. Unlike that event, this one's dialog needs a real payload (the
+    /// specific failure detail), read from <see cref="HamlibLibraryReloadFailedMessage"/> by the
+    /// View's own handler rather than carried on the event itself (this stays a plain
+    /// <c>Func&lt;Task&gt;</c>, matching every other dialog-request event on this class).
+    /// The path itself was still PERSISTED regardless -- <see cref="OptionsSettingsService.SaveAsync"/>
+    /// runs unconditionally, before this call -- so a restart still picks it up; this notice is only
+    /// about the LIVE apply not having happened, and that the failure is worth the user's attention
+    /// (a typo'd path silently doing nothing would otherwise only surface much later, at Connect
+    /// time, with no link back to the Save that caused it).</summary>
+    public event Func<Task>? HamlibLibraryReloadFailedWarningRequested;
 
     /// <summary>Fired from <see cref="SaveAsync"/> only, when this Save's own
     /// <see cref="ISstvSessionService.RequestSampleRateAsync"/> call returned
@@ -2305,12 +2358,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         if (await SaveCoreAsync())
         {
-            // See RestartRequiredWarningRequested's own doc comment -- both conditions are
-            // genuinely restart-required with no live-apply, unlike everything else this dialog
-            // saves. PendingDatabaseDirectory (not IsConfirmingDatabaseRestart) so a relocation
-            // staged in an earlier dialog session, then left pending, still warns here even if the
-            // user never revisits that row this time.
-            var needsRestartWarning = HamlibLibraryPath != _originalHamlibLibraryPath || PendingDatabaseDirectory is not null;
+            // See RestartRequiredWarningRequested's own doc comment -- genuinely restart-required
+            // with no live-apply, unlike everything else this dialog saves. PendingDatabaseDirectory
+            // (not IsConfirmingDatabaseRestart) so a relocation staged in an earlier dialog session,
+            // then left pending, still warns here even if the user never revisits that row this
+            // time. HamlibLibraryPath is NOT part of this condition anymore (restart-required-settings
+            // backlog item 5, 2026-08-28) -- it applies live now, see
+            // HamlibLibraryReloadFailedWarningRequested below for its own (different-shaped) notice.
+            var needsRestartWarning = PendingDatabaseDirectory is not null;
             if (needsRestartWarning && RestartRequiredWarningRequested is not null)
             {
                 await RestartRequiredWarningRequested.Invoke();
@@ -2321,6 +2376,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             if (_sampleRateChangeDeferred && SampleRateChangeDeferredWarningRequested is not null)
             {
                 await SampleRateChangeDeferredWarningRequested.Invoke();
+            }
+
+            // See HamlibLibraryReloadFailedWarningRequested's own doc comment. Independent of both
+            // checks above -- all three can fire on the same Save.
+            if (_hamlibLibraryReloadFailed && HamlibLibraryReloadFailedWarningRequested is not null)
+            {
+                await HamlibLibraryReloadFailedWarningRequested.Invoke();
             }
 
             RequestClose?.Invoke();
@@ -2336,9 +2398,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <c>true</c>, identical to its own prior externally-observable behavior.</summary>
     private async Task<bool> SaveCoreAsync()
     {
-        // Reset every call -- see the field's own doc comment for why SaveAsync reads this
+        // Reset every call -- see the fields' own doc comments for why SaveAsync reads these
         // afterward rather than this method's own bool return.
         _sampleRateChangeDeferred = false;
+        _hamlibLibraryReloadFailed = false;
+        HamlibLibraryReloadFailedMessage = null;
 
         // The single most useful Debug line in the app for "why didn't my settings take effect"
         // bugs -- logs only the fields that are actually safe to log as-is (host/port/device ids/
@@ -2434,8 +2498,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // Closed-event refresh would be redundant here).
             _sstvSession.RequestReconfiguration(RxBpfPreset, DemodType, RxBufferMode);
 
-            // Sample rate (2026-08-27/28, restart-required-settings backlog item 4 -- the LAST item
-            // of this backlog): genuinely live now too, no longer requiring a restart. Different in
+            // Sample rate (2026-08-27/28, restart-required-settings backlog item 4): genuinely live
+            // now too, no longer requiring a restart. Different in
             // kind from every Request* call above -- this can reopen the actual RX capture device, so
             // it gets its OWN try/catch (not folded into the shared try this method is already inside)
             // -- a thrown TimeoutException/failure here must not abort the unrelated writes already
@@ -2462,6 +2526,54 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 Log.SampleRateChangeFailed(_logger, SampleRate, ex);
+            }
+
+            // Hamlib library path (2026-08-28, restart-required-settings backlog item 5 -- the LAST
+            // item of this backlog): genuinely live now too. Different in kind from every other
+            // Request* call above -- it performs a real, uncancellable native library load, so it
+            // gets its OWN try/catch (a thrown TimeoutException from a concurrent reload still in
+            // progress must not abort the unrelated writes below, same reasoning as the sample-rate
+            // block above). Only called when the path actually changed (normalized so a blank-to-blank
+            // reformat, e.g. null vs "", doesn't count as a change -- IHamlibLibraryReconfiguration's
+            // own doc comment: every call performs a fresh native load that is NEVER unloaded, so
+            // calling this unconditionally on every Save would leak a new loaded copy every time,
+            // whether or not the field was actually touched).
+            if (!HamlibPathsAreEquivalent(HamlibLibraryPath, _originalHamlibLibraryPath))
+            {
+                try
+                {
+                    var reloadResult = await _radioSession.RequestHamlibLibraryPathAsync(HamlibLibraryPath);
+                    if (reloadResult is { Applied: true })
+                    {
+                        // Only refresh the baseline on success -- see _originalHamlibLibraryPath's own
+                        // doc comment for why a failed reload must NOT refresh it (a later Save must
+                        // still be able to retry).
+                        _originalHamlibLibraryPath = HamlibLibraryPath;
+                        Log.HamlibLibraryPathApplied(_logger, reloadResult.ResolvedPath ?? "(unknown)");
+                    }
+                    else if (reloadResult is { Applied: false } rejected)
+                    {
+                        _hamlibLibraryReloadFailed = true;
+                        HamlibLibraryReloadFailedMessage = _localization.GetString(
+                            "Options.HamlibLibraryReloadFailedDialog.Message", string.Join("; ", rejected.Attempts));
+                        Log.HamlibLibraryPathRejected(_logger, string.Join("; ", rejected.Attempts));
+                    }
+
+                    // reloadResult is null when the registered IRadioProtocolFactory doesn't
+                    // implement IHamlibLibraryReconfiguration at all (e.g. a fake used by a test) --
+                    // matches every other is-test-gated Request* call's own silent-skip convention.
+                }
+                catch (Exception ex)
+                {
+                    // Round-2 plan-review finding: must NOT be a silent swallow (the nearest-shaped
+                    // precedent, SetCultureAsync's own catch below, logs-and-drops) -- a
+                    // TimeoutException here means the path change genuinely did not apply, and the
+                    // user needs to see that, not just have it vanish into a log line.
+                    _hamlibLibraryReloadFailed = true;
+                    HamlibLibraryReloadFailedMessage = _localization.GetString(
+                        "Options.HamlibLibraryReloadFailedDialog.Message", ex.Message);
+                    Log.HamlibLibraryPathReloadThrew(_logger, ex);
+                }
             }
 
             // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
@@ -2799,6 +2911,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Sample rate change to {SampleRate}Hz failed after a successful settings save")]
         public static partial void SampleRateChangeFailed(ILogger logger, int sampleRate, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Hamlib library path applied live: {ResolvedPath}")]
+        public static partial void HamlibLibraryPathApplied(ILogger logger, string resolvedPath);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Hamlib library path reload rejected -- previous library (if any) stays installed: {Attempts}")]
+        public static partial void HamlibLibraryPathRejected(ILogger logger, string attempts);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Hamlib library path reload threw after a successful settings save")]
+        public static partial void HamlibLibraryPathReloadThrew(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the Storage section's current locations failed")]
         public static partial void StorageLocationsLoadFailed(ILogger logger, Exception ex);
