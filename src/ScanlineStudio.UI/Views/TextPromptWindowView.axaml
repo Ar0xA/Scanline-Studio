@@ -1,0 +1,39 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.TextPromptWindowView"
+        x:DataType="vm:TextPromptWindowViewModel"
+        Title="{Binding Title}"
+        Width="380" Height="180"
+        MinWidth="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Configurations-preset backlog, Phase 4 (2026-08-28). Modeled on
+         RestartRequiredDialogView.axaml's own Border/Grid content-footer split, with a TextBox +
+         inline validation error added (FavouritesEditorWindowView.axaml's own ErrorMessage
+         TextBlock shape). First result-returning dialog in this codebase — see
+         TextPromptWindowViewModel's own doc comment. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding Message}" />
+
+            <TextBox Grid.Row="1" Classes="Industry IndustryInput" Text="{Binding Text}" />
+
+            <TextBlock Grid.Row="2"
+                       Text="{Binding ErrorMessage}"
+                       Foreground="{StaticResource IndustryDanger}"
+                       TextWrapping="Wrap"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+            <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate TextPrompt.CancelButton}" Command="{Binding CancelCommand}" IsCancel="True" />
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate TextPrompt.OkButton}" Command="{Binding OkCommand}" IsDefault="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

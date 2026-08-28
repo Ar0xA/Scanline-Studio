@@ -23,7 +23,13 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public IObservable<RadioConnectionEvent> ConnectionEvents { get; } = System.Reactive.Linq.Observable.Never<RadioConnectionEvent>();
 
-    public Task ConnectUsingSettingsAsync(CancellationToken ct = default) => Task.CompletedTask;
+    public int ConnectUsingSettingsCallCount { get; private set; }
+
+    public Task ConnectUsingSettingsAsync(CancellationToken ct = default)
+    {
+        ConnectUsingSettingsCallCount++;
+        return Task.CompletedTask;
+    }
 
     public RadioConnectionTestResult TestConnectionResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.None, null);
 
@@ -47,10 +53,24 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public HamlibLibraryReloadResult? HamlibLibraryReloadResultToReturn { get; set; } = new(true, "/fake/libhamlib.so.4", "Hamlib 4.5.5", []);
 
-    public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default) =>
-        Task.FromResult(HamlibLibraryReloadResultToReturn);
+    public int RequestHamlibLibraryPathCallCount { get; private set; }
 
-    public Task DisconnectAsync() => Task.CompletedTask;
+    public string? LastRequestedHamlibLibraryPath { get; private set; }
+
+    public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default)
+    {
+        RequestHamlibLibraryPathCallCount++;
+        LastRequestedHamlibLibraryPath = overridePath;
+        return Task.FromResult(HamlibLibraryReloadResultToReturn);
+    }
+
+    public int DisconnectCallCount { get; private set; }
+
+    public Task DisconnectAsync()
+    {
+        DisconnectCallCount++;
+        return Task.CompletedTask;
+    }
 
     public Task SetFrequencyAsync(long hz, CancellationToken ct = default) => Task.CompletedTask;
 
@@ -212,8 +232,24 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
 
     public Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default) => Task.FromResult(SafetySpec);
 
+    public int SaveSafetySettingsCallCount { get; private set; }
+
+    /// <summary>Test-only hook (Configurations-preset backlog, Phase 3 round-1 code-review): when set,
+    /// the NEXT <see cref="SaveSafetySettingsAsync"/> call throws this instead of saving, then this is
+    /// cleared back to <see langword="null"/> -- ONE-SHOT, same shape as <c>FakeSettingsStore.SaveAsyncExceptionOnce</c>
+    /// -- lets a test prove <c>ConfigurationPresetService</c>'s own per-push try/catch actually catches
+    /// a thrown exception from this specific push rather than letting it abort every push after it.</summary>
+    public Exception? SaveSafetySettingsExceptionOnce { get; set; }
+
     public Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default)
     {
+        if (SaveSafetySettingsExceptionOnce is { } ex)
+        {
+            SaveSafetySettingsExceptionOnce = null;
+            throw ex;
+        }
+
+        SaveSafetySettingsCallCount++;
         SafetySpec = spec;
         SafetySettingsChanged?.Invoke(spec);
         return Task.CompletedTask;

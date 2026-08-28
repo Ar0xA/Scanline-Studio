@@ -15,8 +15,17 @@ internal sealed class FakeAudioDeviceEnumerator : IAudioDeviceEnumerator
     /// that comes after.</summary>
     public Task? Gate { get; set; }
 
+    /// <summary>Configurations-preset backlog, Phase 1 (2026-08-28): fired synchronously on every
+    /// call, BEFORE <see cref="InputDevices"/>/<see cref="OutputDevices"/> would be read by whatever
+    /// called <see cref="RefreshAsync"/> -- lets a test mutate the device list between two resolve
+    /// attempts within the SAME production call (e.g. RequestCaptureDeviceAsync's own requested-then-
+    /// rollback resolve pair), which a plain settable property alone can't express.</summary>
+    public Action? OnRefreshAsync { get; set; }
+
     public async Task RefreshAsync(CancellationToken ct = default)
     {
+        OnRefreshAsync?.Invoke();
+
         if (Gate is not null)
         {
             // Round-10: respects `ct` (via Task.WaitAsync, not a plain await) so a test can prove a
