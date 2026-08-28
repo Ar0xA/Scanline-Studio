@@ -261,6 +261,96 @@ public class DecoderReconfigurationLiveApplyTests
         Assert.Equal(RxBufferMode.Off, decoder.InnerRxBufferModeForTests);
     }
 
+    // Restart-required-settings backlog item 6 (RX BPF Receive-tab live dropdown, 2026-08-28):
+    // RequestRxBpfPreset is a per-field-merge sibling of RequestReconfiguration above, mirroring
+    // RequestSampleRate's own already-audited shape -- see that method's own doc comment. Round-1
+    // plan-review's rejected design (RequestReconfiguration called with "current" DemodType/
+    // RxBufferMode from the Receive tab) would have silently clobbered a separately-queued Options
+    // change to either field; the tests below prove the per-field design instead.
+
+    [Fact]
+    public void RequestRxBpfPreset_EqualToCurrentValue_ClearsAnyPendingAndNeverSwaps()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestRxBpfPreset(RxBpfPreset.Wide);
+        decoder.PushSamples(new float[8]); // idle -- would swap if anything were actually pending
+
+        Assert.Equal(0, decoder.RestartCountForTests);
+    }
+
+    [Fact]
+    public void RequestRxBpfPreset_QueuesAndAppliesOnNextIdlePush()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestRxBpfPreset(RxBpfPreset.Narrow);
+        decoder.PushSamples(new float[8]); // idle, pending queued -- the ONLY discretionary swap trigger
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.RxBpfPreset);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+        // DemodType/RxBufferMode must stay UNCHANGED -- proves this method never touches them.
+        Assert.Equal(DemodType.Hilbert, decoder.InnerDemodTypeForTests);
+        Assert.Equal(RxBufferMode.On, decoder.InnerRxBufferModeForTests);
+    }
+
+    [Fact]
+    public void RequestRxBpfPreset_QueueThenRevertBeforeIdlePush_CancelsPendingRequest()
+    {
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestRxBpfPreset(RxBpfPreset.Narrow);
+        decoder.RequestRxBpfPreset(RxBpfPreset.Wide); // reverts to the currently-committed value
+
+        decoder.PushSamples(new float[8]);
+
+        Assert.Equal(0, decoder.RestartCountForTests);
+    }
+
+    [Fact]
+    public void RequestRxBpfPreset_PreservesSeparatelyPendingDemodTypeAndRxBufferMode()
+    {
+        // The blocker round-1's rejected design would have broken: a separately-queued DemodType/
+        // RxBufferMode change (from RequestReconfiguration, e.g. an Options Save) must survive a
+        // LATER RequestRxBpfPreset call (from the Receive tab) untouched.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestReconfiguration(RxBpfPreset.Wide, DemodType.Pll, RxBufferMode.Extended); // BPF unchanged, Demod/Buffer queued
+        decoder.RequestRxBpfPreset(RxBpfPreset.Narrow); // must not clobber the queued Demod/Buffer change
+
+        decoder.PushSamples(new float[8]);
+
+        Assert.Equal(1, decoder.RestartCountForTests); // one swap, not two
+        Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+        Assert.Equal(DemodType.Pll, decoder.InnerDemodTypeForTests);
+        Assert.Equal(RxBufferMode.Extended, decoder.InnerRxBufferModeForTests);
+    }
+
+    [Fact]
+    public void RequestReconfiguration_OverwritesASeparatelyPendingRxBpfPreset_ByDesign()
+    {
+        // The REVERSE of the test above is deliberately NOT true (round-2 plan-review correction: an
+        // earlier draft of this test suite wrongly expected preservation here too).
+        // RequestReconfiguration writes all three fields unconditionally on every call -- Options
+        // genuinely intends to set BPF on every Save -- so a pending RequestRxBpfPreset is
+        // OVERWRITTEN, not merged.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 1_000_000, criticalThresholdSamples: 10_000_000,
+            demodType: DemodType.Hilbert, rxBpfPreset: RxBpfPreset.Wide, rxBufferMode: RxBufferMode.On);
+
+        decoder.RequestRxBpfPreset(RxBpfPreset.Narrow); // queued from the Receive tab
+        decoder.RequestReconfiguration(RxBpfPreset.VeryNarrow, DemodType.Hilbert, RxBufferMode.On); // an Options Save overwrites it
+
+        decoder.PushSamples(new float[8]);
+
+        Assert.Equal(1, decoder.RestartCountForTests);
+        Assert.Equal(RxBpfPreset.VeryNarrow, decoder.InnerRxBpfPresetForTests); // NOT Narrow
+    }
+
     private static async Task CollectAsync(IAsyncEnumerable<float> samples, List<float> destination)
     {
         await foreach (var sample in samples)

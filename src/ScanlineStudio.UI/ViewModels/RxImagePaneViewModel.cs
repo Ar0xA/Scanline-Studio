@@ -443,8 +443,21 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
         ];
         // Direct field assignment, NOT the generated property setter -- same reasoning as
-        // _autoSlantEnabled above (this property has no per-change side effect either).
+        // _autoSlantEnabled above used to have BEFORE this row became live (restart-required-settings
+        // backlog item 6, 2026-08-28) -- the setter now has a real side effect (OnRxBpfPresetChanged
+        // below), which the constructor's own initial seed must not trigger.
         _rxBpfPreset = sstvSession.RxBpfPreset;
+        // Input Chain card's "BPF" row -- same shape as SenseLevelOptions above, reusing the Options
+        // window's own real "Options.Decode.RxBpf.*" locale keys, in RxBpfPreset's own enum order
+        // (Off=0, Wide=1, Narrow=2, VeryNarrow=3) -- matches the Options window's own radio button
+        // order too.
+        RxBpfPresetOptions =
+        [
+            _localization.GetString("Options.Decode.RxBpf.Normal"),
+            _localization.GetString("Options.Decode.RxBpf.Wide"),
+            _localization.GetString("Options.Decode.RxBpf.Sharp"),
+            _localization.GetString("Options.Decode.RxBpf.VerySharp"),
+        ];
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
@@ -456,6 +469,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         // RefreshRxBpfPresetFromSession -- see that method's own doc comment for why a pull-based
         // Options-Closed refresh (like AutoSlantEnabled/SenseLevel above use) would be redundant here.
         sstvSession.DecoderInstanceReplaced += OnDecoderInstanceReplaced;
+        // Restart-required-settings backlog item 6 (2026-08-28): the BPF row is now a live EDITOR,
+        // not a read-only mirror -- a rejected reconfiguration (from ANY source, not just this row's
+        // own request; see OnReconfigurationRejected's own doc comment) must re-sync this row back to
+        // whatever's actually applied, or it would permanently show a preset that was requested but
+        // never took effect.
+        sstvSession.ReconfigurationRejected += OnReconfigurationRejected;
 
         _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
@@ -672,10 +691,89 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// window's own Closed event, unlike <see cref="AutoSlantEnabled"/>/<see cref="SenseLevel"/>
     /// above -- see that method's own doc comment for why). Seeded directly from the backing field
     /// in the constructor (NOT the generated property setter), same reasoning as
-    /// <see cref="AutoSlantEnabled"/>'s own construction-time seed above.</summary>
+    /// <see cref="AutoSlantEnabled"/>'s own construction-time seed above.
+    ///
+    /// Genuinely user-EDITABLE from the Receive tab too as of 2026-08-28 (restart-required-settings
+    /// backlog item 6) -- see <see cref="OnRxBpfPresetChanged"/> for what a real ComboBox selection
+    /// does. Still the single source of truth for both <see cref="RxBpfDisplay"/> and the new
+    /// <see cref="RxBpfPresetIndex"/> int-proxy the ComboBox actually binds to.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(RxBpfDisplay))]
+    [NotifyPropertyChangedFor(nameof(RxBpfPresetIndex))]
     private RxBpfPreset _rxBpfPreset;
+
+    /// <summary>Bridges <see cref="RxBpfPreset"/> (enum) to the Input Chain card's ComboBox, whose
+    /// <c>SelectedIndex</c> is an <see langword="int"/> -- restart-required-settings backlog item 6
+    /// (2026-08-28). NOT an <c>[ObservableProperty]</c>: needs a custom setter, since an out-of-range
+    /// value must never reach <see cref="RxBpfPreset"/> at all (unlike <see cref="SenseLevel"/>'s own
+    /// <see cref="_lastValidSenseLevel"/> guard, which reverts THROUGH its own canonical property --
+    /// there is no valid enum value to revert through here, so this guard just re-raises
+    /// <see cref="PropertyChanged"/> for this property alone, snapping the view back to whatever
+    /// <see cref="RxBpfPreset"/> already holds, without ever calling <see cref="OnRxBpfPresetChanged"/>).
+    /// The -1 case is the same reachable edge case <see cref="_lastValidSenseLevel"/>'s own doc
+    /// comment describes: a ComboBox's <c>SelectedIndex</c> can transiently go -1 when its selection
+    /// is cleared.</summary>
+    public int RxBpfPresetIndex
+    {
+        get => (int)RxBpfPreset;
+        set
+        {
+            if (value is < 0 or > 3)
+            {
+                OnPropertyChanged(nameof(RxBpfPresetIndex));
+                return;
+            }
+
+            RxBpfPreset = (RxBpfPreset)value;
+        }
+    }
+
+    /// <summary>Input Chain card's "BPF" dropdown's own item labels, in <see cref="RxBpfPreset"/>'s
+    /// exact enum order (Off=0..VeryNarrow=3) -- same shape as <see cref="SenseLevelOptions"/> above,
+    /// reusing the Options window's own real "Options.Decode.RxBpf.*" locale keys for the same
+    /// underlying setting. Built once at construction; the 4 options themselves never change.</summary>
+    public IReadOnlyList<string> RxBpfPresetOptions { get; }
+
+    /// <summary>Same ordering-safety shape as <see cref="_pendingSenseLevelPersist"/> above.</summary>
+    private Task _pendingRxBpfPresetPersist = Task.CompletedTask;
+
+    /// <summary>Fires on every <see cref="RxBpfPreset"/> PROPERTY assignment -- a real ComboBox
+    /// selection (via <see cref="RxBpfPresetIndex"/>'s setter), OR <see cref="RefreshRxBpfPresetFromSession"/>
+    /// below. Restart-required-settings backlog item 6 (2026-08-28) -- same live-request/persist
+    /// shape as <see cref="OnSenseLevelChanged"/> above, but forwards to
+    /// <see cref="ISstvSessionService.RequestRxBpfPreset"/>, NOT <see cref="ISstvSessionService.RequestReconfiguration"/>
+    /// with some "current" DemodType/RxBufferMode -- see that method's own doc comment for why (it
+    /// would silently clobber, or be clobbered by, a separately-queued Options change to either of
+    /// those two fields).
+    ///
+    /// Can re-fire redundantly, harmlessly, from <see cref="RefreshRxBpfPresetFromSession"/> when an
+    /// OPTIONS-originated BPF change lands (this field was stale, the refresh assigns a genuinely
+    /// different value) -- NOT when THIS row originated the change (the field already matches, the
+    /// generated setter's equality check skips this method entirely). The redundant call is a genuine
+    /// no-op against <c>RestartableSstvDecoder</c>'s own committed field, and the redundant persist
+    /// write is the same accepted cost <see cref="OnSenseLevelChanged"/>'s own doc comment already
+    /// accepts for its own revert case. A periodic maintenance-only restart preserves the current
+    /// preset, so this never fires for those (no value change).</summary>
+    partial void OnRxBpfPresetChanged(RxBpfPreset value)
+    {
+        _sstvSession.RequestRxBpfPreset(value);
+        _pendingRxBpfPresetPersist = PersistRxBpfPresetAsync(value, _pendingRxBpfPresetPersist);
+    }
+
+    /// <summary>Same ordering-safety/error-handling shape as <see cref="PersistSenseLevelAsync"/>
+    /// above -- see that method's own doc comment for the full reasoning.</summary>
+    private async Task PersistRxBpfPresetAsync(RxBpfPreset value, Task previous)
+    {
+        try
+        {
+            await previous.ConfigureAwait(false);
+            await _sstvSession.PersistRxBpfPresetAsync(value).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistRxBpfPresetFailed(_logger, ex);
+        }
+    }
 
     /// <summary>Re-syncs <see cref="RxBpfPreset"/> from the session -- called from
     /// <see cref="OnDecoderInstanceReplaced"/>, NOT the Options window's own Closed event that
@@ -688,13 +786,26 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// take visible effect until the decoder's next idle swap fires this refresh.</summary>
     private void OnDecoderInstanceReplaced() => Dispatcher.UIThread.Post(RefreshRxBpfPresetFromSession);
 
+    /// <summary>Re-syncs <see cref="RxBpfPreset"/> back to whatever's actually applied when a queued
+    /// reconfiguration is rejected (restart-required-settings backlog item 6, 2026-08-28) -- without
+    /// this, a rejected Receive-tab-originated change would leave the row permanently showing a
+    /// preset that was requested but never took effect (already persisted to disk, too). Fires for
+    /// ANY rejection, not just a BPF-driven one (see <c>ISstvSessionService.ReconfigurationRejected</c>'s
+    /// own doc comment for why) -- harmless either way, since this just re-reads current state.</summary>
+    private void OnReconfigurationRejected() => Dispatcher.UIThread.Post(RefreshRxBpfPresetFromSession);
+
     public void RefreshRxBpfPresetFromSession() => RxBpfPreset = _sstvSession.RxBpfPreset;
 
-    /// <summary>Input Chain card's "BPF" row -- the preset NAME only, not a cutoff figure (see
-    /// <see cref="ISstvDecoder.RxBpfPreset"/>'s own doc comment for why a cutoff would be wrong
-    /// whenever unlocked). Reuses the Options window's own real "Options.Decode.RxBpf.*" locale
-    /// keys for the same underlying setting (Off is labeled "Normal" there, Narrow/VeryNarrow are
-    /// "Sharp"/"Very sharp" -- matching that existing user-facing naming, not the enum's own).</summary>
+    /// <summary>Was the Input Chain card's "BPF" row's own display text before that row became a
+    /// live ComboBox (restart-required-settings backlog item 6, 2026-08-28, bound to
+    /// <see cref="RxBpfPresetIndex"/>/<see cref="RxBpfPresetOptions"/> instead). Deliberately KEPT,
+    /// not removed -- no view references it any more, but it's still covered by an existing test and
+    /// costs nothing to keep; removing a tested public property is out of scope for that change. The
+    /// preset NAME only, not a cutoff figure (see <see cref="ISstvDecoder.RxBpfPreset"/>'s own doc
+    /// comment for why a cutoff would be wrong whenever unlocked). Reuses the Options window's own
+    /// real "Options.Decode.RxBpf.*" locale keys for the same underlying setting (Off is labeled
+    /// "Normal" there, Narrow/VeryNarrow are "Sharp"/"Very sharp" -- matching that existing
+    /// user-facing naming, not the enum's own).</summary>
     public string RxBpfDisplay => RxBpfPreset switch
     {
         ScanlineStudio.Abstractions.Sstv.RxBpfPreset.Narrow => _localization.GetString("Options.Decode.RxBpf.Sharp"),
@@ -1916,6 +2027,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the Squelch level failed")]
         public static partial void PersistSenseLevelFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the RX BPF preset failed")]
+        public static partial void PersistRxBpfPresetFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Quick-mode grid slot {SlotIndex} reassigned to mode {ModeId}")]
         public static partial void ReassignQuickModeSlotInvoked(ILogger logger, int slotIndex, string modeId);
