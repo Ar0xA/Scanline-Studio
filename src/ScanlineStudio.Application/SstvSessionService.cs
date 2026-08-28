@@ -64,6 +64,30 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // gap right after that check passes but before the rate change actually finishes).
     private bool _sampleRateChangeInProgress;
 
+    // Configurations-preset backlog, Phase 1 (2026-08-28): the capture device id this class last
+    // committed to, via EITHER a successful StartReceivingLockedAsync (latched there, from whatever
+    // the resolver actually opened -- may differ from what was requested on a fallback) OR
+    // ApplyCaptureDeviceLockedAsync's own idle-path commit (latched from the REQUEST, since there is
+    // no open capture to resolve against yet). Null only until the first of either happens (never
+    // seeded at construction). Code-review round-2 finding: NOT strictly "what's currently open" --
+    // it can be optimistically set on the idle path before RX ever actually opens anything.
+    // RequestCaptureDeviceAsync's own no-op guard compares against THIS,
+    // not against persisted AudioDeviceSettings -- TryResolveDeviceAsync's own
+    // persistIfResolvedIndirectly write can silently change that field to a fallback device behind
+    // this class's back, so it is not a reliable "what's actually open" signal on its own. Mirrors
+    // RequestSampleRateAsync's own no-op guard against _decoder.SampleRate, a property that is
+    // always meaningful regardless of receiving state; this field is the closest analogue capture
+    // devices have, since there is no persistent decoder-like object that always holds a current
+    // device the way the decoder always holds a current sample rate.
+    private string? _activeCaptureDeviceId;
+
+    // Configurations-preset backlog, Phase 1: same TOCTOU-closing shape as
+    // _sampleRateChangeInProgress immediately above, for a capture-device swap instead of a rate
+    // change -- a SEPARATE dedicated flag, not a rename/generalization of the existing one, so
+    // RequestSampleRateAsync's own already-audited (rounds 2/3/4/16-22) commit sequence is never
+    // touched by this addition.
+    private bool _captureDeviceChangeInProgress;
+
     private int _recordingExceptionCount;
 
     // Piece C2: single-flight guard for DecodeFromFileAsync, same CompareExchange shape as
@@ -469,6 +493,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode) => AnalogFmSstvEncoder.GetVisHeaderInfo(mode);
 
     public bool IsReceiving => _isReceiving;
+
+    /// <summary>See <see cref="ISstvSessionService.IsTransmitting"/>.</summary>
+    public bool IsTransmitting => Volatile.Read(ref _transmitInFlight) != 0;
+
+    /// <summary>See <see cref="ISstvSessionService.IsRecording"/>.</summary>
+    public bool IsRecording
+    {
+        get
+        {
+            lock (_recordingLock)
+            {
+                return _recordingChunks is not null;
+            }
+        }
+    }
 
     /// <summary>See <see cref="ISstvSessionService.IsAutoDetectPaused"/>.</summary>
     public bool IsAutoDetectPaused => _autoDetectPaused;
@@ -1493,6 +1532,179 @@ public sealed partial class SstvSessionService : ISstvSessionService
         throw new InvalidOperationException(message, restartFailure);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestCaptureDeviceAsync"/>. Same gate/no-op/
+    /// defer-on-recording shape as <see cref="RequestSampleRateAsync"/> above -- see that method's
+    /// own doc comment for the shared reasoning behind each step.</summary>
+    public async Task<CaptureDeviceApplyResult> RequestCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Log.CaptureDeviceChangeRequested(_logger, deviceId);
+
+        // Step 0: a no-op guard BEFORE touching anything -- see _activeCaptureDeviceId's own doc
+        // comment for why this compares against THAT field, not persisted settings.
+        if (deviceId == _activeCaptureDeviceId)
+        {
+            return CaptureDeviceApplyResult.NoChange;
+        }
+
+        if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false))
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "RequestCaptureDeviceAsync (rxTransitionGate wait timed out)", new TimeoutException()));
+            throw new TimeoutException("Timed out waiting to apply a capture device change -- a concurrent RX transition did not finish in time.");
+        }
+
+        try
+        {
+            // Re-checked now that the gate is actually held -- a racing caller may have already
+            // committed this exact device while this call was waiting for the gate.
+            if (deviceId == _activeCaptureDeviceId)
+            {
+                return CaptureDeviceApplyResult.NoChange;
+            }
+
+            lock (_recordingLock)
+            {
+                if (_recordingChunks is not null)
+                {
+                    Log.CaptureDeviceChangeDeferred(_logger, deviceId);
+                    return CaptureDeviceApplyResult.DeferredRecordingInProgress;
+                }
+
+                _captureDeviceChangeInProgress = true;
+            }
+
+            try
+            {
+                return await ApplyCaptureDeviceLockedAsync(deviceId, deviceName).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_recordingLock)
+                {
+                    _captureDeviceChangeInProgress = false;
+                }
+            }
+        }
+        finally
+        {
+            _rxTransitionGate.Release();
+        }
+    }
+
+    /// <summary>The actual commit sequence for <see cref="RequestCaptureDeviceAsync"/> -- called only
+    /// while <see cref="_rxTransitionGate"/> is held and the recording-in-progress check has already
+    /// passed. Same stop-then-commit-then-restart shape as <see cref="ApplySampleRateLockedAsync"/> --
+    /// capture being fully stopped BEFORE the settings write is what makes
+    /// <see cref="StartReceivingLockedAsync"/>'s own fresh device resolution safe to rely on
+    /// afterward.</summary>
+    private async Task<CaptureDeviceApplyResult> ApplyCaptureDeviceLockedAsync(string? deviceId, string? deviceName)
+    {
+        var previousSettings = await LoadAudioSettingsAsync(CancellationToken.None).ConfigureAwait(false);
+        var previousDeviceId = previousSettings.CaptureDeviceId;
+        var previousDeviceName = previousSettings.CaptureDeviceName;
+
+        var wasReceiving = _isReceiving;
+        if (wasReceiving)
+        {
+            await StopReceivingLockedAsync().ConfigureAwait(false);
+        }
+
+        try
+        {
+            await PersistCaptureDeviceAsync(deviceId, deviceName, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Code-review round-1 finding: persisting the NEW device itself failing (e.g. disk
+            // full/permission denied) used to leave RX silently dead with no restart attempt --
+            // capture is already stopped at this point. Best-effort restore RX at the OLD device
+            // before this exception propagates, so a persist failure doesn't ALSO strand RX. The
+            // persist failure itself is a genuinely different problem than "device unresolvable"
+            // below -- it must still propagate (not get silently turned into a Rejected result), a
+            // restart failure here must not mask it (swallowed, not rethrown).
+            if (wasReceiving)
+            {
+                try
+                {
+                    await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Swallowed deliberately -- the persist failure about to propagate is the one
+                    // that matters; a restart failure here would just mask it.
+                }
+            }
+
+            throw;
+        }
+
+        _activeCaptureDeviceId = deviceId;
+
+        if (!wasReceiving)
+        {
+            Log.CaptureDeviceChangeApplied(_logger, _activeCaptureDeviceId);
+            return CaptureDeviceApplyResult.Applied;
+        }
+
+        try
+        {
+            // StartReceivingLockedAsync resolves the device FRESH from the settings write just
+            // above (ResolveDeviceAsync -> TryResolveDeviceAsync, SstvSessionService.cs -- no
+            // parameter threading needed here) -- if resolution falls back to a DIFFERENT device
+            // than requested (e.g. the requested one vanished between persist and restart), that
+            // fallback is what actually ends up latched into _activeCaptureDeviceId by
+            // StartReceivingLockedAsync itself (see that field's own doc comment), which is correct:
+            // this method's own Applied result reflects reality, not blindly the input -- the log
+            // line below reads _activeCaptureDeviceId for the same reason (code-review round-1
+            // finding: this used to log the REQUESTED deviceId, which could be wrong on a fallback).
+            await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+            Log.CaptureDeviceChangeApplied(_logger, _activeCaptureDeviceId);
+            return CaptureDeviceApplyResult.Applied;
+        }
+        catch (Exception ex) when (ex is AudioDeviceUnavailableException || (ex is InvalidOperationException and not ObjectDisposedException))
+        {
+            // Code-review round-1 finding: the original filter was `catch (InvalidOperationException)`
+            // alone, which (a) MISSED the realistic failure -- MiniAudioEngine wraps every native
+            // capture-open failure (device busy, unsupported rate, unplugged mid-swap) in
+            // AudioDeviceUnavailableException, not InvalidOperationException, so that case escaped
+            // uncaught, leaving RX dead with an unopenable device already persisted across restarts
+            // -- while (b) being simultaneously TOO BROAD, since ObjectDisposedException derives from
+            // InvalidOperationException and would have triggered a spurious rollback write during a
+            // disposal race (StopReceivingLockedAsync's own watchdog can force _isReceiving=false
+            // while a genuinely disposed engine still throws from underneath). Corrected filter
+            // catches the real "device didn't come up" cases and explicitly excludes disposal.
+            //
+            // Roll back to whatever was active before this call and attempt ONE restart at that
+            // value. If even THAT throws, this method lets it propagate uncaught (matches
+            // HandleSampleRateBusyAsync's own "genuinely unrecoverable -- throw, don't return an enum
+            // value pretending it's a normal outcome" precedent).
+            await PersistCaptureDeviceAsync(previousDeviceId, previousDeviceName, CancellationToken.None).ConfigureAwait(false);
+            _activeCaptureDeviceId = previousDeviceId;
+
+            await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+            // Code-review round-2 finding: the caught exception used to be discarded entirely, and
+            // the log message used to unconditionally claim "no capture device could be resolved at
+            // all" -- wrong for the REALISTIC case this filter also catches (a device that enumerates
+            // but fails to actually open, e.g. AudioDeviceUnavailableException). Logging `ex` here
+            // captures the real native reason regardless of which of the two catches fired.
+            Log.CaptureDeviceChangeRejected(_logger, deviceId, ex);
+            return CaptureDeviceApplyResult.Rejected;
+        }
+    }
+
+    /// <summary>Writes the caller-REQUESTED device id/name directly -- unlike the existing
+    /// <c>PersistResolvedDeviceAsync</c> (which persists whatever a resolution actually landed on),
+    /// this persists exactly what the caller asked for, since <see cref="RequestCaptureDeviceAsync"/>
+    /// is the one entry point that DECIDES the device, rather than resolving one from existing
+    /// settings. Same read-modify-write shape as <see cref="PersistSenseLevelAsync"/> below.</summary>
+    private async Task PersistCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var previous = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+        var updated = previous with { CaptureDeviceId = deviceId, CaptureDeviceName = deviceName };
+        await _settingsStore.SaveAsync(appSettings.WithSection(AudioDeviceSettings.SectionKey, updated, AudioSettingsJsonContext.Default.AudioDeviceSettings), ct).ConfigureAwait(false);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.PersistSenseLevelAsync"/>. Read-modify-write
     /// against whatever is currently persisted for this section, not a fresh
     /// <c>new SstvDecoderSettings { ... }</c> -- matches this codebase's own established convention
@@ -1815,6 +2027,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _audioEngine.SamplesCaptured += _levelMeterHandler;
         _isReceiving = true;
+        // Configurations-preset backlog, Phase 1 (2026-08-28): latched here, at the exact point
+        // capture is confirmed genuinely open -- see this field's own doc comment for why it isn't
+        // seeded at construction or read back from settings.
+        _activeCaptureDeviceId = device.Id;
 
         // ultracode audit finding #6: legacy resets its AGC (CLVL::Init) at every TX<->RX transition
         // (Sound.cpp:398,443) -- this is that transition point on the RX-resuming side.
@@ -2014,6 +2230,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
             if (_sampleRateChangeInProgress)
             {
                 throw new InvalidOperationException("Cannot start recording while a sample rate change is being applied.");
+            }
+
+            // Configurations-preset backlog, Phase 1 (2026-08-28): same TOCTOU close as the check
+            // immediately above, for RequestCaptureDeviceAsync's own commit sequence.
+            if (_captureDeviceChangeInProgress)
+            {
+                throw new InvalidOperationException("Cannot start recording while a capture device change is being applied.");
             }
 
             _recordingChunks = [];
@@ -4505,6 +4728,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Sample rate change failed -- the decoder was busy after an abandoned capture stop")]
         public static partial void SampleRateChangeBusy(ILogger logger, Exception? restartFailure);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Capture device change requested: {DeviceId}")]
+        public static partial void CaptureDeviceChangeRequested(ILogger logger, string? deviceId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Capture device change applied: {DeviceId}")]
+        public static partial void CaptureDeviceChangeApplied(ILogger logger, string? deviceId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture device change to {DeviceId} deferred -- a recording is in progress")]
+        public static partial void CaptureDeviceChangeDeferred(ILogger logger, string? deviceId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture device change to {DeviceId} rejected -- rolled back to the previous device")]
+        public static partial void CaptureDeviceChangeRejected(ILogger logger, string? deviceId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);

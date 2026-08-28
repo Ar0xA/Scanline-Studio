@@ -13,7 +13,7 @@
         x:Class="ScanlineStudio.UI.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Icon="/Assets/app-icon.ico"
-        Title="{loc:Translate MainWindow.Title}"
+        Title="{Binding WindowTitleDisplay}"
         Width="1920" Height="1032"
         MinWidth="1920" MinHeight="640"
         WindowStartupLocation="CenterScreen"
@@ -79,17 +79,18 @@
                 <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.Exit}" Command="{Binding ExitCommand}" />
             </MenuItem>
-            <!-- Station/Audio-devices pruned (now redundant with Options' TX/Audio tabs, which
-                 have the real fields this stub only ever pointed at). Storage's own former entry
-                 here (stub survey Tier 2, wired 2026-08-26) was removed 2026-08-27 — its one
-                 setting (the RX images folder) moved into Options > General's new Storage section
-                 alongside the new Config/Database/Log rows, so this menu now only covers Macros. -->
-            <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations}">
-                <!-- Stub survey Tier 3 (2026-08-26): user narrowed this to a read-only token
-                     reference + live preview (AskUserQuestion) — IMacroTextResolver has no
-                     user-extensible macro list, only fixed known tokens, so there is nothing to
-                     "edit." -->
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Configurations.Macros}" Command="{Binding OpenMacrosReferenceCommand}" />
+            <!-- Configurations-preset backlog, Phase 4b (2026-08-28, cascading-menu redesign — direct
+                 user correction: "no popup menus or modal windows... a submenu opens with Clone into,
+                 reset, Rename"). Every configuration is a per-row cascading submenu, built entirely
+                 in code-behind (MainWindow.axaml.cs's own SubmenuOpened handler) — no standalone
+                 "Manage Configurations" dialog anymore. The one static child below is NOT decorative:
+                 an Avalonia MenuItem with zero Items never opens a submenu popup at all, so
+                 SubmenuOpened would never fire without it. It doubles as the genuine
+                 "no saved configurations" fallback (should never really show, since Default always
+                 auto-seeds) — the code-behind toggles its IsVisible and always keeps it as the LAST
+                 item; every dynamic per-configuration item is inserted before it. -->
+            <MenuItem x:Name="ConfigurationsMenuItem" Header="{loc:Translate MainWindow.Menu.Configurations}">
+                <MenuItem x:Name="ConfigurationsNoneSavedPlaceholder" Header="{loc:Translate MainWindow.Menu.Configurations.NoneSaved}" IsEnabled="False" />
             </MenuItem>
             <!-- Rig & PTT removed per direct user request (2026-08-25) — all 3 items (PTT method,
                  Frequency memories, Test PTT) were disabled stubs, never wired to a real command;
@@ -133,6 +134,13 @@
                      that separately) — same LogbookPaneViewModel.ExportAdifCommand the Logbook
                      tab's own "Export" button uses. -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.ExportSessionLog}" Command="{Binding Logbook.ExportAdifCommand}" />
+                <!-- Moved here from Configurations (2026-08-28, user-requested) — that menu is now
+                     dedicated to configuration save/switch/clone/delete, matching WSJT-X's own real
+                     shape; Macros isn't a configuration. Stub survey Tier 3 (2026-08-26): user
+                     narrowed this to a read-only token reference + live preview (AskUserQuestion) —
+                     IMacroTextResolver has no user-extensible macro list, only fixed known tokens, so
+                     there is nothing to "edit." -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.Macros}" Command="{Binding OpenMacrosReferenceCommand}" />
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.OptionsMenuItem}" Command="{Binding OpenOptionsCommand}" />
             <!-- Help moved behind Options (user request, 2026-08-26) — Options no longer dangles

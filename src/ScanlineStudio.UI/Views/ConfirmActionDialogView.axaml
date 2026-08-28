@@ -1,0 +1,35 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.ConfirmActionDialogView"
+        x:DataType="vm:ConfirmActionDialogViewModel"
+        Title="{Binding Title}"
+        Width="380" SizeToContent="Height"
+        MinWidth="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Configurations-preset backlog, Phase 4b (2026-08-28). Modeled on TextPromptWindowView.axaml's
+         own Border/Grid content-footer split. No/Cancel is IsDefault AND IsCancel — Enter and Esc both
+         decline, matching this dialog's own "prevent accidental resets/deletes" purpose.
+
+         User-caught fix (2026-08-28): a hardcoded Height="180" left a large dead gap below the
+         buttons — this dialog's whole content (one message line + one button row) never needs
+         anywhere near that. SizeToContent="Height" fits the window to whatever the Grid actually
+         measures, which also scales correctly for a longer configuration name that wraps to 2 lines
+         instead of leaving a fixed number wrong in either direction. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding Message}" />
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{loc:Translate Configurations.ConfirmNo}" Command="{Binding CancelCommand}" IsDefault="True" IsCancel="True" />
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate Configurations.ConfirmYes}" Command="{Binding ConfirmCommand}" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

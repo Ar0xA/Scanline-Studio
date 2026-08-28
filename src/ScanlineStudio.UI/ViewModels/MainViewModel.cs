@@ -1,3 +1,4 @@
+using System.Reflection;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,8 +30,20 @@ public partial class MainViewModel : ViewModelBase
 
     private readonly IServiceProvider _services;
     private readonly OptionsSettingsService _optionsSettingsService;
+    private readonly ISettingsStore _settingsStore;
+    private readonly ILocalizationService _localization;
     private readonly IUrlLauncher _urlLauncher;
     private readonly ILogger<MainViewModel> _logger;
+
+    /// <summary>User-requested (2026-08-28): the OS window title now shows the app name, version, and
+    /// currently active configuration ("Scanline Studio v0.9-&lt;sha&gt; - Cfg: Default"). Name/version
+    /// are read ONCE, at construction -- same <see cref="Assembly.GetEntryAssembly"/> +
+    /// <see cref="AssemblyProductAttribute"/>/<see cref="AssemblyInformationalVersionAttribute"/>
+    /// fallback chain <see cref="AboutWindowViewModel"/> already uses (small enough, and used in only
+    /// these 2 places, that duplicating the 3 lines beats a shared helper for 2 callers).</summary>
+    private readonly string _applicationName;
+
+    private readonly string _versionDisplay;
 
     /// <summary>Repo's own GitHub URL (README.md's own citation, `git remote -v`) -- the Help
     /// menu's "Open on GitHub" target.</summary>
@@ -68,6 +81,19 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private string? _callsign;
 
+    /// <summary>Null until <see cref="LoadActiveConfigurationNameAsync"/> first resolves it (fresh
+    /// install, before anything has seeded/marked a configuration active) -- <see cref="WindowTitleDisplay"/>
+    /// falls back to just name+version in that case, rather than showing a stale or guessed name.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WindowTitleDisplay))]
+    private string? _activeConfigurationName;
+
+    /// <summary>The OS window title -- composed, not a static locale string, since it now carries the
+    /// currently active configuration name.</summary>
+    public string WindowTitleDisplay => ActiveConfigurationName is { } configName
+        ? _localization.GetString("MainWindow.TitleWithConfig", _applicationName, _versionDisplay, configName)
+        : _localization.GetString("MainWindow.TitleWithVersion", _applicationName, _versionDisplay);
+
     public MainViewModel(
         WaterfallPaneViewModel waterfall,
         RxImagePaneViewModel rxImage,
@@ -79,6 +105,7 @@ public partial class MainViewModel : ViewModelBase
         ISstvSessionService sstvSession,
         ILocalizationService localization,
         OptionsSettingsService optionsSettingsService,
+        ISettingsStore settingsStore,
         IUrlLauncher urlLauncher,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
@@ -86,8 +113,19 @@ public partial class MainViewModel : ViewModelBase
     {
         _services = services;
         _optionsSettingsService = optionsSettingsService;
+        _settingsStore = settingsStore;
+        _localization = localization;
         _urlLauncher = urlLauncher;
         _logger = logger;
+
+        // Same Assembly.GetEntryAssembly() + attribute fallback chain AboutWindowViewModel already
+        // uses -- see that class's own doc comment for why GetEntryAssembly (the running
+        // ScanlineStudio.Host executable), not this assembly.
+        var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetExecutingAssembly();
+        _applicationName = assembly.GetCustomAttribute<AssemblyProductAttribute>()?.Product ?? "Scanline Studio";
+        _versionDisplay = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
 
         Waterfall = waterfall;
         RxImage = rxImage;
@@ -128,6 +166,7 @@ public partial class MainViewModel : ViewModelBase
         _ = OpenBlankEditorSafelyAsync(txControls);
 
         _ = LoadCallsignAsync();
+        _ = LoadActiveConfigurationNameAsync();
     }
 
     // Tier B audit finding: OpenBlankEditorCommand.ExecuteAsync's own try/catch (inside
@@ -208,6 +247,14 @@ public partial class MainViewModel : ViewModelBase
         MacrosReferenceRequested?.Invoke(_services.GetRequiredService<MacrosReferenceWindowViewModel>());
     }
 
+    /// <summary>Configurations-preset backlog, Phase 4b (2026-08-28, cascading-menu redesign) -- the
+    /// whole feature now lives inside the "Configurations" menu itself (per-configuration cascading
+    /// submenus, `MainWindow.axaml.cs`'s own `SubmenuOpened` handler), so there is no standalone
+    /// window/command to open anymore -- only this plain resolver, called fresh every time that menu
+    /// opens.</summary>
+    public ConfigurationsManagerWindowViewModel ResolveConfigurationsManagerViewModel() =>
+        _services.GetRequiredService<ConfigurationsManagerWindowViewModel>();
+
     /// <summary>The header-row callsign chip's click target -- previously a static, non-interactive
     /// chip with nothing wired to it at all. Callsign/OperatorName/OperatorGrid live on the TX tab
     /// (<see cref="OptionsWindowViewModel.TxTabIndex"/>), so this jumps straight there instead of
@@ -286,6 +333,24 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    /// <summary>User-requested (2026-08-28): re-read after every Configurations-menu switch too
+    /// (<c>MainWindow.axaml.cs</c>'s own <c>RefreshAfterConfigurationChange</c>), same reasoning as
+    /// every other refresh-on-switch call there -- a switch changes which configuration is active.
+    /// Public for the same reason <see cref="LoadCallsignAsync"/> is.</summary>
+    public async Task LoadActiveConfigurationNameAsync()
+    {
+        try
+        {
+            var settings = await _settingsStore.LoadAsync();
+            ActiveConfigurationName = settings.GetSection(
+                ConfigurationPresetSettings.SectionKey, ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings)?.ActivePresetName;
+        }
+        catch (Exception ex)
+        {
+            Log.LoadActiveConfigurationNameFailed(_logger, ex);
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOptions command invoked")]
@@ -308,6 +373,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator callsign failed; menu-row chip stays hidden")]
         public static partial void LoadCallsignFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Loading the active configuration name failed; window title omits it")]
+        public static partial void LoadActiveConfigurationNameFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Auto-opening the blank TX editor at startup failed; Transmit tab may stay empty")]
         public static partial void OpenBlankEditorFailed(ILogger logger, Exception ex);

@@ -117,6 +117,159 @@ internal sealed class FakeLocalizationService : ILocalizationService
     }
 }
 
+/// <summary>Configurations-preset backlog, Phase 4 (2026-08-28). In-memory, not the real filesystem-
+/// backed <c>ConfigurationPresetStore</c> -- matches this test project's own established "fake
+/// everything, no real I/O" convention (unlike <c>ScanlineStudio.Application.Tests</c>' own
+/// <c>ConfigurationPresetServiceTests</c>, which deliberately DOES use the real store against a temp
+/// directory). Mirrors the real store's own name/collision semantics closely enough for a UI-layer VM
+/// test (case-insensitive names, Clone/Rename collision-reject, Save silently overwrites, Delete is a
+/// no-op if absent) -- NOT a re-verification of the store's own contract, which
+/// `ScanlineStudio.Settings.Tests` already owns.</summary>
+internal sealed class FakeConfigurationPresetStore : IConfigurationPresetStore
+{
+    private static readonly char[] InvalidNameChars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
+
+    private readonly Dictionary<string, AppSettings> _presets = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Phase 4b (cascading-menu redesign) test probe: proves a genuine
+    /// <c>ConfigurationsManagerWindowViewModel.RefreshAsync</c> ran, now that the earlier arm-state
+    /// flags (<c>IsSaveAsNewOverwriteArmed</c>/<c>_pendingDeleteName</c>) it used to be observed
+    /// through are both gone. <c>RefreshAsync</c> calls <see cref="ListPresetsAsync"/> TWICE on its
+    /// Default-seed path (once to check, once again after seeding) -- assert this as a DELTA
+    /// (before/after), never an absolute value.</summary>
+    public int ListPresetsCallCount { get; private set; }
+
+    public bool TryValidatePresetName(string name, out string? errorMessage)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            errorMessage = "Name cannot be empty.";
+            return false;
+        }
+
+        if (name.Contains("..", StringComparison.Ordinal))
+        {
+            errorMessage = "Name cannot contain '..'.";
+            return false;
+        }
+
+        foreach (var c in name)
+        {
+            if (char.IsControl(c) || InvalidNameChars.Contains(c))
+            {
+                errorMessage = $"Name cannot contain '{c}'.";
+                return false;
+            }
+        }
+
+        errorMessage = null;
+        return true;
+    }
+
+    public Task<IReadOnlyList<string>> ListPresetsAsync(CancellationToken ct = default)
+    {
+        ListPresetsCallCount++;
+        return Task.FromResult<IReadOnlyList<string>>(_presets.Keys.OrderBy(k => k, StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    public Task<AppSettings?> LoadPresetAsync(string name, CancellationToken ct = default) =>
+        Task.FromResult(_presets.TryGetValue(name, out var settings) ? settings : null);
+
+    public Task SavePresetAsync(string name, AppSettings content, CancellationToken ct = default)
+    {
+        if (!TryValidatePresetName(name, out var error))
+        {
+            throw new ArgumentException(error, nameof(name));
+        }
+
+        _presets[name] = content;
+        return Task.CompletedTask;
+    }
+
+    public Task ClonePresetAsync(string sourceName, string newName, CancellationToken ct = default)
+    {
+        if (!_presets.TryGetValue(sourceName, out var source))
+        {
+            throw new InvalidOperationException($"No preset named '{sourceName}' exists.");
+        }
+
+        if (!TryValidatePresetName(newName, out var error))
+        {
+            throw new ArgumentException(error, nameof(newName));
+        }
+
+        if (_presets.ContainsKey(newName))
+        {
+            throw new InvalidOperationException($"A preset named '{newName}' already exists.");
+        }
+
+        _presets[newName] = source;
+        return Task.CompletedTask;
+    }
+
+    public Task DeletePresetAsync(string name, CancellationToken ct = default)
+    {
+        _presets.Remove(name);
+        return Task.CompletedTask;
+    }
+
+    public Task RenamePresetAsync(string oldName, string newName, CancellationToken ct = default)
+    {
+        if (!_presets.TryGetValue(oldName, out var content))
+        {
+            throw new InvalidOperationException($"No preset named '{oldName}' exists.");
+        }
+
+        if (!TryValidatePresetName(newName, out var error))
+        {
+            throw new ArgumentException(error, nameof(newName));
+        }
+
+        // Round-1 code-review fix: a CASE-ONLY rename ("field day" -> "Field Day") must be allowed --
+        // the real ConfigurationPresetStore explicitly permits this (its own collision check compares
+        // the colliding PATH against the source's own path, not just the name), so a naive
+        // ContainsKey(newName) here (true for the source's own entry too, since _presets is
+        // OrdinalIgnoreCase-keyed) would silently diverge from production behavior and make a test
+        // written against this fake enshrine the OPPOSITE of what the real store actually does.
+        if (_presets.ContainsKey(newName) && !string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"A preset named '{newName}' already exists.");
+        }
+
+        _presets.Remove(oldName);
+        _presets[newName] = content;
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Test-only seeding helper -- bypasses <see cref="SavePresetAsync"/>'s own validation so
+    /// a test can pre-populate the store without depending on that validation passing.</summary>
+    public void Seed(string name, AppSettings? content = null) => _presets[name] = content ?? new AppSettings();
+}
+
+/// <summary>Configurations-preset backlog, Phase 4 (2026-08-28). Deliberately a FAKE, not a real
+/// <c>ConfigurationPresetService</c> -- that concrete type needs a real <c>ISstvSessionService</c>/
+/// <c>IRadioSessionService</c> and touches live audio/radio state, far too heavy for a UI-layer VM
+/// test whose only job is to verify it correctly interprets whatever
+/// <see cref="ConfigurationPresetSwitchResult"/> comes back.</summary>
+internal sealed class FakeConfigurationPresetService : IConfigurationPresetService
+{
+    public ConfigurationPresetSwitchResult ResultToReturn { get; set; } =
+        new(ConfigurationPresetSwitchOutcome.Applied, CultureChanged: false, CultureToApply: null, RxAudioDeferred: false, PartiallyApplied: false);
+
+    public Exception? ThrowOnSwitch { get; set; }
+
+    public string? LastRequestedName { get; private set; }
+
+    public int SwitchCallCount { get; private set; }
+
+    public Task<ConfigurationPresetSwitchResult> SwitchToPresetAsync(string name, CancellationToken ct = default)
+    {
+        LastRequestedName = name;
+        SwitchCallCount++;
+        return ThrowOnSwitch is { } ex ? Task.FromException<ConfigurationPresetSwitchResult>(ex) : Task.FromResult(ResultToReturn);
+    }
+}
+
 internal sealed class FakeWaterfallSource : IWaterfallSource, IDisposable
 {
     private readonly Subject<WaterfallFrame> _frames = new();
@@ -187,6 +340,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode) => VisHeaderInfoToReturn;
 
     public bool IsReceiving { get; set; }
+
+    public bool IsTransmitting { get; set; }
+
+    public bool IsRecording { get; set; }
 
     public bool IsAutoDetectPaused { get; set; }
 
@@ -359,6 +516,19 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         RequestSampleRateCallCount++;
         LastRequestedSampleRate = sampleRate;
         return Task.FromResult(SampleRateApplyResultToReturn);
+    }
+
+    public int RequestCaptureDeviceCallCount { get; private set; }
+
+    public (string? DeviceId, string? DeviceName)? LastRequestedCaptureDevice { get; private set; }
+
+    public CaptureDeviceApplyResult CaptureDeviceApplyResultToReturn { get; set; } = CaptureDeviceApplyResult.Applied;
+
+    public Task<CaptureDeviceApplyResult> RequestCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct = default)
+    {
+        RequestCaptureDeviceCallCount++;
+        LastRequestedCaptureDevice = (deviceId, deviceName);
+        return Task.FromResult(CaptureDeviceApplyResultToReturn);
     }
 
     public int PersistSenseLevelCallCount { get; private set; }
