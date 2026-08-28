@@ -1253,6 +1253,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     public event Action? DecoderInstanceReplaced;
 
+    public event Action? ReconfigurationRejected;
+
     /// <summary>See <see cref="ISstvSessionService.RequestReSync"/>.</summary>
     public void RequestReSync()
     {
@@ -1316,6 +1318,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         if (_decoder is ISstvDecoderReconfiguration reconfiguration)
         {
             reconfiguration.RequestReconfiguration(rxBpfPreset, demodType, rxBufferMode);
+        }
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestRxBpfPreset"/>.</summary>
+    public void RequestRxBpfPreset(RxBpfPreset rxBpfPreset)
+    {
+        Log.RxBpfPresetRequested(_logger, rxBpfPreset);
+        if (_decoder is ISstvDecoderReconfiguration reconfiguration)
+        {
+            reconfiguration.RequestRxBpfPreset(rxBpfPreset);
         }
     }
 
@@ -1493,6 +1505,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         await _settingsStore.SaveAsync(appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings), ct).ConfigureAwait(false);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.PersistRxBpfPresetAsync"/>. Same targeted
+    /// read-modify-write shape as <see cref="PersistSenseLevelAsync"/> above.</summary>
+    public async Task PersistRxBpfPresetAsync(RxBpfPreset preset, CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+        var updated = current with { RxBpfPreset = preset };
+        await _settingsStore.SaveAsync(appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings), ct).ConfigureAwait(false);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.TryGetScopeCaptureChannel0"/>. A plain read, no
     /// logging -- matches this class's own established convention of only logging COMMANDS
     /// (RequestNotch/ArmScopeCapture above), not polled getters.</summary>
@@ -1570,16 +1592,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
     }
 
     /// <summary>See <see cref="ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.ReconfigurationRejected"/>
-    /// for the full contract -- restart-required-settings backlog item 2 (2026-08-27). Log-only: once
-    /// <see cref="ISstvSessionService.RxBpfPreset"/>'s live refresh (via
-    /// <see cref="DecoderInstanceReplaced"/>) lands, a rejected reconfiguration is already visible to
-    /// the operator as the Receive tab's Input Chain card silently disagreeing with what Options shows
-    /// (round-3 plan-review Q3) -- no separate dialog/toast needed.</summary>
+    /// for the full contract -- restart-required-settings backlog item 2 (2026-08-27). Originally
+    /// log-only: <see cref="ISstvSessionService.RxBpfPreset"/>'s live refresh (via
+    /// <see cref="DecoderInstanceReplaced"/>) made a rejected reconfiguration visible to the operator
+    /// as the Receive tab's Input Chain card silently disagreeing with what Options shows (round-3
+    /// plan-review Q3) -- no separate dialog/toast needed. That premise stopped holding once that
+    /// same row became a live EDITOR, not a read-only mirror (restart-required-settings backlog item
+    /// 6, RX BPF Receive-tab live dropdown, 2026-08-28): a rejected change now needs an explicit
+    /// re-sync signal, or the row (and, if the rejected request came from the Receive tab, the
+    /// already-written settings.json entry) would permanently show a preset that was requested but
+    /// never actually applied. <see cref="ReconfigurationRejected"/> below now carries that signal.</summary>
     private void OnReconfigurationRejected()
     {
         try
         {
             SafeLog(() => Log.ReconfigurationRejected(_logger));
+            ReconfigurationRejected?.Invoke();
         }
         catch (Exception ex)
         {
@@ -4456,6 +4484,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Reconfiguration requested: RxBpfPreset={RxBpfPreset}, DemodType={DemodType}, RxBufferMode={RxBufferMode}")]
         public static partial void ReconfigurationRequested(ILogger logger, RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX BPF preset requested: {RxBpfPreset}")]
+        public static partial void RxBpfPresetRequested(ILogger logger, RxBpfPreset rxBpfPreset);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "A queued reconfiguration request was rejected -- the decoder kept its previous RxBpfPreset/DemodType/RxBufferMode")]
         public static partial void ReconfigurationRejected(ILogger logger);

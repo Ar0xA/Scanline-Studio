@@ -119,6 +119,7 @@
   "Panes.RxInput.CardHeader": "INPUT CHAIN",
   "Panes.RxInput.Device": "Device",
   "Panes.RxInput.Bpf": "BPF",
+  "Panes.RxInput.Bpf.Help": "How tightly the receiver band-pass filters incoming audio before demodulation. Normal disables this band-pass filter entirely. Wide is the recommended default. Sharp and Very sharp reject more adjacent-tone interference at the cost of more sensitivity to frequency drift. If a reception is in progress, a change queues and takes effect once that reception ends, not mid-image.",
   "Panes.RxInput.Notch": "Notch",
   "Panes.RxInput.Agc": "AGC gain",
   "Panes.RxInput.Buffer": "Buffer",

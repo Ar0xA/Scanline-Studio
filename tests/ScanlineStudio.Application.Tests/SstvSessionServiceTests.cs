@@ -1144,6 +1144,82 @@ public sealed class SstvSessionServiceTests
         Assert.Equal(0, saved!.SenseLevel);
     }
 
+    // Restart-required-settings backlog item 6 (RX BPF Receive-tab live dropdown, 2026-08-28) --
+    // same shape as RequestSenseLevel/PersistSenseLevelAsync's own tests above, but forwarding to
+    // ISstvDecoderReconfiguration.RequestRxBpfPreset (a per-field-merge sibling of
+    // RequestReconfiguration, not that combined call) -- see RequestRxBpfPreset's own doc comment
+    // for why.
+
+    [Fact]
+    public void RequestRxBpfPreset_ForwardsToTheDecoderReconfigurationSideChannel()
+    {
+        var (service, _, decoder, _, _, _, _) = CreateService();
+
+        service.RequestRxBpfPreset(RxBpfPreset.Narrow);
+
+        Assert.Equal(1, decoder.RequestRxBpfPresetCallCount);
+        Assert.Equal(RxBpfPreset.Narrow, decoder.LastRequestedRxBpfPreset);
+    }
+
+    [Fact]
+    public async Task PersistRxBpfPresetAsync_WritesTheNewValueAndPreservesOtherSiblingFields()
+    {
+        var (service, _, _, _, _, settingsStore, _) = CreateService();
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            SstvDecoderSettings.SectionKey,
+            new SstvDecoderSettings
+            {
+                AutoSyncEnabled = false,
+                AutoStopEnabled = true,
+                DemodType = DemodType.Pll,
+                RxBufferMode = RxBufferMode.Extended,
+                SenseLevel = 1,
+            },
+            SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+
+        await service.PersistRxBpfPresetAsync(RxBpfPreset.VeryNarrow);
+
+        var saved = settingsStore.Settings.GetSection(
+            SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.NotNull(saved);
+        Assert.Equal(RxBpfPreset.VeryNarrow, saved!.RxBpfPreset);
+        // DemodType/RxBufferMode are untouched -- this row edits ONLY RxBpfPreset.
+        Assert.Equal(DemodType.Pll, saved.DemodType);
+        Assert.Equal(RxBufferMode.Extended, saved.RxBufferMode);
+        Assert.False(saved.AutoSyncEnabled);
+        Assert.True(saved.AutoStopEnabled);
+        Assert.Equal(1, saved.SenseLevel);
+    }
+
+    [Fact]
+    public async Task PersistRxBpfPresetAsync_NoExistingSection_CreatesOneWithJustTheNewValue()
+    {
+        var (service, _, _, _, _, settingsStore, _) = CreateService();
+
+        await service.PersistRxBpfPresetAsync(RxBpfPreset.Off);
+
+        var saved = settingsStore.Settings.GetSection(
+            SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        Assert.NotNull(saved);
+        Assert.Equal(RxBpfPreset.Off, saved!.RxBpfPreset);
+    }
+
+    [Fact]
+    public void ReconfigurationRejected_DecoderRaisesIt_ForwardsThroughThePublicEvent()
+    {
+        // The BPF row is now a live EDITOR (restart-required-settings backlog item 6) -- it needs
+        // this signal to re-sync back to whatever's actually applied when a queued reconfiguration
+        // (from ANY source) is rejected. Previously this event existed only on the decoder-level
+        // ISstvDecoderReconfiguration side-channel, log-only at this layer.
+        var (service, _, decoder, _, _, _, _) = CreateService();
+        var raisedCount = 0;
+        service.ReconfigurationRejected += () => raisedCount++;
+
+        decoder.RaiseReconfigurationRejected();
+
+        Assert.Equal(1, raisedCount);
+    }
+
     [Fact]
     public void CaptureOverrunCount_UnderlyingEngineThrowsObjectDisposed_ReportsZeroInstead()
     {

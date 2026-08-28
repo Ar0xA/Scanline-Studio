@@ -169,6 +169,20 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
         LastRequestedReconfiguration = (rxBpfPreset, demodType, rxBufferMode);
     }
 
+    // Restart-required-settings backlog item 6 (2026-08-28): mirrors RequestReconfiguration's own
+    // call-tracking shape immediately above.
+    public int RequestRxBpfPresetCallCount { get; private set; }
+
+    public RxBpfPreset? LastRequestedRxBpfPreset { get; private set; }
+
+    public void RequestRxBpfPreset(RxBpfPreset rxBpfPreset)
+    {
+        RequestRxBpfPresetCallCount++;
+        LastRequestedRxBpfPreset = rxBpfPreset;
+    }
+
+    public void RaiseReconfigurationRejected() => ReconfigurationRejected?.Invoke();
+
     public int RequestSampleRateCallCount { get; private set; }
 
     public int? PendingSampleRate { get; private set; }
