@@ -189,4 +189,58 @@ public sealed class WaterfallSourceTests
         Assert.Single(frames);
         Assert.All(frames[0].MagnitudesDb, db => Assert.True(float.IsFinite(db), $"Non-finite bin value {db} -- a single non-finite input sample corrupted the whole frame."));
     }
+
+    // Restart-required-settings backlog item 4 (2026-08-27): SampleRate is now live-settable via
+    // IWaterfallSourceReconfiguration.RequestSampleRate -- applies immediately (no swap/idle-gating,
+    // unlike the decoder's own equivalent), since the accumulator/Hann window are rate-independent.
+
+    [Fact]
+    public void RequestSampleRate_UpdatesSampleRateProperty_AndSubsequentFrameBinWidth()
+    {
+        const int windowSize = 64;
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: windowSize);
+        var reconfig = Assert.IsAssignableFrom<IWaterfallSourceReconfiguration>(source);
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(frames.Add);
+
+        reconfig.RequestSampleRate(16000);
+
+        Assert.Equal(16000, source.SampleRate);
+
+        source.PushSamples(new float[windowSize]);
+
+        Assert.Single(frames);
+        Assert.Equal((double)16000 / windowSize, frames[0].BinWidthHz, precision: 6);
+    }
+
+    [Fact]
+    public void RequestSampleRate_DiscardsPartiallyFilledAccumulator_NotMixedAcrossRates()
+    {
+        // Round-4 plan-review nit N2: without the reset, up to windowSize-1 old-rate samples already
+        // sitting in the accumulator would get FFT'd together with new-rate samples.
+        const int windowSize = 64;
+        const int hopSize = 32;
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: windowSize, hopSize: hopSize);
+        var reconfig = Assert.IsAssignableFrom<IWaterfallSourceReconfiguration>(source);
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(frames.Add);
+
+        source.PushSamples(new float[hopSize]); // partially fills the accumulator, no frame yet
+        reconfig.RequestSampleRate(16000);
+
+        source.PushSamples(new float[windowSize - 1]); // one short of a full window if the reset didn't happen
+
+        Assert.Empty(frames); // proves the accumulator was reset to 0, not left at hopSize
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void RequestSampleRate_NonPositive_Throws(int sampleRate)
+    {
+        using var source = new WaterfallSource(sampleRate: 8000);
+        var reconfig = Assert.IsAssignableFrom<IWaterfallSourceReconfiguration>(source);
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => reconfig.RequestSampleRate(sampleRate));
+    }
 }

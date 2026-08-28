@@ -6,9 +6,16 @@ namespace ScanlineStudio.Core.Sstv;
 /// <summary>See <see cref="IWaterfallSource"/>'s own doc comment for the concurrency contract and why
 /// this is decode-independent by construction. Hann-windowed, 50%-overlap-by-default short-time FFT;
 /// not a legacy port (see <see cref="RadixTwoFft"/>'s own doc comment).</summary>
-public sealed class WaterfallSource : IWaterfallSource, IDisposable
+public sealed class WaterfallSource : IWaterfallSource, IWaterfallSourceReconfiguration, IDisposable
 {
-    private readonly int _sampleRate;
+    // NOT readonly (restart-required-settings backlog item 4, 2026-08-27) -- volatile, not
+    // lock-guarded: PushSamples/EmitFrame (the audio drain thread) reads it once per emitted frame
+    // only to compute binWidthHz, and RequestSampleRate (any thread, called by
+    // ScanlineStudio.Application.SstvSessionService at the exact moment it commits an RX capture
+    // restart -- see IWaterfallSourceReconfiguration's own doc comment for why it must never be
+    // called any earlier) writes it -- no other state depends on this value, so a plain volatile
+    // int is sufficient and cheaper than a lock on this hot per-frame path.
+    private volatile int _sampleRate;
     private readonly int _windowSize;
     private readonly int _hopSize;
     private readonly float[] _hannWindow;
@@ -41,10 +48,31 @@ public sealed class WaterfallSource : IWaterfallSource, IDisposable
         _accumulator = new float[windowSize];
     }
 
-    /// <summary>Sample rate used to map FFT bins to frequencies.</summary>
+    /// <summary>Sample rate used to map FFT bins to frequencies. Genuinely live now
+    /// (restart-required-settings backlog item 4) -- see <see cref="RequestSampleRate"/>.</summary>
     public int SampleRate => _sampleRate;
 
     public IObservable<WaterfallFrame> Frames => _frames;
+
+    /// <summary>See <see cref="IWaterfallSourceReconfiguration.RequestSampleRate"/>. Also discards
+    /// any partially-filled accumulator window (round-4 plan-review nit N2) -- otherwise up to
+    /// <c>windowSize - 1</c> samples captured at the OLD rate would get FFT'd together with new-rate
+    /// samples and labelled with the NEW bin width. A straggler <see cref="PushSamples"/> call racing
+    /// this reset (e.g. on the same abandoned-capture-stop path
+    /// <see cref="RestartableSstvDecoder.ApplyPendingReconfigurationNow"/>'s own doc comment
+    /// describes) is verified benign, not merely assumed: only ever shrinks the effective fill index
+    /// (see <c>Math.Min(_windowSize - _accumulatedCount, ...)</c> in <see cref="PushSamples"/>), so a
+    /// racing write cannot go out-of-bounds or throw from the <c>CopyTo</c> call.</summary>
+    public void RequestSampleRate(int sampleRate)
+    {
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, "Sample rate must be positive.");
+        }
+
+        _sampleRate = sampleRate;
+        _accumulatedCount = 0;
+    }
 
     public void PushSamples(ReadOnlyMemory<float> samples)
     {

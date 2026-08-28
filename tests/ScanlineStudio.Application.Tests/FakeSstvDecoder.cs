@@ -12,7 +12,7 @@ namespace ScanlineStudio.Application.Tests;
 // the real production RestartableSstvDecoder, which implements it conditionally for the same reason)
 // -- implemented here too so SstvSessionServiceTests can assert that duck-typed dispose path actually
 // fires, without needing a real RestartableSstvDecoder/AnalogFmSstvDecoder.
-internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, IDisposable
+internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, ISstvDecoderReconfiguration, IDisposable
 {
     public int SampleRate { get; set; } = SstvSampleRate.Default;
 
@@ -152,4 +152,76 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
     public void RaiseRestartCriticallyOverdue() => RestartCriticallyOverdue?.Invoke();
 
     public void RaiseRestarted() => Restarted?.Invoke();
+
+    // Restart-required-settings backlog item 4 (2026-08-27): a lightweight, fully-controllable
+    // ISstvDecoderReconfiguration -- lets SstvSessionServiceTests exercise RequestSampleRateAsync's
+    // orchestration (stop/commit/restart ordering, Busy/Rejected handling) without needing a real
+    // RestartableSstvDecoder's own idle-gating/threshold machinery.
+    public event Action? ReconfigurationRejected;
+
+    public int RequestReconfigurationCallCount { get; private set; }
+
+    public (RxBpfPreset RxBpfPreset, DemodType DemodType, RxBufferMode RxBufferMode)? LastRequestedReconfiguration { get; private set; }
+
+    public void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode)
+    {
+        RequestReconfigurationCallCount++;
+        LastRequestedReconfiguration = (rxBpfPreset, demodType, rxBufferMode);
+    }
+
+    public int RequestSampleRateCallCount { get; private set; }
+
+    public int? PendingSampleRate { get; private set; }
+
+    public void RequestSampleRate(int sampleRate)
+    {
+        RequestSampleRateCallCount++;
+        PendingSampleRate = sampleRate == SampleRate ? null : sampleRate;
+    }
+
+    /// <summary>Configures what the next <see cref="ApplyPendingReconfigurationNow"/> call returns --
+    /// default <see cref="SwapResult.Committed"/>, matching the common case.</summary>
+    public SwapResult ApplyPendingReconfigurationNowResultToReturn { get; set; } = SwapResult.Committed;
+
+    public int ApplyPendingReconfigurationNowCallCount { get; private set; }
+
+    /// <summary>Lets a test observe state exactly at the commit point -- e.g. assert the audio engine
+    /// is genuinely stopped and the waterfall hasn't been touched yet, proving the caller's own
+    /// stop-then-commit-then-restart ordering, not just its final state.</summary>
+    public Action? OnApplyPendingReconfigurationNow { get; set; }
+
+    public SwapResult ApplyPendingReconfigurationNow()
+    {
+        ApplyPendingReconfigurationNowCallCount++;
+        OnApplyPendingReconfigurationNow?.Invoke();
+
+        // Code-review round-1 finding: Busy must be checked BEFORE touching any pending state,
+        // matching the real RestartableSstvDecoder's own contract (its CAS guard trips before the
+        // pending record is ever read) -- checking this after the PendingSampleRate-null branch
+        // below made a test's "the stuck pending rate was cleared on Busy" assertion pass even if
+        // the production code never cleared anything at all.
+        if (ApplyPendingReconfigurationNowResultToReturn == SwapResult.Busy)
+        {
+            return SwapResult.Busy;
+        }
+
+        if (PendingSampleRate is null)
+        {
+            return SwapResult.NothingPending;
+        }
+
+        var result = ApplyPendingReconfigurationNowResultToReturn;
+        if (result == SwapResult.Committed)
+        {
+            SampleRate = PendingSampleRate.Value;
+        }
+
+        if (result == SwapResult.Rejected)
+        {
+            ReconfigurationRejected?.Invoke();
+        }
+
+        PendingSampleRate = null;
+        return result;
+    }
 }

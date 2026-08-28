@@ -179,6 +179,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <see cref="RestartRequiredWarningRequested"/>'s own doc comment.</summary>
     private string? _originalHamlibLibraryPath;
 
+    /// <summary>Set inside <see cref="SaveCoreAsync"/> (reset to <see langword="false"/> at its own
+    /// start, every call) when this Save's sample-rate request came back
+    /// <see cref="SampleRateApplyResult.DeferredRecordingInProgress"/> -- see
+    /// <see cref="SampleRateChangeDeferredWarningRequested"/>'s own doc comment for why
+    /// <see cref="SaveAsync"/> reads this afterward instead of <see cref="SaveCoreAsync"/> returning
+    /// it directly (that method's own <c>bool</c> return already means something else: whether the
+    /// whole save succeeded).</summary>
+    private bool _sampleRateChangeDeferred;
+
     [ObservableProperty]
     private string? _hamlibDiscoveryStatusMessage;
 
@@ -1906,6 +1915,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// the user's OK -- restarting itself stays entirely up to the user, this only informs them.</summary>
     public event Func<Task>? RestartRequiredWarningRequested;
 
+    /// <summary>Fired from <see cref="SaveAsync"/> only, when this Save's own
+    /// <see cref="ISstvSessionService.RequestSampleRateAsync"/> call returned
+    /// <see cref="SampleRateApplyResult.DeferredRecordingInProgress"/> -- the new rate WAS persisted
+    /// (the whole-dialog snapshot save happens unconditionally, before this call, see
+    /// <see cref="SaveCoreAsync"/>) but NOT applied live, because a recording was in progress. Same
+    /// <c>Func&lt;Task&gt;</c>/await-before-close shape as <see cref="RestartRequiredWarningRequested"/>
+    /// immediately above -- the user must see this before the window closes, since it's the only
+    /// place this outcome is surfaced (2026-08-28, user-requested after the live-apply feature
+    /// itself shipped).</summary>
+    public event Func<Task>? SampleRateChangeDeferredWarningRequested;
+
     /// <summary>Fired by Restart Now (Config/Database rows), after any dirty edit elsewhere in this
     /// dialog has already been saved successfully -- see <see cref="RestartNowAsync"/>. Distinct
     /// from <see cref="RequestClose"/>: this must close the WHOLE app, not just this dialog, so
@@ -2296,6 +2316,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 await RestartRequiredWarningRequested.Invoke();
             }
 
+            // See SampleRateChangeDeferredWarningRequested's own doc comment. Independent of the
+            // restart-warning check above -- both can fire on the same Save.
+            if (_sampleRateChangeDeferred && SampleRateChangeDeferredWarningRequested is not null)
+            {
+                await SampleRateChangeDeferredWarningRequested.Invoke();
+            }
+
             RequestClose?.Invoke();
         }
     }
@@ -2309,6 +2336,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <c>true</c>, identical to its own prior externally-observable behavior.</summary>
     private async Task<bool> SaveCoreAsync()
     {
+        // Reset every call -- see the field's own doc comment for why SaveAsync reads this
+        // afterward rather than this method's own bool return.
+        _sampleRateChangeDeferred = false;
+
         // The single most useful Debug line in the app for "why didn't my settings take effect"
         // bugs -- logs only the fields that are actually safe to log as-is (host/port/device ids/
         // sample rate/culture/backend id). Code-review correction: an earlier version of this
@@ -2402,6 +2433,36 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // this window's Closed event (see that property's own doc comment for why a pull-based
             // Closed-event refresh would be redundant here).
             _sstvSession.RequestReconfiguration(RxBpfPreset, DemodType, RxBufferMode);
+
+            // Sample rate (2026-08-27/28, restart-required-settings backlog item 4 -- the LAST item
+            // of this backlog): genuinely live now too, no longer requiring a restart. Different in
+            // kind from every Request* call above -- this can reopen the actual RX capture device, so
+            // it gets its OWN try/catch (not folded into the shared try this method is already inside)
+            // -- a thrown TimeoutException/failure here must not abort the unrelated writes already
+            // committed above (window geometry/JpegQuality/culture below), matching the established
+            // SetCultureAsync precedent just below. DeferredRecordingInProgress: the new rate was
+            // ALREADY persisted by the whole-dialog snapshot save above (OptionsSnapshot.SampleRate,
+            // `await _optionsSettingsService.SaveAsync(snapshot)`), so it takes effect on the next
+            // restart regardless of what happens here -- this branch only decides whether the LIVE
+            // apply happens now or not, and sets _sampleRateChangeDeferred so SaveAsync can tell the
+            // user (2026-08-28, user-requested).
+            try
+            {
+                var sampleRateResult = await _sstvSession.RequestSampleRateAsync(SampleRate);
+                if (sampleRateResult == SampleRateApplyResult.DeferredRecordingInProgress)
+                {
+                    _sampleRateChangeDeferred = true;
+                    Log.SampleRateChangeDeferred(_logger, SampleRate);
+                }
+                else if (sampleRateResult == SampleRateApplyResult.Rejected)
+                {
+                    Log.SampleRateChangeRejected(_logger, SampleRate);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.SampleRateChangeFailed(_logger, SampleRate, ex);
+            }
 
             // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
             // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync
@@ -2729,6 +2790,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetCultureAsync({Culture}) failed after a successful settings save")]
         public static partial void SetCultureFailed(ILogger logger, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz deferred -- a recording is in progress")]
+        public static partial void SampleRateChangeDeferred(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz rejected -- the decoder kept its previous rate")]
+        public static partial void SampleRateChangeRejected(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Sample rate change to {SampleRate}Hz failed after a successful settings save")]
+        public static partial void SampleRateChangeFailed(ILogger logger, int sampleRate, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the Storage section's current locations failed")]
         public static partial void StorageLocationsLoadFailed(ILogger logger, Exception ex);
