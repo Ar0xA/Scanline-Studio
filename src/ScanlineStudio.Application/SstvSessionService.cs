@@ -46,6 +46,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // own isolation exists to avoid).
     private List<ReadOnlyMemory<float>>? _recordingChunks;
     private string? _recordingPath;
+
+    // Restart-required-settings backlog item 4 (2026-08-27): the rate the audio was ACTUALLY
+    // captured at, snapshotted at StartRecordingAsync time under _recordingLock -- WavFile.Write
+    // (FinalizeRecordingAsync below) uses THIS, never a fresh _decoder.SampleRate read at write time.
+    // Round-4 plan-review finding: a fresh read at write time races a rate change landing between
+    // FinalizeRecordingAsync clearing _recordingChunks (inside _recordingLock) and the actual
+    // WavFile.Write call (outside it, after a Task.Run hop) -- a SEPARATE race from, and not closed
+    // by, _sampleRateChangeInProgress below (that flag only prevents a NEW recording from starting
+    // mid-change; this field closes the already-in-progress-recording's own header-vs-audio race).
+    private int? _recordingSampleRate;
+
+    // Restart-required-settings backlog item 4, round-4 finding R2: set/cleared under
+    // _recordingLock for the WHOLE duration of RequestSampleRateAsync's own commit sequence --
+    // StartRecordingAsync refuses to start while this is set, closing the TOCTOU a plain
+    // "_recordingChunks is not null" check on ITS OWN would leave open (a recording starting in the
+    // gap right after that check passes but before the rate change actually finishes).
+    private bool _sampleRateChangeInProgress;
+
     private int _recordingExceptionCount;
 
     // Piece C2: single-flight guard for DecodeFromFileAsync, same CompareExchange shape as
@@ -1301,6 +1319,168 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestSampleRateAsync"/>.</summary>
+    public async Task<SampleRateApplyResult> RequestSampleRateAsync(int sampleRate, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        Log.SampleRateChangeRequested(_logger, sampleRate);
+
+        // Step 0 (round-2 finding B3): a no-op guard BEFORE touching anything -- without this, the
+        // unconditional-every-Save call shape every other Request* method on this interface uses
+        // would drop and reopen the capture session, aborting any in-progress reception, on every
+        // Options Save that didn't even touch this setting.
+        if (sampleRate == _decoder.SampleRate)
+        {
+            return SampleRateApplyResult.NoChange;
+        }
+
+        if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false))
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "RequestSampleRateAsync (rxTransitionGate wait timed out)", new TimeoutException()));
+            throw new TimeoutException("Timed out waiting to apply a sample rate change -- a concurrent RX transition did not finish in time.");
+        }
+
+        try
+        {
+            // Re-checked now that the gate is actually held (round-4 finding R2, same discipline
+            // DecodeFromFileAsync's own re-check above uses) -- a racing caller may have already
+            // committed this exact rate while this call was waiting for the gate.
+            if (sampleRate == _decoder.SampleRate)
+            {
+                return SampleRateApplyResult.NoChange;
+            }
+
+            lock (_recordingLock)
+            {
+                if (_recordingChunks is not null)
+                {
+                    Log.SampleRateChangeDeferred(_logger, sampleRate);
+                    return SampleRateApplyResult.DeferredRecordingInProgress;
+                }
+
+                _sampleRateChangeInProgress = true;
+            }
+
+            try
+            {
+                return await ApplySampleRateLockedAsync(sampleRate).ConfigureAwait(false);
+            }
+            finally
+            {
+                lock (_recordingLock)
+                {
+                    _sampleRateChangeInProgress = false;
+                }
+            }
+        }
+        finally
+        {
+            _rxTransitionGate.Release();
+        }
+    }
+
+    /// <summary>The actual commit sequence for <see cref="RequestSampleRateAsync"/> -- called only
+    /// while <see cref="_rxTransitionGate"/> is held and the recording-in-progress check has already
+    /// passed. Encoder (TX) applies independently of everything below -- RX and TX are separate
+    /// streams (see <c>ISstvEncoderReconfiguration</c>'s own doc comment); called first so it always
+    /// runs regardless of what happens to the decoder/capture side.</summary>
+    private async Task<SampleRateApplyResult> ApplySampleRateLockedAsync(int sampleRate)
+    {
+        if (_encoder is ISstvEncoderReconfiguration encoderReconfig)
+        {
+            encoderReconfig.RequestSampleRate(sampleRate);
+        }
+
+        if (_decoder is not ISstvDecoderReconfiguration decoderReconfig)
+        {
+            // No live-apply side-channel on this decoder implementation (e.g. a fake used by a test
+            // project) -- matches every other is-test-gated Request* method's own silent-skip
+            // convention on this class.
+            return SampleRateApplyResult.NoChange;
+        }
+
+        // Round-3 plan-review: stop-then-commit-then-restart, not commit-then-restart -- capture
+        // being fully stopped BEFORE the decoder commits is what makes committing directly (no
+        // idle-gating) safe at all. See ISstvDecoderReconfiguration.ApplyPendingReconfigurationNow's
+        // own doc comment for the decoder-side half of this contract.
+        var wasReceiving = _isReceiving;
+        if (wasReceiving)
+        {
+            await StopReceivingLockedAsync().ConfigureAwait(false);
+        }
+
+        decoderReconfig.RequestSampleRate(sampleRate);
+        var result = decoderReconfig.ApplyPendingReconfigurationNow();
+
+        switch (result)
+        {
+            case SwapResult.Committed:
+                if (Waterfall is IWaterfallSourceReconfiguration waterfallReconfig)
+                {
+                    waterfallReconfig.RequestSampleRate(sampleRate);
+                }
+
+                if (wasReceiving)
+                {
+                    await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+
+                Log.SampleRateChangeApplied(_logger, sampleRate);
+                return SampleRateApplyResult.Applied;
+
+            case SwapResult.Rejected:
+            case SwapResult.NothingPending:
+                // Old inner decoder (or, for NothingPending, nothing at all) untouched, still at the
+                // previous rate -- restore capture at that unchanged rate, don't touch the waterfall.
+                if (wasReceiving)
+                {
+                    await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+
+                Log.SampleRateChangeRejected(_logger, sampleRate);
+                return SampleRateApplyResult.Rejected;
+
+            case SwapResult.Busy:
+                return await HandleSampleRateBusyAsync(decoderReconfig, wasReceiving).ConfigureAwait(false);
+
+            default:
+                throw new InvalidOperationException($"Unexpected {nameof(SwapResult)} value: {result}.");
+        }
+    }
+
+    /// <summary>Round-3/round-4 plan-review finding C2: <see cref="SwapResult.Busy"/> is genuinely
+    /// reachable via <see cref="StopReceivingLockedAsync"/>'s own watchdog-timeout/abandoned-stop
+    /// path (a straggler <c>PushSamples</c> call can still be genuinely in flight even after that
+    /// method returns) -- NOT retried (a 5s <see cref="IAudioEngine.StopCaptureAsync"/> timeout means
+    /// the drain thread is genuinely wedged, so retrying inside any sane budget would not succeed
+    /// either).</summary>
+    private async Task<SampleRateApplyResult> HandleSampleRateBusyAsync(ISstvDecoderReconfiguration decoderReconfig, bool wasReceiving)
+    {
+        // Clears the now-stuck pending rate via the decoder's own equality guard (requesting the
+        // CURRENT committed value) -- otherwise it would sit armed and get silently applied by a
+        // future unrelated maintenance swap (exactly what round-4 finding C1 exists to prevent).
+        decoderReconfig.RequestSampleRate(_decoder.SampleRate);
+
+        Exception? restartFailure = null;
+        if (wasReceiving)
+        {
+            try
+            {
+                await StartReceivingLockedAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                restartFailure = ex;
+            }
+        }
+
+        Log.SampleRateChangeBusy(_logger, restartFailure);
+        var message = restartFailure is null
+            ? "Sample rate change failed: the decoder was busy after an abandoned capture stop; capture was restarted at the previous rate."
+            : "Sample rate change failed: the decoder was busy after an abandoned capture stop, and restarting capture also failed.";
+        throw new InvalidOperationException(message, restartFailure);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.PersistSenseLevelAsync"/>. Read-modify-write
     /// against whatever is currently persisted for this section, not a fresh
     /// <c>new SstvDecoderSettings { ... }</c> -- matches this codebase's own established convention
@@ -1799,8 +1979,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 throw new InvalidOperationException("A recording is already in progress.");
             }
 
+            // Restart-required-settings backlog item 4, round-4 finding R2: the other half of
+            // RequestSampleRateAsync's own TOCTOU close -- refuse to start while a rate change is
+            // actively being applied, rather than starting a recording whose header could end up
+            // describing a rate the audio wasn't actually captured at.
+            if (_sampleRateChangeInProgress)
+            {
+                throw new InvalidOperationException("Cannot start recording while a sample rate change is being applied.");
+            }
+
             _recordingChunks = [];
             _recordingPath = path;
+            _recordingSampleRate = _decoder.SampleRate;
             // Code-review finding: subscribing here, INSIDE the same lock acquisition that
             // publishes _recordingChunks, not after releasing it -- a concurrent
             // FinalizeRecordingAsync landing in the gap between unlock and a subscribe-after-unlock
@@ -1830,12 +2020,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         List<ReadOnlyMemory<float>>? chunks;
         string? path;
+        int sampleRate;
         lock (_recordingLock)
         {
             chunks = _recordingChunks;
             path = _recordingPath;
+            // Restart-required-settings backlog item 4: the rate CAPTURED at StartRecordingAsync
+            // time, read here (still inside the lock) rather than at WavFile.Write below, after this
+            // lock is released and a Task.Run hop -- see _recordingSampleRate's own doc comment for
+            // the race this closes. Falls back to the live decoder rate only for the (unreachable in
+            // practice, since _recordingSampleRate is always set alongside _recordingChunks)
+            // chunks-is-not-null-but-field-somehow-null case.
+            sampleRate = _recordingSampleRate ?? _decoder.SampleRate;
             _recordingChunks = null;
             _recordingPath = null;
+            _recordingSampleRate = null;
 
             // Code-review finding: unsubscribing here, INSIDE the same lock acquisition that clears
             // _recordingChunks -- see StartRecordingAsync's own subscribe-inside-the-lock comment
@@ -1866,7 +2065,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
             offset += chunk.Length;
         }
 
-        await Task.Run(() => WavFile.Write(path!, combined, _decoder.SampleRate)).ConfigureAwait(false);
+        await Task.Run(() => WavFile.Write(path!, combined, sampleRate)).ConfigureAwait(false);
         SafeLog(() => Log.RecordingSaved(_logger, path!, combined.Length));
     }
 
@@ -1922,6 +2121,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
             if (!await _rxTransitionGate.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false))
             {
                 throw new TimeoutException("Timed out waiting to start file decode -- a concurrent RX transition did not finish in time.");
+            }
+
+            // Restart-required-settings backlog item 4, round-4 finding R1: re-check the rate AGAIN
+            // now that the gate is actually held -- the check above ran BEFORE acquiring it, so a
+            // RequestSampleRateAsync call that committed a new rate while this one waited for the
+            // gate would otherwise go undetected here, and the file's samples would be pushed at the
+            // wrong rate. Previously fine when the rate was immutable; not anymore.
+            if (sampleRate != _decoder.SampleRate)
+            {
+                _rxTransitionGate.Release();
+                throw new InvalidOperationException(
+                    $"File sample rate ({sampleRate} Hz) does not match the configured decode rate ({_decoder.SampleRate} Hz) -- the decode rate changed while waiting to start.");
             }
 
             var wasReceiving = _isReceiving;
@@ -2014,160 +2225,170 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 throw new InvalidOperationException("Cannot run a loopback self-test while a transmit or tune is in progress.");
             }
 
-            // sampleRate comes from _encoder.SampleRate, NOT a fresh AudioDeviceSettings read -- the
-            // encoder is what actually generates the audio this decoder consumes, and SampleRate is
-            // documented restart-only (ISstvDecoder.SampleRate's own doc comment): if the user changed
-            // the persisted sample rate mid-session without restarting, a fresh settings read here
-            // would silently disagree with what _encoder.EncodeAsync actually emits, corrupting every
-            // self-test until the next restart. Only the decoder BEHAVIOR settings need a fresh read
-            // (DemodType/senseLevel/etc. have no such restart-only encoder-side counterpart to drift
-            // against). Deliberately NOT ResolveTransmitSettingsAsync -- that resolves the REAL
-            // persisted StationId/TxSampleRateOffsetHz, both of which this self-test must never use
-            // (see this method's own interface doc comment for why).
-            var sampleRate = _encoder.SampleRate;
-            var appSettings = await Task.Run(() => _settingsStore.LoadAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
-
-            // Code-review round-1 finding: unguarded GetSection call here would let a corrupt/
-            // version-skewed "SstvDecoder" section (e.g. a hand-edited settings.json) permanently
-            // break the self-test with a generic "failed" error, while live RX silently falls back to
-            // defaults via this SAME try/catch/fallback shape (Program.CreateSstvDecoder). Matching
-            // that established pattern here instead of leaving this the one unguarded read.
-            SstvDecoderSettings decoderSettings;
+            // sampleRate comes from _encoder.SampleRate -- the encoder is what actually generates the
+            // audio this decoder consumes. Restart-required-settings backlog item 4 (2026-08-27):
+            // SampleRate is genuinely live now, not restart-only -- the real protection against a
+            // mid-self-test rate change is the BeginTransmission/EndTransmission bracket below (round-4
+            // plan-review finding B1: this is a SECOND, independent call site into the encoder that
+            // needs the same bracket TransmitAsync's own TX path uses -- easy to miss since it doesn't
+            // go through PlayWithPttAsync at all). Only the decoder BEHAVIOR settings need a fresh read
+            // (DemodType/senseLevel/etc. have no such encoder-side counterpart to drift against).
+            // Deliberately NOT ResolveTransmitSettingsAsync -- that resolves the REAL persisted
+            // StationId/TxSampleRateOffsetHz, both of which this self-test must never use (see this
+            // method's own interface doc comment for why).
+            var encoderReconfig = _encoder as ISstvEncoderReconfiguration;
+            encoderReconfig?.BeginTransmission();
             try
             {
-                decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
-                    ?? new SstvDecoderSettings();
-            }
-            catch (JsonException ex)
-            {
-                SafeLog(() => Log.SettingsSectionReadFailed(_logger, SstvDecoderSettings.SectionKey, ex));
-                decoderSettings = new SstvDecoderSettings();
-            }
+                var sampleRate = _encoder.SampleRate;
+                var appSettings = await Task.Run(() => _settingsStore.LoadAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
-            var resolved = decoderSettings.Resolve();
-
-            // Fresh, throwaway instance -- see this method's own interface doc comment for why this
-            // is the whole design (round-5 plan-review): never the shared _decoder, so nothing here
-            // needs to serialize against _rxTransitionGate or touch ReceivedImageBuffer/
-            // ReceiveHistoryRecorder/the live RX pane at all.
-            using var decoder = new AnalogFmSstvDecoder(
-                sampleRate: sampleRate,
-                afcEnabled: resolved.AfcEnabled,
-                syncRestartEnabled: resolved.SyncRestartEnabled,
-                autoSyncEnabled: resolved.AutoSyncEnabled,
-                autoStopEnabled: resolved.AutoStopEnabled,
-                autoSlantEnabled: resolved.AutoSlantEnabled,
-                senseLevel: resolved.SenseLevel,
-                demodType: resolved.DemodType,
-                rxBpfPreset: resolved.RxBpfPreset,
-                rxBufferMode: resolved.RxBufferMode);
-
-            ArrayImageSource? lastImage = null;
-            int? previousLine = null;
-            int? observedStep = null;
-            var lastLine = -1;
-            string? detectedModeId = null;
-            var decodeRestarted = false;
-
-            // Learns the scanline step from the first two events rather than assuming 1 -- paired-line
-            // families (PD/MP/RM8/RM12) advance 2 rows per event and RowsPerTransmissionLine isn't on
-            // the public SstvModeDefinition. Same technique ReceivedImageBuffer/ReceiveHistoryRecorder
-            // already use (round-5 plan-review finding).
-            void OnLineDecoded(DecodedImageUpdate update)
-            {
-                // Copy, not the live update.Image reference -- see ArrayImageSource.CopyFrom's own
-                // doc comment.
-                lastImage = ArrayImageSource.CopyFrom(update.Image);
-
-                if (previousLine is int previous && observedStep is null)
+                // Code-review round-1 finding: unguarded GetSection call here would let a corrupt/
+                // version-skewed "SstvDecoder" section (e.g. a hand-edited settings.json) permanently
+                // break the self-test with a generic "failed" error, while live RX silently falls back to
+                // defaults via this SAME try/catch/fallback shape (Program.CreateSstvDecoder). Matching
+                // that established pattern here instead of leaving this the one unguarded read.
+                SstvDecoderSettings decoderSettings;
+                try
                 {
-                    observedStep = update.Line - previous;
+                    decoderSettings = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
+                        ?? new SstvDecoderSettings();
+                }
+                catch (JsonException ex)
+                {
+                    SafeLog(() => Log.SettingsSectionReadFailed(_logger, SstvDecoderSettings.SectionKey, ex));
+                    decoderSettings = new SstvDecoderSettings();
                 }
 
-                previousLine = update.Line;
-                lastLine = update.Line;
-            }
+                var resolved = decoderSettings.Resolve();
 
-            void OnModeDetected(SstvModeDefinition detected) => detectedModeId = detected.Id;
+                // Fresh, throwaway instance -- see this method's own interface doc comment for why this
+                // is the whole design (round-5 plan-review): never the shared _decoder, so nothing here
+                // needs to serialize against _rxTransitionGate or touch ReceivedImageBuffer/
+                // ReceiveHistoryRecorder/the live RX pane at all.
+                using var decoder = new AnalogFmSstvDecoder(
+                    sampleRate: sampleRate,
+                    afcEnabled: resolved.AfcEnabled,
+                    syncRestartEnabled: resolved.SyncRestartEnabled,
+                    autoSyncEnabled: resolved.AutoSyncEnabled,
+                    autoStopEnabled: resolved.AutoStopEnabled,
+                    autoSlantEnabled: resolved.AutoSlantEnabled,
+                    senseLevel: resolved.SenseLevel,
+                    demodType: resolved.DemodType,
+                    rxBpfPreset: resolved.RxBpfPreset,
+                    rxBufferMode: resolved.RxBufferMode);
 
-            // Code-review round-1 finding: DecodeRestarted has TWO reachable raise sites during a
-            // self-test, not one -- Auto Stop AND a mid-reception re-lock (a stronger/cleaner sync
-            // found while already locked, gated by syncRestartEnabled, which defaults true). With
-            // AutoStopEnabled defaulting FALSE, under stock settings every DecodeRestarted here is
-            // actually the re-lock case -- a real decode-fidelity failure, the exact thing this
-            // feature exists to catch. Only attribute it to Auto Stop when that setting is actually
-            // on; the event alone can't distinguish the two cases even then, so the outcome's own
-            // display text is deliberately hedged ("may be"), not asserted as fact.
-            void OnDecodeRestarted(SstvModeDefinition abandoned) => decodeRestarted = true;
+                ArrayImageSource? lastImage = null;
+                int? previousLine = null;
+                int? observedStep = null;
+                var lastLine = -1;
+                string? detectedModeId = null;
+                var decodeRestarted = false;
 
-            decoder.LineDecoded += OnLineDecoded;
-            decoder.ModeDetected += OnModeDetected;
-            decoder.DecodeRestarted += OnDecodeRestarted;
+                // Learns the scanline step from the first two events rather than assuming 1 -- paired-line
+                // families (PD/MP/RM8/RM12) advance 2 rows per event and RowsPerTransmissionLine isn't on
+                // the public SstvModeDefinition. Same technique ReceivedImageBuffer/ReceiveHistoryRecorder
+                // already use (round-5 plan-review finding).
+                void OnLineDecoded(DecodedImageUpdate update)
+                {
+                    // Copy, not the live update.Image reference -- see ArrayImageSource.CopyFrom's own
+                    // doc comment.
+                    lastImage = ArrayImageSource.CopyFrom(update.Image);
 
-            try
-            {
-                // Runs on a background thread -- encode+decode events are synchronous, so without this
-                // the whole loop would run on whatever thread called this method (the UI thread, in
-                // practice) and block it for the full self-test duration. Same reasoning as
-                // DecodeFromFileAsync's own push loop.
-                await Task.Run(
-                    async () =>
+                    if (previousLine is int previous && observedStep is null)
                     {
-                        const int ChunkSize = 4096;
-                        var buffer = new float[ChunkSize];
-                        var count = 0;
+                        observedStep = update.Line - previous;
+                    }
 
-                        // sampleRateOffsetHz: 0.0 and stationId: null (StationIdTransmitOptions.None) --
-                        // both deliberate, see this method's own interface doc comment.
-                        await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct)
-                            .WithCancellation(ct).ConfigureAwait(false))
+                    previousLine = update.Line;
+                    lastLine = update.Line;
+                }
+
+                void OnModeDetected(SstvModeDefinition detected) => detectedModeId = detected.Id;
+
+                // Code-review round-1 finding: DecodeRestarted has TWO reachable raise sites during a
+                // self-test, not one -- Auto Stop AND a mid-reception re-lock (a stronger/cleaner sync
+                // found while already locked, gated by syncRestartEnabled, which defaults true). With
+                // AutoStopEnabled defaulting FALSE, under stock settings every DecodeRestarted here is
+                // actually the re-lock case -- a real decode-fidelity failure, the exact thing this
+                // feature exists to catch. Only attribute it to Auto Stop when that setting is actually
+                // on; the event alone can't distinguish the two cases even then, so the outcome's own
+                // display text is deliberately hedged ("may be"), not asserted as fact.
+                void OnDecodeRestarted(SstvModeDefinition abandoned) => decodeRestarted = true;
+
+                decoder.LineDecoded += OnLineDecoded;
+                decoder.ModeDetected += OnModeDetected;
+                decoder.DecodeRestarted += OnDecodeRestarted;
+
+                try
+                {
+                    // Runs on a background thread -- encode+decode events are synchronous, so without this
+                    // the whole loop would run on whatever thread called this method (the UI thread, in
+                    // practice) and block it for the full self-test duration. Same reasoning as
+                    // DecodeFromFileAsync's own push loop.
+                    await Task.Run(
+                        async () =>
                         {
-                            buffer[count++] = sample;
-                            if (count == ChunkSize)
+                            const int ChunkSize = 4096;
+                            var buffer = new float[ChunkSize];
+                            var count = 0;
+
+                            // sampleRateOffsetHz: 0.0 and stationId: null (StationIdTransmitOptions.None) --
+                            // both deliberate, see this method's own interface doc comment.
+                            await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct)
+                                .WithCancellation(ct).ConfigureAwait(false))
+                            {
+                                buffer[count++] = sample;
+                                if (count == ChunkSize)
+                                {
+                                    decoder.PushSamples(buffer.AsMemory(0, count));
+                                    count = 0;
+                                }
+                            }
+
+                            if (count > 0)
                             {
                                 decoder.PushSamples(buffer.AsMemory(0, count));
-                                count = 0;
                             }
-                        }
 
-                        if (count > 0)
-                        {
-                            decoder.PushSamples(buffer.AsMemory(0, count));
-                        }
+                            // Trailing silence: TryProcessBuffer can leave the final scanline undecoded
+                            // without it -- the sync-anchor correction shifts consumed-vs-received sample
+                            // counts, so exact-length encoded audio can fall short on the last line (round-5
+                            // plan-review finding). One full transmission line covers any anchor offset; the
+                            // sampleRate/2 floor keeps short-line modes sane.
+                            var padSamples = Math.Max((int)Math.Ceiling(mode.LineDurationMs / 1000.0 * sampleRate), sampleRate / 2);
+                            var silence = new float[Math.Min(padSamples, ChunkSize)];
+                            for (var remaining = padSamples; remaining > 0;)
+                            {
+                                var n = Math.Min(remaining, silence.Length);
+                                decoder.PushSamples(silence.AsMemory(0, n));
+                                remaining -= n;
+                            }
+                        },
+                        ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    decoder.LineDecoded -= OnLineDecoded;
+                    decoder.ModeDetected -= OnModeDetected;
+                    decoder.DecodeRestarted -= OnDecodeRestarted;
+                }
 
-                        // Trailing silence: TryProcessBuffer can leave the final scanline undecoded
-                        // without it -- the sync-anchor correction shifts consumed-vs-received sample
-                        // counts, so exact-length encoded audio can fall short on the last line (round-5
-                        // plan-review finding). One full transmission line covers any anchor offset; the
-                        // sampleRate/2 floor keeps short-line modes sane.
-                        var padSamples = Math.Max((int)Math.Ceiling(mode.LineDurationMs / 1000.0 * sampleRate), sampleRate / 2);
-                        var silence = new float[Math.Min(padSamples, ChunkSize)];
-                        for (var remaining = padSamples; remaining > 0;)
-                        {
-                            var n = Math.Min(remaining, silence.Length);
-                            decoder.PushSamples(silence.AsMemory(0, n));
-                            remaining -= n;
-                        }
-                    },
-                    ct).ConfigureAwait(false);
+                // Code-review round-1 finding: only attribute a restart to Auto Stop when that setting is
+                // actually enabled -- see OnDecodeRestarted's own comment above for why a restart with
+                // Auto Stop OFF (the default) is really a decode-fidelity failure, not expected behavior.
+                var outcome = decodeRestarted && resolved.AutoStopEnabled
+                    ? LoopbackSelfTestOutcome.AbandonedByAutoStop
+                    : observedStep is int step && step > 0 && lastLine + step >= mode.ImageHeight
+                        ? LoopbackSelfTestOutcome.Completed
+                        : LoopbackSelfTestOutcome.Incomplete;
+
+                return new LoopbackSelfTestResult(lastImage ?? EmptySelfTestImage, detectedModeId, outcome);
             }
             finally
             {
-                decoder.LineDecoded -= OnLineDecoded;
-                decoder.ModeDetected -= OnModeDetected;
-                decoder.DecodeRestarted -= OnDecodeRestarted;
+                encoderReconfig?.EndTransmission();
             }
-
-            // Code-review round-1 finding: only attribute a restart to Auto Stop when that setting is
-            // actually enabled -- see OnDecodeRestarted's own comment above for why a restart with
-            // Auto Stop OFF (the default) is really a decode-fidelity failure, not expected behavior.
-            var outcome = decodeRestarted && resolved.AutoStopEnabled
-                ? LoopbackSelfTestOutcome.AbandonedByAutoStop
-                : observedStep is int step && step > 0 && lastLine + step >= mode.ImageHeight
-                    ? LoopbackSelfTestOutcome.Completed
-                    : LoopbackSelfTestOutcome.Incomplete;
-
-            return new LoopbackSelfTestResult(lastImage ?? EmptySelfTestImage, detectedModeId, outcome);
         }
         finally
         {
@@ -2193,8 +2414,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // thread called TransmitAsync (the caller's own await above may not have yielded at all, e.g.
         // JsonSettingsStore.LoadAsync returns synchronously when no settings file exists yet), so a
         // large image's estimate can't delay PTT keying/RX pause by running inline on the UI thread.
-        var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
-        await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+        // Restart-required-settings backlog item 4 (2026-08-27): brackets the WHOLE window from the
+        // first _encoder.SampleRate-derived read (EstimateSampleCount below) through PlayWithPttAsync's
+        // playback fully draining -- see ISstvEncoderReconfiguration's own doc comment for why a
+        // queued sample-rate change must never land between "read the rate" and "generate tones at
+        // it," and round-4 plan-review finding C3 for why this must open BEFORE PlayWithPttAsync's own
+        // _transmitInFlight guard, not after.
+        var encoderReconfig = _encoder as ISstvEncoderReconfiguration;
+        encoderReconfig?.BeginTransmission();
+        try
+        {
+            var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
+            await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+        }
+        finally
+        {
+            encoderReconfig?.EndTransmission();
+        }
     }
 
     /// <summary>Resolves the CW-ID/FSK station-ID settings + operator identity into one fully-formed
@@ -4223,6 +4459,21 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "A queued reconfiguration request was rejected -- the decoder kept its previous RxBpfPreset/DemodType/RxBufferMode")]
         public static partial void ReconfigurationRejected(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Sample rate change requested: {SampleRate}Hz")]
+        public static partial void SampleRateChangeRequested(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Sample rate change applied: {SampleRate}Hz")]
+        public static partial void SampleRateChangeApplied(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz deferred -- a recording is in progress")]
+        public static partial void SampleRateChangeDeferred(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz rejected -- the decoder kept its previous rate")]
+        public static partial void SampleRateChangeRejected(ILogger logger, int sampleRate);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Sample rate change failed -- the decoder was busy after an abandoned capture stop")]
+        public static partial void SampleRateChangeBusy(ILogger logger, Exception? restartFailure);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Manual Correct Slant requested")]
         public static partial void CorrectSlantRequested(ILogger logger);

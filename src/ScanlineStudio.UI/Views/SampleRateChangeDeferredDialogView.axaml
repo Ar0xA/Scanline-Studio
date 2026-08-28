@@ -1,0 +1,28 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.SampleRateChangeDeferredDialogView"
+        x:DataType="vm:SampleRateChangeDeferredDialogViewModel"
+        Title="{loc:Translate Options.SampleRateChangeDeferredDialog.Title}"
+        Width="360" Height="160"
+        MinWidth="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Minimal OK-only acknowledgement — see SampleRateChangeDeferredDialogViewModel's own doc
+         comment. Same shape as RestartRequiredDialogView.axaml. -->
+
+    <Border Background="{StaticResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap"
+                       Text="{loc:Translate Options.SampleRateChangeDeferredDialog.Message}" />
+
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate Options.SampleRateChangeDeferredDialog.OkButton}" Command="{Binding CloseCommand}"
+                        IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

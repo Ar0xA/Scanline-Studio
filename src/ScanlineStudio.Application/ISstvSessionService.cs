@@ -250,6 +250,33 @@ public interface ISstvSessionService : IAsyncDisposable
     /// for why no diff-against-current-value check is needed first. Safe to call from any thread.</summary>
     void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode);
 
+    /// <summary>Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27) --
+    /// applies a new sample rate live, without an app restart. Different in kind from
+    /// <see cref="RequestReconfiguration"/> and every other <c>Request*</c> method on this interface:
+    /// sample rate determines what format the sound card itself captures/plays at, so a live change
+    /// here can require reopening the actual RX capture device, not just swapping an in-memory
+    /// decoder object.
+    ///
+    /// Sequencing (all under this session's own RX-transition gate, serializing against
+    /// <see cref="StartReceivingAsync"/>/<see cref="StopReceivingAsync"/>/<see cref="DecodeFromFileAsync"/>):
+    /// if RX was actively receiving, capture is stopped FIRST, the new rate is committed to the
+    /// decoder directly (not idle-gated the way <see cref="RequestReconfiguration"/> is -- capture
+    /// being stopped already establishes it's safe), then capture reopens at the new rate. This
+    /// ABORTS any reception in progress (mid-image or not) -- unavoidable, since the capture stream
+    /// itself is being closed and reopened. If RX was idle, the rate commits immediately with no
+    /// capture to coordinate. The encoder (TX) and waterfall pick up the new rate independently -- see
+    /// <see cref="SampleRateApplyResult"/>'s own doc comment for the full per-outcome contract.
+    ///
+    /// Deferred (returns <see cref="SampleRateApplyResult.DeferredRecordingInProgress"/>, changes
+    /// nothing) while a recording is in progress -- the WAV header is written from the capture rate at
+    /// finalize time; changing rate mid-recording would produce a file describing a rate the audio was
+    /// never actually captured at. A <c>_rxTransitionGate</c> timeout throws
+    /// <see cref="TimeoutException"/> (matching <see cref="StartReceivingAsync"/>'s own established
+    /// choice) rather than being folded into the result. A no-op if the underlying decoder doesn't
+    /// implement the optional live-apply side-channel, matching <see cref="RequestReconfiguration"/>'s
+    /// own convention. Safe to call from any thread.</summary>
+    Task<SampleRateApplyResult> RequestSampleRateAsync(int sampleRate, CancellationToken ct = default);
+
     /// <summary>Targeted single-field persist for the Receive tab's own live "Squelch level"
     /// dropdown (<c>RxImagePaneViewModel</c>) -- a real settings-file read-modify-write against
     /// <c>SstvDecoderSettings.SenseLevel</c> ONLY, preserving whatever else is currently persisted in

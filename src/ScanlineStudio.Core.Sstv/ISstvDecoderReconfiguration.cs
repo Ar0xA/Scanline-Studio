@@ -31,6 +31,52 @@ public interface ISstvDecoderReconfiguration
     /// reconfiguration queued still completes -- using the previous, known-good settings -- and
     /// reports the drop here). Same threading/ordering contract as
     /// <see cref="ISstvDecoderMaintenance"/>'s own events: fires synchronously on whichever thread
-    /// called <c>PushSamples</c>, strictly after the swap lock is released.</summary>
+    /// called <c>PushSamples</c>, strictly after the swap lock is released. Also fires from
+    /// <see cref="ApplyPendingReconfigurationNow"/> on a <see cref="SwapResult.Rejected"/> outcome,
+    /// strictly after that method releases its own lock.</summary>
     event Action? ReconfigurationRejected;
+
+    /// <summary>Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27): queues
+    /// a sample-rate change, drained ONLY by <see cref="ApplyPendingReconfigurationNow"/> -- never by
+    /// the push-driven path <see cref="RequestReconfiguration"/> uses, since a live decode session's
+    /// incoming audio may still be physically sampled at the OLD rate at any moment
+    /// <c>PushSamples</c> could be called. A separately-queued <see cref="RequestReconfiguration"/>
+    /// request is preserved untouched. Throws <see cref="ArgumentOutOfRangeException"/> synchronously
+    /// for an unsupported rate -- never queues an invalid value. Safe to call from any thread.</summary>
+    void RequestSampleRate(int sampleRate);
+
+    /// <summary>Commits whatever is currently queued (a sample-rate change, and/or an
+    /// RxBpfPreset/DemodType/RxBufferMode change) in one swap, RIGHT NOW -- not gated on the
+    /// decoder's own idle state, unlike <see cref="RequestReconfiguration"/>'s push-driven path.
+    /// Intended caller: <c>ScanlineStudio.Application.SstvSessionService</c>, called ONLY after it
+    /// has fully stopped any open capture session (a live rate change is unsafe to commit while
+    /// audio could still be arriving at the old hardware rate). Returns
+    /// <see cref="SwapResult.Busy"/> rather than blocking if a <c>PushSamples</c> call is genuinely
+    /// still in flight (a real, reachable outcome via a capture-stop's own watchdog-timeout path, not
+    /// just a defensive guard) -- the caller must treat that as a failure needing its own recovery.
+    /// Returns <see cref="SwapResult.NothingPending"/> if called with nothing queued.</summary>
+    SwapResult ApplyPendingReconfigurationNow();
+}
+
+/// <summary>Outcome of <see cref="ISstvDecoderReconfiguration.ApplyPendingReconfigurationNow"/>.
+/// Restart-required-settings backlog item 4, round-4 plan-review finding B3: the caller MUST switch
+/// on every member -- in particular, it must never apply a new sample rate to any OTHER component
+/// (e.g. the waterfall, or reopen a capture device) unless the result is <see cref="Committed"/>.</summary>
+public enum SwapResult
+{
+    /// <summary>The swap happened; every field this call queued is now live.</summary>
+    Committed,
+
+    /// <summary>Called with nothing queued -- no swap was attempted.</summary>
+    NothingPending,
+
+    /// <summary>A change was queued, but building the replacement decoder failed -- the previous
+    /// decoder is untouched and still fully functional, at its previous settings (including its
+    /// previous sample rate, if a rate change was what failed). One attempt only, not retried.</summary>
+    Rejected,
+
+    /// <summary>A <c>PushSamples</c> call was genuinely still in flight -- no swap was attempted, and
+    /// nothing changed. See this method's own doc comment for why this is a real, reachable outcome,
+    /// not just a defensive guard.</summary>
+    Busy,
 }
