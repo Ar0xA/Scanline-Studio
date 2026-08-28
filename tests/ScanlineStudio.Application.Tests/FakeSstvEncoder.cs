@@ -3,9 +3,24 @@ using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Application.Tests;
 
-internal sealed class FakeSstvEncoder : ISstvEncoder
+internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguration
 {
-    public int SampleRate { get; init; } = 11025;
+    public int SampleRate { get; set; } = 11025;
+
+    // Restart-required-settings backlog item 4 (2026-08-27).
+    public int TransmissionRefCount { get; private set; }
+
+    public int RequestSampleRateCallCount { get; private set; }
+
+    public void RequestSampleRate(int sampleRate)
+    {
+        RequestSampleRateCallCount++;
+        SampleRate = sampleRate;
+    }
+
+    public void BeginTransmission() => TransmissionRefCount++;
+
+    public void EndTransmission() => TransmissionRefCount--;
 
     public float[] SamplesToYield { get; init; } = [0.1f, 0.2f, 0.3f];
 

@@ -21,6 +21,14 @@ public partial class OptionsWindowView : Window
                     var dialog = new RestartRequiredDialogView { DataContext = dialogVm };
                     await dialog.ShowDialog(this);
                 };
+                // See OptionsWindowViewModel.SampleRateChangeDeferredWarningRequested's own doc
+                // comment -- same await-before-close shape as RestartRequiredWarningRequested above.
+                vm.SampleRateChangeDeferredWarningRequested += async () =>
+                {
+                    var dialogVm = new SampleRateChangeDeferredDialogViewModel();
+                    var dialog = new SampleRateChangeDeferredDialogView { DataContext = dialogVm };
+                    await dialog.ShowDialog(this);
+                };
                 // Tier C audit finding (risk): unguarded before this fix -- RequestClose can fire
                 // AFTER the window already closed (e.g. the user closes it manually while the
                 // settings-save/SetCultureAsync await is still in flight; the continuation then

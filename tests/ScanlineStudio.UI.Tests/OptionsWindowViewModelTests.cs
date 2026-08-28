@@ -1913,6 +1913,50 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveCommand_RaisesSampleRateChangeDeferredWarning_WhenRecordingInProgress()
+    {
+        // User-requested (2026-08-28), after the sample-rate live-apply feature itself shipped: the
+        // rate is still SAVED either way (OptionsSettingsService.SaveAsync above the
+        // RequestSampleRateAsync call is unconditional) -- this only covers the LIVE-apply-deferred
+        // notice.
+        var sstvSession = new FakeSstvSessionService { SampleRateApplyResultToReturn = SampleRateApplyResult.DeferredRecordingInProgress };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var deferredWarningRaised = false;
+        var closeRaised = false;
+        vm.SampleRateChangeDeferredWarningRequested += () => { deferredWarningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        vm.SampleRate = 48000;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(deferredWarningRaised);
+        Assert.True(closeRaised); // the window still closes -- this is a notice, not a blocker
+        Assert.Equal(1, sstvSession.RequestSampleRateCallCount);
+
+        // Code-review finding: locks down the user's own explicit requirement, not just the comment
+        // above's claim -- the rate must be PERSISTED even though live-apply was deferred.
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        Assert.Equal(48000, audio?.SampleRate);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_DoesNotRaiseSampleRateChangeDeferredWarning_WhenApplied()
+    {
+        var sstvSession = new FakeSstvSessionService { SampleRateApplyResultToReturn = SampleRateApplyResult.Applied };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var deferredWarningRaised = false;
+        vm.SampleRateChangeDeferredWarningRequested += () => { deferredWarningRaised = true; return Task.CompletedTask; };
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(deferredWarningRaised);
+    }
+
+    [AvaloniaFact]
     public async Task SaveCommand_PersistsFlrigFieldsWhenBackendIsFlrig()
     {
         var settingsStore = new FakeSettingsStore();

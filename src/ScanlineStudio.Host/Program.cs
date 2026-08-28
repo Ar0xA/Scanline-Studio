@@ -880,7 +880,10 @@ internal static partial class Program
             loggerFactory: loggerFactory);
     }
 
-    internal static AnalogFmSstvEncoder CreateSstvEncoder(IServiceProvider services) =>
+    // Restart-required-settings backlog item 4 (2026-08-27): RestartableSstvEncoder, not the plain
+    // AnalogFmSstvEncoder this used to construct directly -- see that class's own doc comment for why
+    // it needs no periodic-maintenance machinery, only a live-swappable rate.
+    internal static RestartableSstvEncoder CreateSstvEncoder(IServiceProvider services) =>
         new(services.GetRequiredService<ISstvDecoder>().SampleRate);
 
     internal static WaterfallSource CreateWaterfallSource(IServiceProvider services) =>

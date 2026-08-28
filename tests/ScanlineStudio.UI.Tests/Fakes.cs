@@ -331,6 +331,19 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         LastRequestedReconfiguration = (rxBpfPreset, demodType, rxBufferMode);
     }
 
+    public int RequestSampleRateCallCount { get; private set; }
+
+    public int? LastRequestedSampleRate { get; private set; }
+
+    public SampleRateApplyResult SampleRateApplyResultToReturn { get; set; } = SampleRateApplyResult.Applied;
+
+    public Task<SampleRateApplyResult> RequestSampleRateAsync(int sampleRate, CancellationToken ct = default)
+    {
+        RequestSampleRateCallCount++;
+        LastRequestedSampleRate = sampleRate;
+        return Task.FromResult(SampleRateApplyResultToReturn);
+    }
+
     public int PersistSenseLevelCallCount { get; private set; }
 
     public int? LastPersistedSenseLevel { get; private set; }

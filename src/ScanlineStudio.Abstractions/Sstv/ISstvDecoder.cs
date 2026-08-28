@@ -6,9 +6,14 @@ public sealed record DecodedImageUpdate(int Line, IImageSource Image);
 
 public interface ISstvDecoder
 {
-    /// <summary>Immutable whole-Hz sample rate expected by <see cref="PushSamples"/>. The capture
-    /// pipeline, waterfall, and encoder must use this same process-lifetime value; changing the
-    /// persisted setting requires an application restart.</summary>
+    /// <summary>Whole-Hz sample rate expected by <see cref="PushSamples"/>. The capture pipeline,
+    /// waterfall, and encoder must all use this same value AT ANY GIVEN MOMENT -- restart-required-
+    /// settings backlog item 4 (2026-08-27) made this genuinely live-settable on the production
+    /// implementation, `ScanlineStudio.Core.Sstv.RestartableSstvDecoder` (see
+    /// `ScanlineStudio.Core.Sstv.ISstvDecoderReconfiguration.RequestSampleRate`'s own doc comment for
+    /// the request/commit contract) -- a caller must not assume this value is fixed for the process
+    /// lifetime, and must not cache a read across an operation that spans any await/yield point where
+    /// a concurrent change could land.</summary>
     int SampleRate { get; }
 
     /// <summary>Feeds one block of demodulated audio samples into the decoder. Intended to be called

@@ -87,15 +87,49 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// <summary>NOT drained anywhere but inside <see cref="Swap"/> -- see
     /// <see cref="RequestReconfiguration"/>'s own doc comment for the full contract (idle-gating,
     /// equality-guard, and the bounded-retry failure policy a persistent <c>CreateInner</c> failure
-    /// needs, restart-required-settings backlog item 2, round-2/round-3 plan-review).</summary>
-    private sealed record PendingReconfiguration(RxBpfPreset RxBpfPreset, DemodType DemodType, RxBufferMode RxBufferMode);
+    /// needs, restart-required-settings backlog item 2, round-2/round-3 plan-review).
+    ///
+    /// Restart-required-settings backlog item 4 (sample-rate live-apply): every field is nullable and
+    /// each <c>Request*</c> method sets/clears ONLY its own field(s) -- "pending" means any field is
+    /// non-null, normalized back to a <see langword="null"/> record (see <see cref="Normalize"/>)
+    /// once every field is null, so this record's own nullness and its four fields' nullness never
+    /// disagree about what's queued. This fixes a real defect an earlier draft had: a single shared
+    /// no-op guard that replaced the whole record would let one Options field's unrelated Save (e.g.
+    /// RX BPF preset unchanged) silently erase a separately-queued Sample rate change, or vice versa.
+    /// <see cref="SampleRate"/> is drained separately from the other three -- see
+    /// <see cref="Swap"/>'s own <c>drainSampleRate</c> parameter and
+    /// <see cref="ApplyPendingReconfigurationNow"/>'s doc comment for why a rate change can't
+    /// self-apply the way the other three do.</summary>
+    private sealed record PendingReconfiguration(RxBpfPreset? RxBpfPreset, DemodType? DemodType, RxBufferMode? RxBufferMode, int? SampleRate)
+    {
+        /// <summary>Whether this record has a queued BPF/Demod/BufferMode change -- deliberately
+        /// EXCLUDES <see cref="SampleRate"/>, since a rate-only remainder must never trigger
+        /// <see cref="PushSamplesCore"/>'s discretionary idle-swap branch (restart-required-settings
+        /// backlog item 4, round-4 plan-review finding B1: without this exclusion, a rate-only
+        /// remainder left queued after a <see cref="Busy"/>/<see cref="Rejected"/> outcome would
+        /// cause an unbounded rebuild-and-rearm loop, firing <see cref="Restarted"/> on every single
+        /// idle push for as long as it stays queued).</summary>
+        public bool HasSiblingChange => RxBpfPreset is not null || DemodType is not null || RxBufferMode is not null;
+    }
+
+    /// <summary>Collapses an all-null <see cref="PendingReconfiguration"/> back to
+    /// <see langword="null"/> so "pending" always means the same thing everywhere in this class
+    /// (round-5 plan-review nit) -- never leaves an inert all-null record sitting in
+    /// <see cref="_pendingReconfiguration"/>.</summary>
+    private static PendingReconfiguration? Normalize(PendingReconfiguration? record) =>
+        record is { RxBpfPreset: null, DemodType: null, RxBufferMode: null, SampleRate: null } ? null : record;
 
     private PendingReconfiguration? _pendingReconfiguration;
 
-    private readonly int _sampleRate;
-    private readonly long _warningThresholdSamples;
-    private readonly long _criticalThresholdSamples;
-    private readonly int _maximumSafeSampleIndex;
+    // NOT readonly (2026-08-27, restart-required-settings backlog item 4) -- unlike every other
+    // seed-and-live-value field above, these four are ONLY ever written from inside Swap (under
+    // _gate, drainSampleRate: true path), recomputed together via ComputeDefaultThresholds so they
+    // never disagree with each other. SampleRate's own public getter now locks (see below) since a
+    // torn/stale unlocked read is no longer safe once this is mutable.
+    private int _sampleRate;
+    private long _warningThresholdSamples;
+    private long _criticalThresholdSamples;
+    private int _maximumSafeSampleIndex;
     private readonly Func<int, AnalogFmSstvDecoder>? _decoderFactoryForTests;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly object _gate = new();
@@ -128,8 +162,19 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private bool _warningRaised;
 
     /// <summary>See <see cref="ISstvDecoder.SampleRate"/>. Every inner decoder is validated against
-    /// this immutable value before it can be installed.</summary>
-    public int SampleRate => _sampleRate;
+    /// this value before it can be installed. Genuinely live now (restart-required-settings backlog
+    /// item 4, 2026-08-27) -- the getter locks under <see cref="_gate"/> like every other mutable
+    /// accessor on this class, since a live rate change is no longer safe to read unlocked.</summary>
+    public int SampleRate
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _sampleRate;
+            }
+        }
+    }
 
     public event Action<DecodedImageUpdate>? LineDecoded;
     public event Action<SstvModeDefinition>? ModeDetected;
@@ -150,6 +195,29 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// <summary>Diagnostic-only: how many times the inner decoder has been swapped (initial
     /// construction does not count). Test infrastructure for pinning the self-clearing property.</summary>
     internal long RestartCountForTests { get; private set; }
+
+    /// <summary>Test infrastructure: forces the <see cref="_pushActive"/> guard on/off directly,
+    /// without a real <see cref="PushSamples"/> call in flight -- restart-required-settings backlog
+    /// item 4, lets a test exercise <see cref="ApplyPendingReconfigurationNow"/>'s
+    /// <see cref="SwapResult.Busy"/> path deterministically (a real concurrent in-flight push is not
+    /// reliably reproducible without a race).</summary>
+    internal void SetPushActiveForTests(bool active) => Volatile.Write(ref _pushActive, active ? 1 : 0);
+
+    /// <summary>Diagnostic-only: the wrapper's own currently-committed rate-derived thresholds --
+    /// restart-required-settings backlog item 4, lets a test verify
+    /// <see cref="ApplyPendingReconfigurationNow"/> actually recomputed these via
+    /// <see cref="ComputeDefaultThresholds"/> for the new rate, without needing to drive a real push
+    /// up to a production-sized (many-hour) threshold to observe it indirectly.</summary>
+    internal (long WarningThresholdSamples, long CriticalThresholdSamples, int MaximumSafeSampleIndex) ThresholdsForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return (_warningThresholdSamples, _criticalThresholdSamples, _maximumSafeSampleIndex);
+            }
+        }
+    }
 
     /// <summary>Diagnostic-only: whether the CURRENT inner instance is idle right now. Test
     /// infrastructure for proving a chunked push actually observed a non-idle decoder at some point
@@ -507,13 +575,18 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                 // mandatory: true -- this swap is the overflow-safety guarantee itself and must
                 // happen regardless of a coincidentally-pending (and possibly failing) reconfiguration
                 // request; see Swap's own doc comment for why "mandatory" always either commits or
-                // throws, never silently no-ops (round-3 plan-review B1/Q3).
-                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
+                // throws, never silently no-ops (round-3 plan-review B1/Q3). drainSampleRate: false --
+                // restart-required-settings backlog item 4, round-4 finding C1: a pending SampleRate
+                // is never drained by a push-driven swap (mandatory or not), since capture could still
+                // be physically streaming at the OLD hardware rate here -- only the direct,
+                // orchestrator-called ApplyPendingReconfigurationNow (called after capture is stopped)
+                // ever drains it.
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
                 raiseCritical = true;
             }
             else if (n >= _criticalThresholdSamples)
             {
-                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
                 raiseCritical = true;
             }
             else if (_inner.IsIdle && n >= _warningThresholdSamples)
@@ -522,15 +595,17 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                 // maintenance swap, not the new reconfiguration-only trigger below -- it must not
                 // silently degrade into a no-op just because a pending reconfiguration happens to be
                 // queued and its CreateInner attempt fails.
-                raiseRestarted = Swap(mandatory: true, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
             }
-            else if (_inner.IsIdle && _pendingReconfiguration is not null)
+            else if (_inner.IsIdle && _pendingReconfiguration is { HasSiblingChange: true })
             {
                 // Restart-required-settings backlog item 2 (2026-08-27): the ONLY discretionary swap
                 // trigger -- a persistent CreateInner failure here just leaves the old (still fully
                 // functional) inner decoder in place instead of forcing anything (see Swap's own
-                // doc comment).
-                raiseRestarted = Swap(mandatory: false, out raiseReconfigurationRejected);
+                // doc comment). HasSiblingChange (not "is not null") -- backlog item 4, round-4
+                // finding B1: a rate-only remainder must NOT trigger this branch (see
+                // PendingReconfiguration.HasSiblingChange's own doc comment for why).
+                raiseRestarted = Swap(mandatory: false, drainSampleRate: false, out raiseReconfigurationRejected);
             }
             else if (!_inner.IsIdle && n >= _warningThresholdSamples && !_warningRaised)
             {
@@ -975,10 +1050,122 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     {
         lock (_gate)
         {
-            _pendingReconfiguration = (rxBpfPreset == _rxBpfPreset && demodType == _demodType && rxBufferMode == _rxBufferMode)
-                ? null
-                : new PendingReconfiguration(rxBpfPreset, demodType, rxBufferMode);
+            // Restart-required-settings backlog item 4, round-4 finding B2: clears/sets ONLY this
+            // method's own three fields -- a separately-queued SampleRate (from RequestSampleRate)
+            // survives untouched either way, preserved via the existing pending record's own
+            // SampleRate field. Normalize collapses back to null if nothing at all ends up pending.
+            var preservedSampleRate = _pendingReconfiguration?.SampleRate;
+            var isNoOp = rxBpfPreset == _rxBpfPreset && demodType == _demodType && rxBufferMode == _rxBufferMode;
+            _pendingReconfiguration = Normalize(isNoOp
+                ? new PendingReconfiguration(null, null, null, preservedSampleRate)
+                : new PendingReconfiguration(rxBpfPreset, demodType, rxBufferMode, preservedSampleRate));
         }
+    }
+
+    /// <summary>Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27): queues
+    /// a sample-rate change, same per-group merge shape as <see cref="RequestReconfiguration"/>
+    /// (preserves any separately-queued RxBpfPreset/DemodType/RxBufferMode change untouched).
+    ///
+    /// Unlike <see cref="RequestReconfiguration"/>'s three fields, a queued <see cref="SampleRate"/>
+    /// is deliberately NEVER drained by <see cref="PushSamplesCore"/>'s own push-driven idle-swap
+    /// path -- the decoder cannot know whether the audio physically arriving at
+    /// <see cref="PushSamples"/> is still sampled at the OLD hardware rate (only
+    /// <c>ScanlineStudio.Application.SstvSessionService</c> knows whether a capture session is even
+    /// open), so a rate change only ever commits via <see cref="ApplyPendingReconfigurationNow"/>,
+    /// called directly by that orchestrator after it has stopped capture. Validates and computes the
+    /// new thresholds up front (throws for an unsupported rate) BEFORE touching any field, so an
+    /// invalid request never leaves a half-mutated pending record. The equality guard compares
+    /// against this wrapper's own currently-committed <see cref="SampleRate"/> (not a mid-drain
+    /// inner value), matching <see cref="RequestReconfiguration"/>'s own established reasoning. Safe
+    /// to call from any thread.</summary>
+    public void RequestSampleRate(int sampleRate)
+    {
+        if (!SstvSampleRate.IsSupported(sampleRate))
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), sampleRate, $"Sample rate must be between {SstvSampleRate.Minimum} and {SstvSampleRate.Maximum} Hz inclusive.");
+        }
+
+        // Computed (and validated again, redundantly but harmlessly) here rather than inside Swap --
+        // round-2 plan-review finding: an unsupported rate must never reach Swap with other fields
+        // already reassigned.
+        _ = ComputeDefaultThresholds(sampleRate);
+
+        lock (_gate)
+        {
+            var preservedRxBpfPreset = _pendingReconfiguration?.RxBpfPreset;
+            var preservedDemodType = _pendingReconfiguration?.DemodType;
+            var preservedRxBufferMode = _pendingReconfiguration?.RxBufferMode;
+            var isNoOp = sampleRate == _sampleRate;
+            _pendingReconfiguration = Normalize(new PendingReconfiguration(
+                preservedRxBpfPreset,
+                preservedDemodType,
+                preservedRxBufferMode,
+                isNoOp ? null : sampleRate));
+        }
+    }
+
+    /// <summary>Restart-required-settings backlog item 4: the ONLY path that ever drains a queued
+    /// <see cref="SampleRate"/> change (see <see cref="RequestSampleRate"/>'s own doc comment for
+    /// why the push-driven path never does). Intended caller:
+    /// <c>ScanlineStudio.Application.SstvSessionService</c>, AFTER it has stopped any open capture
+    /// session -- by construction, no <see cref="PushSamples"/> call can be racing this call at that
+    /// point, so there is no idle-gating here the way the push-driven path has; capture being
+    /// stopped already establishes quiescence. Also drains any simultaneously-pending
+    /// RxBpfPreset/DemodType/RxBufferMode change in the SAME swap.
+    ///
+    /// Takes the SAME <see cref="_pushActive"/> CAS <see cref="PushSamples"/> itself takes, and the
+    /// same <see cref="ObjectDisposedException.ThrowIf(bool,object?)"/> guard <see cref="PushSamplesCore"/>
+    /// takes -- round-4 plan-review finding B4: without these, this entry point could
+    /// <c>Dispose()</c> an inner decoder whose <see cref="PushSamples"/> is concurrently executing
+    /// (reachable via a capture-stop's own watchdog-timeout/abandoned-stop path), or construct-and-
+    /// leak a fresh inner into an already-disposed wrapper. Returns <see cref="SwapResult.Busy"/>
+    /// rather than blocking if that CAS is already held -- the caller (round-4 plan-review finding
+    /// C2) must treat that as a real, reachable outcome needing its own recovery, not a defensive
+    /// nicety. Raises <see cref="Restarted"/>/<see cref="ReconfigurationRejected"/> strictly after
+    /// releasing <see cref="_gate"/>, matching <see cref="PushSamplesCore"/>'s own established
+    /// deadlock-avoidance rule (this class's own doc comment).</summary>
+    public SwapResult ApplyPendingReconfigurationNow()
+    {
+        if (Interlocked.CompareExchange(ref _pushActive, 1, 0) != 0)
+        {
+            return SwapResult.Busy;
+        }
+
+        bool committed;
+        bool rejected;
+        try
+        {
+            lock (_gate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+
+                if (_pendingReconfiguration is null)
+                {
+                    return SwapResult.NothingPending;
+                }
+
+                committed = Swap(mandatory: false, drainSampleRate: true, out rejected);
+            }
+        }
+        finally
+        {
+            Volatile.Write(ref _pushActive, 0);
+        }
+
+        ExceptionDispatchInfo? maintenanceFailure = null;
+        if (committed)
+        {
+            RaiseMaintenanceSubscribers(Restarted, ref maintenanceFailure);
+        }
+
+        if (rejected)
+        {
+            RaiseMaintenanceSubscribers(ReconfigurationRejected, ref maintenanceFailure);
+        }
+
+        maintenanceFailure?.Throw();
+
+        return committed ? SwapResult.Committed : SwapResult.Rejected;
     }
 
     /// <summary>See <see cref="ISstvDecoder.StationIdDecodeEnabled"/> for the full contract --
@@ -1079,18 +1266,48 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// (2026-08-27) made this user-triggerable (a Reconfiguration Save queues a swap on the very next
     /// idle push), so the worst case is now bounded by human click rate, not a many-hour interval;
     /// still code-review-accepted, the underlying stuck-writer precondition is unchanged.</summary>
-    private bool Swap(bool mandatory, out bool reconfigurationRejected)
+    /// <param name="drainSampleRate">Restart-required-settings backlog item 4, round-4 finding C1:
+    /// <see langword="false"/> from every push-driven call in <see cref="PushSamplesCore"/> (mandatory
+    /// or not) -- a pending <see cref="SampleRate"/> is left untouched, still queued, since capture
+    /// could still be physically streaming at the OLD hardware rate at that moment.
+    /// <see langword="true"/> ONLY from <see cref="ApplyPendingReconfigurationNow"/>, called after
+    /// capture has been stopped.</param>
+    private bool Swap(bool mandatory, bool drainSampleRate, out bool reconfigurationRejected)
     {
         reconfigurationRejected = false;
         var pending = _pendingReconfiguration;
         var previousRxBpfPreset = _rxBpfPreset;
         var previousDemodType = _demodType;
         var previousRxBufferMode = _rxBufferMode;
+        var previousSampleRate = _sampleRate;
+        var previousWarningThresholdSamples = _warningThresholdSamples;
+        var previousCriticalThresholdSamples = _criticalThresholdSamples;
+        var previousMaximumSafeSampleIndex = _maximumSafeSampleIndex;
         if (pending is not null)
         {
-            _rxBpfPreset = pending.RxBpfPreset;
-            _demodType = pending.DemodType;
-            _rxBufferMode = pending.RxBufferMode;
+            if (pending.RxBpfPreset is { } rxBpfPreset)
+            {
+                _rxBpfPreset = rxBpfPreset;
+            }
+
+            if (pending.DemodType is { } demodType)
+            {
+                _demodType = demodType;
+            }
+
+            if (pending.RxBufferMode is { } rxBufferMode)
+            {
+                _rxBufferMode = rxBufferMode;
+            }
+
+            if (drainSampleRate && pending.SampleRate is { } sampleRate)
+            {
+                var thresholds = ComputeDefaultThresholds(sampleRate);
+                _sampleRate = sampleRate;
+                _warningThresholdSamples = thresholds.WarningThresholdSamples;
+                _criticalThresholdSamples = thresholds.CriticalThresholdSamples;
+                _maximumSafeSampleIndex = thresholds.MaximumSafeSampleIndex;
+            }
         }
 
         var outgoing = _inner;
@@ -1120,7 +1337,19 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             _rxBpfPreset = previousRxBpfPreset;
             _demodType = previousDemodType;
             _rxBufferMode = previousRxBufferMode;
-            _pendingReconfiguration = null;
+            _sampleRate = previousSampleRate;
+            _warningThresholdSamples = previousWarningThresholdSamples;
+            _criticalThresholdSamples = previousCriticalThresholdSamples;
+            _maximumSafeSampleIndex = previousMaximumSafeSampleIndex;
+
+            // Restart-required-settings backlog item 4, round-4 finding B2: a rate-only remainder
+            // must survive an UNRELATED sibling failure (drainSampleRate: false) rather than being
+            // silently dropped -- only drop it when THIS attempt was the one carrying the rate
+            // (drainSampleRate: true), matching the existing "one attempt only, never automatically
+            // retried" contract this catch already establishes for the sibling fields.
+            _pendingReconfiguration = (!drainSampleRate && pending.SampleRate is { } preservedRate)
+                ? new PendingReconfiguration(null, null, null, preservedRate)
+                : null;
             reconfigurationRejected = true;
 
             if (!mandatory)
@@ -1151,7 +1380,12 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // above -- otherwise a SUCCESSFUL drain of a pending reconfiguration would leave
         // _pendingReconfiguration set, and the new idle-plus-pending branch in PushSamplesCore would
         // re-arm and rebuild a fresh (identical) inner decoder on every subsequent idle push forever.
-        _pendingReconfiguration = null;
+        // Same remainder-preservation as the catch above (round-4 finding B2): a non-rate-draining
+        // swap that successfully applied BPF/Demod/BufferMode must not drop a separately-queued rate
+        // request.
+        _pendingReconfiguration = (!drainSampleRate && pending?.SampleRate is { } remainderRate)
+            ? new PendingReconfiguration(null, null, null, remainderRate)
+            : null;
         _warningRaised = false;
         RestartCountForTests++;
         return true;
