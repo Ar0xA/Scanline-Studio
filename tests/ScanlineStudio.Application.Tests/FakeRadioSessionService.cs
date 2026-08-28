@@ -45,6 +45,11 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
         return Task.FromResult(TestPttResultToReturn);
     }
 
+    public HamlibLibraryReloadResult? HamlibLibraryReloadResultToReturn { get; set; } = new(true, "/fake/libhamlib.so.4", "Hamlib 4.5.5", []);
+
+    public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default) =>
+        Task.FromResult(HamlibLibraryReloadResultToReturn);
+
     public Task DisconnectAsync() => Task.CompletedTask;
 
     public Task SetFrequencyAsync(long hz, CancellationToken ct = default) => Task.CompletedTask;

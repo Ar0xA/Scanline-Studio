@@ -294,10 +294,40 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public event Action<RadioSafetySpec>? SafetySettingsChanged;
 
+    /// <summary>See <see cref="IRadioSessionService.RequestHamlibLibraryPathAsync"/>.</summary>
+    public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default)
+    {
+        var reconfigurable = _protocolFactories.OfType<IHamlibLibraryReconfiguration>().FirstOrDefault();
+        return reconfigurable is null
+            ? Task.FromResult<HamlibLibraryReloadResult?>(null)
+            : ReloadHamlibLibraryAsync(reconfigurable, overridePath, ct);
+    }
+
+    private async Task<HamlibLibraryReloadResult?> ReloadHamlibLibraryAsync(IHamlibLibraryReconfiguration reconfigurable, string? overridePath, CancellationToken ct)
+    {
+        var result = await reconfigurable.ReloadLibraryAsync(overridePath, ct).ConfigureAwait(false);
+        if (result.Applied)
+        {
+            Log.HamlibLibraryReloaded(_logger, result.ResolvedPath ?? "(unknown)");
+        }
+        else
+        {
+            Log.HamlibLibraryReloadRejected(_logger, string.Join("; ", result.Attempts));
+        }
+
+        return result;
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Information, Message = "Resolved radio spec from settings: backend={BackendId}")]
         public static partial void ResolvedSpecFromSettings(ILogger logger, string backendId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Hamlib library reloaded live: {Path}")]
+        public static partial void HamlibLibraryReloaded(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Hamlib library reload rejected: {Attempts}")]
+        public static partial void HamlibLibraryReloadRejected(ILogger logger, string attempts);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestConnectionAsync: factory resolution failed for {SpecType}: {MatchCount} match(es)")]
         public static partial void TestConnectionResolutionFailed(ILogger logger, string specType, int matchCount);

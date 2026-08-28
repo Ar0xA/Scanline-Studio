@@ -1841,8 +1841,13 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("/dev/ttyS1", radio?.PttPort);
     }
 
+    // Restart-required-settings backlog item 5 (2026-08-28): HamlibLibraryPath no longer needs a
+    // restart -- it applies live now. The five tests below replace the old
+    // SaveCommand_RaisesRestartRequiredWarning_WhenHamlibLibraryPathChanged (which asserted exactly
+    // the removed condition) with coverage for the new live-reload path.
+
     [AvaloniaFact]
-    public async Task SaveCommand_RaisesRestartRequiredWarning_WhenHamlibLibraryPathChanged()
+    public async Task SaveCommand_DoesNotRaiseRestartRequiredWarning_WhenOnlyHamlibLibraryPathChanged()
     {
         var settingsStore = new FakeSettingsStore
         {
@@ -1853,16 +1858,176 @@ public sealed class OptionsWindowViewModelTests
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
-        var warningRaised = false;
+        var restartWarningRaised = false;
         var closeRaised = false;
-        vm.RestartRequiredWarningRequested += () => { warningRaised = true; return Task.CompletedTask; };
+        vm.RestartRequiredWarningRequested += () => { restartWarningRaised = true; return Task.CompletedTask; };
         vm.RequestClose += () => closeRaised = true;
 
         vm.HamlibLibraryPath = "/opt/homebrew/lib/libhamlib.4.dylib";
         await vm.SaveCommand.ExecuteAsync(null);
 
-        Assert.True(warningRaised);
+        Assert.False(restartWarningRaised);
         Assert.True(closeRaised);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RequestsHamlibLibraryReload_WhenPathChanged()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.HamlibLibraryPath = "/opt/homebrew/lib/libhamlib.4.dylib";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, radioSession.RequestHamlibLibraryPathCallCount);
+        Assert.Equal("/opt/homebrew/lib/libhamlib.4.dylib", radioSession.LastRequestedHamlibLibraryPath);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_DoesNotRequestHamlibLibraryReload_WhenPathUnchanged()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        // Nothing touched -- a Save with the path exactly as loaded must not leak another native load.
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, radioSession.RequestHamlibLibraryPathCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RequestsHamlibLibraryReload_TreatsNullAndEmptyPathAsEquivalent()
+    {
+        // Round-1 plan-review finding: a TextBox binding yields "" where the loaded/persisted value
+        // was null -- must not count as a change on its own.
+        var settingsStore = new FakeSettingsStore { Settings = new AppSettings() }; // HamlibLibraryPath defaults to null
+        var radioSession = new FakeRadioSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.HamlibLibraryPath = string.Empty;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, radioSession.RequestHamlibLibraryPathCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RaisesHamlibLibraryReloadFailedWarning_WhenReloadFails()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService
+        {
+            HamlibLibraryReloadResultToReturn = new HamlibLibraryReloadResult(false, "/bad/path.so", null, ["/bad/path.so: file not found"]),
+        };
+        var localization = new FakeLocalizationService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var failedWarningRaised = false;
+        var closeRaised = false;
+        vm.HamlibLibraryReloadFailedWarningRequested += () => { failedWarningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        vm.HamlibLibraryPath = "/bad/path.so";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(failedWarningRaised);
+        Assert.True(closeRaised); // a notice, not a blocker -- the window still closes
+        Assert.NotNull(vm.HamlibLibraryReloadFailedMessage);
+        // FakeLocalizationService.GetString returns the raw key, not real interpolated text (see its
+        // own doc comment) -- verify the CALLER passed the real failure detail as an arg instead.
+        Assert.Equal("Options.HamlibLibraryReloadFailedDialog.Message", localization.LastKey);
+        Assert.Contains("file not found", string.Join("; ", localization.LastArgs), StringComparison.Ordinal);
+
+        // A later Save with the SAME (still-bad) path must retry, not silently no-op -- proves the
+        // baseline was correctly NOT refreshed on failure.
+        radioSession.HamlibLibraryReloadResultToReturn = new HamlibLibraryReloadResult(true, "/bad/path.so", "Hamlib 4.5.5", []);
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Equal(2, radioSession.RequestHamlibLibraryPathCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_DoesNotRaiseHamlibLibraryReloadFailedWarning_WhenReloadSucceeds()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var failedWarningRaised = false;
+        vm.HamlibLibraryReloadFailedWarningRequested += () => { failedWarningRaised = true; return Task.CompletedTask; };
+
+        vm.HamlibLibraryPath = "/opt/homebrew/lib/libhamlib.4.dylib";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(failedWarningRaised);
+
+        // Baseline correctly refreshed on success -- a SECOND, unrelated Save must not re-reload.
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Equal(1, radioSession.RequestHamlibLibraryPathCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_RaisesHamlibLibraryReloadFailedWarning_WhenReloadThrows()
+    {
+        // Round-1 plan-review finding: a TimeoutException from a concurrent reload must not be
+        // silently swallowed the way SetCultureAsync's own nearest-shaped catch would be if copied
+        // naively -- the user needs to see that the change did not apply.
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService { HamlibLibraryReloadException = new TimeoutException("Timed out waiting for a concurrent Hamlib library reload to finish.") };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var failedWarningRaised = false;
+        var closeRaised = false;
+        vm.HamlibLibraryReloadFailedWarningRequested += () => { failedWarningRaised = true; return Task.CompletedTask; };
+        vm.RequestClose += () => closeRaised = true;
+
+        vm.HamlibLibraryPath = "/opt/homebrew/lib/libhamlib.4.dylib";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(failedWarningRaised);
+        Assert.True(closeRaised); // the unrelated writes already committed this Save must still land
+        Assert.NotNull(vm.HamlibLibraryReloadFailedMessage);
+
+        // Round-1 code-review finding: proves the baseline was correctly NOT refreshed on the
+        // exception path either (only WhenReloadFails covered the Applied:false path before) -- a
+        // later Save with the SAME path must retry, not silently no-op.
+        radioSession.HamlibLibraryReloadException = null;
+        radioSession.HamlibLibraryReloadResultToReturn = new HamlibLibraryReloadResult(true, "/opt/homebrew/lib/libhamlib.4.dylib", "Hamlib 4.5.5", []);
+        await vm.SaveCommand.ExecuteAsync(null);
+        Assert.Equal(2, radioSession.RequestHamlibLibraryPathCallCount);
     }
 
     [AvaloniaFact]

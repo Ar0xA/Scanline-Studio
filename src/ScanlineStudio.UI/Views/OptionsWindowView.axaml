@@ -384,8 +384,7 @@
                                             <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibLibraryPath}"
                                                       Watermark="{loc:Translate Options.Radio.Hamlib.LibraryPath.Watermark}" IsEnabled="{Binding !IsProbingHamlib}" />
                                         </Grid>
-                                        <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" FontWeight="Bold"
-                                                   Text="{loc:Translate Options.Radio.Hamlib.LibraryPath.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.Hamlib.LibraryPath.Caption}" TextWrapping="Wrap" />
                                         <WrapPanel>
                                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Margin="0,0,4,0"
                                                     Content="{loc:Translate Options.Radio.Hamlib.Browse}"
