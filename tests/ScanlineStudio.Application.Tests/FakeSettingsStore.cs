@@ -38,8 +38,21 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
         return Settings;
     }
 
+    /// <summary>Configurations-preset backlog, Phase 1 code-review round-1 finding: when set, the
+    /// NEXT <see cref="SaveAsync"/> call throws this instead of persisting, then this is cleared
+    /// back to <see langword="null"/> -- ONE-SHOT, mirroring <see cref="LoadAsyncException"/>'s own
+    /// shape -- lets a test simulate a disk-full/permission-denied write without breaking a
+    /// SUBSEQUENT save in the same test (e.g. a rollback's own restore write).</summary>
+    public Exception? SaveAsyncExceptionOnce { get; set; }
+
     public Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
+        if (SaveAsyncExceptionOnce is { } ex)
+        {
+            SaveAsyncExceptionOnce = null;
+            throw ex;
+        }
+
         Settings = settings;
         _changes.OnNext(settings);
         return Task.CompletedTask;

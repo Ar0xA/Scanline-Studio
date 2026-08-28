@@ -48,6 +48,26 @@ public interface ISstvSessionService : IAsyncDisposable
     /// pausing capture for the duration of a transmission.</summary>
     bool IsReceiving { get; }
 
+    /// <summary>Configurations-preset backlog, Phase 3 (2026-08-28) -- whether a transmission is
+    /// genuinely in flight right now (PTT keyed via <see cref="TransmitAsync"/>/<see cref="TuneAsync"/>,
+    /// both of which route through the same internal single-flight guard). Distinct from
+    /// <see cref="IsPttLocked"/> (a user-initiated MANUAL lock, unrelated to whether audio is
+    /// actually being transmitted right now) and from a rig-reported <c>RadioState.IsTransmitting</c>
+    /// (meaningless with VOX or no radio at all) -- this is the one reliable "don't tear down RX/
+    /// switch a live configuration out from under an active transmission" signal. Safe to read from
+    /// any thread.</summary>
+    bool IsTransmitting { get; }
+
+    /// <summary>Configurations-preset backlog, Phase 3 (2026-08-28) -- whether a WAV recording is
+    /// currently armed (between <see cref="StartRecordingAsync"/> and <see cref="StopRecordingAsync"/>).
+    /// Same underlying state
+    /// <see cref="RequestSampleRateAsync"/>'s own recording-in-progress defer check already reads --
+    /// exposed here as a public, safe-from-any-thread property so a caller can check UP FRONT before
+    /// attempting an action that would otherwise defer partway through (a preset switch, which needs
+    /// to reject cleanly before touching anything, not discover a deferral after settings are already
+    /// partway overwritten).</summary>
+    bool IsRecording { get; }
+
     /// <summary>Whether RX auto-detect is currently paused -- the port of legacy's RX-page
     /// <c>SBAuto</c> toggle (<c>TMmsstv::RxAutoPush</c>, `Main.cpp:6042-6060`). Session-owned state,
     /// NOT decoder state: capture and the waterfall keep running while paused; only the decoder
@@ -290,6 +310,34 @@ public interface ISstvSessionService : IAsyncDisposable
     /// implement the optional live-apply side-channel, matching <see cref="RequestReconfiguration"/>'s
     /// own convention. Safe to call from any thread.</summary>
     Task<SampleRateApplyResult> RequestSampleRateAsync(int sampleRate, CancellationToken ct = default);
+
+    /// <summary>Configurations-preset backlog, Phase 1 (2026-08-28) -- applies a new RX capture
+    /// device live, without an app restart. Previously the one setting with no live-apply path at
+    /// all: RX capture opens once at boot and is never revisited otherwise. Same shape as
+    /// <see cref="RequestSampleRateAsync"/> (this session's own established precedent for this exact
+    /// class of change): all under this session's own RX-transition gate; if RX was actively
+    /// receiving, capture is stopped FIRST, the new device id/name is persisted, then capture reopens
+    /// -- which resolves the device FRESH from that persisted value, so no parameter threading is
+    /// needed for the reopen itself. This ABORTS any reception in progress, unavoidably, same as a
+    /// rate change. If RX was idle, the persisted device commits immediately with no capture to
+    /// coordinate -- it takes effect the next time RX actually starts.
+    ///
+    /// <paramref name="deviceName"/> is required alongside <paramref name="deviceId"/>, not optional
+    /// convenience: the existing device-resolution fallback recovers a churned device by NAME when
+    /// its id no longer matches (see the private resolver's own doc comment) -- persisting only a new
+    /// id while leaving a stale name from the PREVIOUS device would let a later id-miss silently
+    /// name-recover to the wrong physical device.
+    ///
+    /// Deferred (returns <see cref="CaptureDeviceApplyResult.DeferredRecordingInProgress"/>, changes
+    /// nothing) while a recording is in progress -- same reasoning as
+    /// <see cref="RequestSampleRateAsync"/>'s own deferral (a recording's WAV header must describe
+    /// the device/rate audio was actually captured at, not one that changed mid-recording). A
+    /// <c>_rxTransitionGate</c> timeout throws <see cref="TimeoutException"/>, matching
+    /// <see cref="RequestSampleRateAsync"/>'s own established choice. See
+    /// <see cref="CaptureDeviceApplyResult"/>'s own doc comment for the full per-outcome contract,
+    /// including the <see cref="CaptureDeviceApplyResult.Rejected"/> case (the requested device
+    /// failed to resolve OR failed to actually open). Safe to call from any thread.</summary>
+    Task<CaptureDeviceApplyResult> RequestCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct = default);
 
     /// <summary>Targeted single-field persist for the Receive tab's own live "Squelch level"
     /// dropdown (<c>RxImagePaneViewModel</c>) -- a real settings-file read-modify-write against

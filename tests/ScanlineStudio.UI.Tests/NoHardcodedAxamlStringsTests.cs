@@ -10,7 +10,13 @@ namespace ScanlineStudio.UI.Tests;
 /// can drift from what's actually shipping.</summary>
 public sealed partial class NoHardcodedAxamlStringsTests
 {
-    [GeneratedRegex("(Content|Text|Header)=\"([^\"{][^\"]*)\"")]
+    // \b before the group is load-bearing (found via a real false positive, 2026-08-28):
+    // SizeToContent="Height" otherwise matches as if it were Content="Height", since the original
+    // regex had no word boundary and "Content" is a substring of "SizeToContent". No boundary is
+    // needed between "o" and "C" within a single word (both \w), so \b correctly rejects that case
+    // while still matching a real standalone Content=/Text=/Header= (always preceded by whitespace
+    // or a tag-opening char, both non-word).
+    [GeneratedRegex("\\b(Content|Text|Header)=\"([^\"{][^\"]*)\"")]
     private static partial Regex HardcodedAttributeRegex();
 
     [Fact]

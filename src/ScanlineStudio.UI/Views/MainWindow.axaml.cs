@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
@@ -18,6 +19,14 @@ public partial class MainWindow : Window
     // that retry also exhausts its 5 attempts) before the user has dismissed an already-open popup
     // from the previous give-up. Null once the window is closed (or before the first give-up).
     private RadioConnectionGaveUpWindowView? _connectionGaveUpWindow;
+
+    // Configurations-preset backlog, Phase 4b: re-entrancy guard for ConfigurationsMenuItem's own
+    // SubmenuOpened handler -- see that handler's own doc comment for why this is needed (the event
+    // bubbles from each row's own nested submenu). Class-level, not local to the DataContextChanged
+    // lambda below, since DataContextChanged can in principle fire more than once over this window's
+    // lifetime and each firing re-subscribes a fresh closure -- a field survives that; a local
+    // wouldn't reliably.
+    private bool _isPopulatingConfigurationsMenu;
 
     public MainWindow()
     {
@@ -402,6 +411,197 @@ public partial class MainWindow : Window
                     }
                 };
 
+                // Configurations-preset backlog, Phase 4 (2026-08-28). Same shape as
+                // MacrosReferenceRequested above. window.Closed re-runs the SAME refresh block
+                // OptionsRequested's own Closed handler below uses, PLUS a frequency-presets reload --
+                // a preset switch can change every settings section Options' own dialog owns, so it
+                // needs the identical readout refresh, and it can ALSO change FrequencyPresetsSettings
+                // (the header's M1-M7 favourite buttons), which nothing else on this window refreshes.
+                // Safe to run unconditionally even if the dialog was only browsed/closed with no
+                // switch -- same "no-op reload of the same value" reasoning as Options' own comment.
+                // Factored out (2026-08-28, user-requested quick-switch addition) -- the SAME refresh
+                // block now runs from two places: this dialog's own Closed handler below, and the new
+                // quick-switch menu's post-switch handler further down.
+                void RefreshAfterConfigurationChange()
+                {
+                    _ = vm.LoadCallsignAsync();
+                    _ = vm.TxControls.LoadOutputDeviceNameAsync();
+                    _ = vm.TxControls.LoadIdentificationSummaryAsync();
+                    _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                    _ = vm.RxImage.LoadQrzLookupConfiguredAsync();
+                    vm.RxImage.RefreshSenseLevelFromSession();
+                    vm.RxImage.RefreshAutoSlantEnabledFromSession();
+                    _ = vm.RadioStatus.LoadPresetsSafeAsync();
+                    // User-requested (2026-08-28): the window title now shows the active configuration
+                    // name -- a switch is exactly the moment it can change.
+                    _ = vm.LoadActiveConfigurationNameAsync();
+                }
+
+                // Configurations-preset backlog, Phase 4b (2026-08-28, cascading-menu redesign --
+                // direct user correction, see docs/plans/configuration-presets-phase4b-cascading-menu-plan.md).
+                // No more standalone "Manage Configurations" dialog -- every saved configuration gets
+                // its own top-level MenuItem with a nested per-action submenu, built fresh every time
+                // this menu opens (never kept live for the whole app lifetime).
+                //
+                // ConfigurationsMenuItem.Items always keeps ConfigurationsNoneSavedPlaceholder
+                // (declared in XAML) as its LAST entry -- an Avalonia MenuItem with zero Items never
+                // opens a submenu popup at all, so leaving Items empty here would mean SubmenuOpened
+                // itself could never fire again. This handler clears everything BEFORE that
+                // placeholder and re-inserts the current configuration list at the front, every time,
+                // then toggles the placeholder's own visibility based on whether the list is empty
+                // (it should never really be, since Default always auto-seeds -- defensive only).
+                //
+                // Guarded on e.Source: SubmenuOpened bubbles (RoutingStrategies.Bubble), and every
+                // per-configuration item built below has its own nested submenu -- hovering one raises
+                // SubmenuOpened on THAT item first, which then bubbles up to this handler too. Without
+                // the guard, that would re-run the whole rebuild and tear down the very item the user
+                // is hovering. _isPopulatingConfigurationsMenu additionally blocks two overlapping
+                // opens of the top-level item itself (this handler awaits before mutating Items).
+                ConfigurationsMenuItem.SubmenuOpened += async (_, e) =>
+                {
+                    if (!ReferenceEquals(e.Source, ConfigurationsMenuItem) || _isPopulatingConfigurationsMenu)
+                    {
+                        return;
+                    }
+
+                    _isPopulatingConfigurationsMenu = true;
+                    try
+                    {
+                        var configVm = vm.ResolveConfigurationsManagerViewModel();
+                        configVm.TextPromptRequested = async promptVm =>
+                        {
+                            var promptView = new TextPromptWindowView { DataContext = promptVm };
+                            return await promptView.ShowDialog<string?>(this);
+                        };
+                        configVm.ConfirmRequested = async confirmVm =>
+                        {
+                            var confirmView = new ConfirmActionDialogView { DataContext = confirmVm };
+                            return await confirmView.ShowDialog<bool>(this);
+                        };
+                        await configVm.RefreshAsync();
+
+                        while (ConfigurationsMenuItem.Items.Count > 1)
+                        {
+                            ConfigurationsMenuItem.Items.RemoveAt(0);
+                        }
+
+                        ConfigurationsNoneSavedPlaceholder.IsVisible = configVm.Presets.Count == 0;
+
+                        var localization = App.Services?.GetService<ILocalizationService>();
+
+                        // A menu Click fires before Avalonia closes the popup -- opening a dialog
+                        // synchronously inside a Click handler is new exposure this redesign
+                        // introduces on every action (Clone/Rename/Delete/Reset all show a dialog
+                        // now, not just the rare quick-switch-failure case the old handler had).
+                        // Task.Yield() lets the menu finish closing first.
+                        //
+                        // Every action shares the same failure-surfacing shape the original round-1
+                        // code-review fix added for Switch alone: CloneAsync/RenameAsync/DeleteAsync/
+                        // SwitchToRowAsync/ResetToDefaultAsync all set ErrorMessage on failure, and
+                        // none of them are ever shown in a window of their own -- read it back after
+                        // every action, not just Switch, or Clone/Rename/Delete failures go silent the
+                        // exact same way Switch's used to.
+                        async Task InvokeConfigurationActionAsync(Func<Task> action)
+                        {
+                            await Task.Yield();
+                            await action();
+                            if (configVm.ErrorMessage is { } errorMessage)
+                            {
+                                try
+                                {
+                                    var dialogVm = new QuickSwitchFailedDialogViewModel(errorMessage);
+                                    var dialog = new QuickSwitchFailedDialogView { DataContext = dialogVm };
+                                    await dialog.ShowDialog(this);
+                                }
+                                catch (Exception ex)
+                                {
+                                    if (logger is not null)
+                                    {
+                                        Log.QuickSwitchFailedDialogFailed(logger, ex);
+                                    }
+                                }
+                            }
+
+                            RefreshAfterConfigurationChange();
+                        }
+
+                        MenuItem BuildActionItem(string localeKey, Func<Task> action)
+                        {
+                            var header = localization?.GetString(localeKey) ?? localeKey;
+                            var actionItem = new MenuItem { Header = header };
+                            actionItem.Click += async (_, _) => await InvokeConfigurationActionAsync(action);
+                            return actionItem;
+                        }
+
+                        var insertAt = 0;
+                        foreach (var row in configVm.Presets)
+                        {
+                            var rowItem = new MenuItem
+                            {
+                                Header = row.Name,
+                                ToggleType = MenuItemToggleType.CheckBox,
+                                IsChecked = row.IsActive,
+                            };
+
+                            if (row.IsProtected)
+                            {
+                                // User-caught gap (2026-08-28): Default had no way back once you
+                                // switched away from it -- "Reset" alone isn't discoverable as "get
+                                // back to Default." Default now gets "Switch To" too, same as any
+                                // other inactive row, alongside "Reset" (the confirmed version of the
+                                // exact same underlying switch, kept for the "prevent accidental
+                                // resets" ask).
+                                if (!row.IsActive)
+                                {
+                                    rowItem.Items.Add(BuildActionItem("Configurations.SwitchToMenuItem", () => configVm.SwitchToRowCommand.ExecuteAsync(row)));
+                                    rowItem.Items.Add(new Separator());
+                                }
+
+                                // No Rename here (user-requested, 2026-08-28): protection is keyed on
+                                // the literal string "Default" (ConfigurationPresetRowViewModel.IsProtected),
+                                // not any persistent identity -- renaming it doesn't customize Default,
+                                // it detaches the content under a new (fully deletable, unprotected)
+                                // name while RefreshAsync's own seed-if-missing check spawns a BRAND
+                                // NEW "Default" from current live settings the next time the menu
+                                // opens. Two near-identical presets where the user expected one renamed
+                                // one -- a real trap, not a feature -- so Rename is deliberately left
+                                // off Default's own submenu.
+                                rowItem.Items.Add(BuildActionItem("Configurations.CloneIntoMenuItem", () => configVm.CloneCommand.ExecuteAsync(row)));
+                                rowItem.Items.Add(BuildActionItem("Configurations.ResetMenuItem", () => configVm.ResetToDefaultCommand.ExecuteAsync(row)));
+                            }
+                            else if (row.IsActive)
+                            {
+                                rowItem.Items.Add(BuildActionItem("Configurations.CloneIntoMenuItem", () => configVm.CloneCommand.ExecuteAsync(row)));
+                                rowItem.Items.Add(BuildActionItem("Configurations.RenameMenuItem", () => configVm.RenameCommand.ExecuteAsync(row)));
+                            }
+                            else
+                            {
+                                rowItem.Items.Add(BuildActionItem("Configurations.SwitchToMenuItem", () => configVm.SwitchToRowCommand.ExecuteAsync(row)));
+                                rowItem.Items.Add(new Separator());
+                                rowItem.Items.Add(BuildActionItem("Configurations.CloneIntoMenuItem", () => configVm.CloneCommand.ExecuteAsync(row)));
+                                rowItem.Items.Add(BuildActionItem("Configurations.RenameMenuItem", () => configVm.RenameCommand.ExecuteAsync(row)));
+                                if (row.CanDelete)
+                                {
+                                    rowItem.Items.Add(BuildActionItem("Configurations.DeleteMenuItem", () => configVm.DeleteCommand.ExecuteAsync(row)));
+                                }
+                            }
+
+                            ConfigurationsMenuItem.Items.Insert(insertAt++, rowItem);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.ConfigurationsQuickSwitchPopulateFailed(logger, ex);
+                        }
+                    }
+                    finally
+                    {
+                        _isPopulatingConfigurationsMenu = false;
+                    }
+                };
+
                 // Stub survey Tier 2 (2026-08-26). Same synchronous, unawaited shape as
                 // OptionsRequested/AboutRequested above -- ShowDialog itself is synchronous (blocks
                 // until the dialog closes), no async construction work precedes it.
@@ -520,6 +720,12 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "MacrosReferenceWindowView failed to open or show")]
         public static partial void MacrosReferenceWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Populating the Configurations quick-switch menu failed")]
+        public static partial void ConfigurationsQuickSwitchPopulateFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QuickSwitchFailedDialogView failed to open or show")]
+        public static partial void QuickSwitchFailedDialogFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
         public static partial void ExitRequested(ILogger logger);

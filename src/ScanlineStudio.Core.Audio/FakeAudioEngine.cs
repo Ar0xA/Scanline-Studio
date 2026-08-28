@@ -64,6 +64,21 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public int? LastRequestedCaptureSampleRate { get; private set; }
 
+    /// <summary>Configurations-preset backlog, Phase 1 (2026-08-28): lets a test assert WHICH device
+    /// was actually opened, same shape as <see cref="LastRequestedCaptureSampleRate"/> above -- added
+    /// alongside the new live capture-device-swap feature, which needed a way to distinguish "opened
+    /// device A" from "opened device B" that this fake didn't previously expose.</summary>
+    public AudioDeviceInfo? LastRequestedCaptureDevice { get; private set; }
+
+    /// <summary>Configurations-preset backlog, Phase 1 code-review round-1 finding: when set, the
+    /// NEXT <see cref="StartCaptureAsync"/> call throws this instead of succeeding, then this is
+    /// cleared back to <see langword="null"/> -- ONE-SHOT, not a permanent failure, so a test can
+    /// simulate a single real native-open failure (e.g. <see cref="AudioDeviceUnavailableException"/>,
+    /// what <c>MiniAudioEngine</c> actually throws for a device that enumerates but won't open --
+    /// exclusive use, unsupported rate, unplugged mid-swap) without also breaking a SUBSEQUENT
+    /// rollback restart attempt in the same test.</summary>
+    public Exception? StartCaptureExceptionToThrowOnce { get; set; }
+
     public Task StartCaptureAsync(
         AudioDeviceInfo device, int sampleRate, ThreadPriority? drainThreadPriority = null,
         int periodSizeInFrames = 0, int periods = 0, AudioChannelSource channelSource = AudioChannelSource.Mono,
@@ -75,8 +90,15 @@ public sealed class FakeAudioEngine : IAudioEngine
             throw new InvalidOperationException("Capture is already started -- call StopCaptureAsync first.");
         }
 
+        if (StartCaptureExceptionToThrowOnce is { } ex)
+        {
+            StartCaptureExceptionToThrowOnce = null;
+            throw ex;
+        }
+
         LastRequestedDrainThreadPriority = drainThreadPriority;
         LastRequestedCaptureSampleRate = sampleRate;
+        LastRequestedCaptureDevice = device;
         LastRequestedCapturePeriodSizeInFrames = periodSizeInFrames;
         LastRequestedCapturePeriods = periods;
         LastRequestedChannelSource = channelSource;
@@ -85,10 +107,19 @@ public sealed class FakeAudioEngine : IAudioEngine
         return Task.CompletedTask;
     }
 
-    public Task StopCaptureAsync()
+    /// <summary>Configurations-preset backlog, Phase 1 (2026-08-28): same deterministic-gate idiom as
+    /// <see cref="OnPlaybackChunkEnqueued"/> above -- fired synchronously, right as capture stops,
+    /// letting a test act at the exact window a live capture-device (or sample-rate) change's own
+    /// TOCTOU guard exists to close (e.g. attempting to start a recording while a swap is mid-flight).</summary>
+    public Func<Task>? OnStopCaptureAsync { get; set; }
+
+    public async Task StopCaptureAsync()
     {
         IsCapturing = false;
-        return Task.CompletedTask;
+        if (OnStopCaptureAsync is not null)
+        {
+            await OnStopCaptureAsync().ConfigureAwait(false);
+        }
     }
 
     public int? LastRequestedPeriodSizeInFrames { get; private set; }

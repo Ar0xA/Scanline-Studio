@@ -607,8 +607,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- a
     /// failure here (e.g. settings store not reachable yet) would have thrown on a thread nothing
-    /// observes, an unlogged latent crash risk.</summary>
-    private async Task LoadPresetsSafeAsync()
+    /// observes, an unlogged latent crash risk.
+    ///
+    /// Configurations-preset backlog, Phase 4 (2026-08-28): made public (was private) -- the
+    /// Configurations dialog's own post-switch refresh needs to re-run this, since a preset switch can
+    /// change <c>FrequencyPresetsSettings</c> (the header's M1-M7 favourite buttons) and this was the
+    /// ONLY thing that ever rebuilt <see cref="Presets"/>/<see cref="PresetVisibility"/> from settings
+    /// before now, previously reachable only from this VM's own constructor and the Favourites-editor
+    /// open path -- neither of which a preset switch goes anywhere near.</summary>
+    public async Task LoadPresetsSafeAsync()
     {
         try
         {

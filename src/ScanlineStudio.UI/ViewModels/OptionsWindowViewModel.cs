@@ -1490,7 +1490,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// reload + permanent leak for a no-op. Matches <c>HamlibLibraryLocator</c>'s own
     /// <c>!string.IsNullOrWhiteSpace</c> blank test exactly (`:45`) -- NOT a stricter rule invented
     /// here, so a genuine "clear the field to fall back to auto-detection" case (non-blank -> blank)
-    /// still correctly counts as a change and still reloads.</summary>
+    /// still correctly counts as a change and still reloads.
+    ///
+    /// Configurations-preset backlog, Phase 3 (2026-08-28) update: the preset-switch orchestrator
+    /// needs this SAME rule and now has its own copy,
+    /// <see cref="ScanlineStudio.Core.Radio.RadioConnectionSettingsExtensions.HamlibPathsAreEquivalent"/>
+    /// -- NOT forwarded to from here. Round-2 code-review correction: <c>ScanlineStudio.UI</c> DOES
+    /// see <c>ScanlineStudio.Core.Radio</c>'s types, transitively, via its own reference to
+    /// <c>ScanlineStudio.Application</c> (which references Core.Radio directly, with no
+    /// <c>PrivateAssets</c>) -- it is not that the type is literally unreachable. The real reason for
+    /// two copies is architectural discipline, not a compile error: this dialog is meant to reach
+    /// Radio settings ONLY through <c>IRadioSessionService</c>'s own Application-layer surface, never
+    /// a Core project's types directly, and writing `RadioConnectionSettingsExtensions.HamlibPathsAreEquivalent(...)`
+    /// here would be exactly that kind of direct reach-through, however harmless this one specific
+    /// helper looks. Two copies, deliberately, kept identical -- see that method's own doc
+    /// comment too.</summary>
     private static bool HamlibPathsAreEquivalent(string? a, string? b) =>
         string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b) || a == b;
 

@@ -70,4 +70,22 @@ public static class RadioConnectionSettingsExtensions
                 => new FlrigConnectionSpec(flrigHost, flrigPort),
             _ => new NoneConnectionSpec(),
         };
+
+    /// <summary>Configurations-preset backlog, Phase 3 (2026-08-28): needed here for the preset-switch
+    /// orchestrator's own diff, which is the same null/blank-equivalence rule
+    /// <c>OptionsWindowViewModel</c>'s own PRIVATE, identically-named, identically-bodied method
+    /// already used for its no-op-guard-before-reloading check. NOT forwarded to from there -- that
+    /// method's own doc comment explains why: not because <c>ScanlineStudio.UI</c> can't reach this
+    /// type (it can, transitively, via its reference to <c>ScanlineStudio.Application</c>), but
+    /// because that dialog is meant to reach Radio settings only through <c>IRadioSessionService</c>'s
+    /// own Application-layer surface, never a Core project's types directly -- so the two copies are
+    /// deliberately kept in sync by hand rather than merged into one. Treats <see langword="null"/>
+    /// and an empty/whitespace-only string as equivalent (both mean "auto-detect") -- an unconditional
+    /// reload on a null-vs-empty-string difference alone would trigger a real native library
+    /// reload + permanent leak for a no-op. Matches <c>HamlibLibraryLocator</c>'s own
+    /// <c>!string.IsNullOrWhiteSpace</c> blank test exactly -- NOT a stricter rule invented here, so a
+    /// genuine "clear the field to fall back to auto-detection" case (non-blank -> blank) still
+    /// correctly counts as a change and still reloads.</summary>
+    public static bool HamlibPathsAreEquivalent(string? a, string? b) =>
+        string.IsNullOrWhiteSpace(a) && string.IsNullOrWhiteSpace(b) || a == b;
 }

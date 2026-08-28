@@ -589,6 +589,11 @@ internal static partial class Program
         services.AddSingleton<ISettingsStore>(sp => sp.GetRequiredService<JsonSettingsStore>());
         services.AddSingleton<ISettingsFileRelocator>(sp => sp.GetRequiredService<JsonSettingsStore>());
 
+        // Configurations-preset backlog, Phase 2 (2026-08-28): a genuinely separate store, own fixed
+        // (non-relocating) location and own lock -- see ConfigurationPresetStore's own doc comment
+        // for why this is not folded into JsonSettingsStore above.
+        services.AddSingleton<IConfigurationPresetStore>(sp => new ConfigurationPresetStore(sp.GetRequiredService<ILogger<ConfigurationPresetStore>>()));
+
         // First IHttpClientFactory consumer in this codebase (QrzLogbookUploader) -- no prior
         // registration to match, this is the standard AddHttpClient() entry point.
         services.AddHttpClient();
@@ -610,6 +615,14 @@ internal static partial class Program
         // Macros reference/preview dialog (stub survey Tier 3) -- transient, same reasoning: a
         // fresh instance re-reads OperatorSettings (Name/Grid/Callsign) each open.
         services.AddTransient<MacrosReferenceWindowViewModel>();
+
+        // Configurations-preset backlog, Phase 4b (cascading-menu redesign, 2026-08-28) -- transient,
+        // same reasoning: a fresh instance re-lists presets from disk every time the Configurations
+        // menu opens. TextPromptWindowViewModel/ConfirmActionDialogViewModel are deliberately NOT
+        // registered here -- both take per-invocation constructor args (title/message/prefill), so
+        // they're always `new`'d directly by MainWindow.axaml.cs's own Configurations-menu code,
+        // matching OptionsWindowView.axaml.cs's own precedent for a parameterized child dialog VM.
+        services.AddTransient<ConfigurationsManagerWindowViewModel>();
 
         // Locale files live alongside the built app -- see ScanlineStudio.Host.csproj's asset-copy item.
         // Always boots into English; restoring a persisted non-English culture happens later in Main
@@ -784,6 +797,10 @@ internal static partial class Program
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
         services.AddSingleton<ISstvSessionService, SstvSessionService>();
         services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
+
+        // Configurations-preset backlog, Phase 3 (2026-08-28) -- orchestrates across both session
+        // services above plus the settings/preset stores, so it's registered last among these.
+        services.AddSingleton<IConfigurationPresetService, ConfigurationPresetService>();
     }
 
     /// <summary>Reads the persisted tier-1 Hamlib library-path override (spec/03-cat-layer.md's
