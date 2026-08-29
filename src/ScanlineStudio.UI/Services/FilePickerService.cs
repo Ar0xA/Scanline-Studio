@@ -316,6 +316,46 @@ public sealed partial class FilePickerService : IFilePickerService
         return files.Count > 0 ? files[0].TryGetLocalPath() : null;
     }
 
+    private static readonly FilePickerFileType TemplateBundleFileType = new("Scanline Studio template bundles")
+    {
+        Patterns = ["*.sstemplate"],
+    };
+
+    public async Task<string?> PickSaveTemplateBundleAsync(string suggestedFileName)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var file = await mainWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggestedFileName,
+            DefaultExtension = "sstemplate",
+            FileTypeChoices = [TemplateBundleFileType],
+        });
+
+        return file?.TryGetLocalPath();
+    }
+
+    public async Task<string?> PickOpenTemplateBundleAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            AllowMultiple = false,
+            FileTypeFilter = [TemplateBundleFileType],
+        });
+
+        return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
     public async Task<string?> PickFolderAsync(string? suggestedStartDirectory)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })

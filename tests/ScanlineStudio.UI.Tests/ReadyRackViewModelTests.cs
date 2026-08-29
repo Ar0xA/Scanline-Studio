@@ -14,8 +14,10 @@ namespace ScanlineStudio.UI.Tests;
 /// pin/unpin, and the two dangling-pinned-id sweeps (delete-time and refresh-time).</summary>
 public sealed class ReadyRackViewModelTests
 {
-    private static ReadyRackViewModel CreateReadyRack(FakeTemplateStore? templateStore = null, FakeSettingsStore? settingsStore = null) =>
-        new(templateStore ?? new FakeTemplateStore(), settingsStore ?? new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ReadyRackViewModel>.Instance);
+    private static ReadyRackViewModel CreateReadyRack(
+        FakeTemplateStore? templateStore = null, FakeSettingsStore? settingsStore = null, FakeFilePickerService? filePickerService = null) =>
+        new(templateStore ?? new FakeTemplateStore(), settingsStore ?? new FakeSettingsStore(), new FakeLocalizationService(),
+            filePickerService ?? new FakeFilePickerService(), NullLogger<ReadyRackViewModel>.Instance);
 
     private static async Task<string> SaveTemplateAsync(FakeTemplateStore store, string name)
     {
@@ -297,5 +299,102 @@ public sealed class ReadyRackViewModelTests
         await readyRack.RefreshAsync();
 
         Assert.Equal(["Contest Serial"], readyRack.FilteredTemplates.Select(t => t.Name));
+    }
+
+    // ui_transition_plan.md step 13 (native template bundle export/import) --------------------------
+
+    [Fact]
+    public async Task ExportCommand_UserCancelsThePicker_NeverCallsTheStore()
+    {
+        var templateStore = new FakeTemplateStore();
+        var filePickerService = new FakeFilePickerService { SaveTemplateBundlePathToReturn = null };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+        await SaveTemplateAsync(templateStore, "Field Day");
+        await readyRack.RefreshAsync();
+        var row = readyRack.AllTemplates[0];
+
+        await readyRack.ExportCommand.ExecuteAsync(row);
+
+        Assert.Empty(templateStore.Exported);
+        Assert.False(row.IsExporting);
+    }
+
+    [Fact]
+    public async Task ExportCommand_HappyPath_CallsStoreWithTheRowsOwnIdAndTheChosenPath_SuggestsTheTemplatesOwnName()
+    {
+        var templateStore = new FakeTemplateStore();
+        var filePickerService = new FakeFilePickerService { SaveTemplateBundlePathToReturn = "/tmp/field-day.sstemplate" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+        await SaveTemplateAsync(templateStore, "Field Day");
+        await readyRack.RefreshAsync();
+        var row = readyRack.AllTemplates[0];
+
+        await readyRack.ExportCommand.ExecuteAsync(row);
+
+        var exported = Assert.Single(templateStore.Exported);
+        Assert.Equal(row.Id, exported.TemplateId);
+        Assert.Equal("/tmp/field-day.sstemplate", exported.DestinationZipPath);
+        Assert.Equal("Field Day.sstemplate", filePickerService.LastSuggestedTemplateBundleFileName);
+        Assert.False(row.IsExporting);
+        Assert.Null(readyRack.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportCommand_StoreThrows_SetsStatusMessageAndClearsIsExportingAfterward()
+    {
+        var templateStore = new FakeTemplateStore { ExportExceptionToThrow = new InvalidOperationException("simulated export failure") };
+        var filePickerService = new FakeFilePickerService { SaveTemplateBundlePathToReturn = "/tmp/out.sstemplate" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+        await SaveTemplateAsync(templateStore, "Field Day");
+        await readyRack.RefreshAsync();
+        var row = readyRack.AllTemplates[0];
+
+        await readyRack.ExportCommand.ExecuteAsync(row);
+
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.False(row.IsExporting);
+    }
+
+    [Fact]
+    public async Task ImportCommand_UserCancelsThePicker_NeverCallsTheStoreOrRefreshes()
+    {
+        var templateStore = new FakeTemplateStore();
+        var filePickerService = new FakeFilePickerService { OpenTemplateBundlePathToReturn = null };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportCommand.ExecuteAsync(null);
+
+        Assert.Empty(readyRack.AllTemplates);
+    }
+
+    [Fact]
+    public async Task ImportCommand_HappyPath_RefreshesTheListSoTheNewTemplateAppearsImmediately()
+    {
+        var templateStore = new FakeTemplateStore
+        {
+            ImportResult = ("Imported Field Day", new PersistedTemplateDocument([])),
+        };
+        var filePickerService = new FakeFilePickerService { OpenTemplateBundlePathToReturn = "/tmp/in.sstemplate" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportCommand.ExecuteAsync(null);
+
+        Assert.Contains(readyRack.AllTemplates, t => t.Name == "Imported Field Day");
+        Assert.Null(readyRack.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ImportCommand_StoreThrows_SetsStatusMessageAndDoesNotRefresh()
+    {
+        var templateStore = new FakeTemplateStore { ImportExceptionToThrow = new InvalidOperationException("simulated import failure") };
+        await SaveTemplateAsync(templateStore, "Pre-existing");
+        var filePickerService = new FakeFilePickerService { OpenTemplateBundlePathToReturn = "/tmp/bad.sstemplate" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportCommand.ExecuteAsync(null);
+
+        Assert.NotNull(readyRack.StatusMessage);
+        // Confirms RefreshAsync (which would populate AllTemplates from the store) was never reached.
+        Assert.Empty(readyRack.AllTemplates);
     }
 }

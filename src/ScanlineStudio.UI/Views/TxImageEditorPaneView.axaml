@@ -359,7 +359,14 @@
                         <!-- Count badge moved from the header tab into row 0 of the content Grid —
                              same title-tab-doesn't-stretch finding as the READY RACK panel above. -->
                         <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
-                            <TextBlock Grid.Row="0" Classes="IndustryKicker" HorizontalAlignment="Right" Text="{Binding ReadyRack.TemplateCount}" />
+                            <!-- ui_transition_plan.md step 13: Import is panel-level (no row target,
+                                 unlike Export below), so it lives in this header row rather than the
+                                 per-row action grid further down. -->
+                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                                <Button Grid.Column="0" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.ImportTemplate}" Command="{Binding ReadyRack.ImportCommand}" />
+                                <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
+                            </Grid>
                             <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
 
                             <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
@@ -373,7 +380,7 @@
                                     <ItemsControl ItemsSource="{Binding ReadyRack.FilteredTemplates}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:TemplateListRowViewModel">
-                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
+                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
                                                     <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
                                                     <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                                             Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
@@ -386,10 +393,16 @@
                                                                   IsChecked="{Binding IsPinned, Mode=OneWay}" IsEnabled="{Binding CanPin}"
                                                                   Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
                                                                   Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
+                                                    <!-- ui_transition_plan.md step 13: IsEnabled disabled while THIS row's
+                                                         own export is in flight (a real file-save dialog await + zip write,
+                                                         unlike Load/TogglePin's near-instant operations). -->
+                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                                            IsEnabled="{Binding !IsExporting}"
+                                                            Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ExportCommand}" CommandParameter="{Binding}" />
                                                     <!-- Backlog item (auditor usability review, 2026-08-17, item 3):
                                                          "Template DELETE is a single unconfirmed click." Arm/confirm —
                                                          see ReadyRackViewModel.DeleteAsync's own doc comment. -->
-                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsPendingDelete}"
+                                                    <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsPendingDelete}"
                                                             Padding="6,0" Command="{Binding DeleteCommand}" CommandParameter="{Binding}">
                                                         <Panel>
                                                             <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !IsPendingDelete}" />
