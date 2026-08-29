@@ -3,8 +3,7 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// <summary>See spec/02-radio-layer.md. Describes *how* to reach a rig — a discriminated union via an
 /// open abstract record base with one sealed subtype per backend (spec/03-cat-layer.md).
 /// <see cref="NoneConnectionSpec"/>, <see cref="RigctldConnectionSpec"/>, <see cref="HamlibConnectionSpec"/>,
-/// and <see cref="FlrigConnectionSpec"/> exist; a future OmniRig-as-client backend adds its own sealed
-/// subtype here without requiring any existing code to change — <see cref="IRadioController"/> never switches on the concrete subtype
+/// <see cref="FlrigConnectionSpec"/>, and <see cref="OmniRigConnectionSpec"/> exist — <see cref="IRadioController"/> never switches on the concrete subtype
 /// itself, only each registered <see cref="IRadioProtocolFactory"/>'s own <c>CanHandle</c> does (see
 /// that interface's doc comment), so there is no exhaustiveness surface for a new subtype to silently
 /// fall through.
@@ -72,3 +71,10 @@ public sealed record HamlibConnectionSpec(uint Model) : RadioConnectionSpec
 /// value has no way to reach it. Timeout is instead a single fixed value configured on that named
 /// client, covering connect+read together.</summary>
 public sealed record FlrigConnectionSpec(string Host, int Port) : RadioConnectionSpec;
+
+/// <summary>See spec/03-cat-layer.md's OmniRig section. Connects to an already-running (or, per
+/// legacy's VCL <c>ckRunningOrNew</c> default, freshly-launched) <c>OmniRig.exe</c> local COM
+/// server via its <c>Rig1</c> automation object -- no host/port/model here, unlike the other
+/// backends: OmniRig's own config dialog owns rig selection (matching legacy, which never chose a
+/// rig model through <c>cradio.cpp</c> for this path either).</summary>
+public sealed record OmniRigConnectionSpec : RadioConnectionSpec;
