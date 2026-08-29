@@ -107,6 +107,35 @@ public sealed class TemplateStoreRealFileSystemTests : IDisposable
         Assert.Equal(Path.Combine(copiedDirectory, "thumbnail.png"), copyMetadata.ThumbnailPath);
     }
 
+    [Fact]
+    public async Task ExportThenImport_TemplateWithRealThumbnailAndAsset_BytesAreIdenticalAfterRoundTrip()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Photo Card");
+        var assetPath = store.GetAssetPath(templateId, "photo.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+        await new ImageSourceWriter().WritePngAsync(new FakeImageSource(4, 4, new Rgb24(50, 60, 70)), assetPath);
+        await store.SaveAsync(templateId, "Photo Card", new PersistedTemplateDocument([
+            new PersistedImageElement(0.5, 0.5, 0.3, 0.3, 0, false, "photo.png", ImageFitMode.Cover, PersistedImageSourceKind.File, null),
+        ]));
+        var originalThumbnailBytes = await File.ReadAllBytesAsync(Path.Combine(_root, templateId, "thumbnail.png"));
+        var originalAssetBytes = await File.ReadAllBytesAsync(assetPath);
+
+        var zipPath = Path.Combine(_root, "photo-card.sstemplate");
+        await store.ExportAsync(templateId, zipPath);
+        var importedId = await store.ImportAsync(zipPath);
+
+        Assert.NotEqual(templateId, importedId);
+        var importedThumbnailBytes = await File.ReadAllBytesAsync(Path.Combine(_root, importedId, "thumbnail.png"));
+        var importedAssetBytes = await File.ReadAllBytesAsync(Path.Combine(_root, importedId, "assets", "photo.png"));
+        Assert.Equal(originalThumbnailBytes, importedThumbnailBytes);
+        Assert.Equal(originalAssetBytes, importedAssetBytes);
+
+        var importedDocument = await store.LoadAsync(importedId);
+        var importedImage = Assert.IsType<PersistedImageElement>(Assert.Single(importedDocument.Elements));
+        Assert.Equal("photo.png", importedImage.AssetFileName);
+    }
+
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);

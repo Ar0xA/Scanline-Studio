@@ -34,4 +34,29 @@ public interface ITemplateStore
     Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default);
 
     Task DeleteAsync(string templateId, CancellationToken ct = default);
+
+    /// <summary>ui_transition_plan.md step 13 (native template bundle export/import) — zips
+    /// <paramref name="templateId"/>'s own folder (<c>template.json</c> + <c>thumbnail.png</c> +
+    /// <c>assets/*</c>) to <paramref name="destinationZipPath"/> (a <c>.sstemplate</c> file by
+    /// convention, enforced by the file picker, not this method). Overwrites an existing file at
+    /// that path. Throws <see cref="InvalidOperationException"/> if <paramref name="templateId"/>
+    /// does not exist.</summary>
+    Task ExportAsync(string templateId, string destinationZipPath, CancellationToken ct = default);
+
+    /// <summary>ui_transition_plan.md step 13 — imports a bundle written by <see cref="ExportAsync"/>
+    /// (or hand-built to the same shape) from <paramref name="sourceZipPath"/>, always minting a
+    /// FRESH template id via <see cref="CreateTemplateId"/> from the bundle's own recorded name —
+    /// never trusts the archive's own id/folder name, since that could otherwise silently overwrite
+    /// an existing template of the same id. Returns the newly minted id. Validates every zip entry
+    /// NAME and the total entry COUNT before extracting anything; per-entry and total UNCOMPRESSED
+    /// SIZE are capped separately, during extraction, against actual bytes read (never trusting a
+    /// zip entry's own declared, spoofable length) — see <see cref="TemplateStore"/>'s own
+    /// implementation comments for the exact caps. Also rejects a
+    /// <see cref="TemplateManifest.SchemaVersion"/> newer than this build's
+    /// <see cref="TemplateManifest.CurrentSchemaVersion"/>. All rejections are
+    /// <see cref="InvalidOperationException"/> with a message safe to surface to the user, and a
+    /// failure at any point — whether the up-front name/count validation or a size cap tripped mid-
+    /// extraction — never leaves a partially-written template folder behind (a cleanup-on-failure
+    /// step removes it, scoped ONLY to the id THIS call itself just minted).</summary>
+    Task<string> ImportAsync(string sourceZipPath, CancellationToken ct = default);
 }

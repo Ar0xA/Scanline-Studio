@@ -109,7 +109,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), currentContactVariables: currentContactVariables);
 
     private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
-        new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ReadyRackViewModel>.Instance);
+        new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), new FakeFilePickerService(), NullLogger<ReadyRackViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_OriginalLargerThanWorkingCopyBudget_DownsamplesBeforeUse()
