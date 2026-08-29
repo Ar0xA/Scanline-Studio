@@ -24,7 +24,7 @@
 
     <Grid RowDefinitions="Auto,*,Auto">
         <Border Grid.Row="0" Classes="Industry" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,0,0,1" Padding="{StaticResource IndustryPaddingGroup}">
-            <Grid ColumnDefinitions="140,Auto,44,Auto,*,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+            <Grid ColumnDefinitions="140,Auto,44,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                 <Grid ColumnDefinitions="*,*">
                     <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="ImageViewerZoomMode"
                                  Content="{loc:Translate ImageViewer.FitToWindow}" IsChecked="{Binding IsFitToWindow}" Command="{Binding FitToWindowCommand}" />
@@ -35,8 +35,11 @@
                 <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" HorizontalAlignment="Center" Text="{Binding ZoomPercentDisplay}" />
                 <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.ZoomIn}" Command="{Binding ZoomInCommand}" />
                 <Button Grid.Column="5" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Copy}" Command="{Binding CopyCommand}" />
-                <Button Grid.Column="6" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.OpenFileLocation}" Command="{Binding OpenFileLocationCommand}" />
-                <Button Grid.Column="7" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Close}" Command="{Binding CloseCommand}" />
+                <!-- ui_transition_plan.md step 16 — distinct from OpenFileLocation (opens the
+                     containing folder): opens the image FILE itself in the OS's default viewer. -->
+                <Button Grid.Column="6" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.OpenExternally}" Command="{Binding OpenExternallyCommand}" />
+                <Button Grid.Column="7" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.OpenFileLocation}" Command="{Binding OpenFileLocationCommand}" />
+                <Button Grid.Column="8" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Close}" Command="{Binding CloseCommand}" />
             </Grid>
         </Border>
 
