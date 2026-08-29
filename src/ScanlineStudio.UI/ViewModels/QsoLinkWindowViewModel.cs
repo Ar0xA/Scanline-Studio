@@ -260,7 +260,11 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
                 null,
                 null,
                 NewNotes,
-                _entry.Id);
+                _entry.Id,
+                // This dialog has no QSL-status UI of its own -- a freshly created QSO always starts
+                // unconfirmed either way (see QsoRecord.QslSent's own doc comment).
+                QslSent: false,
+                QslReceived: false);
 
             LogQsoResult result;
             try

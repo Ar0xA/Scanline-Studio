@@ -14,7 +14,7 @@ public sealed class AdifExporterTests
             new DateTimeOffset(2026, 8, 7, 14, 30, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 8, 7, 14, 35, 0, TimeSpan.Zero),
             14230000, RadioMode.Usb, "martin1", "59", "58",
-            "Alice", "Somewhere", "jo31", "Germany", "Nice signal", "img-1");
+            "Alice", "Somewhere", "jo31", "Germany", "Nice signal", "img-1", QslSent: true, QslReceived: true);
 
         var writer = new StringWriter();
         exporter.Export([record], writer, stationCallsign: "w1aw");
@@ -37,14 +37,33 @@ public sealed class AdifExporterTests
         Assert.Contains("<RST_RCVD:2>58", adif);
         Assert.Contains("<GRIDSQUARE:4>JO31", adif);
         Assert.Contains("<STATION_CALLSIGN:4>W1AW", adif);
+        Assert.Contains("<QSL_SENT:1>Y", adif);
+        Assert.Contains("<QSL_RCVD:1>Y", adif);
         Assert.Contains("<EOR>", adif);
+    }
+
+    [Fact]
+    public void Export_QslFlagsFalse_OmitsTheFieldsEntirely()
+    {
+        // ui_transition_plan.md step 15, piece (b): an absent ADIF field means "unknown," which is
+        // honest -- this app doesn't distinguish "confirmed not sent" from "never asked," so
+        // emitting QSL_SENT/QSL_RCVD="N" would overclaim a negative this app never actually recorded.
+        var exporter = new AdifExporter();
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
+
+        var writer = new StringWriter();
+        exporter.Export([record], writer);
+        var adif = writer.ToString();
+
+        Assert.DoesNotContain("QSL_SENT", adif);
+        Assert.DoesNotContain("QSL_RCVD", adif);
     }
 
     [Fact]
     public void Export_NoSstvModeId_FallsBackToRadioModeMapping()
     {
         var exporter = new AdifExporter();
-        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Cw, null, null, null, null, null, null, null, null, null);
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Cw, null, null, null, null, null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([record], writer);
@@ -66,7 +85,7 @@ public sealed class AdifExporterTests
     public void Export_RadioModeMapping_WritesValidAdifModeTokens(RadioMode mode, string? expectedMode, string? expectedSubmode)
     {
         var exporter = new AdifExporter();
-        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null);
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([record], writer);
@@ -95,7 +114,7 @@ public sealed class AdifExporterTests
     public void Export_NonAsciiFieldValue_UsesUtf8ByteCountNotCharLength()
     {
         var exporter = new AdifExporter();
-        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, "Jörg", null, null, null, null, null);
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, "Jörg", null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([record], writer);
@@ -109,7 +128,7 @@ public sealed class AdifExporterTests
     public void Export_NullOptionalFields_OmitsTheirTags()
     {
         var exporter = new AdifExporter();
-        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+        var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([record], writer);

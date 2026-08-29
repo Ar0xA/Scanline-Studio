@@ -24,7 +24,7 @@ public sealed class QsoLinkWindowViewModelTests
             entry ?? SampleEntry);
 
     private static QsoRecord SampleQsoRecord(string id = "qso-1") =>
-        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, "robot36", null, null, null, null, null, null, null, null);
+        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, "robot36", null, null, null, null, null, null, null, null, false, false);
 
     [AvaloniaFact]
     public async Task LinkSelectedAsync_ExistingQso_LinksEntryBeforeUpdatingReverseFk_RaisesLinkedAndRequestClose()

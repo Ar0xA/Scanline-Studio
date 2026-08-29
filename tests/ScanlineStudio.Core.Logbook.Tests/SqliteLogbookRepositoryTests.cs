@@ -29,7 +29,9 @@ public sealed class SqliteLogbookRepositoryTests
                 GridSquare: "JO31",
                 Country: "Germany",
                 Notes: "Nice signal",
-                ReceivedImageId: "img-1");
+                ReceivedImageId: "img-1",
+                QslSent: true,
+                QslReceived: true);
 
             await repository.AddAsync(record);
             var results = await repository.SearchAsync(new LogbookQuery());
@@ -50,7 +52,7 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
 
             await repository.AddAsync(record);
             var results = await repository.SearchAsync(new LogbookQuery());
@@ -74,7 +76,7 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
             await repository.AddAsync(record);
 
             var updated = record with { RstSent = "59", Notes = "Updated" };
@@ -98,8 +100,8 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
-            await repository.AddAsync(new QsoRecord("2", "W1AW", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
+            await repository.AddAsync(new QsoRecord("2", "W1AW", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
 
             var results = await repository.SearchAsync(new LogbookQuery(Callsign: "n0call"));
 
@@ -121,8 +123,8 @@ public sealed class SqliteLogbookRepositoryTests
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
             var old = DateTimeOffset.UtcNow.AddDays(-10);
             var recent = DateTimeOffset.UtcNow;
-            await repository.AddAsync(new QsoRecord("old", "N0CALL", old, null, null, null, null, null, null, null, null, null, null, null, null));
-            await repository.AddAsync(new QsoRecord("recent", "N0CALL", recent, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("old", "N0CALL", old, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
+            await repository.AddAsync(new QsoRecord("recent", "N0CALL", recent, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
 
             var results = await repository.SearchAsync(new LogbookQuery(From: DateTimeOffset.UtcNow.AddDays(-1)));
 
@@ -143,8 +145,8 @@ public sealed class SqliteLogbookRepositoryTests
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
             var now = DateTimeOffset.UtcNow;
-            await repository.AddAsync(new QsoRecord("first", "N0CALL", now.AddMinutes(-5), null, null, null, null, null, null, null, null, null, null, null, null));
-            await repository.AddAsync(new QsoRecord("second", "N0CALL", now, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("first", "N0CALL", now.AddMinutes(-5), null, null, null, null, null, null, null, null, null, null, null, null, false, false));
+            await repository.AddAsync(new QsoRecord("second", "N0CALL", now, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
 
             var results = await repository.SearchAsync(new LogbookQuery());
 
@@ -163,7 +165,7 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
             await repository.AddAsync(record);
 
             var deleted = await repository.DeleteAsync("1");
@@ -202,8 +204,8 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
-            await repository.AddAsync(new QsoRecord("2", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
+            await repository.AddAsync(new QsoRecord("2", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
 
             await repository.DeleteAsync("1");
 
@@ -230,7 +232,7 @@ public sealed class SqliteLogbookRepositoryTests
         try
         {
             var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
-            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
 
             await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
             {
@@ -249,6 +251,127 @@ public sealed class SqliteLogbookRepositoryTests
         {
             DeleteDb(dbPath);
         }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_ExistingPreQslDatabase_AddsTheTwoNewColumnsLast_ExistingRowsDefaultToFalse()
+    {
+        // ui_transition_plan.md step 15, piece (b) -- same migration shape as
+        // SqliteReceiveHistoryStoreTests's own pre-migration test: seed a pre-QSL DB with only the
+        // original 15 columns via raw SQL (bypassing SqliteLogbookRepository entirely, so this test
+        // doesn't depend on the very migration logic it verifies), then confirm the migration adds
+        // QslSent/QslReceived LAST (matching a fresh DB's own CREATE TABLE column order) and that a
+        // pre-existing row reads back with both flags false, not some other default.
+        var dbPath = TempDbPath();
+        try
+        {
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE Qso (
+                        Id TEXT PRIMARY KEY,
+                        Callsign TEXT NOT NULL,
+                        StartUtc TEXT NOT NULL,
+                        EndUtc TEXT NULL,
+                        FrequencyHz INTEGER NULL,
+                        Mode TEXT NULL,
+                        SstvModeId TEXT NULL,
+                        RstSent TEXT NULL,
+                        RstReceived TEXT NULL,
+                        Name TEXT NULL,
+                        Qth TEXT NULL,
+                        GridSquare TEXT NULL,
+                        Country TEXT NULL,
+                        Notes TEXT NULL,
+                        ReceivedImageId TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO Qso (Id, Callsign, StartUtc) VALUES ('1', 'N0CALL', $startUtc)";
+                insert.Parameters.AddWithValue("$startUtc", DateTimeOffset.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            // Constructing the repository runs EnsureSchema, which must migrate this existing DB in place.
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+
+            var columns = await ReadColumnNamesAsync(dbPath);
+            Assert.Equal(
+                ["Id", "Callsign", "StartUtc", "EndUtc", "FrequencyHz", "Mode", "SstvModeId", "RstSent", "RstReceived",
+                    "Name", "Qth", "GridSquare", "Country", "Notes", "ReceivedImageId", "QslSent", "QslReceived"],
+                columns);
+
+            var loaded = Assert.Single(await repository.SearchAsync(new LogbookQuery()));
+            Assert.False(loaded.QslSent);
+            Assert.False(loaded.QslReceived);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_RunTwiceAgainstAnAlreadyMigratedDatabase_DoesNotThrow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            _ = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            // Second construction re-runs EnsureSchema against the now-already-migrated DB -- the
+            // `PRAGMA table_info` probe must correctly see QslSent/QslReceived already present and
+            // skip the ALTER TABLE, not throw "duplicate column name."
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+
+            var columns = await ReadColumnNamesAsync(dbPath);
+            Assert.Equal(1, columns.Count(c => c == "QslSent"));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task AddAsync_ThenSearchAsync_QslFlagsRoundTrip()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, true, false);
+            await repository.AddAsync(record);
+
+            var loaded = Assert.Single(await repository.SearchAsync(new LogbookQuery()));
+
+            Assert.True(loaded.QslSent);
+            Assert.False(loaded.QslReceived);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    private static async Task<List<string>> ReadColumnNamesAsync(string dbPath)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA table_info(Qso)";
+
+        var columns = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            columns.Add(reader.GetString(reader.GetOrdinal("name")));
+        }
+
+        return columns;
     }
 
     private static string TempDbPath() => Path.Combine(Path.GetTempPath(), $"scanline-studio-logbook-test-{Guid.NewGuid()}.db");

@@ -5642,7 +5642,7 @@ public sealed class PaneViewModelTests
     }
 
     private static QsoRecord SampleQsoRecord(string id = "1") =>
-        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
 
     private static LogbookPaneViewModel CreateLogbookPaneViewModel(
         FakeLogbookSessionService? logbook = null,
@@ -5907,6 +5907,61 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_QslFlagsPersist_AndFormResetsToFalseAfterward()
+    {
+        // ui_transition_plan.md step 15, piece (b) -- threaded through BuildRecordFromForm/ResetForm.
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "N0CALL";
+        vm.FormQslSent = true;
+        vm.FormQslReceived = true;
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(logbook.Records[0].QslSent);
+        Assert.True(logbook.Records[0].QslReceived);
+        // ResetForm() ran (same regression class as above) -- QSL checkboxes must not stay checked
+        // for the NEXT QSO the operator logs.
+        Assert.False(vm.FormQslSent);
+        Assert.False(vm.FormQslReceived);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_SelectingAnEntry_LoadsQslFlagsIntoTheForm()
+    {
+        var record = SampleQsoRecord("1") with { QslSent = true, QslReceived = false };
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(record);
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+
+        Assert.True(vm.FormQslSent);
+        Assert.False(vm.FormQslReceived);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_UpdateAsync_QslFlagsPersist()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        vm.FormQslSent = true;
+        vm.FormQslReceived = true;
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(logbook.Records[0].QslSent);
+        Assert.True(logbook.Records[0].QslReceived);
+    }
+
+    [AvaloniaFact]
     public async Task LogbookPaneViewModel_LogAsync_TrailingRefreshFails_StillShowsTheLogOutcome()
     {
         // Tier B audit finding: this used to set StatusMessage to the Log outcome BEFORE the
@@ -6008,7 +6063,7 @@ public sealed class PaneViewModelTests
         // destroyed that reverse FK on every Update, even though nothing on this form lets the user
         // see or change it.
         var linkedRecord = new QsoRecord(
-            "1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, "rx-entry-42");
+            "1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, "rx-entry-42", false, false);
         var logbook = new FakeLogbookSessionService();
         logbook.Records.Add(linkedRecord);
         var vm = CreateLogbookPaneViewModel(logbook);
