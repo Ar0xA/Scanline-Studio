@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
@@ -208,5 +210,185 @@ public class ZeroCrossingFrequencyCounterTests
         // Without the gate this would become SampleRate*0.5/0.5 = 44100Hz, clamped to 2400Hz --
         // instead the estimate must stay exactly at its pre-crossing value.
         Assert.Equal(beforeGatedCrossing, counter.CurrentFrequencyHzForTests);
+    }
+
+    // Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md):
+    // SmoothingMode/SetTuning coverage. Auditor plan-review finding: a "does behavior differ between
+    // modes" check isn't a parity assertion -- every test below is an exact, tolerance-stated
+    // comparison, not a vague qualitative one.
+
+    [Fact]
+    public void ProcessSample_OffMode_ReturnsRawHeldValueBitExact_NoFiltering()
+    {
+        // default: m_out = m_fq (sstv.cpp:482) -- the raw, unfiltered sample-and-hold estimate,
+        // exactly what CurrentFrequencyHzForTests already exposes.
+        var counter = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Off, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var phaseIncrement = 2 * Math.PI * 1200.0 / SampleRate;
+        var phase = 0.0;
+
+        for (var i = 0; i < 500; i++)
+        {
+            phase += phaseIncrement;
+            var output = counter.ProcessSample(Math.Sin(phase));
+            Assert.Equal(counter.CurrentFrequencyHzForTests, output); // exact, no tolerance
+        }
+    }
+
+    [Fact]
+    public void ProcessSample_FirMode_MatchesAnIndependentMovingAverageOfTheRawHeldValues()
+    {
+        // The raw zero-crossing measurement (_currentFrequencyHz) is identical regardless of
+        // smoothing mode -- only the OUTPUT stage differs. Drive a raw-only (Off-mode) counter and a
+        // FIR-mode counter through the IDENTICAL sample sequence: the FIR output at every step must
+        // equal an independent MovingAverage fed the raw-only counter's own CurrentFrequencyHzForTests
+        // at that same step -- an exact, per-sample dispatch-correctness assertion, not a converged
+        // steady-state check (which can't discriminate IIR from FIR from Off, since all three have DC
+        // gain 1 at a constant tone).
+        const double smoothingHz = 8000; // window = (int)(44100/8000) = 5
+        var rawCounter = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Off, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: smoothingHz);
+        var firCounter = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: smoothingHz);
+        var reference = new MovingAverage(5);
+
+        var phaseIncrement = 2 * Math.PI * 1200.0 / SampleRate;
+        var phase = 0.0;
+
+        for (var i = 0; i < 500; i++)
+        {
+            phase += phaseIncrement;
+            var sample = Math.Sin(phase);
+            rawCounter.ProcessSample(sample);
+            var firOutput = firCounter.ProcessSample(sample);
+            var expected = reference.Add(rawCounter.CurrentFrequencyHzForTests);
+
+            Assert.Equal(expected, firOutput, precision: 9);
+        }
+    }
+
+    [Fact]
+    public void SetTuning_WindowSizeTruncation_PinnedExactly()
+    {
+        // Auditor plan-review finding: pin the exact truncation, not just "some averaging happens."
+        // sampleRate=11025, smoothingFrequencyHz=2200 -> (int)(11025/2200) = (int)5.011... = 5 (hand-
+        // computed here, independently of the production formula, so a production off-by-one bug
+        // can't hide behind re-deriving the same expression on both sides).
+        var rawCounter = new ZeroCrossingFrequencyCounter(11025, ZeroCrossingSmoothingMode.Off, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var firCounter = new ZeroCrossingFrequencyCounter(11025, ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var reference = new MovingAverage(5); // hand-pinned, not re-derived
+
+        var phaseIncrement = 2 * Math.PI * 1200.0 / 11025;
+        var phase = 0.0;
+
+        for (var i = 0; i < 200; i++)
+        {
+            phase += phaseIncrement;
+            var sample = Math.Sin(phase);
+            rawCounter.ProcessSample(sample);
+            var firOutput = firCounter.ProcessSample(sample);
+            var expected = reference.Add(rawCounter.CurrentFrequencyHzForTests);
+
+            Assert.Equal(expected, firOutput, precision: 9);
+        }
+    }
+
+    [Fact]
+    public void SetTuning_AppliedLive_NoInterveningSetWidth_StillSwitchesSmoothing()
+    {
+        var counter = new ZeroCrossingFrequencyCounter(SampleRate); // starts Iir
+        var iirSettled = SampleSineWaveFrequency(counter, targetHz: 1200.0, durationMs: 50);
+        Assert.Equal(1200.0, iirSettled, tolerance: 5.0); // sanity: filtering was actually happening
+
+        counter.SetTuning(ZeroCrossingSmoothingMode.Off, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+
+        // Off mode is bit-exact to the raw estimate -- immediately after SetTuning, no settling delay
+        // needed, unlike a filter's own transient.
+        var afterSwitch = counter.ProcessSample(1.0);
+        Assert.Equal(counter.CurrentFrequencyHzForTests, afterSwitch);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    [InlineData(33)]
+    [InlineData(1000)]
+    public void Constructor_OutOfRangeOutputOrder_ClampsTo1Or32(int rawOrder)
+    {
+        var clampedOrder = Math.Clamp(rawOrder, 1, 32);
+        var reference = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Iir, clampedOrder, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var underTest = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Iir, rawOrder, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+
+        var expected = SampleSineWaveFrequency(reference, targetHz: 1200.0, durationMs: 50);
+        var actual = SampleSineWaveFrequency(underTest, targetHz: 1200.0, durationMs: 50);
+
+        Assert.Equal(expected, actual, precision: 9);
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(-100.0)]
+    [InlineData(1_000_000.0)] // above Nyquist -- must clamp to sampleRate*0.45, not destabilize
+    public void Constructor_OutOfRangeOutputCutoffHz_ClampsToBothBounds(double rawCutoffHz)
+    {
+        var clampedCutoffHz = Math.Clamp(rawCutoffHz, 1.0, SampleRate * 0.45);
+        var reference = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Iir, outputOrder: 3, clampedCutoffHz, smoothingFrequencyHz: 2200);
+        var underTest = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Iir, outputOrder: 3, rawCutoffHz, smoothingFrequencyHz: 2200);
+
+        var expected = SampleSineWaveFrequency(reference, targetHz: 1200.0, durationMs: 50);
+        var actual = SampleSineWaveFrequency(underTest, targetHz: 1200.0, durationMs: 50);
+
+        Assert.Equal(expected, actual, precision: 9);
+        Assert.False(double.IsNaN(actual));
+    }
+
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(100.0)] // below the real 500Hz floor
+    [InlineData(20000.0)] // above the real 8000Hz ceiling
+    public void SetTuning_OutOfRangeSmoothingFrequencyHz_ClampsToBothBounds(double rawSmoothingHz)
+    {
+        var clampedSmoothingHz = Math.Clamp(rawSmoothingHz, 500.0, 8000.0);
+        var reference = new ZeroCrossingFrequencyCounter(SampleRate);
+        reference.SetTuning(ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: 900, clampedSmoothingHz);
+        var underTest = new ZeroCrossingFrequencyCounter(SampleRate);
+        underTest.SetTuning(ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: 900, rawSmoothingHz);
+
+        var expected = SampleSineWaveFrequency(reference, targetHz: 1200.0, durationMs: 50);
+        var actual = SampleSineWaveFrequency(underTest, targetHz: 1200.0, durationMs: 50);
+
+        Assert.Equal(expected, actual, precision: 9);
+        Assert.False(double.IsNaN(actual));
+    }
+
+    [Fact]
+    public void SetTuning_NaNCutoffAndSmoothingFrequency_DoesNotPropagateNaN()
+    {
+        var counter = new ZeroCrossingFrequencyCounter(SampleRate);
+
+        counter.SetTuning(ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: double.NaN, smoothingFrequencyHz: double.NaN);
+
+        var actual = SampleSineWaveFrequency(counter, targetHz: 1200.0, durationMs: 50);
+        Assert.False(double.IsNaN(actual));
+
+        // A NaN input substitutes the field's own legacy default (900/2200) before clamping --
+        // matches a counter built with those defaults directly.
+        var reference = new ZeroCrossingFrequencyCounter(SampleRate);
+        reference.SetTuning(ZeroCrossingSmoothingMode.Fir, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var expected = SampleSineWaveFrequency(reference, targetHz: 1200.0, durationMs: 50);
+
+        Assert.Equal(expected, actual, precision: 9);
+    }
+
+    [Fact]
+    public void SetTuning_OutOfRangeSmoothingMode_FallsBackToOff_NotIir()
+    {
+        // sstv.cpp:482's `default:` case is Off, NOT Iir -- a completely different fallback rule from
+        // the ABSENT-value default (Iir, CFQC's own ctor). Confirm the dispatch actually lands on Off
+        // by comparing against a counter explicitly constructed with Off.
+        var reference = new ZeroCrossingFrequencyCounter(SampleRate, ZeroCrossingSmoothingMode.Off, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+        var underTest = new ZeroCrossingFrequencyCounter(SampleRate, (ZeroCrossingSmoothingMode)99, outputOrder: 3, outputCutoffHz: 900, smoothingFrequencyHz: 2200);
+
+        var expected = SampleSineWaveFrequency(reference, targetHz: 1200.0, durationMs: 50);
+        var actual = SampleSineWaveFrequency(underTest, targetHz: 1200.0, durationMs: 50);
+
+        Assert.Equal(expected, actual, precision: 9);
     }
 }

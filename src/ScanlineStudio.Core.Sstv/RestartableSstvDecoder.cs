@@ -135,6 +135,17 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private readonly object _gate = new();
     private int _pushActive;
 
+    // ISstvDecoder.ReceptionSequence's backing field -- see that property's own doc comment for the
+    // full contract, and OnModeDetected below for where it's bumped. Deliberately this WRAPPER's own
+    // counter, never delegated to _inner.ReceptionSequence: _inner gets replaced by Swap (see that
+    // method's own doc comment), and a per-inner counter would reset to 0 and reuse ids across a
+    // swap -- the one instance DI ever hands out (this wrapper) is what must own a value that's
+    // monotonic for the whole process, not per-inner-instance. Interlocked, not gated by _gate:
+    // OnModeDetected runs on whatever thread the CURRENT inner decoder's own decode loop is on,
+    // outside _gate, matching this class's existing _pushActive CAS-guard idiom rather than
+    // RestartCountForTests's _gate-protected plain-increment idiom.
+    private long _receptionSequence;
+
     // NOT readonly, unlike every toggle above -- StationIdDecodeEnabled is deliberately
     // LIVE-settable (see ISstvDecoder.StationIdDecodeEnabled's own doc comment for why), so this is
     // both the "what to apply to a freshly-(re)built inner decoder" seed AND the current live value,
@@ -148,6 +159,31 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     // a restart, so it needs storing here too, not just forwarding to whichever inner is current.
     private bool _notchEnabled;
     private double _notchFrequencyHz = 2400.0; // matches CNotch::CNotch's own default (fir.cpp:271)
+
+    // ui_transition_plan.md step 10 (T2-5): same "seed for a freshly-(re)built inner AND the current
+    // live value" shape as _notchEnabled immediately above -- persistent state that must survive a
+    // restart, not a one-shot request. Unlike notch, a fresh AnalogFmSstvDecoder's own _lockedMode
+    // already defaults to null, so CreateInner's own re-seed is naturally gated on `is not null`
+    // (nothing to do for the common unlocked case), matching notch's own `if (_notchEnabled)` shape
+    // rather than PLL/zero-crossing tuning's unconditional one.
+    private SstvModeDefinition? _lockedMode;
+
+    // Options stub backlog item 1 (docs/plans/options-stub-item1-pll-tuning-plan.md): same
+    // "seed for a freshly-(re)built inner AND the current live value" shape as _stationIdDecodeEnabled/
+    // _notchEnabled above, EXCEPT re-seeded via CreateInner's own AnalogFmSstvDecoder ctor args (real
+    // params exist there, unlike notch, which has none and must re-request post-construction instead).
+    private double _pllVcoGain = 1.0;
+    private int _pllLoopOrder = 1;
+    private double _pllLoopCutoffHz = 1500;
+    private int _pllOutputOrder = 3;
+    private double _pllOutputCutoffHz = 900;
+
+    // Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md): same
+    // seed-and-re-seed shape as the PLL fields immediately above.
+    private ZeroCrossingSmoothingMode _zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir;
+    private int _zeroCrossingOutputOrder = 3;
+    private double _zeroCrossingOutputCutoffHz = 900;
+    private double _zeroCrossingSmoothingFrequencyHz = 2200;
 
     // Un-stub-RX-tab Piece B: unlike notch state above, these two are NOT re-seeded per rebuild --
     // owned here for this wrapper's WHOLE lifetime and passed as the SAME instances into every
@@ -273,6 +309,22 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     }
 
     /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.LockedModeForTests"/> directly -- proves
+    /// <see cref="SetModeLock"/>'s own re-seed in <see cref="CreateInner"/> actually survives a
+    /// decoder-instance restart, not just that this wrapper's own <see cref="_lockedMode"/> field
+    /// remembers the value (round 2 plan-review's own named "piece most likely to be forgotten").</summary>
+    internal SstvModeDefinition? InnerLockedModeForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.LockedModeForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
     /// <see cref="AnalogFmSstvDecoder.DemodTypeForTests"/> directly -- there is no public
     /// wrapper-level <c>DemodType</c> getter to compare against (see this class' own constructor,
     /// which follows <c>SenseLevel</c>'s "no read-back needed" shape, not <c>AutoSlantEnabled</c>'s
@@ -287,6 +339,36 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.DemodTypeForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.PllTuningForTests"/> directly -- same reasoning/shape as
+    /// <see cref="InnerDemodTypeForTests"/> above (Options stub backlog item 1: without this, a
+    /// dropped PLL-tuning argument in <see cref="CreateInner"/> would silently revert a user's tuning
+    /// to the legacy defaults after the periodic restart rebuild, with no test able to catch it).</summary>
+    internal (double VcoGain, int LoopOrder, double LoopCutoffHz, int OutputOrder, double OutputCutoffHz) InnerPllTuningForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.PllTuningForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.ZeroCrossingTuningForTests"/> directly -- same reasoning/shape as
+    /// <see cref="InnerPllTuningForTests"/> immediately above (Options stub backlog item 2).</summary>
+    internal (ZeroCrossingSmoothingMode SmoothingMode, int OutputOrder, double OutputCutoffHz, double SmoothingFrequencyHz) InnerZeroCrossingTuningForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.ZeroCrossingTuningForTests;
             }
         }
     }
@@ -463,7 +545,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
-    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, ILoggerFactory? loggerFactory = null)
+    public RestartableSstvDecoder(bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, int sampleRate = SstvSampleRate.Default, ILoggerFactory? loggerFactory = null)
         : this(
             afcEnabled,
             ComputeDefaultThresholds(sampleRate).WarningThresholdSamples,
@@ -477,6 +559,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             demodType,
             rxBpfPreset,
             rxBufferMode,
+            pllVcoGain,
+            pllLoopOrder,
+            pllLoopCutoffHz,
+            pllOutputOrder,
+            pllOutputCutoffHz,
+            zeroCrossingSmoothingMode,
+            zeroCrossingOutputOrder,
+            zeroCrossingOutputCutoffHz,
+            zeroCrossingSmoothingFrequencyHz,
             sampleRate,
             ComputeDefaultThresholds(sampleRate).MaximumSafeSampleIndex,
             decoderFactoryForTests: null,
@@ -488,7 +579,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// the rate-aware production values --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null, ILoggerFactory? loggerFactory = null)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null, ILoggerFactory? loggerFactory = null)
     {
         if (!SstvSampleRate.IsSupported(sampleRate))
         {
@@ -512,6 +603,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _demodType = demodType;
         _rxBpfPreset = rxBpfPreset;
         _rxBufferMode = rxBufferMode;
+        _pllVcoGain = pllVcoGain;
+        _pllLoopOrder = pllLoopOrder;
+        _pllLoopCutoffHz = pllLoopCutoffHz;
+        _pllOutputOrder = pllOutputOrder;
+        _pllOutputCutoffHz = pllOutputCutoffHz;
+        _zeroCrossingSmoothingMode = zeroCrossingSmoothingMode;
+        _zeroCrossingOutputOrder = zeroCrossingOutputOrder;
+        _zeroCrossingOutputCutoffHz = zeroCrossingOutputCutoffHz;
+        _zeroCrossingSmoothingFrequencyHz = zeroCrossingSmoothingFrequencyHz;
         _sampleRate = sampleRate;
         _warningThresholdSamples = warningThresholdSamples;
         _criticalThresholdSamples = criticalThresholdSamples;
@@ -729,6 +829,65 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         current.RequestNotch(enabled, frequencyHz);
     }
 
+    /// <summary>See <see cref="ISstvDecoder.SetModeLock"/>. Same "store under <see cref="_gate"/> AND
+    /// forward to whichever inner is current" persistent-state shape as <see cref="RequestNotch"/>
+    /// above -- re-seeded in <see cref="CreateInner"/> so the lock survives a decoder-instance
+    /// restart (periodic maintenance swap or a live BPF/demod-type/RX-buffer-mode reconfiguration),
+    /// not just forwarded to whichever inner happens to be current right now.</summary>
+    public void SetModeLock(SstvModeDefinition? mode)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            _lockedMode = mode;
+            current = _inner;
+        }
+
+        current.SetModeLock(mode);
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.RequestPllTuning"/>. Same "store under <see cref="_gate"/>
+    /// AND forward to whichever inner is current" shape as <see cref="RequestNotch"/> immediately
+    /// above -- but re-seeded on rebuild via <see cref="CreateInner"/>'s own
+    /// <see cref="AnalogFmSstvDecoder"/> constructor arguments (real ctor params exist for these 5
+    /// fields, unlike notch, which has none and must re-request post-construction instead). The
+    /// re-seed is UNCONDITIONAL, unlike notch's own `if (_notchEnabled)` gate -- PLL tuning has no
+    /// off-state to gate on; every fresh inner decoder always gets SOME tuning, whether the legacy
+    /// defaults or a prior request's values.</summary>
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            _pllVcoGain = vcoGain;
+            _pllLoopOrder = loopOrder;
+            _pllLoopCutoffHz = loopCutoffHz;
+            _pllOutputOrder = outputOrder;
+            _pllOutputCutoffHz = outputCutoffHz;
+            current = _inner;
+        }
+
+        current.RequestPllTuning(vcoGain, loopOrder, loopCutoffHz, outputOrder, outputCutoffHz);
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.RequestZeroCrossingTuning"/>. Same "store under
+    /// <see cref="_gate"/> AND forward to the current inner" shape as <see cref="RequestPllTuning"/>
+    /// immediately above.</summary>
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz)
+    {
+        AnalogFmSstvDecoder current;
+        lock (_gate)
+        {
+            _zeroCrossingSmoothingMode = smoothingMode;
+            _zeroCrossingOutputOrder = outputOrder;
+            _zeroCrossingOutputCutoffHz = outputCutoffHz;
+            _zeroCrossingSmoothingFrequencyHz = smoothingFrequencyHz;
+            current = _inner;
+        }
+
+        current.RequestZeroCrossingTuning(smoothingMode, outputOrder, outputCutoffHz, smoothingFrequencyHz);
+    }
+
     /// <summary>See <see cref="ISstvDecoder.ArmScopeCapture"/>. Fire-and-forget, same shape as
     /// <see cref="RequestReSync"/> above -- unlike notch, there is no wrapper-level "re-seed on
     /// rebuild" step needed here: the STATE that must survive a restart is the capture's own fill
@@ -805,6 +964,11 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
         current.RequestAbandonReception();
     }
+
+    /// <summary>See <see cref="ISstvDecoder.ReceptionSequence"/>. This wrapper's OWN counter (see its
+    /// backing field's own doc comment for why it is never delegated to <c>_inner</c>) -- reads via
+    /// <see cref="Interlocked.Read(ref long)"/>, safe from any thread.</summary>
+    public long ReceptionSequence => Interlocked.Read(ref _receptionSequence);
 
     /// <summary>Forwards to whichever inner instance is current. A restart swap resets this to
     /// <see langword="null"/> for any realistic triggering chunk (a fresh inner has no lock/
@@ -1426,7 +1590,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         // (_decoderFactoryForTests is never set outside this project's own tests) -- documented here
         // so a future test using this seam doesn't chase a phantom capture stall.
         var decoder = _decoderFactoryForTests?.Invoke(_sampleRate)
-            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode, loggerFactory: _loggerFactory, scopeCaptureChannel0: _scopeCaptureChannel0, scopeCaptureChannel1: _scopeCaptureChannel1);
+            ?? new AnalogFmSstvDecoder(sampleRate: _sampleRate, afcEnabled: _afcEnabled, syncRestartEnabled: _syncRestartEnabled, autoSyncEnabled: _autoSyncEnabled, autoStopEnabled: _autoStopEnabled, autoSlantEnabled: _autoSlantEnabled, senseLevel: _senseLevel, demodType: _demodType, rxBpfPreset: _rxBpfPreset, rxBufferMode: _rxBufferMode, pllVcoGain: _pllVcoGain, pllLoopOrder: _pllLoopOrder, pllLoopCutoffHz: _pllLoopCutoffHz, pllOutputOrder: _pllOutputOrder, pllOutputCutoffHz: _pllOutputCutoffHz, zeroCrossingSmoothingMode: _zeroCrossingSmoothingMode, zeroCrossingOutputOrder: _zeroCrossingOutputOrder, zeroCrossingOutputCutoffHz: _zeroCrossingOutputCutoffHz, zeroCrossingSmoothingFrequencyHz: _zeroCrossingSmoothingFrequencyHz, loggerFactory: _loggerFactory, scopeCaptureChannel0: _scopeCaptureChannel0, scopeCaptureChannel1: _scopeCaptureChannel1);
         if (decoder.SampleRate != _sampleRate)
         {
             decoder.Dispose();
@@ -1441,6 +1605,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             // this just seeds the enabled/frequency state itself, matching StationIdDecodeEnabled's
             // own re-seed immediately above.
             decoder.RequestNotch(true, _notchFrequencyHz);
+        }
+
+        if (_lockedMode is not null)
+        {
+            // ui_transition_plan.md step 10 (T2-5): re-seed the persistent mode lock onto the fresh
+            // inner, same reasoning as StationIdDecodeEnabled/notch's own re-seed immediately above --
+            // without this, a periodic maintenance swap or a live BPF/demod-type/RX-buffer-mode
+            // reconfiguration would silently unlock an operator's active mode lock.
+            decoder.SetModeLock(_lockedMode);
         }
 
         decoder.LineDecoded += OnLineDecoded;
@@ -1532,7 +1705,15 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private void OnLineDecoded(DecodedImageUpdate update) => RaiseForwardedSubscribers(LineDecoded, update);
 
-    private void OnModeDetected(SstvModeDefinition mode) => RaiseForwardedSubscribers(ModeDetected, mode);
+    private void OnModeDetected(SstvModeDefinition mode)
+    {
+        // ISstvDecoder.ReceptionSequence: bumped BEFORE the forwarded raise below, so every
+        // subscriber of THIS raise (this class's own forwarding is the one true fan-out point every
+        // external subscriber goes through) reads the identical value regardless of subscription
+        // order -- see that property's own doc comment for the full contract.
+        Interlocked.Increment(ref _receptionSequence);
+        RaiseForwardedSubscribers(ModeDetected, mode);
+    }
 
     private void OnDecodeRestarted(SstvModeDefinition mode) => RaiseForwardedSubscribers(DecodeRestarted, mode);
 

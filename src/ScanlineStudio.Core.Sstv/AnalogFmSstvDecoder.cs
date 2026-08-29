@@ -522,6 +522,39 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private sealed record NotchRequest(bool Enabled, double? FrequencyHz);
     private NotchRequest? _pendingNotchRequest;
 
+    // Options stub backlog item 1 (docs/plans/options-stub-item1-pll-tuning-plan.md): PLL
+    // demodulator tuning, exact same deferred-request shape as _pendingNotchRequest immediately
+    // above -- all 5 fields are always set together as one atomic group (never independently, unlike
+    // _desiredFlags' own 4-property CAS-merge shape), so a plain Interlocked.Exchange is sufficient,
+    // no merge logic needed.
+    private sealed record PllTuningRequest(double VcoGain, int LoopOrder, double LoopCutoffHz, int OutputOrder, double OutputCutoffHz);
+    private PllTuningRequest? _pendingPllTuningRequest;
+
+    // Holds the CURRENTLY APPLIED tuning (updated only by ApplyPendingPllTuningRequest, the drain --
+    // never written directly by RequestPllTuning) -- needed because _avtPllDemodulator is
+    // constructed FRESH per AVT-training attempt (see its own field doc comment), not once per
+    // decoder lifetime like _pllDemodulator. Without these, a freshly-(re)constructed AVT instance
+    // between two drains would silently start at the legacy defaults instead of whatever tuning is
+    // actually currently in effect.
+    private double _pllVcoGain;
+    private int _pllLoopOrder;
+    private double _pllLoopCutoffHz;
+    private int _pllOutputOrder;
+    private double _pllOutputCutoffHz;
+
+    // Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md): same
+    // deferred-request shape as PllTuningRequest above. Unlike PLL's _avtPllDemodulator, BOTH
+    // ZeroCrossingFrequencyCounter instances here are constructed once, in the constructor, never
+    // freshly reconstructed mid-session -- so these tracking fields aren't load-bearing for a future
+    // construction site, only for InnerZeroCrossingTuningForTests-style test visibility, kept for
+    // symmetry with the PLL pattern.
+    private sealed record ZeroCrossingTuningRequest(ZeroCrossingSmoothingMode SmoothingMode, int OutputOrder, double OutputCutoffHz, double SmoothingFrequencyHz);
+    private ZeroCrossingTuningRequest? _pendingZeroCrossingTuningRequest;
+    private ZeroCrossingSmoothingMode _zeroCrossingSmoothingMode;
+    private int _zeroCrossingOutputOrder;
+    private double _zeroCrossingOutputCutoffHz;
+    private double _zeroCrossingSmoothingFrequencyHz;
+
     // Un-stub-RX-tab Piece B: RX Decoder Trace capture buffers -- see the constructor's own doc
     // comment for why these are externally-owned (unlike _notchFilter), and D12At/D19At's own doc
     // comments for the channel-0 write hook, ApplySlantTracking's for channel-1's. The d12-vs-d19
@@ -630,6 +663,31 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // read-and-clear (last-request-wins) rather than a separate test-then-clear pair. See
     // ForceMode/PushSamples's own consumption point for why this is checked BEFORE _reSyncRequested.
     private SstvModeDefinition? _forcedMode;
+
+    // ui_transition_plan.md step 10 (T2-5): persistent RX mode lock -- genuinely NEW UI/workflow
+    // (CLAUDE.md ss2), no legacy precedent (exhaustively grepped yoniq-old/YONIQ-main for
+    // AutoDetect/FixMode/ManualMode/LockMode/VIS-disable-shaped concepts -- legacy's own related
+    // state, CSSTVDEM::m_SyncMode/RxAutoPush/SBMClick, maps to features ALREADY ported here
+    // (SetAutoDetectPaused, and this class' own one-shot ForceMode above), not to "stays locked
+    // across many receptions"). Deliberately a SEPARATE field from _forcedMode, not a reuse of it --
+    // _forcedMode self-clears (one-shot, Interlocked.Exchange to null on every drain,
+    // ApplyPendingModeLockRequest below); this one persists across receptions until explicitly
+    // unlocked, and Commit() applies it via substitution (see that method's own doc comment) rather
+    // than by pre-empting VIS auto-detection -- detection keeps running exactly as today, which is
+    // what keeps IsIdle/RestartableSstvDecoder's idle-gated swap machinery/history-recording all
+    // correct during silence (2 rounds of plan-review: round 1's "skip auto-detect at the idle
+    // boundary" strawman made the decoder never idle, an infinite noise-frame decode+disk-write loop
+    // during silence -- round 2's corrected design, implemented here, keeps detection unchanged and
+    // substitutes only the mode actually committed).
+    private SstvModeDefinition? _lockedMode;
+
+    private sealed record ModeLockRequest(SstvModeDefinition? Mode);
+
+    // Deferred-request latch, exact same shape/reasoning as _pendingSenseLevelRequest above (a
+    // record, not SstvModeDefinition? directly, because Interlocked.Exchange<T> requires a reference
+    // type and there is no Nullable<T> overload -- the record's own null Mode is a real "unlock"
+    // request, distinct from this OUTER field being null, "nothing pending").
+    private ModeLockRequest? _pendingModeLockRequest;
 
     // Pause/abandon (legacy's RxAutoPush -> pDem->Stop(), Main.cpp:6042-6060) request state. Plain
     // int (0/1), not a reference-type payload like _forcedMode above -- there's no payload to carry,
@@ -959,7 +1017,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
     /// Restart-only, same reasoning/limitation as demodType above (see that parameter's own doc
     /// comment).</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
 
@@ -985,10 +1043,19 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
         (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
         _demodType = demodType;
+        _pllVcoGain = pllVcoGain;
+        _pllLoopOrder = pllLoopOrder;
+        _pllLoopCutoffHz = pllLoopCutoffHz;
+        _pllOutputOrder = pllOutputOrder;
+        _pllOutputCutoffHz = pllOutputCutoffHz;
+        _zeroCrossingSmoothingMode = zeroCrossingSmoothingMode;
+        _zeroCrossingOutputOrder = zeroCrossingOutputOrder;
+        _zeroCrossingOutputCutoffHz = zeroCrossingOutputCutoffHz;
+        _zeroCrossingSmoothingFrequencyHz = zeroCrossingSmoothingFrequencyHz;
         _demodulator = new HilbertFmDemodulator(sampleRate);
-        _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz);
-        _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate);
-        _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate);
+        _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz, pllVcoGain, pllLoopOrder, pllLoopCutoffHz, pllOutputOrder, pllOutputCutoffHz);
+        _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate, zeroCrossingSmoothingMode, zeroCrossingOutputOrder, zeroCrossingOutputCutoffHz, zeroCrossingSmoothingFrequencyHz);
+        _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate, zeroCrossingSmoothingMode, zeroCrossingOutputOrder, zeroCrossingOutputCutoffHz, zeroCrossingSmoothingFrequencyHz);
         _rxBpfPreset = rxBpfPreset;
         // Round-2 auditor finding (D0-audit round-7: moved to sit directly above the call it
         // actually describes, previously misplaced one statement early): pass the
@@ -1459,6 +1526,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private bool _subscriberFailureDeferralActive;
     private ExceptionDispatchInfo? _deferredSubscriberFailure;
 
+    // ISstvDecoder.ReceptionSequence's backing field -- see that property's own doc comment for the
+    // full contract. Interlocked, not a plain field: this class's own PushSamples recursion guard
+    // above already establishes that a caller may poll properties from a different thread than the
+    // one driving PushSamples, and ReceptionSequence's own contract promises any-thread reads.
+    private long _receptionSequence;
+
+    /// <summary>See <see cref="ISstvDecoder.ReceptionSequence"/>.</summary>
+    public long ReceptionSequence => Interlocked.Read(ref _receptionSequence);
+
     /// <summary>See <see cref="ISstvDecoder.ResetAgc"/> for the full concurrency contract (D0-audit
     /// round-6 finding: this is the one public mutator on this class that writes DSP state directly
     /// and synchronously instead of through a deferred flag <see cref="PushSamples"/> consumes --
@@ -1479,6 +1555,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// doc comment for how the enabled/frequency state itself, as opposed to just this request latch,
     /// survives across calls).</summary>
     public void RequestNotch(bool enabled, double? frequencyHz) => Interlocked.Exchange(ref _pendingNotchRequest, new NotchRequest(enabled, frequencyHz));
+
+    /// <summary>See <see cref="ISstvDecoder.RequestPllTuning"/>. Same atomic-exchange shape as
+    /// <see cref="RequestNotch"/> immediately above -- consumed at the top of the next
+    /// <see cref="PushSamples"/> call by <see cref="ApplyPendingPllTuningRequest"/>. All 5 fields
+    /// are always set together as one group (never independently), so a plain exchange is correct --
+    /// no CAS-merge needed, unlike <see cref="_desiredFlags"/>'s own 4-independent-property shape.</summary>
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz) =>
+        Interlocked.Exchange(ref _pendingPllTuningRequest, new PllTuningRequest(vcoGain, loopOrder, loopCutoffHz, outputOrder, outputCutoffHz));
+
+    /// <summary>See <see cref="ISstvDecoder.RequestZeroCrossingTuning"/>. Same atomic-exchange shape as
+    /// <see cref="RequestPllTuning"/> immediately above -- consumed at the top of the next
+    /// <see cref="PushSamples"/> call by <see cref="ApplyPendingZeroCrossingTuningRequest"/>.</summary>
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz) =>
+        Interlocked.Exchange(ref _pendingZeroCrossingTuningRequest, new ZeroCrossingTuningRequest(smoothingMode, outputOrder, outputCutoffHz, smoothingFrequencyHz));
 
     /// <summary>See <see cref="ISstvDecoder.ArmScopeCapture"/>. A single atomic exchange, safe from
     /// any thread -- consumed at the top of the next <see cref="PushSamples"/> call, same shape as
@@ -1515,6 +1605,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// actually calls that (matching this class's own established single-caller-thread contract; no
     /// thread marshaling, no synchronization context, no background dispatch).</summary>
     public void ForceMode(SstvModeDefinition mode) => Interlocked.Exchange(ref _forcedMode, mode);
+
+    /// <summary>See <see cref="ISstvDecoder.SetModeLock"/>. <see langword="null"/> unlocks. A
+    /// deferred-request latch, not a plain field write -- see <see cref="_pendingModeLockRequest"/>'s
+    /// own doc comment for why (same reasoning as <see cref="SenseLevel"/>'s own setter: a plain
+    /// cross-thread write gives <see cref="PushSamplesCore"/> no memory-model ordering guarantee
+    /// against <see cref="_lockedMode"/>, which <see cref="Commit"/> reads on every commit).
+    /// Independent of <see cref="ForceMode"/> above -- setting a lock does not affect any in-flight
+    /// forced mode, and a forced mode does not affect the lock (see <see cref="Commit"/>'s own
+    /// <c>applyModeLock</c> parameter).</summary>
+    public void SetModeLock(SstvModeDefinition? mode) => Interlocked.Exchange(ref _pendingModeLockRequest, new ModeLockRequest(mode));
 
     /// <summary>See <see cref="ISstvDecoder.RequestAbandonReception"/>. A single atomic exchange,
     /// safe from any thread -- consumed at the very top of the next <see cref="PushSamples"/> call,
@@ -1828,6 +1928,21 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _visLockStateMachine.UpdateThresholds(_slvl, _slvl2);
     }
 
+    /// <summary>Drains <see cref="_pendingModeLockRequest"/> -- see that field's and
+    /// <see cref="_lockedMode"/>'s own doc comments. A bare reassignment; the new value only takes
+    /// effect at the NEXT <see cref="Commit"/> (whether that's the reception already in progress or a
+    /// future one), never retroactively re-decoding whatever is currently committed.</summary>
+    private void ApplyPendingModeLockRequest()
+    {
+        var request = Interlocked.Exchange(ref _pendingModeLockRequest, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        _lockedMode = request.Mode;
+    }
+
     /// <summary>Diagnostic-only: exposes <see cref="VisLockStateMachine.ThresholdsForTests"/> so a
     /// test can prove <see cref="ApplyPendingSenseLevelRequest"/> actually reached that class' own
     /// copies, not just this decoder's.</summary>
@@ -1938,10 +2053,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // batch's toggle state for every sample in it.
         ApplyPendingNotchRequest();
         ApplyPendingScopeCaptureArm();
-        // Order vs. the two calls above doesn't matter -- zero field overlap (confirmed by reading
-        // both: notch touches _notchFilter/_notchFrequencyHz/sync-correction bookkeeping, scope
-        // capture touches its own arm/fill state, neither touches _slvl*/VisLockStateMachine).
+        // Order vs. the calls above/below doesn't matter -- zero field overlap (notch touches
+        // _notchFilter/_notchFrequencyHz/sync-correction bookkeeping, scope capture touches its own
+        // arm/fill state, PLL tuning touches only _pllDemodulator/_avtPllDemodulator/_pll* fields,
+        // none of which any of the others read or write).
+        ApplyPendingPllTuningRequest();
+        ApplyPendingZeroCrossingTuningRequest();
         ApplyPendingSenseLevelRequest();
+        ApplyPendingModeLockRequest();
         // Order vs. the call above doesn't matter (zero field overlap, see this method's own doc
         // comment) -- but this one MUST stay below the abandon/ForceMode/ReSync/Notch block above,
         // not just below ApplyPendingSenseLevelRequest -- see that method's own doc comment for why.
@@ -2169,6 +2288,54 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _slantCorrectionsDisabledForRestOfImage = true;
         _autoSyncReferencePosition = null;
         _autoSyncCooldown = 6;
+    }
+
+    // Options stub backlog item 1 (docs/plans/options-stub-item1-pll-tuning-plan.md): consumes
+    // _pendingPllTuningRequest, applying to BOTH PLL instances -- the picture-path _pllDemodulator
+    // (always live) and, if an AVT-training attempt is currently in flight, _avtPllDemodulator too
+    // (null-conditional -- legacy's single m_pll instance affects both paths, so a retune arriving
+    // mid-AVT-attempt must reach it, not just the not-yet-started case _avtPllDemodulator's own
+    // construction site already covers). Also updates the CURRENT-tuning fields (_pllVcoGain etc.)
+    // BEFORE calling SetTuning -- these are read by _avtPllDemodulator's own construction site for a
+    // FUTURE AVT attempt, so they must reflect the latest request even if no AVT attempt is active
+    // right now to apply it to directly.
+    private void ApplyPendingPllTuningRequest()
+    {
+        var request = Interlocked.Exchange(ref _pendingPllTuningRequest, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        _pllVcoGain = request.VcoGain;
+        _pllLoopOrder = request.LoopOrder;
+        _pllLoopCutoffHz = request.LoopCutoffHz;
+        _pllOutputOrder = request.OutputOrder;
+        _pllOutputCutoffHz = request.OutputCutoffHz;
+
+        _pllDemodulator.SetTuning(request.VcoGain, request.LoopOrder, request.LoopCutoffHz, request.OutputOrder, request.OutputCutoffHz);
+        _avtPllDemodulator?.SetTuning(request.VcoGain, request.LoopOrder, request.LoopCutoffHz, request.OutputOrder, request.OutputCutoffHz);
+    }
+
+    /// <summary>Drains <see cref="_pendingZeroCrossingTuningRequest"/>, applying to BOTH
+    /// <see cref="_zeroCrossingDemodulator"/> and <see cref="_afcZeroCrossingCounter"/> -- legacy's
+    /// single <c>m_fqc</c> serves both roles, so whatever smoothing is configured affects both,
+    /// mirroring <see cref="ApplyPendingPllTuningRequest"/> immediately above.</summary>
+    private void ApplyPendingZeroCrossingTuningRequest()
+    {
+        var request = Interlocked.Exchange(ref _pendingZeroCrossingTuningRequest, null);
+        if (request is null)
+        {
+            return;
+        }
+
+        _zeroCrossingSmoothingMode = request.SmoothingMode;
+        _zeroCrossingOutputOrder = request.OutputOrder;
+        _zeroCrossingOutputCutoffHz = request.OutputCutoffHz;
+        _zeroCrossingSmoothingFrequencyHz = request.SmoothingFrequencyHz;
+
+        _zeroCrossingDemodulator.SetTuning(request.SmoothingMode, request.OutputOrder, request.OutputCutoffHz, request.SmoothingFrequencyHz);
+        _afcZeroCrossingCounter.SetTuning(request.SmoothingMode, request.OutputOrder, request.OutputCutoffHz, request.SmoothingFrequencyHz);
     }
 
     // Un-stub-RX-tab Piece A: consumes _pendingNotchRequest, applying the on/off/frequency change
@@ -2660,7 +2827,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // TrimBuffers' own watermark comments) and matches legacy's actual reset target -- Start(void)
         // zeroes m_wBase/m_wPage/m_rPage/m_rBase (sstv.cpp:1726-1730), "begin buffering from now", not
         // the m_wBgn=2 buffered-lines-gate flag.
-        Commit(mode, TotalSamplesReceived);
+        // applyModeLock: false -- see Commit's own doc comment: a manual quick-mode-button click
+        // always wins its own reception, a one-shot exception to an active persistent lock, not a
+        // change to it.
+        Commit(mode, TotalSamplesReceived, applyModeLock: false);
 
         // See this method's own top comment for why this is gated on !hadPendingAnchor: firing
         // DecodeRestarted for a mode that never reached ModeDetected would violate the event's own
@@ -4628,16 +4798,34 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _autoSyncCooldown = 0; // Main.cpp:4994's own m_AutoSyncDis=0, alongside m_AutoSyncCount=0 above
     }
 
-    private void Commit(SstvModeDefinition matched, int lineStartSample)
+    // ui_transition_plan.md step 10 (T2-5): applyModeLock defaults true for every ordinary
+    // detection-driven caller; PerformForceMode passes false so a manual quick-mode-button click
+    // always wins its OWN reception regardless of an active lock (a one-shot EXCEPTION to the lock,
+    // not a change to it -- ForceMode's own _forcedMode field is untouched by _lockedMode either
+    // way, see that field's own doc comment). matched == Avt is excluded from substitution even when
+    // applyModeLock is true -- a detected-AVT signal always trains/commits as AVT (v1 limitation,
+    // deliberately not given a cross-family AVT<->locked-mode substitution -- see _lockedMode's own
+    // doc comment). The pre-Commit anchor math every caller already computed (e.g.
+    // IsScottieFamily/GetSyncSegmentMidpointOffsetMs) stays keyed to `matched`, the ACTUALLY
+    // DETECTED mode -- it describes the observed signal, not what this method chooses to label it
+    // as; only what happens FROM HERE ON (the mode actually decoded/committed) substitutes.
+    // TryResolveSyncAnchorCorrection (called from TryProcessBuffer against _pendingAnchorCorrectionMode,
+    // set below) re-derives the anchor modulo the COMMITTED mode's own line width regardless, so a
+    // locked-mode substitution here is corrected for automatically, not left as a mismatch.
+    private void Commit(SstvModeDefinition matched, int lineStartSample, bool applyModeLock = true)
     {
+        var effectiveMode = applyModeLock && matched != SstvModeRegistry.Avt && _lockedMode is not null
+            ? _lockedMode
+            : matched;
+
         AbandonInProgressImage();
         _consumedSamples = Math.Max(0, lineStartSample);
         _idealLineStartSample = _consumedSamples; // MUST 4 -- see field's own doc comment
         RaiseSubscribers(LockAnchorCommitted, _consumedSamples);
         _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
-        _mode = matched;
-        _lineDecoder = ScanlineCodecFactory.CreateDecoder(matched.ColorEncoding);
-        _pixels = new Rgb24[matched.ImageWidth * matched.ImageHeight];
+        _mode = effectiveMode;
+        _lineDecoder = ScanlineCodecFactory.CreateDecoder(effectiveMode.ColorEncoding);
+        _pixels = new Rgb24[effectiveMode.ImageWidth * effectiveMode.ImageHeight];
         _nextLine = 0;
 
         // Piece 6c prerequisite, a real bug caught by this port's own end-to-end test: whichever
@@ -4735,13 +4923,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // this piece existed. Every other mode defers to TryResolveSyncAnchorCorrection (called from
         // TryProcessBuffer, once enough samples are buffered) -- see _pendingAnchorCorrectionMode's
         // own doc comment for why the deferral is needed.
-        if (matched == SstvModeRegistry.Avt)
+        if (effectiveMode == SstvModeRegistry.Avt)
         {
-            FinalizeAnchorAndStartDecoding(matched);
+            FinalizeAnchorAndStartDecoding(effectiveMode);
         }
         else
         {
-            _pendingAnchorCorrectionMode = matched;
+            _pendingAnchorCorrectionMode = effectiveMode;
         }
     }
 
@@ -4767,6 +4955,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         InitializeAfc(matched);
         InitializeSlant(matched);
+
+        // ISstvDecoder.ReceptionSequence: bumped BEFORE the raise below, at the single true
+        // ModeDetected raise site in this class -- see that property's own doc comment for why this
+        // is the only correct place (never on DecodeRestarted).
+        Interlocked.Increment(ref _receptionSequence);
         RaiseSubscribers(ModeDetected, matched);
     }
 
@@ -5507,7 +5700,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _avtTrainingLock = new AvtTrainingLockStateMachine(_sampleRate);
         _avtTrainingProcessedUpTo = _avtTrainingOriginSample;
         _avtTrainingPending = true;
-        _avtPllDemodulator = new PllFmDemodulator(_sampleRate, DemodulatorLowHz, DemodulatorHighHz);
+        // Options stub backlog item 1: constructed with the CURRENTLY APPLIED tuning fields (updated
+        // by ApplyPendingPllTuningRequest's drain), not the legacy-default ctor overloads -- this
+        // instance is fresh-per-attempt, so it would otherwise silently start at defaults regardless
+        // of whatever tuning the picture-path _pllDemodulator is actually running with.
+        _avtPllDemodulator = new PllFmDemodulator(_sampleRate, DemodulatorLowHz, DemodulatorHighHz, _pllVcoGain, _pllLoopOrder, _pllLoopCutoffHz, _pllOutputOrder, _pllOutputCutoffHz);
         _avtPllWarmedUp = false;
 
         // Band-2 item S16 (pre-Phase-2 audit): auditor plan-review, round 1 -- the FIRST proposed fix
@@ -5776,6 +5973,30 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// it was told.</summary>
     internal DemodType DemodTypeForTests => _demodType;
 
+    /// <summary>Test-only visibility into the CURRENTLY APPLIED PLL tuning -- same reasoning as
+    /// <see cref="DemodTypeForTests"/> above, backing <see cref="RestartableSstvDecoder"/>'s own
+    /// InnerPllTuningForTests hook (without this, a dropped tuning argument in
+    /// <see cref="RestartableSstvDecoder"/>'s own CreateInner would silently revert a user's PLL
+    /// tuning to the legacy defaults after a periodic restart, with no test able to catch it).</summary>
+    internal (double VcoGain, int LoopOrder, double LoopCutoffHz, int OutputOrder, double OutputCutoffHz) PllTuningForTests =>
+        (_pllVcoGain, _pllLoopOrder, _pllLoopCutoffHz, _pllOutputOrder, _pllOutputCutoffHz);
+
+    /// <summary>Test-only visibility into the CURRENTLY APPLIED zero-crossing tuning -- same reasoning
+    /// as <see cref="PllTuningForTests"/> immediately above.</summary>
+    internal (ZeroCrossingSmoothingMode SmoothingMode, int OutputOrder, double OutputCutoffHz, double SmoothingFrequencyHz) ZeroCrossingTuningForTests =>
+        (_zeroCrossingSmoothingMode, _zeroCrossingOutputOrder, _zeroCrossingOutputCutoffHz, _zeroCrossingSmoothingFrequencyHz);
+
+    /// <summary>Test-only visibility into <see cref="_zeroCrossingDemodulator"/>'s OWN currently-
+    /// applied smoothing mode (not the decoder-level tracking field above) -- code-review round 1
+    /// finding: without reading the live instance itself, a dropped
+    /// <c>_zeroCrossingDemodulator.SetTuning</c> call in <see cref="ApplyPendingZeroCrossingTuningRequest"/>
+    /// could pass the whole suite undetected, since the tracking fields update independently.</summary>
+    internal ZeroCrossingSmoothingMode DemodulatorSmoothingModeForTests => _zeroCrossingDemodulator.SmoothingModeForTests;
+
+    /// <summary>Same reasoning as <see cref="DemodulatorSmoothingModeForTests"/> immediately above, for
+    /// <see cref="_afcZeroCrossingCounter"/>'s own live instance.</summary>
+    internal ZeroCrossingSmoothingMode AfcCounterSmoothingModeForTests => _afcZeroCrossingCounter.SmoothingModeForTests;
+
     /// <summary>Test-only visibility into the RX BPF preset this instance was actually constructed
     /// with -- production code has no need to read this back (and <see cref="_searchBandpassFilter"/>
     /// itself can't answer this, since it's null for <see cref="RxBpfPreset.Off"/>). Same reasoning as
@@ -6015,6 +6236,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// needs to distinguish "idle" from "locked" independently of <see cref="ModeDetected"/> having
     /// fired yet (a non-AVT commit can be locked with a pending, not-yet-announced anchor).</summary>
     internal SstvModeDefinition? ModeForTests => _mode;
+
+    /// <summary>Diagnostic-only: the currently ACTIVE persistent mode lock (already-drained value,
+    /// not <see cref="_pendingModeLockRequest"/>) -- see <see cref="_lockedMode"/>'s own doc
+    /// comment.</summary>
+    internal SstvModeDefinition? LockedModeForTests => _lockedMode;
 
     /// <summary>Test-only visibility into whether AVT training is currently in flight --
     /// <see cref="ForceMode"/>'s own teardown is the first production code that needs to abort this

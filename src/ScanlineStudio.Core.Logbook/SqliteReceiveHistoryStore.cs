@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Core.Logbook;
@@ -23,6 +24,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     private readonly ILogger<SqliteReceiveHistoryStore> _logger;
 
     public event Action<ReceiveHistoryEntry>? Recorded;
+    public event Action<ReceiveHistoryEntry>? Deleted;
 
     public SqliteReceiveHistoryStore(ISettingsStore settingsStore, ILogger<SqliteReceiveHistoryStore> logger, string? dbFilePath = null)
     {
@@ -46,7 +48,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged FROM ReceiveHistory WHERE 1 = 1";
+        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath FROM ReceiveHistory WHERE 1 = 1";
 
         if (filter.ModeId is not null)
         {
@@ -80,7 +82,10 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 ParseDecodeState(reader.GetString(5)),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.GetInt64(7) != 0));
+                reader.GetInt64(7) != 0,
+                reader.IsDBNull(8) ? null : reader.GetInt64(8),
+                reader.IsDBNull(9) ? null : ParseRigMode(reader.GetString(9)),
+                reader.IsDBNull(10) ? null : reader.GetString(10)));
         }
 
         return results;
@@ -93,6 +98,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// backfill.</summary>
     private static ReceiveDecodeState ParseDecodeState(string value) =>
         Enum.TryParse<ReceiveDecodeState>(value, out var parsed) ? parsed : ReceiveDecodeState.Completed;
+
+    /// <summary>Same DBNull-means-null / garbage-string-means-Unknown-not-throw shape as
+    /// <c>SqliteLogbookRepository.ParseMode</c>, mirrored exactly (both persist a <see cref="RadioMode"/>?
+    /// the identical way).</summary>
+    private static RadioMode ParseRigMode(string value) =>
+        Enum.TryParse<RadioMode>(value, out var parsed) ? parsed : RadioMode.Unknown;
 
     public async Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
     {
@@ -124,8 +135,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged)
-            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged)
+            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath)
+            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath)
             """;
         command.Parameters.AddWithValue("$id", entry.Id);
         command.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
@@ -135,6 +146,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         command.Parameters.AddWithValue("$decodeState", entry.DecodeState.ToString());
         command.Parameters.AddWithValue("$note", (object?)entry.Note ?? DBNull.Value);
         command.Parameters.AddWithValue("$isFlagged", entry.IsFlagged ? 1 : 0);
+        command.Parameters.AddWithValue("$frequencyHz", (object?)entry.FrequencyHz ?? DBNull.Value);
+        command.Parameters.AddWithValue("$rigMode", (object?)entry.RigMode?.ToString() ?? DBNull.Value);
+        // Always null at write time in production -- RxAudioAutoSaver's join always completes AFTER
+        // this row already exists, attaching the path later via SetAudioFilePathAsync. Still taken
+        // from entry.AudioFilePath (not hardcoded DBNull.Value) so a test/ReconcileWithDiskAsync-style
+        // caller that already knows the path isn't forced through a second UPDATE round-trip.
+        command.Parameters.AddWithValue("$audioFilePath", (object?)entry.AudioFilePath ?? DBNull.Value);
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -188,6 +206,40 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         Log.ImagesDirectorySet(_logger, normalized);
     }
 
+    public async Task<AudioAutoSaveSettings> GetAudioSettingsAsync(CancellationToken ct = default)
+    {
+        // Single load, not one via ResolveAudioDirectoryAsync plus a second one here -- Enabled and
+        // Directory must come from the SAME snapshot, matching GetImagesDirectoryAsync's own
+        // single-load shape (an earlier draft loaded twice, letting the two values theoretically
+        // disagree if a concurrent SetAudioSettingsAsync landed in between).
+        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var section = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        var directory = ReceiveHistorySettings.ResolveAudioDirectory(section);
+        return new AudioAutoSaveSettings(section?.AutoSaveAudioEnabled ?? false, directory);
+    }
+
+    /// <summary>See <see cref="IReceiveHistoryStore.SetAudioSettingsAsync"/>. Same validate-then-
+    /// persist-the-resolved-absolute-path shape as <see cref="SetImagesDirectoryAsync"/> -- see that
+    /// method's own doc comment for why (relative-path/`~` instability across process restarts).</summary>
+    public async Task SetAudioSettingsAsync(bool enabled, string? directory, CancellationToken ct = default)
+    {
+        var normalized = string.IsNullOrWhiteSpace(directory) ? null : directory;
+        if (normalized is not null)
+        {
+            normalized = Path.GetFullPath(normalized);
+            Directory.CreateDirectory(normalized);
+        }
+
+        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
+        var updated = settings.WithSection(ReceiveHistorySettings.SectionKey, current with { AutoSaveAudioEnabled = enabled, AudioDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        Log.AudioSettingsSet(_logger, enabled, normalized);
+    }
+
+    public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default) =>
+        ExecuteUpdateAsync("UPDATE ReceiveHistory SET AudioFilePath = $audioFilePath WHERE Id = $id", entryId, "$audioFilePath", path, ct);
+
     public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET Note = $note WHERE Id = $id", entryId, "$note", (object?)note ?? DBNull.Value, ct);
 
@@ -196,6 +248,75 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET LinkedQsoId = $linkedQsoId WHERE Id = $id", entryId, "$linkedQsoId", qsoId, ct);
+
+    /// <summary>See <see cref="IReceiveHistoryStore.DeleteAsync"/>. File removal happens FIRST,
+    /// before the DB row -- if the row were deleted first and the file delete then failed, a
+    /// later <see cref="ReconcileWithDiskAsync"/> pass would re-adopt that orphaned file as a
+    /// "new" entry, silently resurrecting something the operator just deleted. Doing the file
+    /// first means the worst case is the reverse (a row briefly outlives its file, already an
+    /// explicitly-tolerated state per <see cref="SetNoteAsync"/>'s own doc comment), not a
+    /// resurrection.</summary>
+    public async Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
+    {
+        try
+        {
+            if (File.Exists(entry.FilePath))
+            {
+                File.Delete(entry.FilePath);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Logged, not rethrown -- deliberately does not block the row delete below (see this
+            // method's own doc comment on the interface: "this entry disappears from the Gallery"
+            // is the promise, not "and disk space is reclaimed, guaranteed").
+            Log.DeleteFileFailed(_logger, entry.FilePath, ex);
+        }
+
+        // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same tolerant, isolated
+        // best-effort delete as the image file above -- a null AudioFilePath (no audio was ever
+        // attached) is simply skipped, not an error.
+        if (entry.AudioFilePath is { } audioFilePath)
+        {
+            try
+            {
+                if (File.Exists(audioFilePath))
+                {
+                    File.Delete(audioFilePath);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.DeleteFileFailed(_logger, audioFilePath, ex);
+            }
+        }
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM ReceiveHistory WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", entry.Id);
+        var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        if (rowsAffected == 0)
+        {
+            return false;
+        }
+
+        // Isolated deliberately, same reasoning as RecordAsync's own Recorded-event try/catch: a
+        // subscriber's own exception must not surface as if THIS delete had failed -- both the
+        // file removal attempt and the row delete already fully ran by this point.
+        try
+        {
+            Deleted?.Invoke(entry);
+        }
+        catch (Exception ex)
+        {
+            Log.DeletedSubscriberFailed(_logger, entry.Id, ex);
+        }
+
+        return true;
+    }
 
     /// <summary>See <see cref="IReceiveHistoryStore.ReconcileWithDiskAsync"/>. Matches
     /// <c>ReceiveHistoryRecorder</c>'s CURRENT filename shapes (`RecordCompletedImageAsync` writes
@@ -388,10 +509,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// <summary>Creates the table on a fresh DB, and migrates an existing pre-`Note`/`IsFlagged`/
     /// `DecodeState` DB in place -- the first schema change this store has ever needed. Lightweight
     /// `PRAGMA table_info` probe + `ALTER TABLE ADD COLUMN` (NOT a versioned-migration framework --
-    /// proportionate to a single 8-column table; do not "improve" this without a real second table
+    /// proportionate to a single 11-column table; do not "improve" this without a real second table
     /// to justify it). `CREATE TABLE`'s own column definitions carry the identical `DEFAULT`s the
-    /// `ALTER TABLE` statements below use, AND the 3 `ALTER TABLE ADD COLUMN`s below run in the
-    /// same order `CREATE TABLE` declares them (`DecodeState`, then `Note`, then `IsFlagged`) --
+    /// `ALTER TABLE` statements below use, AND the 6 `ALTER TABLE ADD COLUMN`s below run in the
+    /// same order `CREATE TABLE` declares them (`DecodeState`, `Note`, `IsFlagged`, `FrequencyHz`,
+    /// `RigMode`, `AudioFilePath`) --
     /// deliberate, not incidental: SQLite's `ADD COLUMN` always appends, so a migrated DB's column
     /// ORDER would otherwise permanently diverge from a fresh DB's the moment this ships (code-level
     /// audit finding -- harmless today, since no query anywhere uses `SELECT *`, but a real,
@@ -423,7 +545,10 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 LinkedQsoId TEXT NULL,
                 DecodeState TEXT NOT NULL DEFAULT 'Completed',
                 Note TEXT NULL,
-                IsFlagged INTEGER NOT NULL DEFAULT 0
+                IsFlagged INTEGER NOT NULL DEFAULT 0,
+                FrequencyHz INTEGER NULL,
+                RigMode TEXT NULL,
+                AudioFilePath TEXT NULL
             )
             """;
         createCommand.ExecuteNonQuery();
@@ -444,8 +569,9 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         }
 
         // Order matches CREATE TABLE's own column declaration order above (DecodeState, Note,
-        // IsFlagged) -- ADD COLUMN always appends, so a migrated DB's column order would otherwise
-        // permanently diverge from a fresh DB's; see this method's own doc comment.
+        // IsFlagged, FrequencyHz, RigMode, AudioFilePath) -- ADD COLUMN always appends, so a migrated
+        // DB's column order would otherwise permanently diverge from a fresh DB's; see this method's
+        // own doc comment.
         var decodeStateWasJustAdded = false;
 
         if (!existingColumns.Contains("DecodeState"))
@@ -462,6 +588,28 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         if (!existingColumns.Contains("IsFlagged"))
         {
             ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN IsFlagged INTEGER NOT NULL DEFAULT 0");
+        }
+
+        // ui_transition_plan.md step 6 (T2-4): appended AFTER IsFlagged, same "always appends,
+        // never reorders" reasoning as the 3 columns above -- a pre-existing row simply has no
+        // latched frequency/mode (NULL, correctly meaning "unknown," not backfilled/guessed).
+        if (!existingColumns.Contains("FrequencyHz"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN FrequencyHz INTEGER NULL");
+        }
+
+        if (!existingColumns.Contains("RigMode"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN RigMode TEXT NULL");
+        }
+
+        // ui_transition_plan.md step 12 (Auto-save RX audio): the 6th ALTER TABLE block, appended
+        // AFTER RigMode -- same "always appends, never reorders" reasoning as the columns above. A
+        // pre-existing row simply has no linked audio (NULL, correctly meaning "none ever attached,"
+        // matching every real row this feature didn't exist for yet -- not backfilled/guessed).
+        if (!existingColumns.Contains("AudioFilePath"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN AudioFilePath TEXT NULL");
         }
 
         // Backfill ONLY when DecodeState was newly added THIS pass -- never on subsequent startups,
@@ -525,8 +673,17 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         [LoggerMessage(Level = LogLevel.Warning, Message = "A Recorded event subscriber threw for entry {EntryId}")]
         public static partial void RecordedSubscriberFailed(ILogger logger, string entryId, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A Deleted event subscriber threw for entry {EntryId}")]
+        public static partial void DeletedSubscriberFailed(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the image file failed, the history row was removed anyway: {FilePath}")]
+        public static partial void DeleteFileFailed(ILogger logger, string filePath, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "RX images directory set to {Directory}")]
         public static partial void ImagesDirectorySet(ILogger logger, string? directory);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Auto-save RX audio settings set: enabled={Enabled}, directory={Directory}")]
+        public static partial void AudioSettingsSet(ILogger logger, bool enabled, string? directory);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Disk/DB reconcile: skipped a file not matching the app's own naming convention: {FilePath}")]
         public static partial void ReconcileSkippedUnrecognizedFile(ILogger logger, string filePath);

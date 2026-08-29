@@ -41,6 +41,12 @@ public sealed partial class OptionsSettingsService
         PlaybackDeviceName: new AudioDeviceSettings().PlaybackDeviceName,
         SampleRate: new AudioDeviceSettings().SampleRate,
         TxSampleRateOffsetHz: new AudioDeviceSettings().TxSampleRateOffsetHz,
+        // Options stub backlog item 3 -- absent -> legacy's real CSSTVMOD constructor defaults
+        // (true/24/false/2000.0, see AudioDeviceSettings.TxBpfEnabled's own doc comment).
+        TxBpfEnabled: new AudioDeviceSettings().TxBpfEnabled ?? true,
+        TxBpfTapCount: new AudioDeviceSettings().TxBpfTapCount ?? 24,
+        TxLpfEnabled: new AudioDeviceSettings().TxLpfEnabled ?? false,
+        TxLpfFrequencyHz: new AudioDeviceSettings().TxLpfFrequencyHz ?? 2000.0,
         RadioBackendId: new RadioConnectionSettings().BackendId,
         RigctldHost: new RadioConnectionSettings().Host,
         RigctldPort: new RadioConnectionSettings().Port,
@@ -82,6 +88,20 @@ public sealed partial class OptionsSettingsService
         // equivalent Enum.IsDefined clamp for the same reason, see SstvDecoderSettings.RxBufferMode's
         // own doc comment).
         RxBufferMode: new SstvDecoderSettings().RxBufferMode ?? RxBufferMode.On,
+        // Options stub backlog item 1 -- absent -> legacy's real CPLL constructor defaults
+        // (1.0/1/1500.0/3/900.0, see SstvDecoderSettings.PllVcoGain's own doc comment), same
+        // resolution shape as DemodType/RxBpfPreset/RxBufferMode above.
+        PllVcoGain: new SstvDecoderSettings().PllVcoGain ?? 1.0,
+        PllLoopOrder: new SstvDecoderSettings().PllLoopOrder ?? 1,
+        PllLoopCutoffHz: new SstvDecoderSettings().PllLoopCutoffHz ?? 1500,
+        PllOutputOrder: new SstvDecoderSettings().PllOutputOrder ?? 3,
+        PllOutputCutoffHz: new SstvDecoderSettings().PllOutputCutoffHz ?? 900,
+        // Options stub backlog item 2 -- absent -> legacy's real CFQC constructor defaults
+        // (Iir/3/900.0/2200.0, see SstvDecoderSettings.ZeroCrossingSmoothingMode's own doc comment).
+        ZeroCrossingSmoothingMode: new SstvDecoderSettings().ZeroCrossingSmoothingMode ?? ZeroCrossingSmoothingMode.Iir,
+        ZeroCrossingOutputOrder: new SstvDecoderSettings().ZeroCrossingOutputOrder ?? 3,
+        ZeroCrossingOutputCutoffHz: new SstvDecoderSettings().ZeroCrossingOutputCutoffHz ?? 900,
+        ZeroCrossingSmoothingFrequencyHz: new SstvDecoderSettings().ZeroCrossingSmoothingFrequencyHz ?? 2200,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
         QrzLookupPassword: new QrzLookupSettings().Password,
@@ -95,6 +115,7 @@ public sealed partial class OptionsSettingsService
         FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled,
         NrRstEnabled: new StationIdSettings().NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
         NrRstText: new StationIdSettings().NrRstText,
+        SoundFileMmvPath: new StationIdSettings().SoundFileMmvPath,
         // Immutable empty, never a shared mutable List<T> -- this property is static, so a mutable
         // default would be a single shared instance every caller could accidentally mutate.
         AdifUdpDestinations: []);
@@ -123,6 +144,10 @@ public sealed partial class OptionsSettingsService
             PlaybackDeviceName: audio.PlaybackDeviceName,
             SampleRate: SstvSampleRate.NormalizePersisted(audio.SampleRate),
             TxSampleRateOffsetHz: audio.TxSampleRateOffsetHz,
+            TxBpfEnabled: audio.TxBpfEnabled ?? true,
+            TxBpfTapCount: audio.TxBpfTapCount ?? 24,
+            TxLpfEnabled: audio.TxLpfEnabled ?? false,
+            TxLpfFrequencyHz: audio.TxLpfFrequencyHz ?? 2000.0,
             RadioBackendId: radio.BackendId,
             RigctldHost: radio.Host,
             RigctldPort: radio.Port,
@@ -149,6 +174,15 @@ public sealed partial class OptionsSettingsService
             DemodType: decoder.DemodType ?? DemodType.Hilbert,
             RxBpfPreset: decoder.RxBpfPreset ?? RxBpfPreset.Wide,
             RxBufferMode: decoder.RxBufferMode ?? RxBufferMode.On,
+            PllVcoGain: decoder.PllVcoGain ?? 1.0,
+            PllLoopOrder: decoder.PllLoopOrder ?? 1,
+            PllLoopCutoffHz: decoder.PllLoopCutoffHz ?? 1500,
+            PllOutputOrder: decoder.PllOutputOrder ?? 3,
+            PllOutputCutoffHz: decoder.PllOutputCutoffHz ?? 900,
+            ZeroCrossingSmoothingMode: decoder.ZeroCrossingSmoothingMode ?? ZeroCrossingSmoothingMode.Iir,
+            ZeroCrossingOutputOrder: decoder.ZeroCrossingOutputOrder ?? 3,
+            ZeroCrossingOutputCutoffHz: decoder.ZeroCrossingOutputCutoffHz ?? 900,
+            ZeroCrossingSmoothingFrequencyHz: decoder.ZeroCrossingSmoothingFrequencyHz ?? 2200,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
             QrzLookupPassword: qrzLookup.Password,
@@ -162,6 +196,7 @@ public sealed partial class OptionsSettingsService
             FskIdRxEnabled: stationId.FskIdRxEnabled,
             NrRstEnabled: stationId.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
             NrRstText: stationId.NrRstText,
+            SoundFileMmvPath: stationId.SoundFileMmvPath,
             AdifUdpDestinations: adifUdp.Destinations ?? []);
     }
 
@@ -203,6 +238,17 @@ public sealed partial class OptionsSettingsService
         var txSampleRateOffsetToPersist = snapshot.TxSampleRateOffsetHz is >= -1500.0 and <= 1500.0
             ? snapshot.TxSampleRateOffsetHz
             : previousAudio.TxSampleRateOffsetHz;
+        // Options stub backlog item 3 -- same "reject, preserve the prior valid value" shape as
+        // TxSampleRateOffsetHz above: legacy's own Save-handler validation for these 2 numeric TX
+        // fields (Option.cpp:452-459) has no else branch either, i.e. an out-of-range typed value is
+        // simply never applied, keeping whatever the field already held. Tap count additionally
+        // rounds to the nearest even value (see AudioDeviceSettings.TxBpfEnabled's own doc comment).
+        var txBpfTapCountToPersist = snapshot.TxBpfTapCount is >= 2 and <= 512
+            ? (snapshot.TxBpfTapCount % 2 == 0 ? snapshot.TxBpfTapCount : snapshot.TxBpfTapCount - 1)
+            : previousAudio.TxBpfTapCount ?? 24;
+        var txLpfFrequencyToPersist = snapshot.TxLpfFrequencyHz is >= 100.0 and <= 3000.0
+            ? snapshot.TxLpfFrequencyHz
+            : previousAudio.TxLpfFrequencyHz ?? 2000.0;
         var previousRadio = currentSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
         var previousDecoder = currentSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
         var previousStationId = currentSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
@@ -228,6 +274,10 @@ public sealed partial class OptionsSettingsService
                     // is deliberately different and falls back to 11025.
                     SampleRate = sampleRateToPersist,
                     TxSampleRateOffsetHz = txSampleRateOffsetToPersist,
+                    TxBpfEnabled = snapshot.TxBpfEnabled,
+                    TxBpfTapCount = txBpfTapCountToPersist,
+                    TxLpfEnabled = snapshot.TxLpfEnabled,
+                    TxLpfFrequencyHz = txLpfFrequencyToPersist,
                     CaptureChannelSource = snapshot.CaptureChannelSource,
                     StereoTxEnabled = snapshot.StereoTxEnabled,
                 },
@@ -279,6 +329,18 @@ public sealed partial class OptionsSettingsService
                     DemodType = snapshot.DemodType,
                     RxBpfPreset = snapshot.RxBpfPreset,
                     RxBufferMode = snapshot.RxBufferMode,
+                    // Options stub backlog item 1, wired 2026-08-28 -- same fallback shape as
+                    // DemodType/RxBpfPreset/RxBufferMode above.
+                    PllVcoGain = snapshot.PllVcoGain,
+                    PllLoopOrder = snapshot.PllLoopOrder,
+                    PllLoopCutoffHz = snapshot.PllLoopCutoffHz,
+                    PllOutputOrder = snapshot.PllOutputOrder,
+                    PllOutputCutoffHz = snapshot.PllOutputCutoffHz,
+                    // Options stub backlog item 2 -- same fallback shape as PLL above.
+                    ZeroCrossingSmoothingMode = snapshot.ZeroCrossingSmoothingMode,
+                    ZeroCrossingOutputOrder = snapshot.ZeroCrossingOutputOrder,
+                    ZeroCrossingOutputCutoffHz = snapshot.ZeroCrossingOutputCutoffHz,
+                    ZeroCrossingSmoothingFrequencyHz = snapshot.ZeroCrossingSmoothingFrequencyHz,
                 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
@@ -306,6 +368,10 @@ public sealed partial class OptionsSettingsService
                     // verbatim is correct.
                     NrRstEnabled = snapshot.NrRstEnabled,
                     NrRstText = snapshot.NrRstText,
+                    // Same "no ?? string.Empty guard needed" reasoning as NrRstText above --
+                    // SoundFileMmvPath has no first-run pre-fill default to accidentally resurrect
+                    // (StationIdSettings.SoundFileMmvPath's own doc comment).
+                    SoundFileMmvPath = snapshot.SoundFileMmvPath,
                 },
                 StationIdSettingsJsonContext.Default.StationIdSettings)
             .WithSection(

@@ -10,12 +10,19 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public ConcurrentBag<ReceiveHistoryEntry> RecordedEntries { get; } = [];
 
     public event Action<ReceiveHistoryEntry>? Recorded;
+    public event Action<ReceiveHistoryEntry>? Deleted;
 
     /// <summary>Test-only hook, not currently invoked by <see cref="RecordAsync"/> itself --
     /// <c>ReceiveHistoryRecorderTests</c> only exercises the recording path, never a
     /// <see cref="Recorded"/> subscriber, but this satisfies the interface without leaving the event
     /// entirely dead (CS0067), matching the sibling fake's own <c>RaiseRecorded</c> convention.</summary>
     public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
+
+    /// <summary>Same "satisfies the interface without leaving the event entirely dead (CS0067)"
+    /// reasoning as <see cref="RaiseRecorded"/> -- <see cref="DeleteAsync"/> itself always throws
+    /// (not exercised by ReceiveHistoryRecorderTests), so nothing else would ever invoke this.
+    /// </summary>
+    public void RaiseDeleted(ReceiveHistoryEntry entry) => Deleted?.Invoke(entry);
 
     public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>(RecordedEntries.ToList());
@@ -29,6 +36,15 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
+    public Task<AudioAutoSaveSettings> GetAudioSettingsAsync(CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
+    public Task SetAudioSettingsAsync(bool enabled, string? directory, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
+    public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
     public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
@@ -36,6 +52,9 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default)
+        => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
+
+    public Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
     public Task<int> ReconcileWithDiskAsync(CancellationToken ct = default)

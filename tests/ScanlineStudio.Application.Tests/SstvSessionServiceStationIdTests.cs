@@ -110,16 +110,197 @@ public sealed class SstvSessionServiceStationIdTests
     [Fact]
     public async Task TransmitAsync_CwIdModeSoundFile_StaysDisabled_NotAccidentallyTreatedAsCwOn()
     {
-        // Main.cpp:7021-7025: sys.m_CWID == 2 -> OutputMMV() (sound-file, out of v1 scope).
-        // StationIdTransmitOptions has no field for it at all -- must resolve to CwEnabled=false,
-        // silently transmitting nothing, matching legacy's own unconfigured-sound-file behavior
-        // (`!sys.m_MMVID.IsEmpty()` failing) rather than accidentally falling through to CW-ID.
+        // Main.cpp:7021-7025: sys.m_CWID == 2 -> OutputMMV() (sound-file ID). `cwEnabled`'s own
+        // check is `== CwIdMode.Cw` specifically, so SoundFile mode must never fall through to
+        // CW-ID -- independent of whether a sound-file path is even configured (it isn't here).
         var (service, encoder, _, settingsStore) = CreateService();
         WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.SoundFile, CwText = "DE %m" });
 
         await service.TransmitAsync(TestMode, TestImage);
 
         Assert.False(encoder.LastStationIdOptions!.CwEnabled);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_CwIdModeSoundFileButNoPathConfigured_SoundFileIdStaysDisabled()
+    {
+        // CwIdMode.SoundFile alone isn't enough -- matches legacy's own
+        // `!sys.m_MMVID.IsEmpty()` gate (CwIdMode.SoundFile's own doc comment).
+        var (service, encoder, _, settingsStore) = CreateService();
+        WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.SoundFile, SoundFileMmvPath = null });
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        var resolved = encoder.LastStationIdOptions!;
+        Assert.False(resolved.SoundFileIdEnabled);
+        Assert.Null(resolved.SoundFileSamples);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_CwIdModeSoundFileWithMissingFile_IdEnabledButSamplesStayNull()
+    {
+        // The file doesn't need to exist for SoundFileIdEnabled (a cheap, I/O-free "is configured"
+        // signal) to be true -- only the actual SAMPLES resolution (a real file read) fails silently,
+        // matching this port's "unreadable file -> silent no-op, just logged" convention.
+        var (service, encoder, _, settingsStore) = CreateService();
+        WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.SoundFile, SoundFileMmvPath = "/nonexistent/path.mmv" });
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        var resolved = encoder.LastStationIdOptions!;
+        Assert.True(resolved.SoundFileIdEnabled);
+        Assert.Null(resolved.SoundFileSamples);
+    }
+
+    [Fact]
+    public async Task TransmitAsync_CwIdModeSoundFileWithRealFileAtMatchingRate_ResolvesExactSamples()
+    {
+        // Encoder's SampleRate (FakeSstvEncoder) is 11025Hz by default -- SampTable index 0 is also
+        // 11025Hz (ComLib.cpp:68), so this exercises the "already matches" fast path: raw copy,
+        // /32768.0 normalize only, no resample/IIR filter.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            byte[] mmvBytes = [0x55, 0xAA, 0x00, 0x00, 0x10, 0x27, 0xF0, 0xD8]; // magic, index 0=11025Hz, samples [10000, -10000]
+            await File.WriteAllBytesAsync(tempFile, mmvBytes);
+
+            var (service, encoder, _, settingsStore) = CreateService();
+            WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.SoundFile, SoundFileMmvPath = tempFile });
+
+            await service.TransmitAsync(TestMode, TestImage);
+
+            var resolved = encoder.LastStationIdOptions!;
+            Assert.True(resolved.SoundFileIdEnabled);
+            Assert.NotNull(resolved.SoundFileSamples);
+            Assert.Equal(new[] { 10000 / 32768f, -10000 / 32768f }, resolved.SoundFileSamples!.Value.ToArray());
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task GetStationIdTransmitOptionsAsync_SoundFileConfigured_SetsFlagButNeverReadsTheFile()
+    {
+        // Plan-review round 2b design decision: the read-only preview must NOT trigger the real
+        // file read/resample/IIR pass (would run on every Options-dialog close for no reason) --
+        // SoundFileIdEnabled alone (cheap, no I/O) is what a summary should read instead.
+        // Code-review nit: points at a REAL, valid, readable .mmv file (not a nonexistent path) so
+        // this assertion is actually load-bearing -- a nonexistent path can't distinguish "gated
+        // off" from "read and failed," since SoundFileSamples would be null either way.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            byte[] mmvBytes = [0x55, 0xAA, 0x00, 0x00, 0x10, 0x27]; // magic, index 0=11025Hz, 1 sample
+            await File.WriteAllBytesAsync(tempFile, mmvBytes);
+
+            var (service, encoder, _, settingsStore) = CreateService();
+            WithStationIdSettings(settingsStore, new StationIdSettings { CwIdMode = CwIdMode.SoundFile, SoundFileMmvPath = tempFile });
+
+            var resolved = await service.GetStationIdTransmitOptionsAsync();
+
+            Assert.True(resolved.SoundFileIdEnabled);
+            Assert.Null(resolved.SoundFileSamples);
+            Assert.Null(encoder.LastStationIdOptions); // no TransmitAsync call happened
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    /// <summary>ui_transition_plan.md step 8 (T2-2): ValidateStationIdSoundFileAsync shares its
+    /// parse core (TryParseSoundFile) with TryResolveSoundFileSamples above -- these tests cover the
+    /// validation-only surface (duration/failure reason), the real-audio resolution above already
+    /// covers the shared exists/size/header logic didn't regress via TransmitAsync's own path.</summary>
+    [Fact]
+    public async Task ValidateStationIdSoundFileAsync_MissingFile_ReturnsFileNotFoundFailure()
+    {
+        var (service, _, _, _) = CreateService();
+
+        var result = await service.ValidateStationIdSoundFileAsync("/nonexistent/path.mmv");
+
+        Assert.False(result.IsValid);
+        Assert.Equal(SoundFileIdValidationFailure.FileNotFound, result.Failure);
+        Assert.Null(result.DurationSeconds);
+    }
+
+    [Fact]
+    public async Task ValidateStationIdSoundFileAsync_FileOverSizeCap_ReturnsFileTooLargeFailure()
+    {
+        // A sparse file report the right Length without actually allocating/writing 32MB+ --
+        // TryParseSoundFile's own size check runs BEFORE File.ReadAllBytes, so the padding is never
+        // read.
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            const long maxSoundFileIdBytes = 32 * 1024 * 1024; // SstvSessionService.MaxSoundFileIdBytes
+            using (var stream = new FileStream(tempFile, FileMode.Create))
+            {
+                stream.SetLength(maxSoundFileIdBytes + 1);
+            }
+
+            var (service, _, _, _) = CreateService();
+
+            var result = await service.ValidateStationIdSoundFileAsync(tempFile);
+
+            Assert.False(result.IsValid);
+            Assert.Equal(SoundFileIdValidationFailure.FileTooLarge, result.Failure);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateStationIdSoundFileAsync_UnplayableHeader_ReturnsUnplayableHeaderFailure()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            await File.WriteAllBytesAsync(tempFile, [0x01]); // shorter than ParseHeader's own 4-byte minimum
+
+            var (service, _, _, _) = CreateService();
+
+            var result = await service.ValidateStationIdSoundFileAsync(tempFile);
+
+            Assert.False(result.IsValid);
+            Assert.Equal(SoundFileIdValidationFailure.UnplayableHeader, result.Failure);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public async Task ValidateStationIdSoundFileAsync_ValidFile_ReturnsRealDurationFromOriginalSampleRate()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            // Same fixture as TransmitAsync_CwIdModeSoundFileWithRealFileAtMatchingRate_ResolvesExactSamples
+            // above: magic, index 0=11025Hz, 2 samples -> 2/11025s duration. Deliberately NOT the
+            // encoder's own SampleRate (8000Hz in this file's CreateService) -- duration must come
+            // from the file's OWN original rate, not any TX target rate (this method's own interface
+            // doc comment).
+            byte[] mmvBytes = [0x55, 0xAA, 0x00, 0x00, 0x10, 0x27, 0xF0, 0xD8];
+            await File.WriteAllBytesAsync(tempFile, mmvBytes);
+
+            var (service, _, _, _) = CreateService();
+
+            var result = await service.ValidateStationIdSoundFileAsync(tempFile);
+
+            Assert.True(result.IsValid);
+            Assert.Equal(SoundFileIdValidationFailure.None, result.Failure);
+            Assert.Equal(2.0 / 11025.0, result.DurationSeconds!.Value, precision: 9);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
     }
 
     [Fact]

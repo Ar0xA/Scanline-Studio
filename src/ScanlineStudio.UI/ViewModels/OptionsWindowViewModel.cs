@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -21,11 +22,15 @@ namespace ScanlineStudio.UI.ViewModels;
 /// <summary>The first `Window`/dialog-backed view-model in the app (every other view-model so far
 /// backs a dockable `Tool` pane) -- holds one editable in-memory copy of every settings field it
 /// covers, loaded via <see cref="OptionsSettingsService"/> on construction (never the concrete
-/// per-module settings-section types directly -- see that service's own doc comment for why),
-/// committed back only on <see cref="SaveCommand"/>; <see cref="CancelCommand"/> discards every
-/// edit by simply closing without saving. Per-section resets are a single click each (nothing is
-/// persisted until Save, so an accidental reset costs nothing); the global "reset ALL" is the one
-/// genuinely destructive action here and requires an explicit confirm step.
+/// per-module settings-section types directly -- see that service's own doc comment for why).
+/// ui_transition_plan.md step 7: committed by <see cref="SaveCommand"/> (saves and closes),
+/// <see cref="ApplyCommand"/> (saves, stays open), or implicitly by the Connect branch of
+/// <see cref="ToggleRadioConnectionCommand"/> (saves first so Connect always uses what Test just
+/// validated, not a stale prior Save -- see that method's own doc comment). <see cref="CancelCommand"/>
+/// discards only edits made since the LAST of those three, not necessarily since the dialog
+/// opened. Per-section resets are a single click each (an accidental reset before the next
+/// Save/Apply/Connect costs nothing); the global "reset ALL" is the one genuinely destructive
+/// action here and requires an explicit confirm step.
 ///
 /// Radio/CAT offers None/rigctld/Hamlib -- all three <c>IRadioProtocolFactory</c> backends are
 /// registered in DI (spec/14-roadmap.md's Piece 3).</summary>
@@ -47,6 +52,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     private static readonly TimeSpan TxVolumePersistDebounce = TimeSpan.FromMilliseconds(400);
+
+    /// <summary>ui_transition_plan.md step 8 (T2-2): same debounce shape as
+    /// <see cref="TxVolumePersistDebounce"/> above -- a typed path fires this on every keystroke,
+    /// and each attempt is a real file read, not just a settings write.</summary>
+    private static readonly TimeSpan SoundFileIdValidationDebounce = TimeSpan.FromMilliseconds(400);
 
     /// <summary>Test PTT opens its own throwaway connection, invisible to the app's real SWR
     /// auto-cutoff (<c>TxControlsPaneViewModel.CheckSwrCutoff</c> only bounds an in-flight
@@ -278,6 +288,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _imagesDirectoryErrorMessage;
 
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same immediate-commit
+    /// shape as <see cref="ImagesDirectory"/> above, but a combined enable+directory row -- both
+    /// halves are always applied together via <see cref="ApplyAudioDirectoryAsync"/>, matching
+    /// <c>IReceiveHistoryStore.SetAudioSettingsAsync</c>'s own combined-arguments contract, and both
+    /// the persisted store call AND the live-apply <see cref="ISstvSessionService.SetAutoSaveAudioEnabled"/>/
+    /// <see cref="ISstvSessionService.SetAudioDirectory"/> calls happen on that one Apply, same
+    /// "persist + live-apply together" pairing those two live-apply methods' own doc comments
+    /// require.</summary>
+    [ObservableProperty]
+    private bool _audioSaveEnabled;
+
+    [ObservableProperty]
+    private string _audioDirectory = string.Empty;
+
+    [ObservableProperty]
+    private string? _audioDirectoryErrorMessage;
+
     /// <summary>"Currently using" display value -- refreshed after a successful
     /// <see cref="ApplyConfigDirectoryAsync"/> (restart-required-settings backlog item 3, 2026-08-27:
     /// Config directory now applies live, same shape as <see cref="LogDirectory"/>'s own
@@ -383,6 +410,71 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private RxBufferMode _rxBufferMode = RxBufferMode.On;
 
+    /// <summary>PLL demodulator tuning (Options stub backlog item 1,
+    /// `docs/plans/options-stub-item1-pll-tuning-plan.md`) -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.PllVcoGain"/>'s own doc comment for the
+    /// legacy basis and real defaults (1.0/1/1500.0/3/900.0, NOT the AXAML's own earlier hardcoded
+    /// placeholder values). Enabled for editing only while <see cref="IsDemodTypePllSelected"/> (the
+    /// AXAML group's own `IsEnabled` binding), matching legacy's real `GBPLL.Enabled` gate
+    /// (`Option.cpp:179-196`, driven by the PENDING radio selection, not the committed DemodType).</summary>
+    [ObservableProperty]
+    private double _pllVcoGain = 1.0;
+
+    [ObservableProperty]
+    private int _pllLoopOrder = 1;
+
+    [ObservableProperty]
+    private double _pllLoopCutoffHz = 1500;
+
+    [ObservableProperty]
+    private int _pllOutputOrder = 3;
+
+    [ObservableProperty]
+    private double _pllOutputCutoffHz = 900;
+
+    /// <summary>Zero-crossing demodulator tuning (Options stub backlog item 2,
+    /// `docs/plans/options-stub-item2-zerocrossing-tuning-plan.md`) -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.ZeroCrossingSmoothingMode"/>'s own doc
+    /// comment for the legacy basis and real defaults (Iir/3/900.0/2200.0). Enabled for editing only
+    /// while <see cref="IsDemodTypeZeroCrossingSelected"/>, matching legacy's real `GBCROSS.Enabled`
+    /// gate (`Option.cpp:179-196`). The IIR sub-group (order+cutoff) and FIR sub-group (smoothing
+    /// frequency) are further greyed based on <see cref="ZeroCrossingSmoothingMode"/> itself, matching
+    /// legacy's real `GBCOI`/`GBCOF` gate (`Option.cpp:197-212`).</summary>
+    [ObservableProperty]
+    private ZeroCrossingSmoothingMode _zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir;
+
+    [ObservableProperty]
+    private int _zeroCrossingOutputOrder = 3;
+
+    [ObservableProperty]
+    private double _zeroCrossingOutputCutoffHz = 900;
+
+    [ObservableProperty]
+    private double _zeroCrossingSmoothingFrequencyHz = 2200;
+
+    /// <summary>TX output bandpass filter tuning (Options stub backlog item 3,
+    /// `docs/plans/options-stub-item3-tx-bpf-lpf-plan.md`) -- see
+    /// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.TxBpfEnabled"/>'s own doc comment for
+    /// the legacy basis and real defaults (true/24). This is a REVERSAL of a documented, deliberate
+    /// prior removal (`docs/removed-features.md`'s former "TX output bandpass filter toggle/tap
+    /// setting" entry, deleted now that the capability is restored) -- the underlying filter math was
+    /// already correctly ported and applied unconditionally; only the user-facing toggle/tap control
+    /// was missing.</summary>
+    [ObservableProperty]
+    private bool _txBpfEnabled = true;
+
+    [ObservableProperty]
+    private int _txBpfTapCount = 24;
+
+    /// <summary>TX pre-VCO frequency-smoothing tuning (Options stub backlog item 3) -- see
+    /// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.TxBpfEnabled"/>'s own doc comment for
+    /// the legacy basis and real defaults (false/2000.0). Genuinely new work, never ported before.</summary>
+    [ObservableProperty]
+    private bool _txLpfEnabled;
+
+    [ObservableProperty]
+    private double _txLpfFrequencyHz = 2000;
+
     [ObservableProperty]
     private bool _qrzLookupEnabled;
 
@@ -405,19 +497,136 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private bool _isTestingQrzLookup;
 
     /// <summary>Backs the Identification tab's "ID method" 3-way radio group -- see
-    /// <see cref="CwIdMode"/>'s own doc comment for what each value means. Unlike every OTHER
-    /// value this group's radio buttons could carry, <see cref="ScanlineStudio.Abstractions.Sstv.CwIdMode.SoundFile"/>
-    /// is NOT selectable here -- the sound-file ID feature itself is unimplemented (out of v1 scope),
-    /// so its `RadioButton` stays individually disabled with a not-implemented tooltip, matching this
-    /// dialog's own established per-control (not whole-group) disable convention already used for
-    /// the sound-file text/browse row directly below it.</summary>
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.CwIdMode"/>'s own doc comment for what each value
+    /// means.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(IsIdMethodOffSelected))]
     [NotifyPropertyChangedFor(nameof(IsIdMethodCwSelected))]
+    [NotifyPropertyChangedFor(nameof(IsIdMethodSoundFileSelected))]
     private CwIdMode _cwIdMode;
+
+    /// <summary>ui_transition_plan.md step 8 (T2-2): a leftover validation message from a
+    /// PREVIOUSLY selected sound-file path must not still show once the operator switches to
+    /// Off/Cw -- and switching back TO SoundFile with a path already typed should show its status
+    /// immediately, not wait for the next edit. <see cref="OnSoundFileMmvPathChanged"/> already does
+    /// exactly this same clear-or-validate branch for a path edit; reused here for a method-switch
+    /// so there's exactly one place that decides "does the currently-configured sound-file path need
+    /// re-checking".</summary>
+    partial void OnCwIdModeChanged(CwIdMode value)
+    {
+        if (value == CwIdMode.SoundFile)
+        {
+            OnSoundFileMmvPathChanged(SoundFileMmvPath);
+        }
+        else
+        {
+            _soundFileIdValidationCts?.Cancel();
+            SoundFileIdSuccessMessage = null;
+            SoundFileIdErrorMessage = null;
+        }
+    }
 
     [ObservableProperty]
     private string? _cwText;
+
+    /// <summary><c>StationIdSettings.SoundFileMmvPath</c> -- the sound-file station ID's own file
+    /// path, edited via <see cref="BrowseSoundFileCommand"/> or typed directly. Every change (browse
+    /// pick or manual edit alike, since both go through this one setter) re-validates via
+    /// <see cref="OnSoundFileMmvPathChanged"/> -- ui_transition_plan.md step 8 (T2-2).</summary>
+    [ObservableProperty]
+    private string? _soundFileMmvPath;
+
+    /// <summary>Duration text for the CURRENTLY typed/picked <see cref="SoundFileMmvPath"/>, once it
+    /// validates successfully -- <see langword="null"/> whenever there's nothing to show (blank
+    /// path, still validating, or currently failing -- see <see cref="SoundFileIdErrorMessage"/> for
+    /// that case). The two are deliberately separate properties, not one message plus a bool, so the
+    /// AXAML can gate each one's own <c>IsVisible</c>/color with the same
+    /// <c>ObjectConverters.IsNotNull</c> convention already used throughout this file, instead of a
+    /// combined-boolean expression AXAML bindings can't express directly.</summary>
+    [ObservableProperty]
+    private string? _soundFileIdSuccessMessage;
+
+    /// <summary>Failure text for the CURRENTLY typed/picked <see cref="SoundFileMmvPath"/> --
+    /// <see langword="null"/> whenever it's blank, still validating, or currently valid. See
+    /// <see cref="SoundFileIdSuccessMessage"/>'s own doc comment for why this is a separate property.
+    /// Non-null also blocks Save (<see cref="SaveCoreUnguardedAsync"/> re-validates fresh rather than
+    /// trusting this live UI value, but keeps it in sync so the message shown here always matches
+    /// what Save/Apply/Connect will decide).</summary>
+    [ObservableProperty]
+    private string? _soundFileIdErrorMessage;
+
+    private CancellationTokenSource? _soundFileIdValidationCts;
+
+    partial void OnSoundFileMmvPathChanged(string? value)
+    {
+        _soundFileIdValidationCts?.Cancel();
+        // Code-review finding: a path edit that lands while the OFF/Cw method is selected (e.g.
+        // ApplyFromSnapshot sets CwIdMode before SoundFileMmvPath on load, so OnCwIdModeChanged's own
+        // clear-on-switch-away branch never fires for that ordering) must not validate at all --
+        // the fields aren't even visible in that state.
+        if (!IsIdMethodSoundFileSelected || string.IsNullOrWhiteSpace(value))
+        {
+            SoundFileIdSuccessMessage = null;
+            SoundFileIdErrorMessage = null;
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _soundFileIdValidationCts = cts;
+        _ = ValidateSoundFileIdDebouncedAsync(value, cts.Token);
+    }
+
+    private async Task ValidateSoundFileIdDebouncedAsync(string path, CancellationToken ct)
+    {
+        SoundFileIdValidationResult result;
+        try
+        {
+            await Task.Delay(SoundFileIdValidationDebounce, ct).ConfigureAwait(false);
+            // Code-review finding: ISstvSessionService.ValidateStationIdSoundFileAsync's own contract
+            // is "never throws" -- but Task.Run(f, ct) itself throws OperationCanceledException if ct
+            // fires between the delay completing and the delegate starting, on this fire-and-forget
+            // task, an unobserved exception. Caught below alongside the delay's own cancellation.
+            result = await _sstvSession.ValidateStationIdSoundFileAsync(path, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal control flow -- a newer edit/pick/mode-switch superseded this one. Not worth a
+            // log line, same reasoning as PersistTxVolumeDebouncedAsync's own identical catch.
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() =>
+        {
+            // Code-review finding: a SLOWER validation for an OLDER path can otherwise resolve after
+            // a faster one for a NEWER path already posted its result (last-writer-wins by
+            // completion order, not by which edit is actually current) -- re-check cancellation here
+            // too, since a mode-switch-away can cancel `ct` after this continuation already resumed
+            // but before the Post callback actually runs.
+            if (ct.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (result.IsValid)
+            {
+                SoundFileIdSuccessMessage = _localization.GetString("Options.Radio.SoundFileId.Valid", result.DurationSeconds ?? 0);
+                SoundFileIdErrorMessage = null;
+            }
+            else
+            {
+                SoundFileIdSuccessMessage = null;
+                SoundFileIdErrorMessage = ResolveSoundFileIdFailureMessage(result.Failure);
+            }
+        });
+    }
+
+    private string ResolveSoundFileIdFailureMessage(SoundFileIdValidationFailure failure) => _localization.GetString(failure switch
+    {
+        SoundFileIdValidationFailure.FileNotFound => "Options.Radio.SoundFileId.Error.NotFound",
+        SoundFileIdValidationFailure.FileTooLarge => "Options.Radio.SoundFileId.Error.TooLarge",
+        SoundFileIdValidationFailure.UnplayableHeader => "Options.Radio.SoundFileId.Error.UnplayableHeader",
+        _ => "Options.Radio.SoundFileId.Error.ReadError",
+    });
 
     /// <summary>WPM, wired to actually drive CW-ID dot length -- see <c>CwMorseGenerator</c>'s own
     /// doc comment for why this is a deliberate, user-approved deviation from an apparent legacy bug
@@ -713,8 +922,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Bound to the Connect/Disconnect button's own <c>IsEnabled</c> -- Connect is gated by
     /// <see cref="CanConnectRadio"/>, but Disconnect never is: you must always be able to
-    /// disconnect regardless of test state.</summary>
-    public bool CanToggleRadioConnection => IsRadioConnected || CanConnectRadio;
+    /// disconnect regardless of test state. <see cref="IsConnectingRadio"/> disables the button for
+    /// the duration of Connect's own implicit save (ui_transition_plan.md step 7) -- that save can
+    /// take several seconds (a Hamlib native library reload, a sample-rate device reopen), and this
+    /// is the only path through this dialog where a button click now kicks off I/O that slow.</summary>
+    public bool CanToggleRadioConnection => !IsConnectingRadio && (IsRadioConnected || CanConnectRadio);
+
+    /// <summary>See <see cref="CanToggleRadioConnection"/>'s own doc comment. Code-review finding
+    /// (step 7): also gates <see cref="SaveCommand"/>/<see cref="ApplyCommand"/> -- without this, a
+    /// Save/Apply click during Connect's own implicit save could resume (once the shared
+    /// <see cref="_saveGate"/> is released) and clear <see cref="_hamlibLibraryReloadFailed"/>/
+    /// <see cref="SaveErrorMessage"/> BEFORE Connect's own continuation reads them, hiding a genuine
+    /// Hamlib-reload failure from the Connect path this step exists to protect.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyCommand))]
+    private bool _isConnectingRadio;
 
     /// <summary>Shown via <c>ToolTip.ShowOnDisabled</c> (Avalonia doesn't show tooltips on a
     /// disabled control by default) so a disabled Connect button actually explains why, instead of
@@ -736,12 +960,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Toggle, same shape as <see cref="TuneCommand"/>/<see cref="TestPttCommand"/> above --
     /// connects using PERSISTED settings (<see cref="IRadioSessionService.ConnectUsingSettingsAsync"/>'s
-    /// own contract, same as app startup), not whatever is currently typed into this dialog
-    /// (unsaved), so the tooltip tells the operator to Save first. The <see cref="CanConnectRadio"/>
-    /// check below is a defensive no-op mirroring the button's own <c>IsEnabled</c> binding
-    /// (<see cref="CanToggleRadioConnection"/> in XAML) -- same "internal guard alongside an
-    /// IsEnabled binding, not a formal CanExecute" idiom <see cref="TestPttAsync"/> already uses,
-    /// so a direct <c>ExecuteAsync</c> call (e.g. from a test) can't bypass it either.</summary>
+    /// own contract, same as app startup), not whatever is currently typed into this dialog. Prior
+    /// to ui_transition_plan.md step 7, that meant Test could pass against a freshly-typed value
+    /// while Connect silently used the last SAVED one -- Connect now saves first (via
+    /// <see cref="SaveCoreAsync"/>, same call <see cref="ApplyAsync"/> uses) so it always connects
+    /// with whatever Test just validated. Only when <see cref="_loadSucceeded"/>: mirrors
+    /// <see cref="RestartNowAsync"/>'s own guard -- a dialog that failed to load has no real
+    /// snapshot to save, and must not persist hardcoded constructor defaults over real settings. The
+    /// <see cref="CanConnectRadio"/> check below is a defensive no-op mirroring the button's own
+    /// <c>IsEnabled</c> binding (<see cref="CanToggleRadioConnection"/> in XAML) -- same "internal
+    /// guard alongside an IsEnabled binding, not a formal CanExecute" idiom <see cref="TestPttAsync"/>
+    /// already uses, so a direct <c>ExecuteAsync</c> call (e.g. from a test) can't bypass it
+    /// either.</summary>
     [RelayCommand]
     private async Task ToggleRadioConnectionAsync()
     {
@@ -767,8 +997,27 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         Log.ConnectRadioInvoked(_logger);
         ConnectRadioErrorMessage = null;
+        IsConnectingRadio = true;
         try
         {
+            if (_loadSucceeded && !await SaveCoreAsync())
+            {
+                ConnectRadioErrorMessage = _localization.GetString("Options.Radio.Connect.SaveFailed", SaveErrorMessage ?? string.Empty);
+                return;
+            }
+
+            // Hamlib's own library-path reload can fail INSIDE a save that otherwise succeeds
+            // (SaveCoreUnguardedAsync sets _hamlibLibraryReloadFailed but still returns true for the
+            // rest of the snapshot) -- connecting anyway would silently CAT against the OLD loaded
+            // library with no indication anything was wrong. No modal here (unlike
+            // ShowPostSaveWarningsAsync, which Save/Apply use) -- this reuses the same inline error
+            // slot Connect already shows failures in.
+            if (_hamlibLibraryReloadFailed && HamlibLibraryReloadFailedMessage is { } hamlibMessage)
+            {
+                ConnectRadioErrorMessage = hamlibMessage;
+                return;
+            }
+
             await _radioSession.ConnectUsingSettingsAsync().ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -779,6 +1028,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // has at app startup, not as an exception here.
             Log.ConnectRadioFailed(_logger, ex);
             Dispatcher.UIThread.Post(() => ConnectRadioErrorMessage = ex.Message);
+        }
+        finally
+        {
+            // Code-review finding (step 7): the success path's ConnectUsingSettingsAsync runs
+            // ConfigureAwait(false) I/O, so this continuation can land off the UI thread -- every
+            // other post-ConfigureAwait(false) property write in this file already goes through
+            // Dispatcher.UIThread.Post (see e.g. the ConnectRadioErrorMessage assignment just above)
+            // specifically because IsConnectingRadio now also drives NotifyCanExecuteChangedFor on
+            // SaveCommand/ApplyCommand, which touches the bound Button.Command directly -- a plain
+            // property-changed push (this field's OLD only effect, via CanToggleRadioConnection) has
+            // shipped fine off-thread elsewhere in this file, but a direct CanExecute re-check does not.
+            Dispatcher.UIThread.Post(() => IsConnectingRadio = false);
         }
     }
 
@@ -1379,6 +1640,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         await RunHamlibProbeAsync(path).ConfigureAwait(false);
     }
 
+    /// <summary>"Browse..." next to the sound-file ID path field -- same shape as
+    /// <see cref="BrowseHamlibLibraryAsync"/> (marshal the result back to the UI thread via
+    /// <c>Dispatcher.UIThread.Post</c>, not a bare property write after the off-thread picker
+    /// `await` -- that exact omission crashed this dialog once, see that method's own doc
+    /// comment).</summary>
+    [RelayCommand]
+    private async Task BrowseSoundFileAsync()
+    {
+        var path = await _filePickerService.PickMmvFileAsync().ConfigureAwait(false);
+        if (path is null)
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => SoundFileMmvPath = path);
+    }
+
     /// <summary>"Auto-detect" -- runs spec/03-cat-layer.md's discovery tiers 2/3 (no override path)
     /// instead of tier 1. On success, overwrites <see cref="HamlibLibraryPath"/> with whatever was
     /// actually found, so Save persists a concrete tier-1 path from then on rather than leaving the
@@ -1780,6 +2058,58 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Backs the Advanced tab's 3-way zero-crossing smoothing-mode radio group (Options stub
+    /// backlog item 2) -- same computed-bool-property idiom as <see cref="IsDemodTypePllSelected"/>
+    /// above. Item order (0=Iir/1=Fir/2=Off) matches <see cref="ZeroCrossingSmoothingMode"/>'s own
+    /// enum values, corroborated (not source-confirmed, see the plan doc) against legacy's real
+    /// <c>RGcrossType</c> labels "IIR"/"FIR"/"OFF".</summary>
+    public bool IsZeroCrossingSmoothingIirSelected
+    {
+        get => ZeroCrossingSmoothingMode == ZeroCrossingSmoothingMode.Iir;
+        set
+        {
+            if (value)
+            {
+                ZeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir;
+            }
+        }
+    }
+
+    public bool IsZeroCrossingSmoothingFirSelected
+    {
+        get => ZeroCrossingSmoothingMode == ZeroCrossingSmoothingMode.Fir;
+        set
+        {
+            if (value)
+            {
+                ZeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Fir;
+            }
+        }
+    }
+
+    public bool IsZeroCrossingSmoothingOffSelected
+    {
+        get => ZeroCrossingSmoothingMode == ZeroCrossingSmoothingMode.Off;
+        set
+        {
+            if (value)
+            {
+                ZeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Off;
+            }
+        }
+    }
+
+    /// <summary>Greys the IIR sub-group (order+cutoff fields) unless IIR smoothing is selected --
+    /// legacy's real `GBCOI.Enabled` gate (`Option.cpp:197-212`; this port shows the group always
+    /// rather than replicating legacy's own hide/show elsewhere, same precedent as
+    /// <see cref="IsDemodTypePllSelected"/>'s own AXAML binding).</summary>
+    public bool IsZeroCrossingIirGroupEnabled => IsZeroCrossingSmoothingIirSelected;
+
+    /// <summary>Greys the FIR sub-group (smoothing-frequency field) unless FIR smoothing is selected --
+    /// legacy's real `GBCOF.Enabled` gate, same reasoning as <see cref="IsZeroCrossingIirGroupEnabled"/>
+    /// above.</summary>
+    public bool IsZeroCrossingFirGroupEnabled => IsZeroCrossingSmoothingFirSelected;
+
     /// <summary>Backs the Decode tab's 4-way RX BPF radio group -- same computed-bool-property idiom
     /// as <see cref="IsDemodTypePllSelected"/>/etc above (N-way-exclusive, not
     /// <see cref="CwIdMode"/>'s 2-plus-disabled shape). Item order (0=Off/1=Wide/2=Narrow/
@@ -1884,9 +2214,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     public bool IsAutoSlantRowEnabled => RxBufferMode != RxBufferMode.Off;
 
     /// <summary>Backs the Identification tab's "ID method" radio group -- same computed-bool idiom
-    /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. No <c>IsIdMethodSoundFileSelected</c>
-    /// counterpart -- see <see cref="CwIdMode"/>'s own doc comment for why that option's `RadioButton`
-    /// stays individually disabled rather than wired.</summary>
+    /// as <see cref="IsSenseLevelVeryLowSelected"/>/etc above.</summary>
     public bool IsIdMethodOffSelected
     {
         get => CwIdMode == CwIdMode.Off;
@@ -1907,6 +2235,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             if (value)
             {
                 CwIdMode = CwIdMode.Cw;
+            }
+        }
+    }
+
+    public bool IsIdMethodSoundFileSelected
+    {
+        get => CwIdMode == CwIdMode.SoundFile;
+        set
+        {
+            if (value)
+            {
+                CwIdMode = CwIdMode.SoundFile;
             }
         }
     }
@@ -2007,7 +2347,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Gates <see cref="SaveCommand"/> -- see <see cref="CanSave"/>.</summary>
     private bool _loadSucceeded;
 
-    private bool CanSave() => _loadSucceeded;
+    /// <summary>Code-review finding (step 7): also excludes Save/Apply while Connect's own implicit
+    /// save is in flight -- see <see cref="IsConnectingRadio"/>'s own doc comment for why an
+    /// interleaved Save/Apply must not resume and clear shared save-result fields before Connect's
+    /// continuation reads them.</summary>
+    private bool CanSave() => _loadSucceeded && !IsConnectingRadio;
 
     /// <summary>Unguarded fire-and-forget from the constructor before this wrap was added -- the
     /// audio enumerator's <c>RefreshAsync</c> call can throw, which used to mean the Options dialog
@@ -2089,6 +2433,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         finally
         {
             SaveCommand.NotifyCanExecuteChanged();
+            // Plan-review finding (step 7): RelayCommand caches CanExecute -- without this,
+            // ApplyCommand stays permanently disabled even after a successful load, since nothing
+            // else ever notifies it (unlike SaveCommand, which this method already covered).
+            ApplyCommand.NotifyCanExecuteChanged();
         }
     }
 
@@ -2104,6 +2452,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         try
         {
             ImagesDirectory = await _historyStore.GetImagesDirectoryAsync();
+            var audioSettings = await _historyStore.GetAudioSettingsAsync();
+            AudioSaveEnabled = audioSettings.Enabled;
+            AudioDirectory = audioSettings.Directory;
             ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
             DatabaseDirectory = await _appLocationsService.GetDatabaseDirectoryAsync();
             PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
@@ -2137,6 +2488,48 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             Log.ImagesDirectorySaveFailed(_logger, ex);
             ImagesDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.SaveFailed", ex.Message);
+        }
+    }
+
+    [RelayCommand]
+    private async Task BrowseAudioDirectoryAsync()
+    {
+        var picked = await _filePickerService.PickFolderAsync(AudioDirectory);
+        if (picked is not null)
+        {
+            AudioDirectory = picked;
+        }
+    }
+
+    [RelayCommand]
+    private async Task ApplyAudioDirectoryAsync()
+    {
+        try
+        {
+            AudioDirectoryErrorMessage = null;
+            await _historyStore.SetAudioSettingsAsync(AudioSaveEnabled, AudioDirectory);
+
+            // Auditor-caught (round 1 code-review): SetAudioSettingsAsync above resolves the typed
+            // text to a full, normalized path (SqliteReceiveHistoryStore.SetAudioSettingsAsync's own
+            // Path.GetFullPath call) before persisting it -- passing the RAW typed text (a relative
+            // path, "~/x", etc.) to the live-apply call below would let the decode path's scratch
+            // root diverge from the actually-persisted directory RxAudioAutoSaver reads back later.
+            // Re-reading here, rather than duplicating the resolution logic, guarantees the two can
+            // never disagree. Also re-displayed, so the row shows what's actually in effect, not what
+            // was typed.
+            var resolved = await _historyStore.GetAudioSettingsAsync();
+            AudioDirectory = resolved.Directory;
+
+            // Live-apply, same call the Host's own startup DI factory makes from the persisted
+            // setting -- see ISstvSessionService.SetAutoSaveAudioEnabled/SetAudioDirectory's own doc
+            // comments for why an Apply/Save flow must call both this and the store write above.
+            _sstvSession.SetAutoSaveAudioEnabled(AudioSaveEnabled);
+            _sstvSession.SetAudioDirectory(resolved.Directory);
+        }
+        catch (Exception ex)
+        {
+            Log.AudioDirectorySaveFailed(_logger, ex);
+            AudioDirectoryErrorMessage = _localization.GetString("Options.General.Storage.Error.SaveFailed", ex.Message);
         }
     }
 
@@ -2328,6 +2721,31 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         // AND out-of-range) resolve to the SAME value here (On), matching
         // SstvDecoderSettings.RxBufferMode's own doc comment.
         RxBufferMode = Enum.IsDefined(snapshot.RxBufferMode) ? snapshot.RxBufferMode : RxBufferMode.On;
+        // Options stub backlog item 1 -- no clamp needed (unlike the enums above), these are plain
+        // numeric fields whose only "invalid" case is an unreachable-Nyquist cutoff, clamped
+        // decoder-side (PllFmDemodulator.SetTuning) at apply time, not here at load time.
+        PllVcoGain = snapshot.PllVcoGain;
+        PllLoopOrder = snapshot.PllLoopOrder;
+        PllLoopCutoffHz = snapshot.PllLoopCutoffHz;
+        PllOutputOrder = snapshot.PllOutputOrder;
+        PllOutputCutoffHz = snapshot.PllOutputCutoffHz;
+        // Options stub backlog item 2 -- ZeroCrossingSmoothingMode clamped (same reasoning as
+        // DemodType/RxBpfPreset/RxBufferMode above, falls back to Iir, matching
+        // SstvDecoderSettings.ZeroCrossingSmoothingMode's own absent-value default -- this snapshot
+        // field is always already-resolved, never genuinely absent, but a hand-edited settings.json
+        // could still carry an out-of-range value through to here); the 3 numeric fields need no
+        // clamp, same reasoning as the PLL numeric fields above.
+        ZeroCrossingSmoothingMode = Enum.IsDefined(snapshot.ZeroCrossingSmoothingMode) ? snapshot.ZeroCrossingSmoothingMode : ZeroCrossingSmoothingMode.Iir;
+        ZeroCrossingOutputOrder = snapshot.ZeroCrossingOutputOrder;
+        ZeroCrossingOutputCutoffHz = snapshot.ZeroCrossingOutputCutoffHz;
+        ZeroCrossingSmoothingFrequencyHz = snapshot.ZeroCrossingSmoothingFrequencyHz;
+        // Options stub backlog item 3 -- no clamp needed, same reasoning as the PLL/zero-crossing
+        // numeric fields above (OptionsSettingsService's own load path already resolves absent/
+        // out-of-range values before this snapshot is ever constructed).
+        TxBpfEnabled = snapshot.TxBpfEnabled;
+        TxBpfTapCount = snapshot.TxBpfTapCount;
+        TxLpfEnabled = snapshot.TxLpfEnabled;
+        TxLpfFrequencyHz = snapshot.TxLpfFrequencyHz;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
         QrzLookupPassword = snapshot.QrzLookupPassword;
@@ -2342,6 +2760,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         FskIdRxEnabled = snapshot.FskIdRxEnabled;
         NrRstEnabled = snapshot.NrRstEnabled;
         NrRstText = snapshot.NrRstText;
+        SoundFileMmvPath = snapshot.SoundFileMmvPath;
 
         AdifUdpDestinations.Clear();
         foreach (var destination in snapshot.AdifUdpDestinations)
@@ -2372,39 +2791,69 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         if (await SaveCoreAsync())
         {
-            // See RestartRequiredWarningRequested's own doc comment -- genuinely restart-required
-            // with no live-apply, unlike everything else this dialog saves. PendingDatabaseDirectory
-            // (not IsConfirmingDatabaseRestart) so a relocation staged in an earlier dialog session,
-            // then left pending, still warns here even if the user never revisits that row this
-            // time. HamlibLibraryPath is NOT part of this condition anymore (restart-required-settings
-            // backlog item 5, 2026-08-28) -- it applies live now, see
-            // HamlibLibraryReloadFailedWarningRequested below for its own (different-shaped) notice.
-            var needsRestartWarning = PendingDatabaseDirectory is not null;
-            if (needsRestartWarning && RestartRequiredWarningRequested is not null)
-            {
-                await RestartRequiredWarningRequested.Invoke();
-            }
-
-            // See SampleRateChangeDeferredWarningRequested's own doc comment. Independent of the
-            // restart-warning check above -- both can fire on the same Save.
-            if (_sampleRateChangeDeferred && SampleRateChangeDeferredWarningRequested is not null)
-            {
-                await SampleRateChangeDeferredWarningRequested.Invoke();
-            }
-
-            // See HamlibLibraryReloadFailedWarningRequested's own doc comment. Independent of both
-            // checks above -- all three can fire on the same Save.
-            if (_hamlibLibraryReloadFailed && HamlibLibraryReloadFailedWarningRequested is not null)
-            {
-                await HamlibLibraryReloadFailedWarningRequested.Invoke();
-            }
-
+            await ShowPostSaveWarningsAsync();
             RequestClose?.Invoke();
         }
     }
 
+    /// <summary>ui_transition_plan.md step 7 (T2-3): saves via <see cref="SaveCoreAsync"/> like
+    /// <see cref="SaveAsync"/>, but does NOT close the dialog -- lets an operator persist a Radio/CAT
+    /// change (or anything else) and keep editing, instead of Save-close-reopen just to reach
+    /// Connect with the values Test just validated.</summary>
+    [RelayCommand(CanExecute = nameof(CanSave))]
+    private async Task ApplyAsync()
+    {
+        if (await SaveCoreAsync())
+        {
+            await ShowPostSaveWarningsAsync();
+        }
+    }
+
+    /// <summary>Extracted from <see cref="SaveAsync"/>'s own post-save sequence (mechanical,
+    /// behavior-preserving split) so <see cref="ApplyAsync"/> can run the identical three warnings
+    /// without also closing the window.</summary>
+    private async Task ShowPostSaveWarningsAsync()
+    {
+        // See RestartRequiredWarningRequested's own doc comment -- genuinely restart-required
+        // with no live-apply, unlike everything else this dialog saves. PendingDatabaseDirectory
+        // (not IsConfirmingDatabaseRestart) so a relocation staged in an earlier dialog session,
+        // then left pending, still warns here even if the user never revisits that row this
+        // time. HamlibLibraryPath is NOT part of this condition anymore (restart-required-settings
+        // backlog item 5, 2026-08-28) -- it applies live now, see
+        // HamlibLibraryReloadFailedWarningRequested below for its own (different-shaped) notice.
+        var needsRestartWarning = PendingDatabaseDirectory is not null;
+        if (needsRestartWarning && RestartRequiredWarningRequested is not null)
+        {
+            await RestartRequiredWarningRequested.Invoke();
+        }
+
+        // See SampleRateChangeDeferredWarningRequested's own doc comment. Independent of the
+        // restart-warning check above -- both can fire on the same Save/Apply.
+        if (_sampleRateChangeDeferred && SampleRateChangeDeferredWarningRequested is not null)
+        {
+            await SampleRateChangeDeferredWarningRequested.Invoke();
+        }
+
+        // See HamlibLibraryReloadFailedWarningRequested's own doc comment. Independent of both
+        // checks above -- all three can fire on the same Save/Apply.
+        if (_hamlibLibraryReloadFailed && HamlibLibraryReloadFailedWarningRequested is not null)
+        {
+            await HamlibLibraryReloadFailedWarningRequested.Invoke();
+        }
+    }
+
+    /// <summary>Plan-review finding (step 7): four callers now reach <see cref="SaveCoreAsync"/>
+    /// (Save, Apply, Connect's implicit save, Restart Now) and its body does several SEPARATE
+    /// settings-store round trips (a load-modify-write is only safe "because sequential, not
+    /// concurrent" per this method's own comments further down) plus a real, never-unloaded native
+    /// Hamlib library load -- two overlapping calls could double-load the native library or lose an
+    /// update to settings.json. Serializes every call; not re-entrant-safe by design (a caller
+    /// awaiting this while another is in flight simply waits its turn).</summary>
+    private readonly SemaphoreSlim _saveGate = new(1, 1);
+
     /// <summary>Extracted from <see cref="SaveAsync"/> (mechanical, behavior-preserving split) so
-    /// <see cref="RestartNowAsync"/> (Config/Database rows' Restart Now) can save any dirty edit
+    /// <see cref="RestartNowAsync"/> (Config/Database rows' Restart Now), <see cref="ApplyAsync"/>,
+    /// and <see cref="ToggleRadioConnectionCommand"/>'s own Connect branch can save any dirty edit
     /// elsewhere in this dialog WITHOUT closing the window itself, and can check whether it
     /// actually succeeded -- the real <see cref="SaveAsync"/> used to signal failure only by
     /// silently not closing, with no way for another caller to observe that. Returns whether the
@@ -2412,11 +2861,47 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <c>true</c>, identical to its own prior externally-observable behavior.</summary>
     private async Task<bool> SaveCoreAsync()
     {
+        await _saveGate.WaitAsync();
+        try
+        {
+            return await SaveCoreUnguardedAsync();
+        }
+        finally
+        {
+            _saveGate.Release();
+        }
+    }
+
+    private async Task<bool> SaveCoreUnguardedAsync()
+    {
         // Reset every call -- see the fields' own doc comments for why SaveAsync reads these
         // afterward rather than this method's own bool return.
         _sampleRateChangeDeferred = false;
         _hamlibLibraryReloadFailed = false;
         HamlibLibraryReloadFailedMessage = null;
+        SaveErrorMessage = null;
+
+        // ui_transition_plan.md step 8 (T2-2): block Save only when the sound-file ID method is
+        // actually SELECTED and a path is configured -- an unconfigured/off sound-file ID must never
+        // block Save, matching every other field's own "nothing to validate when unused" convention.
+        // Re-validates FRESH here rather than trusting SoundFileIdIsValid's live UI state, which can
+        // be mid-debounce or stale (e.g. the file changed on disk since the last keystroke-triggered
+        // check).
+        if (IsIdMethodSoundFileSelected && !string.IsNullOrWhiteSpace(SoundFileMmvPath))
+        {
+            // Code-review finding: deliberately NOT ConfigureAwait(false) -- every other await in
+            // this method stays on the UI thread so its property writes (this branch's own included)
+            // are safe; a dropped SynchronizationContext here would carry through the rest of the
+            // method's tail, not just this one write.
+            var soundFileResult = await _sstvSession.ValidateStationIdSoundFileAsync(SoundFileMmvPath);
+            if (!soundFileResult.IsValid)
+            {
+                SoundFileIdSuccessMessage = null;
+                SoundFileIdErrorMessage = ResolveSoundFileIdFailureMessage(soundFileResult.Failure);
+                SaveErrorMessage = _localization.GetString("Options.Radio.SoundFileId.Error.BlocksSave", SoundFileIdErrorMessage);
+                return false;
+            }
+        }
 
         // The single most useful Debug line in the app for "why didn't my settings take effect"
         // bugs -- logs only the fields that are actually safe to log as-is (host/port/device ids/
@@ -2434,6 +2919,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             PlaybackDeviceName: SelectedPlaybackDevice?.Name,
             SampleRate: SampleRate,
             TxSampleRateOffsetHz: TxSampleRateOffsetHz,
+            TxBpfEnabled: TxBpfEnabled,
+            TxBpfTapCount: TxBpfTapCount,
+            TxLpfEnabled: TxLpfEnabled,
+            TxLpfFrequencyHz: TxLpfFrequencyHz,
             RadioBackendId: RadioBackendId,
             RigctldHost: RigctldHost,
             RigctldPort: RigctldPort,
@@ -2456,6 +2945,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             DemodType: DemodType,
             RxBpfPreset: RxBpfPreset,
             RxBufferMode: RxBufferMode,
+            PllVcoGain: PllVcoGain,
+            PllLoopOrder: PllLoopOrder,
+            PllLoopCutoffHz: PllLoopCutoffHz,
+            PllOutputOrder: PllOutputOrder,
+            PllOutputCutoffHz: PllOutputCutoffHz,
+            ZeroCrossingSmoothingMode: ZeroCrossingSmoothingMode,
+            ZeroCrossingOutputOrder: ZeroCrossingOutputOrder,
+            ZeroCrossingOutputCutoffHz: ZeroCrossingOutputCutoffHz,
+            ZeroCrossingSmoothingFrequencyHz: ZeroCrossingSmoothingFrequencyHz,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
             QrzLookupPassword: QrzLookupPassword,
@@ -2469,6 +2967,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             FskIdRxEnabled: FskIdRxEnabled,
             NrRstEnabled: NrRstEnabled,
             NrRstText: NrRstText,
+            SoundFileMmvPath: SoundFileMmvPath,
             AdifUdpDestinations: AdifUdpDestinations.Select(row => row.ToDestination()).ToList());
 
         try
@@ -2511,6 +3010,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // this window's Closed event (see that property's own doc comment for why a pull-based
             // Closed-event refresh would be redundant here).
             _sstvSession.RequestReconfiguration(RxBpfPreset, DemodType, RxBufferMode);
+
+            // PLL demodulator tuning (Options stub backlog item 1, docs/plans/options-stub-item1-pll-tuning-plan.md):
+            // same unconditional-every-Save convention as RequestSenseLevel above -- applied
+            // immediately (not idle-gated like RequestReconfiguration just above), matching legacy's
+            // own live-edit shape (Option.cpp's Save handler calls CPLL::SetVcoGain/MakeLoopLPF/
+            // MakeOutLPF directly on the live decoder, no restart).
+            _sstvSession.RequestPllTuning(PllVcoGain, PllLoopOrder, PllLoopCutoffHz, PllOutputOrder, PllOutputCutoffHz);
+
+            // Zero-crossing demodulator tuning (Options stub backlog item 2,
+            // docs/plans/options-stub-item2-zerocrossing-tuning-plan.md): same shape as PLL tuning
+            // immediately above -- legacy's own live-edit shape (Option.cpp's Save handler calls
+            // CFQC::CalcLPF directly on the live decoder, no restart).
+            _sstvSession.RequestZeroCrossingTuning(ZeroCrossingSmoothingMode, ZeroCrossingOutputOrder, ZeroCrossingOutputCutoffHz, ZeroCrossingSmoothingFrequencyHz);
 
             // Sample rate (2026-08-27/28, restart-required-settings backlog item 4): genuinely live
             // now too, no longer requiring a restart. Different in
@@ -2627,11 +3139,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             Log.SaveFailed(_logger, ex);
+            // ui_transition_plan.md step 7 (T2-3): this used to signal failure ONLY by the caller
+            // not closing the dialog, with no message anywhere -- now every SaveCoreAsync caller
+            // (Save, Apply, Connect's implicit save) can show the operator what actually went wrong.
+            SaveErrorMessage = ex.Message;
             return false;
         }
 
         return true;
     }
+
+    /// <summary>ui_transition_plan.md step 7 (T2-3): non-null after a failed Save/Apply/Connect
+    /// implicit-save, cleared at the top of every <see cref="SaveCoreUnguardedAsync"/> call. Bound
+    /// to a TextBlock near the bottom button row.</summary>
+    [ObservableProperty]
+    private string? _saveErrorMessage;
 
     [RelayCommand]
     private void Cancel()
@@ -2733,6 +3255,30 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         RxBufferMode = defaults.RxBufferMode;
     }
 
+    /// <summary>Advanced tab's own "Reset section" button -- the first real, resettable content on
+    /// that tab (Options stub backlog item 1); scoped to the PLL, zero-crossing, and TX BPF/LPF
+    /// tuning fields wired so far (items 2 and 3 added the latter two), same incremental-growth
+    /// pattern as every other <c>Reset*ToDefault</c> command here.</summary>
+    [RelayCommand]
+    private void ResetAdvancedToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Advanced");
+        var defaults = OptionsSettingsService.Defaults;
+        PllVcoGain = defaults.PllVcoGain;
+        PllLoopOrder = defaults.PllLoopOrder;
+        PllLoopCutoffHz = defaults.PllLoopCutoffHz;
+        PllOutputOrder = defaults.PllOutputOrder;
+        PllOutputCutoffHz = defaults.PllOutputCutoffHz;
+        ZeroCrossingSmoothingMode = defaults.ZeroCrossingSmoothingMode;
+        ZeroCrossingOutputOrder = defaults.ZeroCrossingOutputOrder;
+        ZeroCrossingOutputCutoffHz = defaults.ZeroCrossingOutputCutoffHz;
+        ZeroCrossingSmoothingFrequencyHz = defaults.ZeroCrossingSmoothingFrequencyHz;
+        TxBpfEnabled = defaults.TxBpfEnabled;
+        TxBpfTapCount = defaults.TxBpfTapCount;
+        TxLpfEnabled = defaults.TxLpfEnabled;
+        TxLpfFrequencyHz = defaults.TxLpfFrequencyHz;
+    }
+
     [RelayCommand]
     private void ResetQrzToDefault()
     {
@@ -2757,6 +3303,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         FskIdRxEnabled = defaults.FskIdRxEnabled;
         NrRstEnabled = defaults.NrRstEnabled;
         NrRstText = defaults.NrRstText;
+        SoundFileMmvPath = defaults.SoundFileMmvPath;
     }
 
     [RelayCommand]
@@ -2880,6 +3427,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsDemodTypeHilbertSelected));
     }
 
+    partial void OnZeroCrossingSmoothingModeChanged(ZeroCrossingSmoothingMode value)
+    {
+        OnPropertyChanged(nameof(IsZeroCrossingSmoothingIirSelected));
+        OnPropertyChanged(nameof(IsZeroCrossingSmoothingFirSelected));
+        OnPropertyChanged(nameof(IsZeroCrossingSmoothingOffSelected));
+        OnPropertyChanged(nameof(IsZeroCrossingIirGroupEnabled));
+        OnPropertyChanged(nameof(IsZeroCrossingFirGroupEnabled));
+    }
+
     partial void OnRxBpfPresetChanged(RxBpfPreset value)
     {
         OnPropertyChanged(nameof(IsRxBpfOffSelected));
@@ -2940,6 +3496,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Saving the RX images directory failed")]
         public static partial void ImagesDirectorySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Saving the auto-save-audio settings failed")]
+        public static partial void AudioDirectorySaveFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Staging the config directory failed")]
         public static partial void ConfigDirectorySaveFailed(ILogger logger, Exception ex);

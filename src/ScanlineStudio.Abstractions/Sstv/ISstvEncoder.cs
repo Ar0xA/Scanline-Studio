@@ -30,12 +30,27 @@ public interface ISstvEncoder
     /// needing the estimate below to match a specific in-flight call byte-for-byte must pass the
     /// SAME resolved value to both, not re-resolve it independently, same requirement
     /// <paramref name="stationId"/> already documents.
+    ///
+    /// <paramref name="txBpfEnabled"/>/<paramref name="txBpfTapCount"/>/<paramref name="txLpfEnabled"/>/
+    /// <paramref name="txLpfFrequencyHz"/> (Options stub backlog item 3,
+    /// `docs/plans/options-stub-item3-tx-bpf-lpf-plan.md`): TX-audio-domain shaping, matching legacy's
+    /// real <c>CSSTVMOD</c> fields <c>m_bpf</c>/<c>m_bpftap</c>/<c>m_lpf</c>/<c>m_lpffq</c>
+    /// (`sstv.cpp:2759-2761,2764,2869,2914,2929`). Defaults (`true`/24/`false`/2000.0) match legacy's
+    /// own real shipped defaults exactly, so every pre-existing shorter call site keeps producing
+    /// byte-identical output with no source change needed anywhere. Same "placed before <c>ct</c>"
+    /// reasoning as <paramref name="stationId"/>/<paramref name="sampleRateOffsetHz"/> above.
+    /// <see cref="EstimateSampleCount"/> needs no equivalent parameters -- these settings change the
+    /// AUDIO CONTENT of samples, never the sample COUNT.
     /// </summary>
     IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
         double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = 24,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
         CancellationToken ct = default);
 
     /// <summary>

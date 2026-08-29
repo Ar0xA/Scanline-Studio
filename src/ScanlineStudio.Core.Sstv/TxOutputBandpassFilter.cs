@@ -40,12 +40,19 @@ namespace ScanlineStudio.Core.Sstv;
 /// <c>g_dblToneOffset</c>, which this port doesn't model, so the fallback's trigger condition is
 /// structurally unreachable here.
 ///
-/// <b>Two legacy user settings are dropped, not just defaulted</b>: legacy's <c>m_bpf</c> checkbox
-/// (`CBTXBPF`, persisted as `TXBPF`, `Option.cpp:266-289,450`) lets the user disable this filter
-/// entirely, and <c>m_bpftap</c> (`TxBpfTap`/`TXBPFTAP`) is user-editable, rebuilt via
-/// <c>CalcFilter</c> (`sstv.cpp:2918-2928`) — this port always applies the filter at a fixed 24 taps,
-/// matching legacy's shipped defaults exactly but with no user override. See
-/// `docs/removed-features.md`'s "TX output bandpass filter toggle/tap setting" entry.
+/// <b>Tap count is now user-editable (Options stub backlog item 3,
+/// `docs/plans/options-stub-item3-tx-bpf-lpf-plan.md`)</b>: legacy's <c>m_bpftap</c>
+/// (`TxBpfTap`/`TXBPFTAP`), rebuilt via <c>CalcFilter</c> (`sstv.cpp:2918-2928`), is now a real
+/// constructor parameter here, clamped to legacy's own real Save-handler range `[2,512]`
+/// (`Option.cpp:456-459`, `TAPMAX`, `fir.h:27`) and rounded to the nearest EVEN value — legacy's
+/// `MakeFilter` only ever writes `2*(n/2)+1` coefficients, exactly filling a `tap+1`-sized allocation
+/// for an EVEN `tap` (verified: 24 -> 13+12=25=24+1) but leaving one slot uninitialized for an ODD
+/// `tap` (verified: 25 -> 13+12=25 writes into a 26-element array, `fir.cpp:421-426,1102,1123`) — this
+/// port sidesteps that legacy UB entirely rather than replicating memory-garbage-dependent behavior.
+/// <b>On/off (legacy's <c>m_bpf</c>/`CBTXBPF`/`TXBPF`) is gated at the CALL SITE, not here</b> —
+/// mirrors legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (`sstv.cpp:2914`) exactly: when off, the
+/// delay line is never advanced at all, not merely bypassed post-construction. See
+/// <see cref="AnalogFmSstvEncoder.EncodeAsyncCore"/>'s own call site for the gate.
 /// </summary>
 internal sealed class TxOutputBandpassFilter
 {
@@ -55,16 +62,26 @@ internal sealed class TxOutputBandpassFilter
     private const double LowCutoffHz = 700.0;
     private const double HighCutoffHz = 2800.0;
     private const double AttenuationDb = 40.0;
-    private const int Tap = 24; // sstv.cpp:2764 -- fixed, NOT scaled by sample rate
+    internal const int DefaultTapCount = 24; // sstv.cpp:2764 -- legacy's real shipped default.
 
+    private readonly int _tap;
     private readonly double[] _h;
-    private readonly double[] _z; // delay line, length Tap+1. _z[0]=newest sample, _z[Tap]=oldest.
+    private readonly double[] _z; // delay line, length _tap+1. _z[0]=newest sample, _z[_tap]=oldest.
 
-    public TxOutputBandpassFilter(double sampleRate)
+    public TxOutputBandpassFilter(double sampleRate, int tapCount = DefaultTapCount)
     {
-        _h = MakeFilter(sampleRate);
-        _z = new double[Tap + 1]; // zero-init -- matches CFIR2::Create's zero-memset delay line and
-                                   // legacy's per-transmission InitTXBuf -> m_BPF.Clear() reset.
+        _tap = ClampTapCount(tapCount);
+        _h = MakeFilter(sampleRate, _tap);
+        _z = new double[_tap + 1]; // zero-init -- matches CFIR2::Create's zero-memset delay line and
+                                    // legacy's per-transmission InitTXBuf -> m_BPF.Clear() reset.
+    }
+
+    // Options stub backlog item 3: both-direction clamp [2,512] (Option.cpp:456-459/TAPMAX), rounded
+    // to the nearest even value (see class doc comment for why odd is legacy UB, not just unusual).
+    internal static int ClampTapCount(int tapCount)
+    {
+        var clamped = Math.Clamp(tapCount, 2, 512);
+        return clamped % 2 == 0 ? clamped : clamped - 1;
     }
 
     /// <summary>Streaming, one-sample-at-a-time convolution -- a persistent delay line, matching
@@ -74,11 +91,11 @@ internal sealed class TxOutputBandpassFilter
     /// own doc comment for why this causal-vs-centered distinction is load-bearing, not cosmetic).</summary>
     public double ProcessSample(double input)
     {
-        Array.Copy(_z, 0, _z, 1, Tap);
+        Array.Copy(_z, 0, _z, 1, _tap);
         _z[0] = input;
 
         var sum = 0.0;
-        for (var i = 0; i <= Tap; i++)
+        for (var i = 0; i <= _tap; i++)
         {
             sum += _z[i] * _h[i];
         }
@@ -91,9 +108,9 @@ internal sealed class TxOutputBandpassFilter
     // .MakeFilter implements this same branch too, as of Band-1 item 4b -- see class doc comment).
     // att>=50's alternate alpha formula (fir.cpp:361-363) is unreachable at att=40 -- omitted, matching
     // SearchBandpassFilter's own precedent for documenting (not silently dropping) an unreachable branch.
-    internal static double[] MakeFilter(double sampleRate)
+    internal static double[] MakeFilter(double sampleRate, int tap = DefaultTapCount)
     {
-        const int half = Tap / 2;
+        var half = tap / 2;
         var fc = (HighCutoffHz - LowCutoffHz) / 2.0;
         var sumArg = 2.0 * Math.PI * fc / sampleRate;
 
@@ -110,7 +127,7 @@ internal sealed class TxOutputBandpassFilter
                 continue;
             }
 
-            var fm = (2.0 * j) / Tap;
+            var fm = (2.0 * j) / tap;
             var win = I0(alpha * Math.Sqrt(1.0 - fm * fm)) / i0Alpha;
             prototype[j] = Math.Sin(j * sumArg) / (Math.PI * j) * win;
         }
@@ -135,7 +152,7 @@ internal sealed class TxOutputBandpassFilter
             prototype[j] *= 2.0 * Math.Cos(j * w0);
         }
 
-        var h = new double[Tap + 1];
+        var h = new double[tap + 1];
         var outIndex = 0;
         for (var j = half; j >= 0; j--)
         {

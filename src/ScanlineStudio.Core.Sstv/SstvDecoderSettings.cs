@@ -121,6 +121,41 @@ public sealed record SstvDecoderSettings
     /// bug and clamp-not-replicate decision.</summary>
     public RxBufferMode? RxBufferMode { get; init; }
 
+    /// <summary>Options Advanced-tab PLL demodulator tuning (backlog item,
+    /// `docs/plans/options-stub-item1-pll-tuning-plan.md`) -- port of legacy's real, user-editable
+    /// <c>CPLL</c> fields (<c>m_vcogain</c>/<c>m_loopOrder</c>/<c>m_loopFC</c>/<c>m_outOrder</c>/
+    /// <c>m_outFC</c>, `sstv.cpp:246-263`), persisted in legacy's own `[Define]` ini section
+    /// (`Main.cpp:1955-1961`/`2442-2446`) unlike this doc comment's earlier confusion in an earlier
+    /// plan-review round -- these ARE persisted, both in legacy and in this port. Desired defaults
+    /// when absent are legacy's own real `CPLL` constructor values (1.0/1/1500.0/3/900.0), verified
+    /// at 3 independent legacy sites (`sstv.cpp:246,251-254`; `sstv.cpp:1431-1436`;
+    /// `Main.cpp:12211-12215`) -- NOT the Options-tab AXAML's own previously-hardcoded placeholder
+    /// values (2600/1/200/1200), which were never real.</summary>
+    public double? PllVcoGain { get; init; }
+
+    public int? PllLoopOrder { get; init; }
+
+    public double? PllLoopCutoffHz { get; init; }
+
+    public int? PllOutputOrder { get; init; }
+
+    public double? PllOutputCutoffHz { get; init; }
+
+    /// <summary>Options Advanced-tab zero-crossing demodulator tuning (backlog item,
+    /// `docs/plans/options-stub-item2-zerocrossing-tuning-plan.md`) -- port of legacy's real,
+    /// user-editable <c>CFQC</c> fields (<c>m_Type</c>/<c>m_outOrder</c>/<c>m_outFC</c>/
+    /// <c>m_SmoozFq</c>, `sstv.cpp:475-485`), persisted in legacy's own `[Define]` ini section
+    /// (`Main.cpp:1938-1941`/`2437-2440`). Desired defaults when absent are legacy's own real
+    /// <c>CFQC</c> constructor values (Iir/3/900.0/2200.0), verified at 3 independent legacy sites
+    /// (`sstv.cpp:347-364`; `Main.cpp:1938-1941`; `Main.cpp:12252-12262`).</summary>
+    public ZeroCrossingSmoothingMode? ZeroCrossingSmoothingMode { get; init; }
+
+    public int? ZeroCrossingOutputOrder { get; init; }
+
+    public double? ZeroCrossingOutputCutoffHz { get; init; }
+
+    public double? ZeroCrossingSmoothingFrequencyHz { get; init; }
+
     /// <summary>Applies this record's documented absent-vs-out-of-range fallback rules, producing the
     /// concrete values an <see cref="AnalogFmSstvDecoder"/> constructor call needs. Single source of
     /// truth for that resolution -- previously duplicated independently in
@@ -139,7 +174,44 @@ public sealed record SstvDecoderSettings
         // DemodType, which shadows the type name within this member's scope.
         DemodType: DemodType is { } dt && Enum.IsDefined(dt) ? dt : Abstractions.Sstv.DemodType.Hilbert,
         RxBpfPreset: RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : Abstractions.Sstv.RxBpfPreset.Wide,
-        RxBufferMode: RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : Abstractions.Sstv.RxBufferMode.On);
+        RxBufferMode: RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : Abstractions.Sstv.RxBufferMode.On,
+        PllVcoGain: PllVcoGain ?? 1.0,
+        // Code-review round 1 finding: unlike SenseLevel/DemodType/RxBpfPreset above, these two had
+        // NO range guard at all -- legacy itself validates both to (0,32] on every edit
+        // (Option.cpp:515,521). A hand-edited settings.json/preset file with order<=0 would either
+        // silently disable the filter (IirFilter.Design's own pass-through at order 0) or throw
+        // OverflowException from `new double[order*3]` at decoder construction for a negative value
+        // (an app-start failure, not a graceful fallback) -- clamp to legacy's own real range here,
+        // the single source of truth this whole method exists to be.
+        PllLoopOrder: PllLoopOrder is { } lo ? Math.Clamp(lo, 1, 32) : 1,
+        // Code-review round 2 finding: a LOWER bound is needed here too, same reasoning as the order
+        // clamp immediately above -- legacy guards this `> 0.0` at its own apply site
+        // (Option.cpp:517-518). No UPPER (Nyquist) bound here deliberately -- this method has no
+        // sample-rate context (see PllFmDemodulator.ClampCutoffBelowNyquist's own doc comment for why
+        // that half of the clamp lives decoder-side instead); only the "reject <= 0" half belongs
+        // here.
+        PllLoopCutoffHz: PllLoopCutoffHz is { } lc ? Math.Max(lc, 1.0) : 1500,
+        PllOutputOrder: PllOutputOrder is { } oo ? Math.Clamp(oo, 1, 32) : 3,
+        PllOutputCutoffHz: PllOutputCutoffHz is { } oc ? Math.Max(oc, 1.0) : 900,
+        // Fully qualified, not just `ZeroCrossingSmoothingMode.Iir` -- this record has its own
+        // property named ZeroCrossingSmoothingMode, which shadows the type name within this member's
+        // scope (same reasoning as the DemodType/RxBpfPreset/RxBufferMode lines above). TWO different
+        // fallbacks, not a copy of DemodType's single-fallback shape: ABSENT (null) -> Iir (CFQC's own
+        // ctor default, `sstv.cpp:349`); PRESENT but out-of-range -> Off (legacy's real dispatch
+        // default, `sstv.cpp:482`'s `default:` case) -- a hand-edited settings.json with an invalid
+        // value must NOT silently become Iir, that would be a different (wrong) legacy behavior.
+        ZeroCrossingSmoothingMode: ZeroCrossingSmoothingMode switch
+        {
+            null => Abstractions.Sstv.ZeroCrossingSmoothingMode.Iir,
+            { } zm when Enum.IsDefined(zm) => zm,
+            _ => Abstractions.Sstv.ZeroCrossingSmoothingMode.Off,
+        },
+        ZeroCrossingOutputOrder: ZeroCrossingOutputOrder is { } zo ? Math.Clamp(zo, 1, 32) : 3,
+        ZeroCrossingOutputCutoffHz: ZeroCrossingOutputCutoffHz is { } zc ? Math.Max(zc, 1.0) : 900,
+        // Both-direction clamp, applied from the start here (unlike PllLoopCutoffHz's own floor-only
+        // shape above, discovered incrementally) -- legacy's real two-sided range is [500,8000]
+        // (`Option.cpp:536-540`).
+        ZeroCrossingSmoothingFrequencyHz: ZeroCrossingSmoothingFrequencyHz is { } zs ? Math.Clamp(zs, 500.0, 8000.0) : 2200);
 }
 
 /// <summary>Concrete, fully-resolved decoder-behavior values -- see <see cref="SstvDecoderSettings.Resolve"/>.</summary>
@@ -152,4 +224,13 @@ public sealed record ResolvedSstvDecoderSettings(
     int SenseLevel,
     DemodType DemodType,
     RxBpfPreset RxBpfPreset,
-    RxBufferMode RxBufferMode);
+    RxBufferMode RxBufferMode,
+    double PllVcoGain,
+    int PllLoopOrder,
+    double PllLoopCutoffHz,
+    int PllOutputOrder,
+    double PllOutputCutoffHz,
+    ZeroCrossingSmoothingMode ZeroCrossingSmoothingMode,
+    int ZeroCrossingOutputOrder,
+    double ZeroCrossingOutputCutoffHz,
+    double ZeroCrossingSmoothingFrequencyHz);

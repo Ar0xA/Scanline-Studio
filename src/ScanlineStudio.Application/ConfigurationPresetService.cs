@@ -2,6 +2,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -151,6 +152,22 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 Log.SwitchRadioConnectionPushFailed(_logger, name, ex);
             }
 
+            // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: auditor-caught round 1 --
+            // ISstvSessionService's own SetAutoSaveAudioEnabled/SetAudioDirectory are volatile fields
+            // cached at the decode path, never re-read from settings on their own, so without this
+            // push a preset switch left capture following the PREVIOUS preset's enable flag/directory
+            // until an app restart, even though Options and the Gallery Storage card both already show
+            // the new preset's values.
+            try
+            {
+                PushReceiveHistoryChanges(preset);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                partiallyApplied = true;
+                Log.SwitchReceiveHistoryPushFailed(_logger, name, ex);
+            }
+
             // Round-1 code-review fix: CultureChanged is the only reliable "did it change" signal --
             // see ConfigurationPresetSwitchResult's own doc comment for why CultureToApply alone
             // (null-vs-unchanged) can't distinguish "no change" from "changed TO null/default."
@@ -296,6 +313,30 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         _sstvSession.RequestAutoSlantEnabled(newResolved.AutoSlantEnabled);
         _sstvSession.RequestSyncRestartEnabled(newResolved.SyncRestartEnabled);
         _sstvSession.RequestReconfiguration(newResolved.RxBpfPreset, newResolved.DemodType, newResolved.RxBufferMode);
+        _sstvSession.RequestPllTuning(newResolved.PllVcoGain, newResolved.PllLoopOrder, newResolved.PllLoopCutoffHz, newResolved.PllOutputOrder, newResolved.PllOutputCutoffHz);
+        _sstvSession.RequestZeroCrossingTuning(newResolved.ZeroCrossingSmoothingMode, newResolved.ZeroCrossingOutputOrder, newResolved.ZeroCrossingOutputCutoffHz, newResolved.ZeroCrossingSmoothingFrequencyHz);
+    }
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same "always call the
+    /// live-apply method whenever the section is present at all, no snapshot diff" reasoning as
+    /// <see cref="PushDecoderChanges"/> above -- <see cref="ISstvSessionService.SetAutoSaveAudioEnabled"/>/
+    /// <see cref="ISstvSessionService.SetAudioDirectory"/> are plain field assignments with no
+    /// no-op guard of their own, but calling them with the same value twice is harmless, and this
+    /// avoids a second class of "diff disagrees with live state" bug this class' own top doc comment
+    /// already describes for the audio-device push. Passes the RESOLVED directory (never the raw,
+    /// possibly-null/relative persisted value) -- the SAME value <c>SqliteReceiveHistoryStore</c>
+    /// would resolve to, so the live decode-path directory can never diverge from what
+    /// <c>RxAudioAutoSaver</c> reads back when a pairing completes.</summary>
+    private void PushReceiveHistoryChanges(AppSettings preset)
+    {
+        if (!preset.Sections.ContainsKey(ReceiveHistorySettings.SectionKey))
+        {
+            return;
+        }
+
+        var section = preset.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        _sstvSession.SetAutoSaveAudioEnabled(section?.AutoSaveAudioEnabled ?? false);
+        _sstvSession.SetAudioDirectory(ReceiveHistorySettings.ResolveAudioDirectory(section));
     }
 
     private async Task PushRadioSafetyChangesAsync(AppSettings previous, AppSettings preset, CancellationToken ct)
@@ -378,5 +419,8 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: radio connection push failed")]
         public static partial void SwitchRadioConnectionPushFailed(ILogger logger, string name, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: auto-save-audio push failed")]
+        public static partial void SwitchReceiveHistoryPushFailed(ILogger logger, string name, Exception exception);
     }
 }

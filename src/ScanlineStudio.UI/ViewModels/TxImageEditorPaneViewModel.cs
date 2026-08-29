@@ -162,6 +162,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private readonly SstvModeDefinition _targetMode;
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
+    /// <summary>Reports the PARENT TxControlsPaneViewModel's own live !IsTransmitting &amp;&amp;
+    /// !IsRunningLoopbackSelfTest state -- this editor has no session/transmit state of its own
+    /// (see <see cref="ApplyAndTransmitCommand"/>'s own doc comment for why a delegate, not a
+    /// duplicated flag). The parent calls <see cref="NotifyTransmitAvailabilityChanged"/> at every
+    /// one of its own toggle points, mirroring how it already re-notifies TransmitCommand/
+    /// StopTransmitCommand/RunLoopbackSelfTestCommand at those same sites. Defaults to "always
+    /// allowed" (see the constructor's own optional-parameter comment) for the many test call
+    /// sites that construct this class directly and don't exercise Apply &amp; Transmit.</summary>
+    private readonly Func<bool> _canTransmitNow;
     private readonly OperatorSettings _operatorSettings;
     private readonly IRadioSessionService _radioSessionService;
     private readonly ILocalizationService _localization;
@@ -390,12 +399,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ITemplateStore templateStore,
         IImageSourceWriter imageSourceWriter,
         ReadyRackViewModel readyRack,
-        EditorInitialState? initialState = null)
+        EditorInitialState? initialState = null,
+        // Optional, defaulting to "always allowed": adding this as a REQUIRED parameter would have
+        // forced every one of this class's ~20 existing test call sites to change for a feature
+        // most of them don't exercise. Trailing-optional keeps it opt-in -- only the 2 real
+        // production call sites (TxControlsPaneViewModel) pass a real delegate.
+        Func<bool>? canTransmitNow = null,
+        // ui_transition_plan.md step 5 (T1-6): "Copy to TX"'s own HIS CALL/HIS GRID seed -- see this
+        // constructor's own application of it, below, for why it's independent of initialState
+        // (Copy-to-TX opens a brand-new editor with no prior edit session to restore).
+        IReadOnlyDictionary<string, string>? currentContactVariables = null)
     {
         _originalSource = originalSource;
         _targetMode = targetMode;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
+        _canTransmitNow = canTransmitNow ?? (static () => true);
         _operatorSettings = operatorSettings;
         _radioSessionService = radioSessionService;
         _localization = localization;
@@ -461,6 +480,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             finally
             {
                 _suspendPreview = false;
+            }
+        }
+
+        // ui_transition_plan.md step 5 (T1-6): applied AFTER initialState's own seed (above) and via
+        // TryAdd, not direct assignment -- a re-edit's own previously-typed values must win over a
+        // stale currentContactVariables snapshot passed alongside them (no call site passes both
+        // today, but this ordering is the safe default if that ever changes). Written directly into
+        // _templateVariables, same "read-only lookup, never eagerly written" contract
+        // RescanTemplateVariables's own doc comment describes -- a template loaded/created LATER in
+        // this same editor session that references {his_call}/{his_grid} picks this up the moment
+        // RescanTemplateVariables next runs; one with no such reference never surfaces it at all.
+        if (currentContactVariables is not null)
+        {
+            foreach (var (key, value) in currentContactVariables)
+            {
+                _templateVariables.TryAdd(key, value);
             }
         }
 
@@ -882,6 +917,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     };
 
     public event Action<IImageSource>? Applied;
+
+    /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's primary action -- applies the
+    /// same output <see cref="Applied"/> would, but signals the parent to immediately transmit it
+    /// too, one click instead of Apply-then-hunt-for-the-real-Transmit-button-in-the-sidebar. The
+    /// parent (only owner of transmit state) still runs the actual TransmitCommand.</summary>
+    public event Action<IImageSource>? AppliedAndTransmitRequested;
 
     public event Action? Cancelled;
 
@@ -2952,11 +2993,34 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     private void Apply()
     {
         Log.ApplyInvoked(_logger, _targetMode.Id);
+        Applied?.Invoke(BuildFinalOutput());
+    }
+
+    /// <summary>Gates the SEND row's "Apply &amp; Transmit" button on the PARENT's live transmit
+    /// readiness (see <see cref="_canTransmitNow"/>'s own doc comment) -- this editor's own output
+    /// is always producible, so unlike <see cref="TxControlsPaneViewModel.CanTransmit"/> there is no
+    /// "_loadedImage is not null" half to this check, only the transmitting/self-test half.</summary>
+    private bool CanApplyAndTransmit() => _canTransmitNow();
+
+    [RelayCommand(CanExecute = nameof(CanApplyAndTransmit))]
+    private void ApplyAndTransmit()
+    {
+        Log.ApplyAndTransmitInvoked(_logger, _targetMode.Id);
+        AppliedAndTransmitRequested?.Invoke(BuildFinalOutput());
+    }
+
+    /// <summary>Called by the parent at each of its own IsTransmitting/IsRunningLoopbackSelfTest
+    /// toggle points, same convention it already follows for TransmitCommand/StopTransmitCommand/
+    /// RunLoopbackSelfTestCommand -- CommunityToolkit does not auto-requery a CanExecute predicate
+    /// that closes over another object's property.</summary>
+    public void NotifyTransmitAvailabilityChanged() => ApplyAndTransmitCommand.NotifyCanExecuteChanged();
+
+    private IImageSource BuildFinalOutput()
+    {
         var cropped = _preparer.Crop(_originalSource, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
-        var final = _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
-        Applied?.Invoke(final);
+        return _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
     }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17): arm/confirm before discarding
@@ -4033,6 +4097,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "Apply invoked: targetMode={TargetMode}")]
         public static partial void ApplyInvoked(ILogger logger, string targetMode);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Apply & Transmit invoked: targetMode={TargetMode}")]
+        public static partial void ApplyAndTransmitInvoked(ILogger logger, string targetMode);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);

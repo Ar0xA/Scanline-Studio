@@ -52,14 +52,74 @@ public class TxOutputBandpassFilterTests
     [InlineData(11025.0)]
     [InlineData(44100.0)]
     [InlineData(48000.0)]
-    public void MakeFilter_TapCountAndLength_IsFixed24_RegardlessOfSampleRate(double sampleRate)
+    public void MakeFilter_DefaultTapCountAndLength_Is24_RegardlessOfSampleRate(double sampleRate)
     {
         // ultracode audit finding #26 (B2): unlike SearchBandpassFilter's RX-side tap scaling
         // (fs*24/11025), legacy's TX tap count (sstv.cpp:2764) is hardcoded at 24 for every sample
-        // rate -- a regression to sample-rate-scaled tap count would give 96 taps at 44100Hz.
+        // rate -- a regression to sample-rate-scaled tap count would give 96 taps at 44100Hz. Options
+        // stub backlog item 3: 24 is now the DEFAULT, not a compile-time constant -- this test pins
+        // the default only; MakeFilter_VariableTapCount_ChangesOutputLength below pins the new
+        // variable-tap capability.
         var h = TxOutputBandpassFilter.MakeFilter(sampleRate);
 
         Assert.Equal(25, h.Length);
+    }
+
+    [Theory]
+    [InlineData(2, 3)]
+    [InlineData(48, 49)]
+    [InlineData(512, 513)]
+    public void MakeFilter_VariableTapCount_ChangesOutputLength(int tap, int expectedLength)
+    {
+        // Options stub backlog item 3: tap count is now a real constructor/MakeFilter parameter,
+        // clamped to legacy's own real Save-handler range [2,512] (Option.cpp:456-459/TAPMAX) at the
+        // settings-resolution layer -- this test exercises MakeFilter directly at each boundary,
+        // independent of that clamp.
+        var h = TxOutputBandpassFilter.MakeFilter(11025.0, tap);
+
+        Assert.Equal(expectedLength, h.Length);
+    }
+
+    [Theory]
+    [InlineData(0, 2)]
+    [InlineData(1, 2)]
+    [InlineData(3, 2)]
+    [InlineData(511, 510)]
+    [InlineData(600, 512)]
+    [InlineData(-10, 2)]
+    public void ClampTapCount_OutOfRangeOrOdd_ClampsAndRoundsToEven(int rawTapCount, int expected)
+    {
+        // Both-direction clamp [2,512] (Option.cpp:456-459/TAPMAX) plus round-to-even (legacy's own
+        // MakeFilter leaves one coefficient slot uninitialized for an odd tap count -- a real UB
+        // divergence this port sidesteps by restricting to the well-defined even case, see this
+        // class's own doc comment).
+        Assert.Equal(expected, TxOutputBandpassFilter.ClampTapCount(rawTapCount));
+    }
+
+    [Fact]
+    public void ProcessSample_DifferentTapCounts_ProduceGenuinelyDifferentImpulseResponses()
+    {
+        // Not just "doesn't crash" -- a real, measurable spectral/impulse-response difference between
+        // two different (both in-range, both even) tap counts: a wider filter has a longer, different
+        // impulse response, not merely a scaled copy of the narrower one.
+        var narrow = new TxOutputBandpassFilter(11025.0, 8);
+        var wide = new TxOutputBandpassFilter(11025.0, 64);
+
+        var narrowResponse = new double[65];
+        var wideResponse = new double[65];
+        narrowResponse[0] = narrow.ProcessSample(1.0);
+        wideResponse[0] = wide.ProcessSample(1.0);
+        for (var n = 1; n <= 64; n++)
+        {
+            narrowResponse[n] = narrow.ProcessSample(0.0);
+            wideResponse[n] = wide.ProcessSample(0.0);
+        }
+
+        // The narrow filter's response has already decayed to exactly 0 well before sample 64 (its
+        // own delay line is only 9 samples long); the wide filter's has not -- a real, structural
+        // difference, not a rounding-noise one.
+        Assert.Equal(0.0, narrowResponse[64]);
+        Assert.NotEqual(0.0, wideResponse[64]);
     }
 
     [Fact]
@@ -102,7 +162,9 @@ public class TxOutputBandpassFilterTests
     public void MakeFilter_IsSymmetric_ForEvenTap()
     {
         // Kaiser windowing preserves the same even-tap symmetry SearchBandpassFilter's rectangular
-        // window has -- this filter's only reachable tap count (24) is even.
+        // window has. Options stub backlog item 3: tap count is now user-editable (this test still
+        // pins the real default, 24) -- ClampTapCount's own round-to-even clamp is what keeps every
+        // reachable tap count even, not a structural guarantee of this class alone.
         var h = TxOutputBandpassFilter.MakeFilter(11025.0);
 
         for (var n = 0; n <= 24; n++)

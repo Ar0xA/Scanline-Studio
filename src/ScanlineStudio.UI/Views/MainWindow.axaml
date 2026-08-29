@@ -15,9 +15,17 @@
         Icon="/Assets/app-icon.ico"
         Title="{Binding WindowTitleDisplay}"
         Width="1920" Height="1032"
-        MinWidth="1920" MinHeight="640"
+        MinWidth="1280" MinHeight="640"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource IndustryBg}">
+
+    <!-- ui_transition_plan.md step 2 (T1-3): a WINDOW-level gesture, not the File menu's own
+         InputGesture, deliberately — SaveOrApplyCommand's routing depends on SelectedTabIndex,
+         not on which menu item happens to display "Ctrl+S", and File > Export received frame…
+         now shows Ctrl+Shift+E instead (see that MenuItem's own comment below). -->
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Ctrl+S" Command="{Binding SaveOrApplyCommand}" />
+    </Window.KeyBindings>
 
     <!-- MainViewModel now requires AppDockFactory via DI, so no Design.DataContext previewer
          instance; see App.axaml.cs for how the real DataContext is resolved at runtime. -->
@@ -35,7 +43,14 @@
          reserves the menu row, header-cards row, and status-bar row as fixed heights — only the
          "*" row (tab strip + its content) actually shrinks, so the status bar stays visible and
          anchored at any height down to this floor, it just leaves less room for the tab content
-         above it. MinWidth stays pinned to 1920 — this request was about vertical height only. -->
+         above it.
+
+         MinWidth (2026-08-28, ui_transition_plan.md step 1): relaxed from 1920 to 1280 — 1920 did
+         not fit common 1366/1440/1600 screens or a 1920 screen under display scaling, and blocked
+         sharing a monitor with logging/CAT/SDR software. No per-tab width math changed; each tab
+         already absorbs a narrower window via star-column compression, WrapPanel toolbars/filter
+         rows, and 300+ DIP of headroom in its fixed-width columns (auditor-verified, 2026-08-28)
+         — not via horizontal scrolling, which only the TX editor's canvas well actually has. -->
 
     <!-- UI-redesign Phase 2/3: outer bands per LAYOUT-SPEC §1, no Auto — the 3rd fixed band, the
          tab strip, is produced by the TabControl's own default header-sizing behavior driven by
@@ -73,9 +88,15 @@
                      InputGesture, so this closes the Ctrl+O accelerator too, not just the click. -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" IsEnabled="{Binding TxControls.CanChangeSourceOrMode}" />
                 <!-- Stub survey Tier 1 (2026-08-26): same RxImagePaneViewModel.SaveFrameCommand the
-                     Receive tab's own "Save frame" button uses (action bar below) — one feature,
-                     two entry points, matching Tools > Re-decode's own pattern above. -->
-                <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+S" Command="{Binding RxImage.SaveFrameCommand}" />
+                     Receive tab's own "Export frame…" button uses (action bar below) — one feature,
+                     two entry points, matching Tools > Decode WAV's own pattern above.
+                     ui_transition_plan.md step 2 (T1-3): moved off Ctrl+S — that gesture is now
+                     the WINDOW-level contextual SaveOrApplyCommand (see Window.KeyBindings above),
+                     which routes to this same command when the Transmit tab isn't active. Label
+                     renamed to "Export received frame…" — step 9 (T2-7) — since every frame is
+                     already auto-archived; this is a user-chosen-destination export, not the first
+                     time the frame is persisted. -->
+                <MenuItem Header="{loc:Translate MainWindow.Menu.File.SaveFrameAs}" InputGesture="Ctrl+Shift+E" Command="{Binding RxImage.SaveFrameCommand}" />
                 <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.File.Exit}" Command="{Binding ExitCommand}" />
             </MenuItem>
@@ -126,8 +147,9 @@
                      entry. -->
             </MenuItem>
             <MenuItem Header="{loc:Translate MainWindow.Menu.Tools}">
-                <!-- Piece C2 (RX tab Re-decode port): same command RxImage's own "Re-decode" button
-                     uses (MainWindow.axaml's action bar below) — one feature, two entry points. -->
+                <!-- Piece C2 (RX tab Re-decode port): same command RxImage's own "Decode WAV…"
+                     button uses (MainWindow.axaml's action bar below) — one feature, two entry
+                     points. -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Tools.RedecodeFromWav}" Command="{Binding RxImage.RedecodeCommand}" />
                 <!-- Stub survey Tier 1 (2026-08-26): "session log" means the QSO log (the Logbook
                      tab's own ADIF export), not the debug log (Help > Open application log covers
@@ -146,6 +168,8 @@
             <!-- Help moved behind Options (user request, 2026-08-26) — Options no longer dangles
                  as the sole trailing item. -->
             <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.UserGuide}" Command="{Binding OpenUserGuideCommand}" />
+                <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenOnGitHub}" Command="{Binding OpenOnGitHubCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenApplicationLog}" Command="{Binding OpenApplicationLogCommand}" />
                 <!-- About stays the last item, per direct user request (2026-08-26). -->
@@ -270,14 +294,42 @@
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:QuickModeSlotViewModel">
                                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1"
-                                                        Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}">
+                                                        Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}"
+                                                        ToolTip.Tip="{loc:Translate Panes.RxImage.QuickMode.ReassignHint}">
+                                                    <!-- ui_transition_plan.md step 10 (T2-5): "Hold this mode" added as a
+                                                         sibling of the existing 43-entry reassignment list — a ContextMenu
+                                                         with an ItemsSource-bound child can't ALSO declare sibling MenuItems
+                                                         directly (ItemsSource mode replaces declared children), so the
+                                                         existing list moved one level deeper, onto its own nested MenuItem's
+                                                         own ItemsSource, rather than the ContextMenu's. Same captured-once-
+                                                         at-construction command (HoldModeCommand) as SelectCommand/
+                                                         ReassignCommand above, not a cross-DataTemplate binding path — this
+                                                         MenuItem is still inside the SAME DataTemplate/DataContext scope as
+                                                         the Button itself. -->
                                                     <Button.ContextMenu>
-                                                        <ContextMenu Classes="Industry" ItemsSource="{Binding MenuEntries}" ItemContainerTheme="{StaticResource QuickModeGridMenuItemTheme}" />
+                                                        <ContextMenu Classes="Industry">
+                                                            <MenuItem Header="{loc:Translate Panes.RxImage.QuickMode.HoldThisMode}" Command="{Binding HoldModeCommand}" CommandParameter="{Binding CurrentMode}" />
+                                                            <Separator />
+                                                            <MenuItem Header="{loc:Translate Panes.RxImage.QuickMode.ReassignSubmenu}" ItemsSource="{Binding MenuEntries}" ItemContainerTheme="{StaticResource QuickModeGridMenuItemTheme}" />
+                                                        </ContextMenu>
                                                     </Button.ContextMenu>
                                                 </Button>
                                             </DataTemplate>
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
+                                    <!-- ui_transition_plan.md step 10 (T2-5): status row for a held
+                                         mode — hidden entirely when nothing is held. A genuinely NEW
+                                         feature (2 rounds of plan-review), not a revival of the old
+                                         Auto/Locked segment the comment just below refers to (that one
+                                         was removed outright 2026-08-26 and had no working feature
+                                         behind it at all). -->
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" Margin="0,2,0,0"
+                                                IsVisible="{Binding HeldModeDisplay, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding HeldModeDisplay}"
+                                                   ToolTip.Tip="{loc:Translate Panes.RxImage.QuickMode.HoldingHelp}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                                                Content="{loc:Translate Panes.RxImage.QuickMode.Release}" Command="{Binding ReleaseHeldModeCommand}" />
+                                    </StackPanel>
                                     <!-- Wired 2026-08-25 (elegant-wondering-hinton.md): port of legacy's
                                          RX-page SBAuto toggle (TMmsstv::RxAutoPush, Main.cpp:6042-6060)
                                          — a SEPARATE concept from mode-selection persistence (the
@@ -495,9 +547,10 @@
                          320x256 image down to near-illegible — instead of the window just
                          scrolling to reveal the rest, which is what every other "too much
                          content, not enough window" case in this app already does. Pinning the
-                         Grid's own Height keeps 100% of its internal "182,*,150" math (and every
-                         pixel-tuned value inside it) running exactly as before; only the
-                         ScrollViewer around it is new. -->
+                         Grid's own Height keeps 100% of its internal row math (originally
+                         "182,*,150", now "166,*" per that row's own trim comment and step 9's own
+                         Decode Activity removal below) and every pixel-tuned value inside it
+                         running exactly as before; only the ScrollViewer around it is new. -->
                     <ScrollViewer Grid.Column="1">
                     <!-- Margin top=6, same fix/reasoning as the left column's own ScrollViewer
                          content above: a ScrollViewer clips to its own viewport regardless of a
@@ -514,7 +567,7 @@
                          the right to match it. Height stays 834 total — the freed 16px is absorbed
                          by row 1's own "*" (Incoming Frame grows slightly), not subtracted from the
                          whole card. -->
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="166,*,150" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="166,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <!-- Spectrum & waterfall (batch 8b): SpectrumTraceControl (new, real FFT
                              line trace + markers + peak-hold) fills what was the literal "Spectrum"
                              placeholder; WaterfallPaneView (ContentControl bound to Waterfall) is
@@ -687,9 +740,10 @@
                                      ShowTodayOnly toggle) to RxImagePaneViewModel.PreviousFrames
                                      (session-only, capped at 2, independent of any Gallery UI state
                                      — see that property's own doc comment). Mode-pill badge overlay
-                                     and callsign line are literal: ReceiveHistoryEntry has no
-                                     callsign field (see RxHistoryPaneViewModel.cs's own doc
-                                     comment), same precedent as Frame metadata's static text. -->
+                                     is real (Entry.ModeId); the literal callsign caption line
+                                     (ReceiveHistoryEntry has no callsign field) was dropped
+                                     ui_transition_plan.md step 3 (T2-7) — same fix the Gallery grid's
+                                     own thumbnail template already got, 2026-08-26. -->
                                 <!-- Frame column is Auto, not a fixed/star width: a plain Border/
                                      Image (no PlotView/aspect-ratio-converter exists in this
                                      codebase) has no intrinsic size, so a star column just
@@ -700,8 +754,16 @@
                                      no C# measure override needed. Previous-frames now gets
                                      whatever's left, matching mock2's own intent. -->
                                 <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource IndustrySpacingGutter}" Margin="0,4,0,0">
+                                    <!-- ui_transition_plan.md step 3 (T1-5): double-tap opens the
+                                         full-size viewer over PreviousFrames at its most recent entry
+                                         (index 0 — see RxImagePaneViewModel.OpenImageViewerCommand's
+                                         own doc comment for why a null parameter means "most recent"
+                                         rather than trying to view the still-decoding live pixels
+                                         directly). A no-op (command guards on an empty list) before
+                                         any reception has completed. -->
                                     <Viewbox Stretch="Uniform" HorizontalAlignment="Left">
-                                        <Border Width="320" Height="256">
+                                        <Border Width="320" Height="256"
+                                                DoubleTapped="OnIncomingFrameDoubleTapped">
                                             <ContentControl Content="{Binding RxImage}" />
                                         </Border>
                                     </Viewbox>
@@ -732,13 +794,14 @@
                                                     </ItemsControl.ItemsPanel>
                                                     <ItemsControl.ItemTemplate>
                                                         <DataTemplate x:DataType="vm:RxHistoryEntryViewModel">
-                                                            <Border Classes="IndustryThumbnail" Margin="0,0,6,6">
+                                                            <!-- ui_transition_plan.md step 3 (T1-5 + T2-6): double-tap opens the
+                                                                 full-size viewer at THIS entry — previously passive, visually
+                                                                 inviting selection it didn't support. -->
+                                                            <Border Classes="IndustryThumbnail" Margin="0,0,6,6"
+                                                                    DoubleTapped="OnPreviousFrameThumbnailDoubleTapped">
                                                                 <DockPanel LastChildFill="True">
                                                                     <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
-                                                                        <Grid ColumnDefinitions="*,Auto">
-                                                                            <TextBlock Classes="IndustryThumbnailCall" Text="{loc:Translate Panes.RxHistory.ThumbCallsignValue}" />
-                                                                            <TextBlock Grid.Column="1" Classes="IndustryThumbnailMeta" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
-                                                                        </Grid>
+                                                                        <TextBlock Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
                                                                     </Border>
                                                                     <Panel>
                                                                         <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
@@ -759,54 +822,13 @@
                             </DockPanel>
                         </HeaderedContentControl>
 
-                        <!-- Ported to Industry atoms. Visual scaffolding only, header-only (no
-                             ItemsSource); no structured decode-history event log exists yet,
-                             distinct from ReceiveHistoryStore (spec/14-roadmap.md backlog).
-                             DataGrid replaced with a plain Grid/IndustryTable atom per the design
-                             doc's own item-10 decision (a real Avalonia.Controls.DataGrid fights
-                             the design system's chrome for no benefit on a static, currently
-                             header-only 9-column table; package removal deferred to whichever
-                             phase confirms nothing else still references the old DataGrid theme). -->
-                        <!-- Decoder Trace moved out of this card 2026-08-25 (user-suggested layout
-                             fix, live-observed): the right column below (Grid.Column="2") had a
-                             completely empty row since the Unattended-RX/Session-Frames cards were
-                             removed, with far more real height and width (312px, not this card's own
-                             squeezed 250px sub-column) available to it there. Back to the plain
-                             single-content table this card had before Piece B2. -->
-                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
-                            <HeaderedContentControl.Header>
-                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.CardHeader}" />
-                            </HeaderedContentControl.Header>
-                            <!-- LastChildFill="False" (design-fidelity-caught fix, round 2): this
-                                 DockPanel has only ONE child, so LastChildFill's own default of True
-                                 made it (also being the last child) fill the WHOLE card body
-                                 regardless of its Dock="Top": the header row's bottom rule ended up
-                                 flush against the card's bottom edge instead of directly under the
-                                 header text. -->
-                            <DockPanel LastChildFill="False">
-                                <!-- Border-per-cell (design-fidelity-caught fix over the first
-                                     draft): mockup's <th style="padding:2px 5px"> pads EACH
-                                     header cell individually, not just the row's own outer
-                                     edges; a single Border wrapping the whole Grid would only
-                                     apply IndustryTableHeaderRule's padding at the row's far
-                                     left/right. -->
-                                <Grid DockPanel.Dock="Top" ColumnDefinitions="*,*,*,*,*,*,*,*,*">
-                                    <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColUtc}" /></Border>
-                                    <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColFreq}" /></Border>
-                                    <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColMode}" /></Border>
-                                    <Border Grid.Column="3" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColCallsign}" /></Border>
-                                    <Border Grid.Column="4" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColGrid}" /></Border>
-                                    <Border Grid.Column="5" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSnr}" /></Border>
-                                    <Border Grid.Column="6" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColSlant}" /></Border>
-                                    <Border Grid.Column="7" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColLines}" /></Border>
-                                    <Border Grid.Column="8" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.RxDecodeLog.ColState}" /></Border>
-                                </Grid>
-                                <!-- No data rows yet (header-only scaffolding, see above); an
-                                     ItemsControl would need a real ItemsSource to add
-                                     IndustryTableRowRule rows against, left empty until a real
-                                     decode-history event log exists. -->
-                            </DockPanel>
-                        </HeaderedContentControl>
+                        <!-- ui_transition_plan.md step 9 (T2-10): "Decode Activity" card removed
+                             outright — it was permanent header-only scaffolding with no ItemsSource
+                             and no structured decode-history event log behind it (distinct from
+                             ReceiveHistoryStore), moved to spec/14-roadmap.md's backlog rather than
+                             left as a dead, empty table on the Receive tab. The freed 150px row is
+                             absorbed by row 1's own "*" (Incoming Frame grows), same reasoning as
+                             the row-0 166px trim's own comment above. -->
                     </Grid>
                     </ScrollViewer>
 
@@ -877,27 +899,20 @@
                                          here, so it reads as the lookup's OWN result, not more decoded
                                          frame data (direct user request). -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NrRst}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DecodedNrRstDisplay}" /></Grid></Border>
-                                    <!-- Ancestor-relative binding, not a new RxImagePaneViewModel
-                                         dependency: RadioStatus lives on the root MainViewModel (this
-                                         card's own DataContext is scoped to RxImage). This project
-                                         does not enable Avalonia compiled bindings (no
-                                         x:CompileBindings/AvaloniaUseCompiledBindingsByDefault
-                                         anywhere) — this is a reflection binding, so a typo here
-                                         would NOT fail the build, only log a binding error at
-                                         runtime and render blank. Verify by running the app, not by
-                                         trusting a green build alone (auditor-caught, 2026-08-25).
-                                         FrequencyDisplayOrPlaceholder, not FrequencyDisplay: the
-                                         status bar's own {Binding RadioStatus.FrequencyDisplay}
-                                         (further down this file) deliberately shows a
-                                         "000.000.000" idle readout with no rig connected — correct
-                                         for a 7-segment-style status pill, but a fake-live literal
-                                         if reused in this card of otherwise-honest "—" placeholder
-                                         rows. Also live-VFO, not latched to the displayed frame's
-                                         own receive frequency — ReceiveHistoryEntry carries no
-                                         frequency field to latch from, so retuning after a decode
-                                         will change what this row shows for an already-completed
-                                         frame. Documented tradeoff, not an oversight. -->
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding $parent[Window].DataContext.RadioStatus.FrequencyDisplayOrPlaceholder}" /></Grid></Border>
+                                    <!-- ui_transition_plan.md step 6 (T2-4): LATCHED, not live — this
+                                         used to bind $parent[Window].DataContext.RadioStatus.
+                                         FrequencyDisplayOrPlaceholder (an ancestor-relative binding
+                                         to the root MainViewModel, since this card's own DataContext
+                                         is scoped to RxImage), which meant retuning the radio after a
+                                         decode changed what this row showed for an already-completed
+                                         frame — the exact T2-4 bug. LatchedFrequencyDisplay is a
+                                         plain RxImage-scoped property (no $parent walk-up needed,
+                                         same as DetectedModeDisplay below), set once per reception
+                                         from the ReceiveHistoryEntry itself, never re-read from live
+                                         radio state — see RxImagePaneViewModel's own doc comment on
+                                         _latchedFrequencyHz for why it reads "—" for the whole
+                                         decoding duration, not just before the first reception. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Frequency}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LatchedFrequencyDisplay}" /></Grid></Border>
                                     <!-- DetectedModeDisplay is the same "{DisplayName} — VIS {VisCode}"
                                          property already used by the Mode panel's ComboBox. For a
                                          forced-mode reception there was no real VIS decode — this
@@ -1157,8 +1172,15 @@
                                                  selects the ListBoxItem underneath. The bottom caption bar
                                                  (callsign/meta) was removed outright, stub sweep 2026-08-26:
                                                  ReceiveHistoryEntry has no such fields, so it was rendering
-                                                 as two literal em-dashes under every thumbnail. -->
-                                            <Border Classes="IndustryThumbnail" Margin="0,0,7,7">
+                                                 as two literal em-dashes under every thumbnail.
+                                                 ui_transition_plan.md step 3 (T1-5 + T2-6): double-tap opens
+                                                 the full-size viewer at THIS entry (over FilteredEntries, not
+                                                 the Receive tab's own PreviousFrames — see
+                                                 RxHistoryPaneViewModel.OpenImageViewerCommand's own doc
+                                                 comment). Single-click still selects (SelectedItem binding
+                                                 above), unaffected by this. -->
+                                            <Border Classes="IndustryThumbnail" Margin="0,0,7,7"
+                                                    DoubleTapped="OnGalleryThumbnailDoubleTapped">
                                                 <Panel>
                                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
                                                     <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
@@ -1284,14 +1306,30 @@
                                      specific row.
                                      Export wired 2026-08-15 (ExportFrameCommand, saves the selected
                                      frame's already-auto-saved PNG to a user-chosen location,
-                                     optionally re-encoded as JPEG). Re-decode removed outright
-                                     2026-08-26 (user decision, "maybe one day") — needs per-history-
-                                     entry audio attachment, a materially bigger feature than the
-                                     Receive tab's own record/play-a-file Re-decode; see
-                                     spec/14-roadmap.md's backlog entry. -->
+                                     optionally re-encoded as JPEG). Re-decode was removed outright
+                                     2026-08-26 (user decision, "maybe one day") for needing per-
+                                     history-entry audio attachment, a materially bigger feature than
+                                     the Receive tab's own record/play-a-file Re-decode (see
+                                     spec/14-roadmap.md's backlog entry) — that attachment now exists
+                                     (ui_transition_plan.md step 12, Auto-save RX audio), so
+                                     RedecodeSelectedEntryCommand below re-adds it, hidden (not
+                                     disabled) for any entry that still has no linked audio file. -->
                                 <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" Command="{Binding ExportFrameCommand}" />
+                                    <!-- ui_transition_plan.md step 12 (Auto-save RX audio), Step 4:
+                                         both hidden (not just disabled) when this entry has no linked
+                                         audio file — unlike Export/Delete above, which always apply
+                                         to every entry, these two only ever apply to a subset. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenAudioFileLocation}"
+                                            Command="{Binding OpenAudioFileLocationCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.RedecodeFrame}"
+                                            Command="{Binding RedecodeSelectedEntryCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    <!-- ui_transition_plan.md step 4 (T1-4, reframed): per-item manual
+                                         delete — confirms first (ConfirmRequested, wired in
+                                         MainWindow.axaml.cs), with a stronger message for an entry
+                                         carrying a note/flag/QSO-link. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary IndustryBtnDanger" Padding="7,0" Content="{loc:Translate Panes.RxHistory.DeleteFrame}" Command="{Binding DeleteSelectedEntryCommand}" />
                                 </StackPanel>
                                 <TextBlock Text="{Binding ErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
@@ -1308,9 +1346,14 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxHistory.StorageHeader}" />
                             </HeaderedContentControl.Header>
                             <StackPanel Classes="Industry IndustryRows">
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FolderLabel}" />
                                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding ImagesDirectory}" />
+                                    <!-- ui_transition_plan.md step 9 (T2-7): every frame is already
+                                         auto-archived here — this button is what actually makes that
+                                         discoverable, not just readable as text. -->
+                                    <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="4,0,0,0"
+                                            Content="{loc:Translate Panes.RxHistory.OpenStorageFolder}" Command="{Binding OpenStorageFolderCommand}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.NamingLabel}" />
@@ -1319,6 +1362,13 @@
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.DiskLabel}" />
                                     <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DiskFreeDisplay}" />
+                                </Grid></Border>
+                                <!-- ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: total
+                                     bytes across every auto-saved WAV, mirroring Disk free's own
+                                     honest-em-dash-when-unknown convention. -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.AudioStorageLabel}" />
+                                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding AudioStorageBytesDisplay}" />
                                 </Grid></Border>
                             </StackPanel>
                         </HeaderedContentControl>
@@ -1445,9 +1495,14 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.EndLabel}" />
                                         <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormEndUtc, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
                                     </Grid>
+                                    <!-- ui_transition_plan.md step 5 (T2-8): FormFrequencyMhzText, not
+                                         FormFrequencyHz directly — the rest of this app speaks MHz
+                                         (RadioStatusViewModel.FrequencyDisplay, the Receive tab's own
+                                         LatchedFrequencyDisplay); the underlying stored value stays
+                                         Hz (see that property's own doc comment). -->
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.FrequencyLabel}" />
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormFrequencyHz}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormFrequencyMhzText}" />
                                     </Grid>
                                     <!-- SelectedValueBinding/SelectedValue, NOT SelectedItem: AvailableModes'
                                          element type (RadioModeOption) differs from FormMode's type
@@ -1630,6 +1685,20 @@
                         <StackPanel Orientation="Horizontal" Spacing="6">
                             <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center" />
                             <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <!-- ui_transition_plan.md step 12, Step 4: real, varying LED — lit only while a
+                         slice is ACTIVELY armed/being captured (RxImage.IsAudioAutoSaveActive polls
+                         ISstvSessionService.IsAudioAutoSaveActive on the same cadence as the other
+                         telemetry chips above), never a static reflection of the Options enable
+                         toggle alone. A near-identical "AUTOSAVE ON" chip existed here before with no
+                         backing property at all and was removed for being fake-live (see this file's
+                         own removed-AutosaveOn comment further up) — do not repeat that mistake. -->
+                    <Border Classes="Industry IndustryStatus" Classes.healthyTint="{Binding RxImage.IsAudioAutoSaveActive}"
+                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.AutoSaveAudio.Help}">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RxImage.IsAudioAutoSaveActive}" VerticalAlignment="Center" />
+                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.AutoSaveAudio}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
                     <!-- LED+lozenge (spec §6): amber "TX error" row, not the red "fault" row —

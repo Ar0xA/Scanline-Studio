@@ -34,6 +34,11 @@ public sealed record OptionsSnapshot(
     // Stub survey Tier 3, "Clock calibration" piece 1 -- see AudioDeviceSettings.TxSampleRateOffsetHz's
     // own doc comment.
     double TxSampleRateOffsetHz,
+    // Options stub backlog item 3 -- see AudioDeviceSettings.TxBpfEnabled's own doc comment.
+    bool TxBpfEnabled,
+    int TxBpfTapCount,
+    bool TxLpfEnabled,
+    double TxLpfFrequencyHz,
     string RadioBackendId,
     string? RigctldHost,
     int? RigctldPort,
@@ -66,7 +71,17 @@ public sealed record OptionsSnapshot(
     bool FskIdRxEnabled,
     bool NrRstEnabled,
     string? NrRstText,
+    string? SoundFileMmvPath,
     DemodType DemodType,
     RxBpfPreset RxBpfPreset,
     RxBufferMode RxBufferMode,
+    double PllVcoGain,
+    int PllLoopOrder,
+    double PllLoopCutoffHz,
+    int PllOutputOrder,
+    double PllOutputCutoffHz,
+    ZeroCrossingSmoothingMode ZeroCrossingSmoothingMode,
+    int ZeroCrossingOutputOrder,
+    double ZeroCrossingOutputCutoffHz,
+    double ZeroCrossingSmoothingFrequencyHz,
     IReadOnlyList<AdifUdpDestination> AdifUdpDestinations);

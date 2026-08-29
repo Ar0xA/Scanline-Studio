@@ -2,11 +2,12 @@ namespace ScanlineStudio.Abstractions.Sstv;
 
 /// <summary>Mirrors legacy's <c>sys.m_CWID</c> tri-state (<c>Main.cpp:7021-7025</c>,
 /// <c>Option.cpp:586-592</c>) -- NOT a bool. <see cref="SoundFile"/> corresponds to
-/// <c>OutputMMV</c> (sound-file station ID), deliberately unimplemented in v1 (out of scope per the
-/// CW-ID/FSK station-ID subsystem plan) -- modeled as its own enum member anyway so a future
-/// sound-file feature doesn't need a breaking settings migration. Selecting it today silently
-/// transmits no CW-ID at all, matching legacy's own behavior when no sound file is configured
-/// (<c>!sys.m_MMVID.IsEmpty()</c> gate failing), not a bug.
+/// <c>OutputMMV</c> (sound-file station ID, `docs/plans/sound-file-id-plan.md`): parses and resamples
+/// the file at <c>StationIdSettings.SoundFileMmvPath</c> (via <c>ScanlineStudio.Core.Sstv.MmvSoundFile</c>)
+/// and plays it back at the same TX dispatch point as CW-ID/FSK-ID. Selecting it with no path
+/// configured (or an unreadable/unplayable file) silently transmits nothing, matching legacy's own
+/// behavior when no sound file is configured (<c>!sys.m_MMVID.IsEmpty()</c> gate failing, or an
+/// unreadable one), not a bug.
 ///
 /// Lives here (not <c>ScanlineStudio.Core.Sstv</c>, where <c>StationIdSettings</c> -- the settings
 /// record this enum is a field of -- actually lives) so <c>ScanlineStudio.Application</c>'s

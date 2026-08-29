@@ -55,8 +55,10 @@ internal sealed class PllFmDemodulator
     private readonly IirFilter _outputFilter = new();
     private readonly double _wideLowHz;
     private readonly double _wideHighHz;
+    private readonly double _sampleRate;
     private double _centerFrequencyHz;
     private double _bandwidthHz;
+    private double _vcoGain;
 
     private double _err;
     private double _max = 1.0;
@@ -69,6 +71,7 @@ internal sealed class PllFmDemodulator
         double sampleRate,
         double lowFrequencyHz,
         double highFrequencyHz,
+        double vcoGain = 1.0,
         int loopOrder = 1,
         double loopCutoffHz = 1500,
         int outputOrder = 3,
@@ -76,13 +79,43 @@ internal sealed class PllFmDemodulator
     {
         _wideLowHz = lowFrequencyHz;
         _wideHighHz = highFrequencyHz;
+        _sampleRate = sampleRate;
+        _vcoGain = vcoGain;
 
         _vco = new Vco(sampleRate, (lowFrequencyHz + highFrequencyHz) / 2.0);
         SetWidth(isNarrow: false);
 
-        _loopFilter.Design(loopCutoffHz, sampleRate, loopOrder);
-        _outputFilter.Design(outputCutoffHz, sampleRate, outputOrder);
+        // Code-review round 1 finding: the Nyquist clamp used to live ONLY in SetTuning, not here --
+        // this constructor's own loopCutoffHz/outputCutoffHz params are reachable, unclamped, from
+        // EVERY production construction site (composition root, periodic decoder rebuild, a live
+        // sample-rate change's own rebuild, a freshly-started AVT training attempt), not just the
+        // live Options-Save push path SetTuning covers. A user-typed sub-Nyquist sample rate paired
+        // with a stale-but-unclamped cutoff produced a divergent IIR filter (Math.Tan at/above
+        // Nyquist) -> permanent NaN output, surviving every restart with no error. Shared helper, not
+        // a second copy of the clamp math.
+        _loopFilter.Design(ClampCutoffBelowNyquist(loopCutoffHz), sampleRate, ClampFilterOrder(loopOrder));
+        _outputFilter.Design(ClampCutoffBelowNyquist(outputCutoffHz), sampleRate, ClampFilterOrder(outputOrder));
     }
+
+    /// <summary>Code-review round 2 finding: this originally clamped the CEILING only
+    /// (<c>Math.Min</c>) -- a zero or negative cutoff (reachable the exact same way the round-1
+    /// blocker was: a hand-edited settings.json/preset file) hits the identical failure class round 1
+    /// fixed. At a negative cutoff, <c>Math.Tan</c>'s argument goes negative, producing an
+    /// unstable/divergent filter pole -> exponential blowup -> a permanently NaN decoder surviving
+    /// every restart; at exactly 0, the filter goes dead (a legitimate value never reaches the
+    /// output, silently). Legacy guards this at its own apply site too (`&gt; 0.0`,
+    /// `Option.cpp:517-518,523-524`) -- this port's version guards it centrally instead.</summary>
+    private double ClampCutoffBelowNyquist(double cutoffHz) => Math.Clamp(cutoffHz, 1.0, _sampleRate * 0.45);
+
+    /// <summary>Code-review round 1 finding: <c>IirFilter.Design</c>'s own <c>new double[order*3]</c>
+    /// has no validation at all -- a negative order throws <see cref="OverflowException"/> (an
+    /// app-start or live-retune crash, not a graceful fallback) and order 0 silently disables the
+    /// filter. <see cref="SstvDecoderSettings.Resolve"/> now clamps to legacy's own real range,
+    /// (0,32] (`Option.cpp:515,521`), for the settings-driven path, but <see cref="SetTuning"/> is
+    /// also directly reachable from a live push (<c>ISstvDecoder.RequestPllTuning</c>) that never
+    /// goes through <c>Resolve</c> -- clamping HERE, right where the unsafe array allocation actually
+    /// happens, protects every caller regardless of path.</summary>
+    private static int ClampFilterOrder(int order) => Math.Clamp(order, 1, 32);
 
     /// <summary>Direct port of <c>CPLL::SetWidth</c> (`sstv.cpp:266-279`) -- retunes center
     /// frequency/bandwidth/VCO gain in place for a narrow-mode (MN/MC family) transition.
@@ -91,11 +124,10 @@ internal sealed class PllFmDemodulator
     /// <c>SetFreeFreq</c>/<c>SetVcoGain</c> (`sstv.cpp:271,274,277`), neither of which is
     /// <c>MakeLoopLPF</c>/<c>MakeOutLPF</c> (the only two legacy calls that would reset filter
     /// state) -- so a narrow-mode transition mid-lock preserves loop continuity exactly like
-    /// legacy's real soft retune, not a full re-acquisition. This port has no separate
-    /// <c>m_vcogain</c> tuning parameter (PLL/Zero-crossing tuning knobs are out of scope, deferred
-    /// to the Advanced tab), so unlike legacy's own <c>SetVcoGain(m_vcogain)</c> call, the VCO gain
-    /// here is always exactly <c>-bandwidthHz</c>, matching this class's own pre-existing
-    /// constructor convention.</summary>
+    /// legacy's real soft retune, not a full re-acquisition. Re-applies the CURRENT
+    /// <see cref="_vcoGain"/>, matching legacy's own <c>SetWidth</c> -&gt; <c>SetVcoGain(m_vcogain)</c>
+    /// chain (`sstv.cpp:278`) -- a narrow-mode transition must not silently reset a user-tuned VcoGain
+    /// back to 1.0.</summary>
     public void SetWidth(bool isNarrow)
     {
         var lowHz = isNarrow ? NarrowLowHz : _wideLowHz;
@@ -104,7 +136,35 @@ internal sealed class PllFmDemodulator
         _bandwidthHz = highHz - lowHz;
 
         _vco.SetFreeFrequency(_centerFrequencyHz);
-        _vco.SetGain(-_bandwidthHz);
+        _vco.SetGain(-_bandwidthHz * _vcoGain);
+    }
+
+    /// <summary>Options-Advanced-tab PLL tuning (backlog item, `docs/plans/options-stub-item1-pll-tuning-plan.md`)
+    /// -- direct port of legacy's own live-edit shape, <c>CPLL::SetVcoGain</c> (`sstv.cpp:281-286`,
+    /// applies the gain to the VCO immediately) + <c>MakeLoopLPF</c>/<c>MakeOutLPF</c>
+    /// (`Option.cpp:522-523`, rebuild both filters). Legacy's own live-edit does NOT reset filter
+    /// Z-state (<c>CIIR::Clear</c> is a separate, never-called-here method) -- this port's
+    /// <see cref="IirFilter.Design"/> DOES reset Z-state on redesign, a documented, accepted
+    /// divergence (a brief loop-unlock on a live retune) rather than added state-preservation
+    /// machinery for a rare, user-initiated action.
+    ///
+    /// <paramref name="loopCutoffHz"/>/<paramref name="outputCutoffHz"/> are clamped below this
+    /// instance's own Nyquist frequency by <see cref="ClampCutoffBelowNyquist"/> -- legacy has no
+    /// such ceiling (`Option.cpp:517-524`, only `&gt; 0.0`), a deliberate divergence: a user-typed
+    /// sample rate (the Options Sample Rate field is an editable ComboBox) could otherwise pair with
+    /// a stale/unclamped cutoff and produce an unstable filter (<c>Math.Tan</c> at/above Nyquist)
+    /// LIVE, mid-decode. The SAME helper is also called from the constructor (code-review round 1
+    /// finding -- this method alone did NOT cover every entry path; the constructor's own
+    /// loopCutoffHz/outputCutoffHz are reachable, unclamped, from composition root/periodic
+    /// rebuild/a live sample-rate change's own rebuild/a fresh AVT attempt, none of which go through
+    /// this method at all).</summary>
+    public void SetTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+        _vcoGain = vcoGain;
+        _vco.SetGain(-_bandwidthHz * _vcoGain);
+
+        _loopFilter.Design(ClampCutoffBelowNyquist(loopCutoffHz), _sampleRate, ClampFilterOrder(loopOrder));
+        _outputFilter.Design(ClampCutoffBelowNyquist(outputCutoffHz), _sampleRate, ClampFilterOrder(outputOrder));
     }
 
     /// <summary>Processes one input sample; returns the demodulated instantaneous frequency in Hz.</summary>
@@ -138,6 +198,6 @@ internal sealed class PllFmDemodulator
         _err = vcoOut * d;
 
         var filteredOut = _outputFilter.Process(loopOut);
-        return _centerFrequencyHz - filteredOut * _bandwidthHz;
+        return _centerFrequencyHz - filteredOut * _bandwidthHz * _vcoGain;
     }
 }

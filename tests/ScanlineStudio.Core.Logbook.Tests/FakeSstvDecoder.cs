@@ -14,6 +14,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
 
+    public long ReceptionSequence { get; private set; }
+
     public void ResetAgc()
     {
     }
@@ -26,6 +28,14 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     {
     }
 
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+    }
+
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz)
+    {
+    }
+
     public void ArmScopeCapture(int size)
     {
     }
@@ -35,6 +45,10 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
     public double[]? TryGetScopeCaptureChannel1() => null;
 
     public void ForceMode(SstvModeDefinition mode)
+    {
+    }
+
+    public void SetModeLock(SstvModeDefinition? mode)
     {
     }
 
@@ -80,7 +94,14 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public void RaiseLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
 
-    public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+    public void RaiseModeDetected(SstvModeDefinition mode)
+    {
+        // ISstvDecoder.ReceptionSequence: bumped before the raise, matching the real
+        // implementations' contract (see that property's own doc comment) -- first value is 1, 0
+        // means "unset."
+        ReceptionSequence++;
+        ModeDetected?.Invoke(mode);
+    }
 
     public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 
