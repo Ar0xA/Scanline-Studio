@@ -18,7 +18,16 @@ ui_findings.md tiers. Audit corrections that change the plan are folded in where
 11. Frequency entry / honest read-only header (T2-1)
 12. Auto-save RX audio (new — Options flag + per-frame WAV + retention) — **auditor cadence required**
 13. Scanline template bundle export/import (T1-7, half A)
-14. Legacy `.mtm` template import (T1-7, half B) — **deferred 2026-08-29, "maybe one day," see below**
+14. Legacy `.mtm` template import (T1-7, half B) — **rejected 2026-08-29, see below and docs/removed-features.md**
+15. QSO delete + duplicate detection + QSL flags (Tier 3, accepted 2026-08-29) — resume from
+    `~/.claude/plans/logbook-deltas.md`, re-validated against current code first (not started).
+16. Copy / open-externally for received images (Tier 3, accepted 2026-08-29) — bundle into the
+    step-3 full-size viewer, which already has the file on disk (not started).
+
+OmniRig client backend (Tier 3, accepted 2026-08-29) is NOT added here — it's CAT-layer/backend
+work, not UI-findings-driven work this doc's own scope covers, and needs its own design/plan-review
+pass before any numbered step is meaningful. Tracked instead at spec/03-cat-layer.md's own
+"Definition of done" and spec/14-roadmap.md.
 
 Changes vs. the findings' own order and why:
 
@@ -31,9 +40,11 @@ Changes vs. the findings' own order and why:
   specifies the format: this is implementable work, not a research prerequisite. Tail position
   reflects it has no dependents and is the largest item here, not a lower tier. spec/15's stale
   "not reverse-engineered" claim (lines 267-282) should be corrected as part of step 14.
-- QSO **delete** half of T1-4 is demoted to a scope decision: parked by explicit user decision
-  2026-08-15 (spec/14-roadmap.md "Logbook deltas — PARKED", `feedback_logbook_minimal_footprint`
-  memory; a reviewed implementation plan already exists at `~/.claude/plans/logbook-deltas.md`).
+- QSO **delete** half of T1-4 was demoted to a scope decision and parked 2026-08-15
+  (spec/14-roadmap.md "Logbook deltas — PARKED", `feedback_logbook_minimal_footprint` memory), then
+  **accepted again 2026-08-29** (see Tier 3 below) — resume from the existing reviewed plan at
+  `~/.claude/plans/logbook-deltas.md`, re-validating it against current code first. Not yet
+  sequenced into the numbered Sequencing list above; do that when this is actually picked up.
   RX-history delete remains real Tier-1 work (docs/removed-features.md leaves manual prune open).
 - T2-8 (logbook shape) merged into step 5 — prefill, MHz display, and the entry form are the same
   files; doing them separately means touching LogbookPaneViewModel twice.
@@ -41,20 +52,20 @@ Changes vs. the findings' own order and why:
   must go with it) and step 6's `ReceiveHistory` schema migration — do both `ADD COLUMN`s in one
   pass, since the store's migration code requires column order to match `CREATE TABLE` and that
   order becomes permanent once shipped.
-- Step 14 **deferred again, 2026-08-29** (explicit user decision, not a reversion to the earlier
-  false "unreverse-engineered" premise above — that premise stays corrected): parked as "maybe one
-  day," a plain prioritization call, no docs/removed-features.md entry (that doc is for a legacy
-  capability permanently NOT ported, not an open deferral). Fable was consulted on both open Tier-3
-  sub-questions before the deferral (verified against `Draw.cpp`/`Main.cpp`, not guessed): `.mti`
-  import would ride the same parser as `.mtm` (`LoadTemplate` calls the identical
-  `CDrawGroup::LoadFromStream` for both extensions, differing only in the file-dialog filter string
-  — Main.cpp:10090/10134), and the legacy `def1-5.mtm`/`Stock/*.mtm`/`Current.mtm` sample files
-  should NOT be committed as test fixtures (YONIQ's own `License.TXT` calls the *program* freeware
-  under the author's copyright, distinct from the LGPL source license, and the files embed
-  author-created bitmap artwork — the project's own "when in doubt, exclude" license-audit rule
-  applies); fresh fixtures saved from the running legacy binary on originally-authored content, the
-  same precedent already used for the committed `.mmv`/`.bmp` golden vectors, would be the safe
-  alternative if/when this is picked back up.
+- Step 14 **rejected outright, 2026-08-29** (explicit, final user decision — not a reversion to the
+  earlier false "unreverse-engineered" premise above, that correction stays; this is a plain "we
+  don't want it" call, superseding this session's own brief earlier "maybe one day" framing). Has a
+  `docs/removed-features.md` entry (a legacy capability permanently not ported) and a matching
+  correction in `spec/15-template-designer.md`'s Decisions/Deferred sections, which previously called
+  `.mtm` import "not dropped." Before the rejection, Fable was consulted on both open Tier-3
+  sub-questions (verified against `Draw.cpp`/`Main.cpp`, not guessed, and preserved here purely as a
+  historical record in case this is ever reconsidered): `.mti` import would have ridden the same
+  parser as `.mtm` (`LoadTemplate` calls the identical `CDrawGroup::LoadFromStream` for both
+  extensions, differing only in the file-dialog filter string — Main.cpp:10090/10134), and the
+  legacy `def1-5.mtm`/`Stock/*.mtm`/`Current.mtm` sample files would NOT have been safe to commit as
+  test fixtures (YONIQ's own `License.TXT` calls the *program* freeware under the author's
+  copyright, distinct from the LGPL source license, and the files embed author-created bitmap
+  artwork).
 - Step 13 (native template bundle) is fully independent of steps 1-12 (touches only
   `TemplateStore`/`PersistedTemplateElement`/`TxImageEditorPaneViewModel`/`FilePickerService`/
   `en.json`) and can be pulled forward anywhere dependency order doesn't force otherwise.
@@ -450,23 +461,42 @@ compare the rendered TX canvas against a legacy screenshot of the same template.
 
 ## Tier 3 — scope decisions for the user (accept / defer / reject, one line each)
 
-- QSO delete + duplicate detection + QSL flags: parked 2026-08-15, reviewed plan already exists
-  (`~/.claude/plans/logbook-deltas.md`) — resume or keep parked.
-- Camera/webcam TX source: accept/defer.
-- Copy / open-externally / print for received images: copy+open cheap to bundle into the step-3
-  viewer; print separate — decide.
-- Legacy `.mti` (single template item) import alongside `.mtm` in step 14: **moot for now** — step
-  14 itself deferred 2026-08-29 (see the Sequencing section's own note); would accept alongside
-  `.mtm` if/when step 14 is picked back up (same parser, confirmed against `Draw.cpp`/`Main.cpp`).
-- Legacy `.mtm` **export** (write, not read): recommend reject — lossy against the shipped
-  element model, not specced, no stated user need.
-- Richer Gallery filters/sort/bulk actions: accept/defer.
-- External logger / live current-QSO integration beyond ADIF UDP: memory says logbook stays
-  minimal-footprint — presumably reject, confirm.
-- OmniRig client backend: spec/03 lists it, en.json calls it speculative — decide platform scope.
-- Waterfall/spectrum palette customization: accept/defer.
-- QSSTV digital SSTV / DRM / hybrid FTP / repeater: record explicit reject/defer in
-  docs/removed-features.md if rejected.
+- QSO delete + duplicate detection + QSL flags: **accepted 2026-08-29** — resume from the reviewed
+  plan at `~/.claude/plans/logbook-deltas.md` (not yet re-read/re-validated against current code
+  since it was written 2026-08-15; do that before implementing, don't assume it's still accurate as-is).
+- Camera/webcam TX source: **rejected 2026-08-29** — see docs/removed-features.md.
+- Copy / open-externally for received images: **accepted 2026-08-29** — not a legacy MMSSTV/YONIQ
+  feature (no `TPrinter`/print-dialog usage found in `yoniq-old/`, and no clipboard-copy/open-
+  externally precedent either), a plain new-feature request from `ui_findings.md`. Bundle into the
+  step-3 full-size viewer, which already has the file on disk.
+- Print for received images: **rejected 2026-08-29** — user can print from whatever app they open
+  the image in externally (see the accepted item above). Not a legacy capability either, so no
+  docs/removed-features.md entry needed.
+- Legacy `.mti` (single template item) import alongside `.mtm` in step 14: **moot, rejected with
+  step 14** — see docs/removed-features.md's "Legacy `.mtm`/`.mti` template import" entry.
+- Legacy `.mtm` **export** (write, not read): moot — the whole `.mtm`/`.mti` import effort is
+  rejected (see above), so export was never in scope to begin with.
+- Richer Gallery filters/sort/bulk actions: **deferred 2026-08-29** ("maybe later" — not rejected,
+  not scheduled either).
+- External logger / live current-QSO integration beyond ADIF UDP: **already covered, no action
+  needed** — `ScanlineStudio.Core.Logbook` already ships batch ADIF file export/import AND a generic
+  ADIF-over-UDP live streamer (`AdifUdpStreamer.cs`/`AdifUdpStreamingSettings.cs`, the same broadcast
+  standard GridTracker/N1MM/Log4OM understand) — this item was asking about going FURTHER than that
+  (a bespoke native integration with one specific app), which the project's own minimal-footprint
+  logbook decision (`feedback_logbook_minimal_footprint` memory) argues against; treat as reject
+  unless a concrete need for a specific app's native protocol shows up later.
+- OmniRig client backend: **accepted 2026-08-29** — a genuinely new, not-yet-designed backend
+  (`ScanlineStudio.Radio.OmniRig`, Windows-only optional module, COM), per spec/03-cat-layer.md's
+  own design sketch #5. Not started; needs its own design/plan-review pass before implementation,
+  same as any other CAT backend.
+- Waterfall/spectrum palette customization: **re-confirmed rejected 2026-08-29** — this is the same
+  feature as the already-shipped-and-removed "7 per-element waterfall/spectrum colors"
+  (docs/removed-features.md), rejected with real design reasoning on 2026-08-28 (a deliberate
+  SDR-style gradient already shipped, replacing legacy's per-element pickers). Explicitly checked
+  with the user before closing this line, given how recent and reasoned that prior decision was —
+  confirmed still rejected, not reopened.
+- QSSTV digital SSTV / DRM / hybrid FTP / repeater: **rejected 2026-08-29** — see
+  docs/removed-features.md.
 
 ## DSP/concurrency call-outs (per task instruction)
 
