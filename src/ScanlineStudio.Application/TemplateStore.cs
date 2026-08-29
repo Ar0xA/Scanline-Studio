@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
@@ -203,6 +204,268 @@ public sealed partial class TemplateStore : ITemplateStore
         return Task.CompletedTask;
     }
 
+    // Zip-bomb guards (ui_transition_plan.md step 13) -- both caps are enforced against ACTUAL bytes
+    // read during extraction (CopyWithLimitAsync below), never against a zip entry's own declared
+    // `Length` header alone, since that header is untrusted metadata a malicious archive can lie
+    // about (System.IO.Compression's inflate stream keeps producing bytes for as long as the
+    // compressed data says to, regardless of what the header claimed).
+    private const long MaxEntryUncompressedBytes = 64L * 1024 * 1024;
+    private const long MaxTotalUncompressedBytes = 200L * 1024 * 1024;
+
+    // Third leg of the zip-bomb defense, alongside the two size caps above -- bounds entry COUNT
+    // (inode/file-handle exhaustion, unreasonable extraction time), which no size cap alone catches.
+    private const int MaxEntryCount = 1000;
+
+    public async Task ExportAsync(string templateId, string destinationZipPath, CancellationToken ct = default)
+    {
+        var directory = GetTemplateDirectory(templateId);
+        var manifestPath = Path.Combine(directory, "template.json");
+        if (!File.Exists(manifestPath))
+        {
+            throw new InvalidOperationException($"Template '{templateId}' does not exist.");
+        }
+
+        // Checked BEFORE opening destinationZipPath (auditor finding): FileMode.Create truncates an
+        // existing file at that path immediately, so failing later (e.g. the manifest read below)
+        // would otherwise leave a 0-byte .sstemplate behind at a path the user may have chosen to
+        // overwrite a real, different file.
+        await using var zipStream = new FileStream(destinationZipPath, FileMode.Create, FileAccess.Write);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create);
+
+        await AddFileEntryAsync(archive, manifestPath, "template.json", ct).ConfigureAwait(false);
+
+        var thumbnailPath = Path.Combine(directory, "thumbnail.png");
+        if (File.Exists(thumbnailPath))
+        {
+            await AddFileEntryAsync(archive, thumbnailPath, "thumbnail.png", ct).ConfigureAwait(false);
+        }
+
+        var assetsDirectory = Path.Combine(directory, "assets");
+        if (Directory.Exists(assetsDirectory))
+        {
+            foreach (var assetPath in Directory.EnumerateFiles(assetsDirectory))
+            {
+                await AddFileEntryAsync(archive, assetPath, $"assets/{Path.GetFileName(assetPath)}", ct).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task AddFileEntryAsync(ZipArchive archive, string sourcePath, string entryName, CancellationToken ct)
+    {
+        var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
+        await using var entryStream = entry.Open();
+        await using var sourceStream = File.OpenRead(sourcePath);
+        await sourceStream.CopyToAsync(entryStream, ct).ConfigureAwait(false);
+    }
+
+    public async Task<string> ImportAsync(string sourceZipPath, CancellationToken ct = default)
+    {
+        using var zipStream = File.OpenRead(sourceZipPath);
+        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Read);
+
+        // Auditor finding: the per-entry/total-size caps alone don't bound entry COUNT -- a bundle of
+        // e.g. 500k one-byte assets/*.png entries would pass both size caps yet exhaust inodes/file
+        // handles in the user's Pictures folder and take an unreasonably long time to extract. A real
+        // template never has more than a handful of assets; this cap is generous, not tight.
+        if (archive.Entries.Count > MaxEntryCount)
+        {
+            throw new InvalidOperationException($"Bundle contains too many entries ({archive.Entries.Count}, max {MaxEntryCount}).");
+        }
+
+        // Pass 1: validate every entry's NAME before extracting anything, so a malicious entry name
+        // is caught before any file I/O touches it. Size caps are enforced separately, DURING
+        // extraction (ReadEntryWithLimitAsync/CheckedAddWithinTotalCap below) against actual bytes
+        // read -- not here, and not against ZipArchiveEntry.Length (untrusted header metadata a
+        // malicious archive can understate) -- so a rejected-for-size bundle can still have partially
+        // extracted content on disk; the try/catch around the extraction loop below is what actually
+        // guarantees no partial template folder survives, not this pass alone.
+        ZipArchiveEntry? manifestEntry = null;
+        ZipArchiveEntry? thumbnailEntry = null;
+        var assetEntries = new List<(ZipArchiveEntry Entry, string FileName)>();
+
+        foreach (var entry in archive.Entries)
+        {
+            if (entry.FullName.EndsWith('/'))
+            {
+                // A directory entry some zip tools emit for "assets/" itself -- no content of its
+                // own, safe to skip.
+                continue;
+            }
+
+            ValidateBundleEntryName(entry.FullName);
+
+            if (entry.FullName == "template.json")
+            {
+                manifestEntry = entry;
+            }
+            else if (entry.FullName == "thumbnail.png")
+            {
+                thumbnailEntry = entry;
+            }
+            else if (entry.FullName.StartsWith("assets/", StringComparison.Ordinal))
+            {
+                var assetFileName = entry.FullName["assets/".Length..];
+                if (Path.GetFileName(assetFileName) != assetFileName || assetFileName.Length == 0)
+                {
+                    throw new InvalidOperationException($"Bundle contains an unsafe asset entry '{entry.FullName}'.");
+                }
+
+                assetEntries.Add((entry, assetFileName));
+            }
+            else
+            {
+                throw new InvalidOperationException($"Bundle contains an unrecognized entry '{entry.FullName}'.");
+            }
+        }
+
+        if (manifestEntry is null)
+        {
+            throw new InvalidOperationException("Bundle is missing 'template.json'.");
+        }
+
+        // Pass 2: read the manifest bytes (size-limited) and peek at its raw SchemaVersion BEFORE
+        // running it through the typed, polymorphic deserializer -- a future schema version could
+        // contain an element "$type" this build's [JsonDerivedType] list doesn't recognize, which
+        // would otherwise throw a raw JsonException instead of this method's own clear, user-safe
+        // rejection message.
+        var manifestBytes = await ReadEntryWithLimitAsync(manifestEntry, ct).ConfigureAwait(false);
+        using (var manifestDocument = JsonDocument.Parse(manifestBytes))
+        {
+            var schemaVersion = manifestDocument.RootElement.TryGetProperty(nameof(TemplateManifest.SchemaVersion), out var schemaVersionProperty)
+                && schemaVersionProperty.ValueKind == JsonValueKind.Number
+                    ? schemaVersionProperty.GetInt32()
+                    : 0;
+
+            if (schemaVersion > TemplateManifest.CurrentSchemaVersion)
+            {
+                throw new InvalidOperationException(
+                    $"Bundle schema version {schemaVersion} is newer than this application supports (max {TemplateManifest.CurrentSchemaVersion}).");
+            }
+        }
+
+        var manifest = JsonSerializer.Deserialize(manifestBytes, PersistedTemplateJsonContext.Default.TemplateManifest)
+            ?? throw new InvalidOperationException("Bundle's template.json is empty or invalid.");
+
+        // Auditor finding: manifest.Name is untrusted input (a hand-edited or attacker-crafted
+        // template.json can omit "Name" entirely, deserializing it to null) -- CreateTemplateId's own
+        // Sanitize calls name.Trim() unconditionally, which threw a raw NullReferenceException here
+        // instead of this method's own documented "always InvalidOperationException" contract.
+        if (string.IsNullOrEmpty(manifest.Name))
+        {
+            throw new InvalidOperationException("Bundle's template.json is missing a name.");
+        }
+
+        // Never trust the archive's own id/folder name (code-review precedent: SaveTemplateAsync's
+        // own overwrite-by-name lookup already established that only a freshly resolved id is safe
+        // to write under) -- a collision with an existing template would otherwise silently
+        // overwrite it.
+        var templateId = CreateTemplateId(manifest.Name);
+        var directory = GetTemplateDirectory(templateId);
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            long totalBytes = manifestBytes.Length;
+
+            if (thumbnailEntry is not null)
+            {
+                var thumbnailBytes = await ReadEntryWithLimitAsync(thumbnailEntry, ct).ConfigureAwait(false);
+                totalBytes = CheckedAddWithinTotalCap(totalBytes, thumbnailBytes.Length);
+                await File.WriteAllBytesAsync(Path.Combine(directory, "thumbnail.png"), thumbnailBytes, ct).ConfigureAwait(false);
+            }
+
+            if (assetEntries.Count > 0)
+            {
+                Directory.CreateDirectory(Path.Combine(directory, "assets"));
+                foreach (var (assetEntry, assetFileName) in assetEntries)
+                {
+                    var assetBytes = await ReadEntryWithLimitAsync(assetEntry, ct).ConfigureAwait(false);
+                    totalBytes = CheckedAddWithinTotalCap(totalBytes, assetBytes.Length);
+                    await File.WriteAllBytesAsync(Path.Combine(directory, "assets", assetFileName), assetBytes, ct).ConfigureAwait(false);
+                }
+            }
+
+            // Re-minted id, current schema version -- this build's own SaveAsync-equivalent shape,
+            // never the archive's own (possibly older or foreign) manifest.Id/SchemaVersion.
+            var rewritten = manifest with { Id = templateId, SchemaVersion = TemplateManifest.CurrentSchemaVersion };
+            var json = JsonSerializer.Serialize(rewritten, PersistedTemplateJsonContext.Default.TemplateManifest);
+            await File.WriteAllTextAsync(Path.Combine(directory, "template.json"), json, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Best-effort cleanup: never leave a half-imported template folder behind (same
+            // freshly-minted-id-only cleanup convention as TxImageEditorPaneViewModel.SaveTemplateAsync's
+            // own catch block -- this id was minted by THIS call, so deleting it can never destroy a
+            // pre-existing template).
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception cleanupEx)
+            {
+                Log.ImportCleanupFailed(_logger, templateId, cleanupEx);
+            }
+
+            throw;
+        }
+
+        return templateId;
+    }
+
+    /// <summary>Rejects an absolute path, a Windows-style separator (zip entry names are
+    /// forward-slash per the ODA/.NET convention, but a maliciously hand-built archive can still
+    /// embed one), and any <c>..</c> segment — the same path-traversal shape
+    /// <see cref="GetAssetPath"/>'s own doc comment already guards against for a persisted
+    /// <c>AssetFileName</c>, applied here one layer earlier (the zip entry name itself, before it
+    /// ever becomes an <c>AssetFileName</c>).</summary>
+    private static void ValidateBundleEntryName(string entryName)
+    {
+        if (entryName.Length == 0
+            || entryName.Contains('\\', StringComparison.Ordinal)
+            || entryName.StartsWith('/')
+            || entryName.Split('/').Contains(".."))
+        {
+            throw new InvalidOperationException($"Bundle contains an unsafe entry name '{entryName}'.");
+        }
+    }
+
+    private static long CheckedAddWithinTotalCap(long runningTotal, long addedBytes)
+    {
+        var total = runningTotal + addedBytes;
+        if (total > MaxTotalUncompressedBytes)
+        {
+            throw new InvalidOperationException("Bundle exceeds the maximum allowed total uncompressed size.");
+        }
+
+        return total;
+    }
+
+    /// <summary>Reads <paramref name="entry"/>'s content fully into memory, enforcing
+    /// <see cref="MaxEntryUncompressedBytes"/> against the ACTUAL bytes read from the inflate stream
+    /// -- not <see cref="ZipArchiveEntry.Length"/>, which is untrusted header metadata a malicious
+    /// archive can understate (see this file's own zip-bomb-guard comment above
+    /// <see cref="MaxEntryUncompressedBytes"/>).</summary>
+    private static async Task<byte[]> ReadEntryWithLimitAsync(ZipArchiveEntry entry, CancellationToken ct)
+    {
+        await using var entryStream = entry.Open();
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        long total = 0;
+        int read;
+        while ((read = await entryStream.ReadAsync(chunk, ct).ConfigureAwait(false)) > 0)
+        {
+            total += read;
+            if (total > MaxEntryUncompressedBytes)
+            {
+                throw new InvalidOperationException($"Bundle entry '{entry.FullName}' exceeds the maximum allowed size.");
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        return buffer.ToArray();
+    }
+
     private static async Task<TemplateManifest> ReadManifestAsync(string directory, CancellationToken ct)
     {
         var manifestPath = Path.Combine(directory, "template.json");
@@ -316,5 +579,8 @@ public sealed partial class TemplateStore : ITemplateStore
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Template manifest at '{ManifestPath}' is corrupt or truncated; skipping this template, the rest of the rack listing is unaffected")]
         public static partial void CorruptManifestSkipped(ILogger logger, string manifestPath, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Cleanup of partially-imported template '{TemplateId}' failed")]
+        public static partial void ImportCleanupFailed(ILogger logger, string templateId, Exception ex);
     }
 }

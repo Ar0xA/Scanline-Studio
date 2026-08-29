@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
@@ -308,5 +310,227 @@ public sealed class TemplateStoreTests : IDisposable
 
         var text = Assert.IsType<PersistedTextElement>(roundTripped);
         Assert.Equal(original, text);
+    }
+
+    // ui_transition_plan.md step 13 (native template bundle export/import) --------------------------
+
+    [Fact]
+    public void TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToCurrentVersion()
+    {
+        // Verifies the exact claim TemplateManifest's own doc comment makes: a record's POSITIONAL
+        // constructor-parameter default (unlike an init-only property initializer -- see
+        // AudioDeviceSettings.TxVolumePercent's own doc comment for the confirmed-broken case) IS
+        // honored by System.Text.Json for a JSON member absent from the payload. Every real
+        // template.json saved before this field existed lacks "SchemaVersion" entirely -- this is
+        // exactly that shape, not a hypothetical.
+        var json = """{"Id":"old_12345678","Name":"Old Template","SavedAt":"2026-01-01T00:00:00+00:00","Elements":[]}""";
+
+        var manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
+
+        Assert.NotNull(manifest);
+        Assert.Equal(TemplateManifest.CurrentSchemaVersion, manifest!.SchemaVersion);
+    }
+
+    [Fact]
+    public async Task ExportThenImport_MintsAFreshIdAndPreservesNameAndElements()
+    {
+        var store = CreateStore();
+        var originalId = store.CreateTemplateId("Field Day Card");
+        var elements = new List<PersistedTemplateElement>
+        {
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(10, 20, 30), null, 0, 1),
+        };
+        await store.SaveAsync(originalId, "Field Day Card", new PersistedTemplateDocument(elements));
+
+        var zipPath = Path.Combine(_root, "export.sstemplate");
+        await store.ExportAsync(originalId, zipPath);
+
+        var importedId = await store.ImportAsync(zipPath);
+
+        Assert.NotEqual(originalId, importedId);
+        var imported = await store.LoadAsync(importedId);
+        Assert.Equal(elements, imported.Elements);
+        var metadata = (await store.ListAsync()).Single(m => m.Id == importedId);
+        Assert.Equal("Field Day Card", metadata.Name);
+    }
+
+    [Fact]
+    public async Task ExportAsync_UnknownTemplateId_Throws()
+    {
+        var store = CreateStore();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ExportAsync("does-not-exist_11111111", Path.Combine(_root, "out.sstemplate")));
+    }
+
+    [Fact]
+    public async Task ExportAsync_UnknownTemplateId_DoesNotTruncateAPreExistingFileAtTheDestinationPath()
+    {
+        // Auditor finding: the destination FileStream used to open with FileMode.Create (truncating
+        // immediately) BEFORE the source template.json was ever read -- an unknown/vanished
+        // templateId left a 0-byte .sstemplate behind at a path the user may have chosen to overwrite
+        // a real, different file.
+        var store = CreateStore();
+        Directory.CreateDirectory(_root);
+        var destinationPath = Path.Combine(_root, "pre-existing.sstemplate");
+        await File.WriteAllTextAsync(destinationPath, "not a template bundle, just a pre-existing file");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ExportAsync("does-not-exist_11111111", destinationPath));
+
+        Assert.Equal("not a template bundle, just a pre-existing file", await File.ReadAllTextAsync(destinationPath));
+    }
+
+    [Fact]
+    public async Task ImportAsync_ZipMissingTemplateJson_Throws()
+    {
+        var store = CreateStore();
+        var zipPath = BuildRawZip(("thumbnail.png", "not a real png"u8.ToArray()));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+        Assert.Contains("template.json", ex.Message);
+    }
+
+    [Theory]
+    [InlineData("../evil.png")]
+    [InlineData("/etc/evil.png")]
+    [InlineData("assets/../../evil.png")]
+    [InlineData("assets\\evil.png")]
+    public async Task ImportAsync_UnsafeEntryName_ThrowsAndCreatesNoTemplateFolder(string unsafeEntryName)
+    {
+        var store = CreateStore();
+        var zipPath = BuildRawZip(
+            ("template.json", MinimalManifestJson("Evil", schemaVersion: 1)),
+            (unsafeEntryName, "x"u8.ToArray()));
+        var directoriesBefore = Directory.Exists(_root) ? Directory.GetDirectories(_root).Length : 0;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+
+        var directoriesAfter = Directory.Exists(_root) ? Directory.GetDirectories(_root).Length : 0;
+        Assert.Equal(directoriesBefore, directoriesAfter);
+    }
+
+    [Fact]
+    public async Task ImportAsync_SchemaVersionNewerThanSupported_ThrowsBeforeDeserializingElements()
+    {
+        var store = CreateStore();
+        // The elements array intentionally contains a "$type" this build's [JsonDerivedType] list
+        // does not recognize -- proving the schema-version check runs (and rejects) BEFORE the typed,
+        // polymorphic deserialize ever touches Elements, not just that some exception is thrown.
+        var manifestJson = """{"Id":"future_12345678","Name":"Future","SavedAt":"2026-01-01T00:00:00+00:00","SchemaVersion":999,"Elements":[{"$type":"future-effect"}]}""";
+        var zipPath = BuildRawZip(("template.json", Encoding.UTF8.GetBytes(manifestJson)));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+        Assert.Contains("999", ex.Message);
+        Assert.DoesNotContain(await store.ListAsync(), m => m.Name == "Future");
+    }
+
+    [Fact]
+    public async Task ImportAsync_ManifestMissingName_ThrowsInvalidOperationExceptionNotNullReferenceException()
+    {
+        // Auditor finding: manifest.Name is untrusted (a hand-edited or attacker-crafted
+        // template.json can omit "Name" entirely) -- CreateTemplateId's own Sanitize calls
+        // name.Trim() unconditionally, which used to throw a raw NullReferenceException here instead
+        // of this method's own documented "always InvalidOperationException" contract.
+        var store = CreateStore();
+        var manifestJson = """{"Id":"noname_12345678","SavedAt":"2026-01-01T00:00:00+00:00","SchemaVersion":1,"Elements":[]}""";
+        var zipPath = BuildRawZip(("template.json", Encoding.UTF8.GetBytes(manifestJson)));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+        Assert.Contains("name", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ImportAsync_TooManyEntries_ThrowsWithoutExtractingAnything()
+    {
+        var store = CreateStore();
+        var entries = new List<(string, byte[])> { ("template.json", MinimalManifestJson("Many", schemaVersion: 1)) };
+        for (var i = 0; i < 1001; i++)
+        {
+            entries.Add(($"assets/{i}.png", "x"u8.ToArray()));
+        }
+
+        var zipPath = BuildRawZip(entries.ToArray());
+        var directoriesBefore = Directory.GetDirectories(_root).Length;
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+
+        Assert.Contains("too many entries", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(directoriesBefore, Directory.GetDirectories(_root).Length);
+    }
+
+    [Fact]
+    public async Task ImportAsync_SingleEntryExceedsPerEntryCap_Throws()
+    {
+        // Auditor finding: this test writes an honest zip header (BuildRawZip goes through the real
+        // ZipArchive writer), so it does NOT by itself prove the cap ignores ZipArchiveEntry.Length --
+        // an implementation that trusted the header would pass this test identically. That specific
+        // property (ReadEntryWithLimitAsync counts bytes off the actual inflate stream, never
+        // consulting Length) is verified by reading TemplateStore.cs itself, not by this test; this
+        // test only proves the cap actually triggers for genuinely oversized content, using an
+        // all-zero buffer so the zip file on disk stays tiny despite the large decompressed size.
+        var store = CreateStore();
+        var oversizedAsset = new byte[(64 * 1024 * 1024) + 1024];
+        var zipPath = BuildRawZip(
+            ("template.json", MinimalManifestJson("Bomb", schemaVersion: 1)),
+            ("assets/big.png", oversizedAsset));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+        Assert.Contains("maximum allowed size", ex.Message);
+    }
+
+    [Fact]
+    public async Task ImportAsync_TotalAcrossEntriesExceedsCap_ThrowsEvenWhenEachEntryIsIndividuallyUnderThePerEntryCap()
+    {
+        var store = CreateStore();
+        var underPerEntryCap = new byte[55 * 1024 * 1024];
+        var zipPath = BuildRawZip(
+            ("template.json", MinimalManifestJson("Bomb2", schemaVersion: 1)),
+            ("assets/a.png", underPerEntryCap),
+            ("assets/b.png", underPerEntryCap),
+            ("assets/c.png", underPerEntryCap),
+            ("assets/d.png", underPerEntryCap));
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => store.ImportAsync(zipPath));
+        Assert.Contains("total", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ImportAsync_TruncatedZip_ThrowsAndCreatesNoTemplateFolder()
+    {
+        var store = CreateStore();
+        var originalId = store.CreateTemplateId("Truncate Me");
+        await store.SaveAsync(originalId, "Truncate Me", new PersistedTemplateDocument([]));
+        var zipPath = Path.Combine(_root, "truncated.sstemplate");
+        await store.ExportAsync(originalId, zipPath);
+
+        var bytes = await File.ReadAllBytesAsync(zipPath);
+        await File.WriteAllBytesAsync(zipPath, bytes[..(bytes.Length / 2)]);
+        var directoriesBefore = Directory.GetDirectories(_root).Length;
+
+        await Assert.ThrowsAnyAsync<Exception>(() => store.ImportAsync(zipPath));
+
+        Assert.Equal(directoriesBefore, Directory.GetDirectories(_root).Length);
+    }
+
+    private static byte[] MinimalManifestJson(string name, int schemaVersion)
+        => Encoding.UTF8.GetBytes($$"""{"Id":"placeholder","Name":"{{name}}","SavedAt":"2026-01-01T00:00:00+00:00","SchemaVersion":{{schemaVersion}},"Elements":[]}""");
+
+    private string BuildRawZip(params (string EntryName, byte[] Content)[] entries)
+    {
+        var zipPath = Path.Combine(_root, $"raw-{Guid.NewGuid():N}.sstemplate");
+        Directory.CreateDirectory(_root);
+        using (var zipStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write))
+        using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+        {
+            foreach (var (entryName, content) in entries)
+            {
+                var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+                using var entryStream = entry.Open();
+                entryStream.Write(content);
+            }
+        }
+
+        return zipPath;
     }
 }

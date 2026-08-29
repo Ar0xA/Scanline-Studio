@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
+using ScanlineStudio.UI.Services;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -67,6 +68,16 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
 
     public IRelayCommand<TemplateListRowViewModel>? DeleteCommand { get; set; }
 
+    /// <summary>ui_transition_plan.md step 13 -- same "child VM holds a direct reference to the
+    /// parent's command" wiring as the three above.</summary>
+    public IRelayCommand<TemplateListRowViewModel>? ExportCommand { get; set; }
+
+    /// <summary>Disabled while an export for THIS row is in flight -- an export is a real disk write
+    /// (a file-save dialog await plus a zip write), unlike Load/TogglePin/Delete's own near-instant
+    /// operations, so a double-click has a real window to land in without this.</summary>
+    [ObservableProperty]
+    private bool _isExporting;
+
     private static Bitmap? TryLoadThumbnail(string path)
     {
         try
@@ -113,13 +124,16 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     private readonly ITemplateStore _templateStore;
     private readonly ISettingsStore _settingsStore;
     private readonly ILocalizationService _localization;
+    private readonly IFilePickerService _filePickerService;
     private readonly ILogger<ReadyRackViewModel> _logger;
 
-    public ReadyRackViewModel(ITemplateStore templateStore, ISettingsStore settingsStore, ILocalizationService localization, ILogger<ReadyRackViewModel> logger)
+    public ReadyRackViewModel(
+        ITemplateStore templateStore, ISettingsStore settingsStore, ILocalizationService localization, IFilePickerService filePickerService, ILogger<ReadyRackViewModel> logger)
     {
         _templateStore = templateStore;
         _settingsStore = settingsStore;
         _localization = localization;
+        _filePickerService = filePickerService;
         _logger = logger;
         Slots = new ObservableCollection<ReadyRackSlotViewModel>(Enumerable.Range(1, SlotCount).Select(n => new ReadyRackSlotViewModel(n, RecallSlotCommand)));
     }
@@ -259,6 +273,7 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         row.LoadCommand = LoadCommand;
         row.TogglePinCommand = TogglePinCommand;
         row.DeleteCommand = DeleteCommand;
+        row.ExportCommand = ExportCommand;
         return row;
     }
 
@@ -374,6 +389,71 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         await RefreshAsync();
     }
 
+    /// <summary>ui_transition_plan.md step 13 -- zips <paramref name="row"/>'s own template folder to
+    /// a user-chosen <c>.sstemplate</c> path via <see cref="ITemplateStore.ExportAsync"/>. Suggested
+    /// file name reuses the template's own display <see cref="TemplateListRowViewModel.Name"/> (same
+    /// "suggest the obvious name, let the picker's own overwrite-confirm handle a collision"
+    /// convention as every other <c>PickSave*</c> call site in this codebase).</summary>
+    [RelayCommand]
+    private async Task ExportAsync(TemplateListRowViewModel? row)
+    {
+        if (row is null || row.IsExporting)
+        {
+            return;
+        }
+
+        row.IsExporting = true;
+        try
+        {
+            var destinationPath = await _filePickerService.PickSaveTemplateBundleAsync($"{row.Name}.sstemplate");
+            if (destinationPath is null)
+            {
+                return;
+            }
+
+            await _templateStore.ExportAsync(row.Id, destinationPath);
+            StatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Log.ExportFailed(_logger, row.Id, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ExportTemplateFailed");
+        }
+        finally
+        {
+            row.IsExporting = false;
+        }
+    }
+
+    /// <summary>ui_transition_plan.md step 13 -- panel-level (no row target), unlike
+    /// Export/Load/TogglePin/Delete above. Imports via <see cref="ITemplateStore.ImportAsync"/>
+    /// (which always mints a fresh id -- see its own doc comment) and refreshes the list so the
+    /// newly imported template appears immediately, matching <see cref="DeleteAsync"/>'s own
+    /// success-path refresh.</summary>
+    [RelayCommand]
+    private async Task ImportAsync()
+    {
+        try
+        {
+            var sourcePath = await _filePickerService.PickOpenTemplateBundleAsync();
+            if (sourcePath is null)
+            {
+                return;
+            }
+
+            await _templateStore.ImportAsync(sourcePath);
+            StatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Log.ImportFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ImportTemplateFailed");
+            return;
+        }
+
+        await RefreshAsync();
+    }
+
     private async Task<IReadOnlyList<string>> LoadPinnedIdsAsync()
     {
         var settings = await _settingsStore.LoadAsync();
@@ -395,5 +475,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack delete failed: templateId={TemplateId}")]
         public static partial void DeleteFailed(ILogger logger, string templateId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack export failed: templateId={TemplateId}")]
+        public static partial void ExportFailed(ILogger logger, string templateId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack import failed")]
+        public static partial void ImportFailed(ILogger logger, Exception exception);
     }
 }

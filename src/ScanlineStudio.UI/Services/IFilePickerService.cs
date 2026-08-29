@@ -82,4 +82,18 @@ public interface IFilePickerService
     /// verify against upstream YONIQ install data). Returns the picked file's local path, or
     /// <c>null</c> if the user cancelled.</summary>
     Task<string?> PickMmvFileAsync();
+
+    /// <summary>ui_transition_plan.md step 13 -- Templates panel's Export action. Prompts for a save
+    /// location pre-filled with <paramref name="suggestedFileName"/>, typed to <c>.sstemplate</c>
+    /// (Scanline Studio's own native template bundle format -- a zipped template folder, see
+    /// <c>ITemplateStore.ExportAsync</c>). Returns the chosen local path, or <c>null</c> if the user
+    /// cancelled.</summary>
+    Task<string?> PickSaveTemplateBundleAsync(string suggestedFileName);
+
+    /// <summary>ui_transition_plan.md step 13 -- Templates panel's Import action. Typed to
+    /// <c>.sstemplate</c> only (step 14's legacy <c>.mtm</c> importer, not yet built, will extend
+    /// this or add its own picker once that format's scope is decided -- deliberately not
+    /// anticipated here). Returns the picked file's local path, or <c>null</c> if the user
+    /// cancelled.</summary>
+    Task<string?> PickOpenTemplateBundleAsync();
 }

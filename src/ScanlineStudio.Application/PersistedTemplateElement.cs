@@ -103,5 +103,30 @@ public sealed partial class PersistedTemplateJsonContext : JsonSerializerContext
 /// the source-generated <see cref="PersistedTemplateJsonContext"/> requires it (a <c>JsonTypeInfo&lt;T&gt;</c>
 /// property can't be less accessible than its own type) — callers of <see cref="ITemplateStore"/>
 /// only ever see <see cref="PersistedTemplateDocument"/>/<see cref="TemplateMetadata"/> separately,
-/// per that interface's own decided public shape.</summary>
-public sealed record TemplateManifest(string Id, string Name, DateTimeOffset SavedAt, IReadOnlyList<PersistedTemplateElement> Elements);
+/// per that interface's own decided public shape.
+///
+/// <paramref name="SchemaVersion"/> (ui_transition_plan.md step 13, native template bundle
+/// export/import) is a trailing CONSTRUCTOR-parameter default, deliberately not an <c>init</c>-only
+/// property initializer — <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent"/>'s
+/// own doc comment documents a real, confirmed System.Text.Json limitation where a property
+/// initializer on an <c>init</c>-only auto-property is NOT applied for a member absent from the JSON
+/// payload; a record's POSITIONAL constructor parameter default is a different System.Text.Json code
+/// path (constructor-argument binding, not object-initializer binding) and IS honored for a missing
+/// member — confirmed for this exact type via
+/// <c>TemplateStoreTests.TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToCurrentVersion</c>,
+/// not assumed. Every <c>template.json</c> written before this field existed therefore deserializes
+/// as <see cref="CurrentSchemaVersion"/> (1) — the correct value, since 1 is what those files
+/// actually are.</summary>
+public sealed record TemplateManifest(string Id, string Name, DateTimeOffset SavedAt, IReadOnlyList<PersistedTemplateElement> Elements, int SchemaVersion = TemplateManifest.CurrentSchemaVersion)
+{
+    /// <summary>Bumped only when <c>template.json</c>'s own shape changes in a way an OLDER app
+    /// build could not safely round-trip (e.g. a new required element kind) — the polymorphic
+    /// <see cref="PersistedTemplateElement"/>/<see cref="PersistedTextElement"/> family's own
+    /// established "trailing, defaulted, missing-property-deserializes-to-default" additive
+    /// convention (see <see cref="PersistedTextElement"/>'s own doc comment) does NOT need a bump;
+    /// this exists specifically for <c>ITemplateStore.ImportAsync</c> to reject a bundle from a
+    /// FUTURE, incompatible app version cleanly instead of throwing a raw
+    /// <see cref="System.Text.Json.JsonException"/> partway through deserializing an element kind
+    /// this build doesn't recognize.</summary>
+    public const int CurrentSchemaVersion = 1;
+}

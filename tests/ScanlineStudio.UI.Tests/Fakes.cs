@@ -1216,6 +1216,46 @@ internal sealed class FakeTemplateStore : ITemplateStore
         DeletedIds.Add(templateId);
         return Task.CompletedTask;
     }
+
+    public Exception? ExportExceptionToThrow { get; set; }
+
+    public List<(string TemplateId, string DestinationZipPath)> Exported { get; } = [];
+
+    public Task ExportAsync(string templateId, string destinationZipPath, CancellationToken ct = default)
+    {
+        if (ExportExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        if (!_templates.ContainsKey(templateId))
+        {
+            throw new InvalidOperationException($"Template '{templateId}' does not exist.");
+        }
+
+        Exported.Add((templateId, destinationZipPath));
+        return Task.CompletedTask;
+    }
+
+    public Exception? ImportExceptionToThrow { get; set; }
+
+    /// <summary>What <see cref="ImportAsync"/> registers as the imported template's own content --
+    /// a test configures this to whatever it wants <see cref="ReadyRackViewModel.RefreshAsync"/> to
+    /// pick up afterward. Defaults to an empty document under a fixed name, matching this fake's own
+    /// "don't require every test to configure everything" convention elsewhere.</summary>
+    public (string Name, PersistedTemplateDocument Document) ImportResult { get; set; } = ("Imported Template", new PersistedTemplateDocument([]));
+
+    public Task<string> ImportAsync(string sourceZipPath, CancellationToken ct = default)
+    {
+        if (ImportExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        var templateId = CreateTemplateId(ImportResult.Name);
+        _templates[templateId] = (ImportResult.Name, DateTimeOffset.Now, ImportResult.Document);
+        return Task.FromResult(templateId);
+    }
 }
 
 internal sealed class FakeImageFileLoader : IImageFileLoader
@@ -1342,6 +1382,20 @@ internal sealed class FakeFilePickerService : IFilePickerService
     public string? MmvPathToReturn { get; set; } = "/tmp/fake.mmv";
 
     public Task<string?> PickMmvFileAsync() => Task.FromResult(MmvPathToReturn);
+
+    public string? SaveTemplateBundlePathToReturn { get; set; } = "/tmp/fake.sstemplate";
+
+    public string? LastSuggestedTemplateBundleFileName { get; private set; }
+
+    public Task<string?> PickSaveTemplateBundleAsync(string suggestedFileName)
+    {
+        LastSuggestedTemplateBundleFileName = suggestedFileName;
+        return Task.FromResult(SaveTemplateBundlePathToReturn);
+    }
+
+    public string? OpenTemplateBundlePathToReturn { get; set; } = "/tmp/fake-open.sstemplate";
+
+    public Task<string?> PickOpenTemplateBundleAsync() => Task.FromResult(OpenTemplateBundlePathToReturn);
 }
 
 internal sealed class FakeUrlLauncher : IUrlLauncher
