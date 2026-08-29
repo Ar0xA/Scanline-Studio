@@ -260,6 +260,7 @@
   "ImageViewer.ZoomOut": "-",
   "ImageViewer.ZoomIn": "+",
   "ImageViewer.Copy": "Copy",
+  "ImageViewer.OpenExternally": "Open Externally",
   "ImageViewer.OpenFileLocation": "Open File Location",
   "ImageViewer.Close": "Close",
   "ImageViewer.Previous": "Previous",

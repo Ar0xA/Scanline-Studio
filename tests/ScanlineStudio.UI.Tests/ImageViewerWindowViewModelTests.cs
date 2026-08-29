@@ -245,6 +245,30 @@ public sealed class ImageViewerWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void OpenExternallyCommand_OpensTheFileItself_NotTheContainingDirectory()
+    {
+        // ui_transition_plan.md step 16 -- the whole point of this command, distinct from
+        // OpenFileLocation above: the FULL file path goes to IUrlLauncher.Open, not the directory.
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = Create([EntryVm("a", "/tmp/history/frame.png")], 0, StoreWithThumbnail(), urlLauncher: urlLauncher);
+
+        vm.OpenExternallyCommand.Execute(null);
+
+        Assert.Equal("/tmp/history/frame.png", Assert.Single(urlLauncher.OpenedUrls));
+    }
+
+    [AvaloniaFact]
+    public void OpenExternallyCommand_NoEntries_DoesNotThrow_DoesNotOpenAnything()
+    {
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = Create([], 0, StoreWithThumbnail(), urlLauncher: urlLauncher);
+
+        vm.OpenExternallyCommand.Execute(null);
+
+        Assert.Empty(urlLauncher.OpenedUrls);
+    }
+
+    [AvaloniaFact]
     public void CloseCommand_RaisesCloseRequested()
     {
         var vm = Create([EntryVm("a")], 0, StoreWithThumbnail());

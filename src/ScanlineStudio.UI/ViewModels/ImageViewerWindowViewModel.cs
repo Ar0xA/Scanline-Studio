@@ -175,6 +175,24 @@ public sealed partial class ImageViewerWindowViewModel : ViewModelBase
         _urlLauncher.Open(string.IsNullOrEmpty(directory) ? path : directory);
     }
 
+    /// <summary>ui_transition_plan.md step 16 (T1-5 follow-up, Tier 3 accepted 2026-08-29) --
+    /// distinct from <see cref="OpenFileLocation"/> above, which opens the containing FOLDER: this
+    /// opens the image FILE itself in the OS's own default handler for it (an external image viewer/
+    /// editor). <see cref="IUrlLauncher.Open"/> already does this correctly for a file path with no
+    /// change needed there -- <c>UseShellExecute = true</c> (its own doc comment) resolves a file
+    /// path to its default application the same way it resolves a folder path to the default file
+    /// manager, so this is a thin, obvious call, not new plumbing.</summary>
+    [RelayCommand]
+    private void OpenExternally()
+    {
+        if (Current?.Entry.FilePath is not { } path)
+        {
+            return;
+        }
+
+        _urlLauncher.Open(path);
+    }
+
     [RelayCommand]
     private void Close() => CloseRequested?.Invoke();
 
