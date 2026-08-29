@@ -140,13 +140,16 @@ Full detail: `spec/14-roadmap-archive.md`.
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
-- ~~Logbook deltas~~ — **PARKED 2026-08-15, user redirect**: QSL sent/received flags,
-  duplicate-QSO detection (by callsign/band), delete-a-QSO. Was explicitly carved out of the
-  shipped Logbook pane (`QsoRecord.cs:12-13`); a full 2-round-plan-reviewed implementation plan
-  exists at `/home/artien/.claude/plans/logbook-deltas.md` but the user reframed scope before
-  implementation started: "basics only" for the Logbook pane itself (already sufficient — add/
-  edit/search/ADIF export), prioritize SSTV-side work over deeper logbook features (see
-  `feedback_logbook_minimal_footprint` memory). Not resumed unless asked. **Correction 2026-08-14**
+- ~~Logbook deltas~~ — **PARKED 2026-08-15, ACCEPTED AGAIN 2026-08-29** (user redirect, then
+  reversed): QSL sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO. Was
+  explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`); a full
+  2-round-plan-reviewed implementation plan exists at `/home/artien/.claude/plans/logbook-deltas.md`
+  but the user reframed scope before implementation started: "basics only" for the Logbook pane
+  itself (already sufficient — add/edit/search/ADIF export), prioritize SSTV-side work over deeper
+  logbook features (see `feedback_logbook_minimal_footprint` memory). **2026-08-29: accepted as a
+  `ui_transition_plan.md` Tier 3 decision** — resume from the existing plan doc, re-validating it
+  against current code first (it predates several shipped features and may be stale). **Correction
+  2026-08-14**
   (predates the redirect, kept for history): Gallery "Log entry"/"Open in log" cross-pane wiring is
   NOT open — verified real, shipped 2026-08-11 (`OpenInLogCommand`/`QsoLinkWindowView`, commit
   `13a8ca7`, `spec/16`'s own entry).
@@ -212,9 +215,11 @@ plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in 
 dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itself (narrowed
 2026-08-22 — a separate, CAT-sourced S-meter now exists, `RadioState.SignalStrengthDb` →
 `RadioStatusViewModel.RxLevelDb`, via rigctld's `l STRENGTH`/Hamlib; this item is specifically about
-a waterfall-native meter, not "no S-meter exists at all"); legacy debug "digital scope" tool); **flrig client backend** and
-**OmniRig-as-client** (`[[03-cat-layer]]`'s "maybe later, not committed" note — worth adding only if
-real post-launch user demand shows up, not a design-now item). **Added 2026-08-25**: Transmit tab
+a waterfall-native meter, not "no S-meter exists at all"); legacy debug "digital scope" tool); **flrig client backend** (since
+shipped, see [[03-cat-layer]]'s "Definition of done") and **OmniRig-as-client** (since accepted
+2026-08-29 as a real committed goal, still not designed — see this document's own OmniRig entry
+above and [[03-cat-layer]]'s matching update; both quotes here are historical, describing an earlier
+"not committed" state). **Added 2026-08-25**: Transmit tab
 Queue/TX-log/Recently-sent cards — user decision "maybe one day," moved out of Tier 2. No queueing,
 sent-frame-log, or send-history concept exists anywhere in `TxControlsPaneViewModel`; each needs a
 new subsystem (persistence + UI), not a wiring fix. **Added 2026-08-25 (second pass)**: the Transmit
@@ -1284,8 +1289,9 @@ UI and remaining dialogs before it needs a plugin system. Phase 5 is now just ex
 - flrig client backend — **done** (see [[03-cat-layer]]'s "Definition of done"), implemented ahead of
   the original "maybe later" plan below because the user asked for it directly, not because post-launch
   demand materialized.
-- **Maybe later** (not committed, no code/design yet): OmniRig-as-client. Revisit once actual user
-  requests make the priority call for real, rather than guessing now.
+- **Accepted 2026-08-29** (`ui_transition_plan.md` Tier 3 decision, was "maybe later"): OmniRig-as-
+  client. Still no code/design — needs its own design/plan-review pass before implementation, same
+  as any other CAT backend, but is now a real committed goal rather than a revisit-if-asked item.
 - [[07-image-pipeline]]: full crop/resize/overlay, stock library, RX history — **done** (`ITransmitImagePreparer`, `TxImageEditorPaneViewModel`/`TxImageEditorPaneView`, `IStockImageLibrary`, `IReceiveHistoryStore`). **Filters shipped too, corrected**: this line used to say filter/preset support was deferred to [[11-plugin-system]] as a separate plugin surface — instead it shipped in-interface as `ITransmitImagePreparer.ApplyAdjustments` (brightness/contrast/saturation/gamma/sharpen/denoise), and template rendering shipped as `ApplyTemplate` ([[15-template-designer]]); [[11-plugin-system]] never gained an `IImageFilter` extension point.
 - [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed. **Mostly done, corrected 2026-08-22** — this line used to say "Not started." The logbook store, ADIF import/export, ADIF-UDP forwarding, QRZ.com online lookup/upload, and the Logbook UI pane all shipped (2026-08-07 through 2026-08-15). Only the **offline** callsign/country lookup remains not started, blocked on a human emailing Clublog for a `cty.dat` API key (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note).
 - [[09-ui]]: remaining dialogs from the inventory table — `OptionsDialog` (tabbed general/TX/RX/audio settings), `RadioSettingsDialog`, `MacroKeyEditor`, `ColorSettingsDialog`, `LanguageSettingsDialog`. (Moved from Phase 5 — `PluginManagerDialog` stays in Phase 5, it has no purpose without the plugin host it's Phase 5's own primary deliverable.)

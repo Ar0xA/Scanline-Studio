@@ -24,7 +24,9 @@ not the current state. Known gaps still open, confirmed against the current code
   work below). `BoxElementViewModel.CornerRadius` renders via a hand-built rounded-rectangle `IPath`
   (`TransmitImagePreparer.BuildBoxPath`: 4 `PathBuilder.AddArc` quarter-arcs, since ImageSharp.Drawing
   2.1.7 has no rounded-rect primitive) — closes the box-elements friction risk below.
-- **Legacy `.mtm` import** — still deferred, per this document's own Decisions section below (unchanged).
+- **Legacy `.mtm` import** — **rejected 2026-08-29** (user decision, reversing the earlier "deferred,
+  not dropped" call below — see the Rejected section, which now supersedes the old Decisions/Deferred
+  framing further down this document).
 - **Element resize** — built 2026-08-18: 8-handle resize (`TxImageEditorPaneView.ResizeHandle` — 4
   corners + 4 edges — via `ComputeElementResize`) plus Shift-drag aspect-lock, closing auditor finding
   2026-08-17 item 18. Multi-select move is unrelated and still not built — see next bullet.
@@ -52,9 +54,10 @@ to DSP/codec math only, CLAUDE.md §2).
 
 Concretely: the scene-graph object model, `.mtm` reverse-engineering, `CDrawOle`/OLE embedding, and
 the `CItems`-successor plugin surface are **dropped as 1.1 goals entirely**, not just deferred
-further — see Non-goals. `.mtm` *import* specifically is **not dropped**, only sequenced after 1.1's
-modern core ships — see Deferred, below, which preserves this document's original legacy research
-for when that's picked up. **Next step is plan-review** (UI/UX design decisions get an auditor
+further — see Non-goals. `.mtm` *import* was originally sequenced after 1.1's modern core rather than
+dropped, but is now **rejected outright (2026-08-29, user decision)** — see the Rejected section
+below, which preserves this document's original legacy research as a historical record only, not a
+live reference for future work. **Next step is plan-review** (UI/UX design decisions get an auditor
 plan-review pass before implementation, same as any other UI/UX design work) — done, and
 implementation is complete as of 2026-08-18 (see Status above).
 
@@ -150,9 +153,9 @@ marking a margin inside the edges (edge columns are where slant/sync artifacts l
 
 ## Decisions from this session (resolving the 3 open questions Opus flagged)
 
-1. **Legacy `.mtm` import**: real goal, confirmed by the user — **deferred to after 1.1's modern
-   core ships**, not part of the initial build. The Deferred section below remains the reference for
-   this when it's picked up.
+1. **Legacy `.mtm` import**: originally a real goal, confirmed by the user — **deferred to after
+   1.1's modern core ships**, not part of the initial build. **Superseded 2026-08-29: rejected
+   outright** (see the Rejected section further down) — not picked back up after 1.1 shipped.
 2. **Multi-line/paragraph text frequency**: SSTV text is always short. Shrink-to-fit is the primary
    and sufficient auto-fit behavior; a separate wrap-mode is lower priority, can be deferred or
    dropped.
@@ -222,7 +225,8 @@ Perspective transform, vertical/stacked text, multi-color gradients, texture-bru
 embedding, and a CItems-equivalent `ITemplateItem` plugin surface** (this reverses this document's
 own earlier proposal; **user decision 2026-08-16: move it fully out of scope**, not just deferred —
 no CItems-successor extension point is planned at all), and "preview as received" (decision 3 above).
-Legacy `.mtm` *import* is a real future goal, not a non-goal — see Decisions above.
+Legacy `.mtm` *import* was carved out of this Non-goals list as a real future goal at the time this
+was written; **as of 2026-08-29 it is rejected too** — see the Rejected section below.
 
 **Cross-references fixed 2026-08-16**: [[11-plugin-system]] and
 [docs/removed-features.md](../docs/removed-features.md) no longer claim a future `ITemplateItem`/
@@ -230,10 +234,15 @@ CItems-successor extension point tied to this document — both now state it as 
 acknowledged gap. [[07-image-pipeline]] and [[14-roadmap]] no longer carry this document's old
 "specified but deferred past v1" framing.
 
-## Deferred, not dropped: legacy `.mtm` import
+## Rejected 2026-08-29: legacy `.mtm` import (was "deferred, not dropped")
 
-This section preserves this document's original research so it's not lost — do this work only after
-1.1's modern core (above) ships, per the Decisions section.
+**User decision, explicit and final** — reverses every "not dropped" / "real future goal" statement
+elsewhere in this document. Scanline Studio's own native `.sstemplate` bundle format
+(`ui_transition_plan.md` step 13, shipped) already covers template sharing/portability going
+forward; legacy `.mtm`/`.mti` files from an existing MMSSTV/YONIQ install are simply not imported.
+See `docs/removed-features.md` for the formal removed-capability entry. This section preserves this
+document's original research below purely as a historical record — it is **not** a live reference
+for future work, and this sub-effort will not be picked back up.
 
 ### What legacy's template designer actually is
 
@@ -318,7 +327,7 @@ subtype onto the closest existing `TemplateElement` subtype (`CDrawText`→`Temp
 `CDrawOle`/any unsupported element per the drop policy above, rather than blocking the whole
 import.
 
-### Definition of done (for this sub-effort specifically, once picked up)
+### Definition of done (historical — this sub-effort is rejected, not picked up)
 
 - [ ] `.mtm` format reverse-engineered and documented (cross-checked against `Draw.cpp`'s `Load`/
       `Save` methods), including confirming or refuting the `PARALIST.BIN` relationship noted above.
@@ -348,8 +357,9 @@ import.
   accurate (those files no longer claim a future `ITemplateItem` extension point tied to this
   document).
 
-**Real open items, as of 2026-08-18** (see Status above for full list): legacy `.mtm` import (still
-intentionally deferred) and multi-select move. Box-element corner-radius and multi-handle/
+**Real open items, as of 2026-08-29**: multi-select move only — legacy `.mtm` import (previously
+listed here as "still intentionally deferred") is now rejected outright, see the Rejected section
+above. Box-element corner-radius and multi-handle/
 aspect-locked element resize both shipped the same day (see Known gaps above), alongside a same-day
 batch of Bold/Italic text styling (real vendored font-file variants, not synthesized), DIST/BEAM
 insert-field chips, the legacy "3D" stacked-copy text effect, bitmap-pattern text fill, clipboard-paste

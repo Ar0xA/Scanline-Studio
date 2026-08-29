@@ -588,3 +588,47 @@ and its resolution, verified directly against current source, not inferred from 
   to suit that hardware's own VOX timing — this port always sends legacy's fixed 8-tone burst and
   alternating footer (mode 0's own behavior), matching
   legacy's own default (unchecked) state.
+
+## Camera/webcam TX image source
+
+- **Legacy**: `PicSel.cpp`'s camera-capture path — lets an operator use a live webcam frame as the TX
+  source image, alongside the file/clipboard sources this port already has.
+- **Replacement**: none. Removed by direct user request (2026-08-29), a `ui_transition_plan.md` Tier
+  3 scope decision — not attempted, not architecturally blocked, purely a "don't want it" call.
+- **Impact**: an operator wanting to send a live camera frame must capture it with separate software
+  first and import it as a normal file/clipboard image — no in-app camera capture exists or is
+  planned.
+
+## Legacy `.mtm`/`.mti` template import
+
+- **Legacy**: `Draw.cpp`'s `CDrawGroup::SaveToStream`/`LoadFromStream` (lines 4963-5385, per-element
+  records dispatched via `CM_*` in `Draw.h:80-88`) — the binary format backing legacy's saved TX
+  templates (`def1-5.mtm`, `t1-5.mtm`, `Stock/*.mtm`, `Current.mtm`) and its single-item variant
+  (`.mti`, confirmed to share the identical `CDrawGroup::LoadFromStream` path, differing only in the
+  file-picker's extension filter — `Main.cpp:10090`/`10134`).
+- **Replacement**: Scanline Studio's own native `.sstemplate` bundle format
+  (`ui_transition_plan.md` step 13, shipped 2026-08-29) covers template sharing/portability going
+  forward — but it is a Scanline Studio-to-Scanline Studio format only, not an importer for existing
+  legacy content. `spec/15-template-designer.md`'s own "Decisions"/"Deferred, not dropped" sections
+  originally scoped `.mtm` import as a real (if sequenced-later) goal; this entry and that document's
+  own corrected "Rejected" section supersede that.
+- **Impact**: an operator with existing `.mtm`/`.mti` templates from a legacy MMSSTV/YONIQ install
+  cannot import them into Scanline Studio — they would need to manually recreate the template in the
+  new TX Template Editor. Removed by direct user request (2026-08-29), a `ui_transition_plan.md` step
+  14 / Tier 3 scope decision — not attempted, not architecturally blocked (the format is fully
+  specified by `Draw.cpp`, per that document's own research), purely a "don't want it" call.
+
+## QSSTV specialist workflows (digital SSTV, DRM, hybrid/FTP upload, repeater support)
+
+- **Legacy**: not a YONIQ/MMSSTV feature at all — these are QSSTV-specific workflows (QSSTV is this
+  project's secondary cross-reference for DSP/decoding edge cases only, per `CLAUDE.md`'s top-of-file
+  precedence note, never a port target in its own right). No `yoniq-old/` source implements digital
+  SSTV modes, DRM, hybrid/FTP picture upload, or SSTV repeater support.
+- **Replacement**: none, and none planned. Scanline Studio stays a pure analog-SSTV application,
+  matching its actual port target (YONIQ/MMSSTV).
+- **Impact**: an operator wanting digital-SSTV modes, DRM, FTP-based picture sharing, or repeater
+  operation needs a separate application (e.g. QSSTV itself, on a platform QSSTV supports) —
+  Scanline Studio was never going to cover this ground and does not now. Rejected by direct user
+  request (2026-08-29), a `ui_transition_plan.md` Tier 3 scope decision recorded here per that
+  document's own instruction (record explicit reject/defer if rejected), even though nothing is
+  technically being "removed" from a port that never included it.

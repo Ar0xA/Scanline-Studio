@@ -44,8 +44,8 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
    instance. flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld
    users. Implemented — see "Definition of done" below.
 
-**Maybe later, not committed** (see [[14-roadmap]]'s Phase 4 entry — revisit once there's real user
-demand, not a guess made now):
+**Accepted 2026-08-29** (`ui_transition_plan.md` Tier 3 decision — was "maybe later, not committed";
+now a real committed goal, still not yet designed/scheduled):
 
 5. **OmniRig client** (`ScanlineStudio.Radio.OmniRig`, Windows-only optional module, COM) — talks to an
    already-running OmniRig instance as a client, the same relationship as (2)/flrig above. This is
