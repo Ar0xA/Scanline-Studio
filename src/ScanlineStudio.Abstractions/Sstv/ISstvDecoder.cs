@@ -119,6 +119,50 @@ public interface ISstvDecoder
     /// isolation follows <see cref="PushSamples"/>.</summary>
     event Action<SstvModeDefinition>? DecodeRestarted;
 
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): a per-reception identity,
+    /// incremented exactly once per reception -- ON <see cref="ModeDetected"/>, before that event
+    /// fans out to any subscriber -- so every independent subscriber (a caller's own arm/close state
+    /// machine, an audio-slice correlator, a history recorder, a UI pane) reads the IDENTICAL value
+    /// for the same reception regardless of subscription order, with no coordination needed between
+    /// them. See <c>docs/plans/step12-auto-save-rx-audio-plan.md</c>'s "Identity" section for the
+    /// full design this exists for.
+    ///
+    /// <b>Contract, binding on every implementation:</b> monotonic for this instance's lifetime,
+    /// never reused -- the first real reception's value is <c>1</c> (an <see
+    /// cref="System.Threading.Interlocked.Increment(ref long)"/> from a 0-initialized field, NEVER a
+    /// post-increment idiom that would make the first value <c>0</c>) -- <c>0</c> is reserved to mean
+    /// "no reception yet"/"unset," and a consumer correlating by this value must treat <c>0</c> as
+    /// never matching a real reception. <see cref="DecodeRestarted"/> NEVER increments this -- see
+    /// below for why.
+    ///
+    /// <b><see cref="DecodeRestarted"/> does not always mean "new reception," so this must not be
+    /// bumped there</b>: the dominant ordering (<see cref="DecodeRestarted"/> fires first, for the
+    /// OLD image, with the new mode's own <see cref="ModeDetected"/> arriving later, possibly in a
+    /// much later <see cref="PushSamples"/> call) and the minority ordering (AVT,
+    /// <see cref="ForceMode"/>-into-AVT: <see cref="ModeDetected"/> for the NEW reception fires
+    /// first, then <see cref="DecodeRestarted"/> closes out the OLD image, both within the SAME
+    /// <see cref="PushSamples"/> call) both mean a value bumped on <see cref="DecodeRestarted"/>
+    /// could not reliably distinguish "the restart my own arm already accounted for" from "a
+    /// genuinely new restart of the reception I just armed" -- this is true even for an ordinary
+    /// same-mode-to-same-mode restart (e.g. Scottie 1 -&gt; Scottie 1), since every
+    /// <see cref="SstvModeDefinition"/> is a shared <c>public static readonly</c> singleton, not a
+    /// fresh instance per reception.
+    ///
+    /// <b>Precondition a consumer keying same-epoch <see cref="DecodeRestarted"/> suppression against
+    /// a separate push-sequence counter depends on, stated here since it constrains every caller of
+    /// <see cref="PushSamples"/>, not just this property:</b> a single <see cref="PushSamples"/> call
+    /// must never itself contain two independent restart-triggering events -- true today only
+    /// because live-capture pushes are chunked at a bounded size (the production audio-capture
+    /// session's own drain-buffer size) and file-decode pushes are similarly bounded. Any test
+    /// harness driving <see cref="PushSamples"/> directly (including a fake audio engine that accepts
+    /// arbitrary-length buffers) MUST chunk its pushes to the same bound, or a single oversized test
+    /// buffer containing two real restarts can collapse them into one apparent push and produce a
+    /// false suppression a real caller would never see.
+    ///
+    /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/>'s own concurrency
+    /// note.</summary>
+    long ReceptionSequence { get; }
+
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
     /// (<c>CLVL::Init</c>) at every TX&lt;-&gt;RX transition (`Sound.cpp:398,443`) -- callers should
     /// invoke this at the same transition points (ultracode audit finding #6).
@@ -157,6 +201,26 @@ public interface ISstvDecoder
     /// same group-delay compensation legacy applies for a toggle while locked, on whichever thread
     /// next calls <see cref="PushSamples"/>.</summary>
     void RequestNotch(bool enabled, double? frequencyHz);
+
+    /// <summary>Options Advanced-tab PLL demodulator tuning (backlog item,
+    /// `docs/plans/options-stub-item1-pll-tuning-plan.md`) — direct port of legacy's own live-edit
+    /// shape (<c>Option.cpp</c>'s Save handler calling <c>CPLL::SetVcoGain</c>/<c>MakeLoopLPF</c>/
+    /// <c>MakeOutLPF</c> on the live decoder instance). Same deferred, last-request-wins,
+    /// call-from-any-thread shape as <see cref="RequestNotch"/> — applied on whichever thread next
+    /// calls <see cref="PushSamples"/>. Affects BOTH the picture-path PLL demodulator (when
+    /// <c>DemodType.Pll</c> is selected) and the always-PLL AVT-training demodulator, matching
+    /// legacy's own single <c>m_pll</c> instance serving both roles.</summary>
+    void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz);
+
+    /// <summary>Options Advanced-tab zero-crossing demodulator tuning (backlog item,
+    /// `docs/plans/options-stub-item2-zerocrossing-tuning-plan.md`) — direct port of legacy's own
+    /// live-edit shape (<c>Option.cpp</c>'s Save handler calling <c>CFQC::CalcLPF</c> on the live
+    /// decoder instance). Same deferred, last-request-wins, call-from-any-thread shape as
+    /// <see cref="RequestNotch"/>/<see cref="RequestPllTuning"/> — applied on whichever thread next
+    /// calls <see cref="PushSamples"/>. Affects BOTH the picture-path zero-crossing demodulator (when
+    /// <c>DemodType.ZeroCrossing</c> is selected) and the AFC sync-frequency-measurement counter,
+    /// matching legacy's own single <c>m_fqc</c> instance serving both roles.</summary>
+    void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz);
 
     /// <summary>Arms a one-shot Decoder Trace capture — the port of legacy's real oscilloscope
     /// trigger (<c>TTScope</c>/<c>CScope</c>, <c>TrigNext</c>/<c>SBTrigClick</c>). Two independent
@@ -204,6 +268,24 @@ public interface ISstvDecoder
     /// <see cref="ModeDetected"/>/<see cref="DecodeRestarted"/> events, are asynchronous relative to
     /// this call.</summary>
     void ForceMode(SstvModeDefinition mode);
+
+    /// <summary>ui_transition_plan.md step 10 (T2-5): pins every FUTURE detected reception to
+    /// <paramref name="mode"/> — <see langword="null"/> unlocks, returning to ordinary VIS
+    /// auto-detection. Genuinely NEW UI/workflow (no legacy precedent for a persistent RX mode
+    /// lock — legacy's own related state, <c>CSSTVDEM::m_SyncMode</c>/<c>RxAutoPush</c>/<c>SBMClick</c>,
+    /// maps to <see cref="ForceMode"/> above and the separate auto-detect pause feature, not to this).
+    /// Independent of <see cref="ForceMode"/>: VIS header detection keeps running exactly as without
+    /// a lock (so <see cref="IsIdle"/>/decoder-swap machinery/history-recording all behave correctly
+    /// during silence — a locked channel with nothing arriving stays genuinely idle, it does not
+    /// synthesize receptions), and a manual <see cref="ForceMode"/> call always wins its OWN
+    /// reception as a one-shot exception, leaving the lock itself unchanged for the reception after
+    /// it. Only the MODE actually committed once a reception is detected gets substituted; a
+    /// detected AVT signal is never substituted (v1 limitation — locking to or from AVT is not
+    /// supported), and the substitution happens after the detected mode's own header/anchor math has
+    /// already run, so it never corrupts sync-anchor computation for the signal actually received.
+    /// Safe to call from any thread; deferred (last-request-wins) and applied on whichever thread
+    /// next calls <see cref="PushSamples"/>, same contract as <see cref="ForceMode"/>.</summary>
+    void SetModeLock(SstvModeDefinition? mode);
 
     /// <summary>Requests that any in-progress decode (auto-detected or previously forced) be
     /// abandoned, and any in-progress AVT training be aborted — the port of legacy's RX "pause

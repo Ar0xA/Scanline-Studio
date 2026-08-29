@@ -76,4 +76,10 @@ public interface IFilePickerService
     /// name="suggestedStartDirectory"/> pre-seeds the dialog at the currently-configured directory
     /// (or the resolved default) rather than always opening wherever the OS last left it.</summary>
     Task<string?> PickFolderAsync(string? suggestedStartDirectory);
+
+    /// <summary>Options dialog's Identification tab, sound-file station ID row -- lets the user
+    /// browse to a legacy <c>.MMV</c> sound-file (a custom raw-PCM format, no standard extension to
+    /// verify against upstream YONIQ install data). Returns the picked file's local path, or
+    /// <c>null</c> if the user cancelled.</summary>
+    Task<string?> PickMmvFileAsync();
 }

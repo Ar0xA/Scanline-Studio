@@ -1,5 +1,6 @@
 using System.Linq;
 using System.Reactive.Subjects;
+using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Imaging;
@@ -53,11 +54,31 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
         return Settings;
     }
 
-    public Task SaveAsync(AppSettings settings, CancellationToken ct = default)
+    /// <summary>When set, <see cref="SaveAsync"/> throws this instead of persisting -- lets a test
+    /// simulate a read-only/locked settings file (ui_transition_plan.md step 7's own "surface a
+    /// visible save-failure message" requirement), same convention as <see cref="LoadAsyncException"/>.</summary>
+    public Exception? SaveAsyncException { get; set; }
+
+    /// <summary>When set, <see cref="SaveAsync"/> parks on this until it completes -- lets a test
+    /// deterministically observe VM state WHILE an async save is still in flight (e.g. that a busy
+    /// flag is set), a real controllable gate rather than a sleep-based race. Same convention as
+    /// <see cref="Gate"/> for <see cref="LoadAsync"/>.</summary>
+    public Task? SaveGate { get; set; }
+
+    public async Task SaveAsync(AppSettings settings, CancellationToken ct = default)
     {
+        if (SaveGate is not null)
+        {
+            await SaveGate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        if (SaveAsyncException is { } ex)
+        {
+            throw ex;
+        }
+
         Settings = settings;
         _changes.OnNext(settings);
-        return Task.CompletedTask;
     }
 
     public void Dispose() => _changes.Dispose();
@@ -345,6 +366,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public bool IsRecording { get; set; }
 
+    public bool IsAudioAutoSaveActive { get; set; }
+
     public bool IsAutoDetectPaused { get; set; }
 
     public int SetAutoDetectPausedCallCount { get; private set; }
@@ -387,6 +410,22 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default) => Task.FromResult(StationIdTransmitOptionsToReturn);
 
+    /// <summary>Keyed by the exact path passed to <see cref="ValidateStationIdSoundFileAsync"/> --
+    /// lets a test give different paths different outcomes in the same run. A path with no entry
+    /// returns <see cref="SoundFileIdValidationResult.Fail"/>(<see cref="SoundFileIdValidationFailure.FileNotFound"/>),
+    /// matching the real implementation's own behavior for a path that genuinely doesn't exist.</summary>
+    public Dictionary<string, SoundFileIdValidationResult> SoundFileValidationResults { get; } = [];
+
+    public List<string> ValidateStationIdSoundFileCalls { get; } = [];
+
+    public Task<SoundFileIdValidationResult> ValidateStationIdSoundFileAsync(string path, CancellationToken ct = default)
+    {
+        ValidateStationIdSoundFileCalls.Add(path);
+        return Task.FromResult(SoundFileValidationResults.TryGetValue(path, out var result)
+            ? result
+            : SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.FileNotFound));
+    }
+
     public event Action? MaintenanceWarningRaised;
 
     public event Action? MaintenanceWarningCleared;
@@ -412,6 +451,20 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         RequestNotchCallCount++;
         LastNotchEnabled = enabled;
         LastNotchFrequencyHz = frequencyHz;
+    }
+
+    public int RequestPllTuningCallCount { get; private set; }
+
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+        RequestPllTuningCallCount++;
+    }
+
+    public int RequestZeroCrossingTuningCallCount { get; private set; }
+
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz)
+    {
+        RequestZeroCrossingTuningCallCount++;
     }
 
     public int ArmScopeCaptureCallCount { get; private set; }
@@ -589,6 +642,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         LastForcedMode = mode;
     }
 
+    public int SetModeLockCallCount { get; private set; }
+
+    public SstvModeDefinition? LastLockedMode { get; private set; }
+
+    public void SetModeLock(SstvModeDefinition? mode)
+    {
+        SetModeLockCallCount++;
+        LastLockedMode = mode;
+    }
+
     public int StartReceivingCallCount { get; private set; }
 
     public Task StartReceivingAsync(CancellationToken ct = default)
@@ -647,6 +710,32 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
         return Task.CompletedTask;
     }
+
+    public event Action<long, int>? AudioSliceReady;
+
+    public event Action? AudioCaptureReset;
+
+    public void RaiseAudioSliceReady(long receptionId, int sampleRate) => AudioSliceReady?.Invoke(receptionId, sampleRate);
+
+    public void RaiseAudioCaptureReset() => AudioCaptureReset?.Invoke();
+
+    public List<(long ReceptionId, string Path)> TrySaveReceptionAudioCalls { get; } = [];
+
+    public bool TrySaveReceptionAudioResult { get; set; } = true;
+
+    public Task<bool> TrySaveReceptionAudioAsync(long receptionId, string path)
+    {
+        TrySaveReceptionAudioCalls.Add((receptionId, path));
+        return Task.FromResult(TrySaveReceptionAudioResult);
+    }
+
+    public List<bool> SetAutoSaveAudioEnabledCalls { get; } = [];
+
+    public void SetAutoSaveAudioEnabled(bool enabled) => SetAutoSaveAudioEnabledCalls.Add(enabled);
+
+    public List<string?> SetAudioDirectoryCalls { get; } = [];
+
+    public void SetAudioDirectory(string? directory) => SetAudioDirectoryCalls.Add(directory);
 
     public List<(SstvModeDefinition Mode, IImageSource Image)> RunLoopbackSelfTestCalls { get; } = [];
 
@@ -922,15 +1011,39 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     /// <c>AsyncRelayCommand</c>); guards against that regression.</summary>
     public bool ThrowOnSetFrequencyOrMode { get; set; }
 
-    public Task SetFrequencyAsync(long hz, CancellationToken ct = default)
+    /// <summary>Test-only hook: when set, <see cref="SetFrequencyAsync"/> awaits this before
+    /// returning -- lets a test simulate a slow CAT backend (e.g. flrig's own readback-verify poll
+    /// loop) to exercise RadioStatusViewModel's stale-completion race guard. Separately controllable
+    /// from <see cref="TestPttGate"/>-style gates elsewhere (deterministic-gates-not-shared-race
+    /// convention): a test using this must not also depend on scheduling order against any other
+    /// gate.</summary>
+    public TaskCompletionSource? SetFrequencyGate { get; set; }
+
+    /// <summary>Test-only hook: when set, each successive <see cref="SetFrequencyAsync"/> call awaits
+    /// the NEXT gate in this queue instead of <see cref="SetFrequencyGate"/> -- lets a test stagger
+    /// two concurrent calls (e.g. a double-Enter under CommunityToolkit's default
+    /// AllowConcurrentExecutions=true) to distinct, independently-releasable completions, per this
+    /// project's own "deterministic gates, not shared race" convention (one shared gate can't express
+    /// "op A finishes before op B" -- releasing it resolves every waiter at once).</summary>
+    public Queue<TaskCompletionSource>? SetFrequencyGateQueue { get; set; }
+
+    public async Task SetFrequencyAsync(long hz, CancellationToken ct = default)
     {
         if (ThrowOnSetFrequencyOrMode)
         {
             throw new InvalidOperationException("No radio connected -- call ConnectAsync first.");
         }
 
+        if (SetFrequencyGateQueue is { Count: > 0 } queue)
+        {
+            await queue.Dequeue().Task.ConfigureAwait(false);
+        }
+        else if (SetFrequencyGate is not null)
+        {
+            await SetFrequencyGate.Task.ConfigureAwait(false);
+        }
+
         SetFrequencyCalls.Add(hz);
-        return Task.CompletedTask;
     }
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct = default)
@@ -1225,6 +1338,10 @@ internal sealed class FakeFilePickerService : IFilePickerService
         LastSuggestedWavFileName = suggestedFileName;
         return Task.FromResult(SaveWavPathToReturn);
     }
+
+    public string? MmvPathToReturn { get; set; } = "/tmp/fake.mmv";
+
+    public Task<string?> PickMmvFileAsync() => Task.FromResult(MmvPathToReturn);
 }
 
 internal sealed class FakeUrlLauncher : IUrlLauncher
@@ -1232,6 +1349,29 @@ internal sealed class FakeUrlLauncher : IUrlLauncher
     public List<string> OpenedUrls { get; } = [];
 
     public void Open(string url) => OpenedUrls.Add(url);
+}
+
+/// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: minimal fake for
+/// RxHistoryPaneViewModel's IRxAudioAutoSaver dependency -- only the event is functional, matching
+/// this project's sibling-fake convention.</summary>
+internal sealed class FakeRxAudioAutoSaver : IRxAudioAutoSaver
+{
+    public event Action<string, string>? AudioAttached;
+
+    public void RaiseAudioAttached(string entryId, string path) => AudioAttached?.Invoke(entryId, path);
+}
+
+internal sealed class FakeClipboardImageService : IClipboardImageService
+{
+    public List<Bitmap> CopiedImages { get; } = [];
+
+    public bool ResultToReturn { get; set; } = true;
+
+    public Task<bool> CopyImageAsync(Bitmap bitmap)
+    {
+        CopiedImages.Add(bitmap);
+        return Task.FromResult(ResultToReturn);
+    }
 }
 
 internal sealed class FakeReceivedFrameExporter : IReceivedFrameExporter
@@ -1418,7 +1558,18 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public string ImagesDirectory { get; set; } = "/tmp/scanlinestudio-history";
 
+    public bool AutoSaveAudioEnabled { get; set; }
+
+    public string AudioDirectory { get; set; } = "/tmp/scanlinestudio-history-audio";
+
     public event Action<ReceiveHistoryEntry>? Recorded;
+    public event Action<ReceiveHistoryEntry>? Deleted;
+
+    public List<ReceiveHistoryEntry> DeletedEntries { get; } = [];
+
+    public List<string> DeletedFilePaths { get; } = [];
+
+    public Exception? ThrowOnDelete { get; set; }
 
     public Exception? ThrowOnQuery { get; set; }
 
@@ -1477,6 +1628,31 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     /// own <see cref="RecordedEntries"/> tracking.</summary>
     public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
 
+    /// <summary>Removes from <see cref="EntriesToReturn"/> (matched by Id, mirroring the real
+    /// store's row delete) so a subsequent <see cref="QueryAsync"/>/refresh naturally excludes it --
+    /// same "actually applies the effect" discipline <see cref="QueryAsync"/>'s own doc comment
+    /// describes, not a bare stub. Returns <see langword="false"/> without raising
+    /// <see cref="Deleted"/> if no matching Id was found, matching the real store's contract.
+    /// </summary>
+    public Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
+    {
+        if (ThrowOnDelete is not null)
+        {
+            throw ThrowOnDelete;
+        }
+
+        var removed = EntriesToReturn.RemoveAll(e => e.Id == entry.Id) > 0;
+        if (!removed)
+        {
+            return Task.FromResult(false);
+        }
+
+        DeletedEntries.Add(entry);
+        DeletedFilePaths.Add(entry.FilePath);
+        Deleted?.Invoke(entry);
+        return Task.FromResult(true);
+    }
+
     public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
 
     public List<string?> SetImagesDirectoryCalls { get; } = [];
@@ -1493,6 +1669,34 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
         SetImagesDirectoryCalls.Add(directory);
         ImagesDirectory = string.IsNullOrWhiteSpace(directory) ? "/tmp/scanlinestudio-history" : directory;
         return Task.CompletedTask;
+    }
+
+    public List<(bool Enabled, string? Directory)> SetAudioSettingsCalls { get; } = [];
+
+    public bool ThrowOnSetAudioSettings { get; set; }
+
+    public Task<AudioAutoSaveSettings> GetAudioSettingsAsync(CancellationToken ct = default) =>
+        Task.FromResult(new AudioAutoSaveSettings(AutoSaveAudioEnabled, AudioDirectory));
+
+    public Task SetAudioSettingsAsync(bool enabled, string? directory, CancellationToken ct = default)
+    {
+        if (ThrowOnSetAudioSettings)
+        {
+            throw new IOException("Simulated directory-creation failure.");
+        }
+
+        SetAudioSettingsCalls.Add((enabled, directory));
+        AutoSaveAudioEnabled = enabled;
+        AudioDirectory = string.IsNullOrWhiteSpace(directory) ? "/tmp/scanlinestudio-history-audio" : directory;
+        return Task.CompletedTask;
+    }
+
+    public List<(string EntryId, string Path)> SetAudioFilePathCalls { get; } = [];
+
+    public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default)
+    {
+        SetAudioFilePathCalls.Add((entryId, path));
+        return Task.FromResult(TryUpdateEntry(entryId, e => e with { AudioFilePath = path }));
     }
 
     /// <summary>Every <see cref="SetNoteAsync"/> call, in order -- lets a test prove a selection

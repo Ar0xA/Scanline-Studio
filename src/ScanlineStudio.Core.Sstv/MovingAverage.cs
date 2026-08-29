@@ -5,13 +5,27 @@ namespace ScanlineStudio.Core.Sstv;
 /// and its longer-term per-lock-event average.</summary>
 internal sealed class MovingAverage
 {
-    private readonly double[] _buffer;
+    private double[] _buffer;
     private int _writeIndex;
     private int _count;
 
     public MovingAverage(int size)
     {
         _buffer = new double[Math.Max(1, size)];
+    }
+
+    /// <summary><c>CSmooz::SetCount(n)</c> (`sstv.h:118-128`) — resize the window and always clear,
+    /// even when <paramref name="windowSize"/> equals the current size (the real, deliberate legacy
+    /// quirk: every call restarts the average from scratch).</summary>
+    public void SetCount(int windowSize)
+    {
+        windowSize = Math.Max(1, windowSize);
+        if (_buffer.Length != windowSize)
+        {
+            _buffer = new double[windowSize];
+        }
+
+        Clear();
     }
 
     /// <summary><c>CSmooz::Avg(d)</c> — pushes a new value and returns the average of all buffered

@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
@@ -23,11 +25,20 @@ namespace ScanlineStudio.Core.Sstv;
 /// own DC-gain algebra rather than trusting the port's original "mathematically identical" claim,
 /// which was true only at steady state, not unconditionally. See <see cref="AfcTracker"/> for
 /// where the corresponding real-Hz threshold values come from.
+///
+/// The FIR moving-average branch (<see cref="MovingAverage"/>, Options stub backlog item 2) has the
+/// SAME accepted-divergence class at a <see cref="SetWidth"/> transition, code-review round 1 finding
+/// -- bounded even more tightly, since the window at the smoothing-frequency floor (500Hz) holds at
+/// most `sampleRate/500` samples (&lt;=88 at 11025Hz), not the IIR filter's settling time. The Off
+/// branch has no accepted divergence at all -- it holds no filter state to rescale.
 /// </summary>
 internal sealed class ZeroCrossingFrequencyCounter
 {
     private readonly IirFilter _outputFilter = new();
+    private readonly MovingAverage _movingAverage = new(1);
+    private readonly double _sampleRate;
     private readonly double _halfSampleRate;
+    private ZeroCrossingSmoothingMode _smoothingMode;
     private double _centerFrequencyHz;
     private double _highClampHz;
     private double _lowClampHz;
@@ -48,11 +59,57 @@ internal sealed class ZeroCrossingFrequencyCounter
     private double _bwh;
     private bool _widthInitialized;
 
-    public ZeroCrossingFrequencyCounter(double sampleRate)
+    public ZeroCrossingFrequencyCounter(
+        double sampleRate,
+        ZeroCrossingSmoothingMode smoothingMode = ZeroCrossingSmoothingMode.Iir,
+        int outputOrder = 3,
+        double outputCutoffHz = 900,
+        double smoothingFrequencyHz = 2200)
     {
+        _sampleRate = sampleRate;
         _halfSampleRate = sampleRate * 0.5;
-        _outputFilter.Design(900, sampleRate, 3); // CFQC::CalcLPF: m_outFC=900, m_outOrder=3
+        SetTuning(smoothingMode, outputOrder, outputCutoffHz, smoothingFrequencyHz);
         SetWidth(isNarrow: false);
+    }
+
+    /// <summary><c>CFQC::CalcLPF</c> (`sstv.cpp:403-408`) -- (re)designs the IIR output filter,
+    /// resizes/clears the FIR moving-average window, and stores which smoothing stage
+    /// <see cref="ProcessSample"/> should apply. Both-direction clamps applied here AND at
+    /// construction (a lesson from the PLL-tuning item's own 2 code-review rounds, applied from the
+    /// start here instead of discovered incrementally): order `[1,32]` (`Option.cpp:529-531`), IIR
+    /// cutoff `[1.0, sampleRate*0.45]` (legacy's own dialog check is floor-only, `Option.cpp:532-534`
+    /// -- this port keeps the stricter Nyquist ceiling too, same accepted divergence as PLL tuning),
+    /// smoothing frequency `[500,8000]` (`Option.cpp:536-540`, legacy's real two-sided range -- legacy
+    /// rejects-and-keeps an out-of-range entry, this port clamps instead). A NaN input is replaced
+    /// with the field's own legacy default before clamping (`Math.Clamp(NaN, ...)` returns NaN
+    /// unchanged, which would otherwise silently reach filter design/window-size math).
+    /// <see cref="MovingAverage.SetCount"/> is called unconditionally every time, matching legacy's
+    /// own "reset even when the window size is unchanged" behavior (`sstv.h:125-127`'s `else`
+    /// branch) -- never skip it as an apparent no-op optimization.</summary>
+    public void SetTuning(
+        ZeroCrossingSmoothingMode smoothingMode,
+        int outputOrder,
+        double outputCutoffHz,
+        double smoothingFrequencyHz)
+    {
+        _smoothingMode = Enum.IsDefined(smoothingMode) ? smoothingMode : ZeroCrossingSmoothingMode.Off;
+
+        if (double.IsNaN(outputCutoffHz))
+        {
+            outputCutoffHz = 900;
+        }
+
+        if (double.IsNaN(smoothingFrequencyHz))
+        {
+            smoothingFrequencyHz = 2200;
+        }
+
+        var clampedOrder = Math.Clamp(outputOrder, 1, 32);
+        var clampedCutoffHz = Math.Clamp(outputCutoffHz, 1.0, _sampleRate * 0.45);
+        var clampedSmoothingHz = Math.Clamp(smoothingFrequencyHz, 500.0, 8000.0);
+
+        _outputFilter.Design(clampedCutoffHz, _sampleRate, clampedOrder);
+        _movingAverage.SetCount((int)(_sampleRate / clampedSmoothingHz));
     }
 
     /// <summary><c>CFQC::SetWidth</c> (`sstv.cpp:367-383`) — the wide sanity-clamp bounds (not the
@@ -128,7 +185,14 @@ internal sealed class ZeroCrossingFrequencyCounter
         _prevSample = input;
         _sampleIndex += 1;
 
-        return _outputFilter.Process(_currentFrequencyHz);
+        // CFQC::Do's m_Type switch (`sstv.cpp:475-485`): IIR -> m_iir.Do, FIR -> m_fir.Avg,
+        // default (OFF) -> raw m_fq passthrough, unsmoothed.
+        return _smoothingMode switch
+        {
+            ZeroCrossingSmoothingMode.Iir => _outputFilter.Process(_currentFrequencyHz),
+            ZeroCrossingSmoothingMode.Fir => _movingAverage.Add(_currentFrequencyHz),
+            _ => _currentFrequencyHz,
+        };
     }
 
     /// <summary>Test-only visibility into the running frequency estimate <see cref="Clear"/> resets
@@ -136,4 +200,11 @@ internal sealed class ZeroCrossingFrequencyCounter
     /// return value is consumed). Round-1 D0-audit finding: lets a test prove <see cref="Clear"/> was
     /// actually called at a given teardown point, not just that the call compiles.</summary>
     internal double CurrentFrequencyHzForTests => _currentFrequencyHz;
+
+    /// <summary>Test-only visibility into the CURRENTLY APPLIED smoothing mode -- code-review round 1
+    /// finding (Options stub backlog item 2): without this, a test asserting
+    /// <see cref="AnalogFmSstvDecoder.RequestZeroCrossingTuning"/> reaches BOTH counter instances could
+    /// only check the decoder's own (non-load-bearing) tracking fields, not the instances themselves --
+    /// the exact gap that let a dropped drain call slip past the whole suite.</summary>
+    internal ZeroCrossingSmoothingMode SmoothingModeForTests => _smoothingMode;
 }

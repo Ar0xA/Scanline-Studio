@@ -283,6 +283,39 @@ public sealed partial class FilePickerService : IFilePickerService
         return files.Count > 0 ? files[0].TryGetLocalPath() : null;
     }
 
+    // No standard extension to verify against upstream YONIQ install data (yoniq-old/ has no sample
+    // .mmv/.MDT file). ui_transition_plan.md step 8 (T2-2): unlike HamlibLibraryFileType above,
+    // deliberately does NOT also offer FilePickerFileTypes.All -- this format has no ambiguous
+    // real-world extension variance to guard against (a Hamlib .so can legitimately be named almost
+    // anything on a given install; a station-ID sound file has exactly one convention, ".mmv"), and
+    // the picker choosing an arbitrary non-.mmv file was the single easiest way to reach the
+    // unplayable-header failure this step adds real validation for. Typed-path entry (the field
+    // itself accepts free text) remains the escape hatch for a genuinely unusual file name.
+    // Code-review finding: BOTH cases explicitly listed, not relying on FilePickerFileTypes.All's
+    // removal being covered by case-insensitivity -- GTK/portal glob filters on Linux are
+    // case-sensitive, and legacy's own convention (a Windows-produced file) is uppercase ".MMV".
+    private static readonly FilePickerFileType MmvSoundFileType = new("MMV sound files")
+    {
+        Patterns = ["*.mmv", "*.MMV"],
+    };
+
+    public async Task<string?> PickMmvFileAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            AllowMultiple = false,
+            FileTypeFilter = [MmvSoundFileType],
+        });
+
+        return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
     public async Task<string?> PickFolderAsync(string? suggestedStartDirectory)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })

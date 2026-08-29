@@ -145,6 +145,179 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal([14_230_000], radioSession.SetFrequencyCalls);
     }
 
+    /// <summary>ui_transition_plan.md step 11 (T2-1): SetFrequencyCommand/FrequencyInputMhz were
+    /// already fully built and tested (see the two tests above/below this block) -- this batch
+    /// covers the NEW inline-edit wiring around them (BeginEditFrequencyCommand/IsEditingFrequency/
+    /// CancelEditFrequencyCommand and the plausibility-range validation), not the pre-existing
+    /// parse/apply behavior itself.</summary>
+    [AvaloniaFact]
+    public void BeginEditFrequencyCommand_PrefillsFromCurrentFrequency_AndEntersEditMode()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        vm.BeginEditFrequencyCommand.Execute(null);
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.Equal("14.230000", vm.FrequencyInputMhz);
+    }
+
+    [AvaloniaFact]
+    public void BeginEditFrequencyCommand_NoRadioStateYet_PrefillsEmpty()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.BeginEditFrequencyCommand.Execute(null);
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.Equal(string.Empty, vm.FrequencyInputMhz);
+    }
+
+    [AvaloniaFact]
+    public void CancelEditFrequencyCommand_RevertsWithoutApplying()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "14.230000";
+
+        vm.CancelEditFrequencyCommand.Execute(null);
+
+        Assert.False(vm.IsEditingFrequency);
+        Assert.Empty(radioSession.SetFrequencyCalls);
+    }
+
+    [AvaloniaFact]
+    public void SetFrequencyCommand_Success_ExitsEditMode()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "14.230000";
+
+        vm.SetFrequencyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditingFrequency);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    /// <summary>Code-review finding: a slow CAT backend's completion (flrig's own readback-verify
+    /// poll loop can take ~2.65s) must not close a DIFFERENT, later edit session that the operator
+    /// opened after cancelling the one that's still in flight -- reproduced here with a
+    /// separately-controllable gate (SetFrequencyGate), not a shared one, per this project's own
+    /// "deterministic gates, not shared race" convention. Uses ExecuteAsync + await, not
+    /// Execute(null) + RunJobs: the fake's own gated await runs its continuation on the ThreadPool
+    /// (ConfigureAwait(false) opts out of Dispatcher's SynchronizationContext), so only a real await
+    /// -- not a Dispatcher pump -- can deterministically observe it complete.</summary>
+    [AvaloniaFact]
+    public async Task SetFrequencyCommand_StaleCompletionAfterCancelAndReopen_DoesNotCloseTheNewSession()
+    {
+        var gate = new TaskCompletionSource();
+        var radioSession = new FakeRadioSessionService { SetFrequencyGate = gate };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "14.230000";
+        var op = vm.SetFrequencyCommand.ExecuteAsync(null);
+
+        // Cancel the in-flight edit and open a new one before the gated call completes.
+        vm.CancelEditFrequencyCommand.Execute(null);
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "7.171000";
+
+        gate.SetResult();
+        await op;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.Equal("7.171000", vm.FrequencyInputMhz);
+    }
+
+    /// <summary>Auditor-caught gap: CommunityToolkit's [RelayCommand] defaults to
+    /// AllowConcurrentExecutions=true, so pressing Enter twice on a slow backend (no busy indicator
+    /// exists) starts a SECOND SetFrequencyAsync under the SAME edit session before the first
+    /// returns -- confirmed by direct test against AsyncRelayCommand.Execute, not assumed. Without
+    /// BeginEditFrequency's own session-id increment, the first call's completion closes the editor,
+    /// the operator reopens it, and the SECOND call's stale completion (still carrying the OLD
+    /// session id) then closes that new, unrelated edit anyway. Two independently-releasable gates
+    /// (SetFrequencyGateQueue), each call's own ExecuteAsync awaited individually -- same
+    /// "deterministic gates, not shared race" reasoning as the test above.</summary>
+    [AvaloniaFact]
+    public async Task SetFrequencyCommand_DoubleEnterThenReopenBeforeSecondCallCompletes_DoesNotCloseTheNewSession()
+    {
+        var gateA = new TaskCompletionSource();
+        var gateB = new TaskCompletionSource();
+        var radioSession = new FakeRadioSessionService { SetFrequencyGateQueue = new Queue<TaskCompletionSource>([gateA, gateB]) };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "14.230000";
+
+        // Double Enter: both calls captured under the SAME edit session, no Cancel in between.
+        var opA = vm.SetFrequencyCommand.ExecuteAsync(null);
+        var opB = vm.SetFrequencyCommand.ExecuteAsync(null);
+
+        gateA.SetResult();
+        await opA;
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsEditingFrequency);
+
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "7.171000";
+
+        gateB.SetResult();
+        await opB;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.Equal("7.171000", vm.FrequencyInputMhz);
+    }
+
+    /// <summary>"Invalid entry rejected inline" (the plan's own wording) -- stays in edit mode so the
+    /// operator can see the rejection and correct it, rather than silently reverting to the old
+    /// display.</summary>
+    [AvaloniaFact]
+    public void SetFrequencyCommand_UnparsableInput_StaysInEditModeAndSetsErrorMessage()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "not a number";
+
+        vm.SetFrequencyCommand.Execute(null);
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.Empty(radioSession.SetFrequencyCalls);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("0.0001")] // below the plausible floor (0.001-30000 MHz, widened per code-review)
+    [InlineData("50000")] // above the plausible ceiling
+    [InlineData("-14.23")] // negative
+    public void SetFrequencyCommand_ImplausibleRange_StaysInEditModeAndSetsErrorMessage(string mhzText)
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = mhzText;
+
+        vm.SetFrequencyCommand.Execute(null);
+
+        Assert.True(vm.IsEditingFrequency);
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.Empty(radioSession.SetFrequencyCalls);
+    }
+
     [AvaloniaFact]
     public void SavePresetsCommand_PersistsEditedRowsAndRebuildsPresetButtons()
     {

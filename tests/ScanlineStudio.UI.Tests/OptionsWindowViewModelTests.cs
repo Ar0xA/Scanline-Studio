@@ -1022,6 +1022,275 @@ public sealed class OptionsWindowViewModelTests
         Assert.Contains("backends all claim", vm.ConnectRadioErrorMessage);
     }
 
+    /// <summary>ui_transition_plan.md step 7 (T2-3): the original loop this step exists to fix --
+    /// Test validates whatever is CURRENTLY TYPED, but before this fix Connect used stale PERSISTED
+    /// settings, so changing the port, testing successfully, then clicking Connect used to silently
+    /// connect with the OLD port. Connect must now save first.</summary>
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_WhenDisconnected_SavesTheCurrentlyTypedPortFirst()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "rigctld", Host = "127.0.0.1", Port = 4532 },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        // Change the port and test THAT value -- never Saved via SaveCommand/ApplyCommand.
+        vm.RigctldPort = 4999;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.CanToggleRadioConnection);
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.ConnectUsingSettingsCallCount);
+        var persisted = settingsStore.Settings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings)!;
+        Assert.Equal(4999, persisted.Port);
+    }
+
+    /// <summary>Plan-review blocker: an unconditional implicit save on Connect must not run when the
+    /// dialog's own load never succeeded -- same reasoning as <see cref="CanSave"/>'s own
+    /// <c>_loadSucceeded</c> gate (constructor defaults would silently overwrite real settings on
+    /// disk). Connect must still be reachable (a test can pass against currently-typed values
+    /// regardless of load success), it just must not persist anything first.</summary>
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_LoadDidNotSucceed_SkipsImplicitSaveButStillConnects()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                OperatorSettings.SectionKey, new OperatorSettings { Callsign = "REAL-CALL" }, OperatorSettingsJsonContext.Default.OperatorSettings),
+        };
+        var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { RefreshAsyncException = new InvalidOperationException("audio backend unavailable") };
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.SaveCommand.CanExecute(null));
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.ConnectUsingSettingsCallCount);
+        var persisted = settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)!;
+        Assert.Equal("REAL-CALL", persisted.Callsign);
+    }
+
+    /// <summary>Plan-review finding: a failed Hamlib native-library reload INSIDE Connect's implicit
+    /// save must not let Connect silently proceed against the OLD loaded library -- the exact
+    /// silent-wrong-value class this whole step exists to kill.</summary>
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_HamlibReloadFailsDuringImplicitSave_RefusesToConnect()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "rigctld", HamlibLibraryPath = "/usr/lib/libhamlib.so.4" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+            HamlibLibraryReloadResultToReturn = new HamlibLibraryReloadResult(false, "/bad/path.so", null, ["/bad/path.so: file not found"]),
+        };
+        var localization = new FakeLocalizationService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.HamlibLibraryPath = "/bad/path.so";
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, radioSession.ConnectUsingSettingsCallCount);
+        // FakeLocalizationService.GetString echoes the raw key, not real interpolated text -- the
+        // ACTUAL failure detail is verified via the args the caller passed, same convention as
+        // SaveCommand_RaisesHamlibLibraryReloadFailedWarning_WhenReloadFails above.
+        Assert.Equal("Options.HamlibLibraryReloadFailedDialog.Message", vm.ConnectRadioErrorMessage);
+        Assert.Contains("file not found", string.Join("; ", localization.LastArgs), StringComparison.Ordinal);
+    }
+
+    /// <summary>Plan-review blocker: SaveCoreAsync's failure used to signal ONLY by not closing --
+    /// Connect's implicit save must surface the actual reason and, critically, must not attempt to
+    /// connect at all when the save it depends on failed.</summary>
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_ImplicitSaveFails_RefusesToConnectAndSurfacesError()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "rigctld" },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var localization = new FakeLocalizationService();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        settingsStore.SaveAsyncException = new IOException("disk full");
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, radioSession.ConnectUsingSettingsCallCount);
+        Assert.Equal("disk full", vm.SaveErrorMessage);
+        // FakeLocalizationService.GetString echoes the raw key -- verify the real failure detail was
+        // actually passed as an arg to the localized Connect-specific wrapper string.
+        Assert.Equal("Options.Radio.Connect.SaveFailed", vm.ConnectRadioErrorMessage);
+        Assert.Contains("disk full", string.Join("; ", localization.LastArgs), StringComparison.Ordinal);
+    }
+
+    /// <summary>Plan-review blocker: RelayCommand caches CanExecute -- without an explicit
+    /// NotifyCanExecuteChanged call alongside SaveCommand's own, ApplyCommand stays permanently
+    /// disabled even after a successful load.</summary>
+    [AvaloniaFact]
+    public void Constructor_LoadSucceeds_ApplyCommandIsEnabled()
+    {
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.ApplyCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Constructor_SettingsStoreLoadThrows_ApplyCommandStaysDisabled()
+    {
+        var settingsStore = new FakeSettingsStore { LoadAsyncException = new IOException("disk error") };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.ApplyCommand.CanExecute(null));
+    }
+
+    /// <summary>ui_transition_plan.md step 7 (T2-3): Apply persists like Save but must NOT close the
+    /// dialog -- proves both halves (the persist and the non-close) in one test.</summary>
+    [AvaloniaFact]
+    public async Task ApplyCommand_PersistsFieldsWithoutClosing()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+        vm.Callsign = "W1AW";
+
+        await vm.ApplyCommand.ExecuteAsync(null);
+
+        Assert.False(closeRaised);
+        var persisted = settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)!;
+        Assert.Equal("W1AW", persisted.Callsign);
+    }
+
+    /// <summary>Mirrors SaveCommand's own failure-signaling gap this step also fixes -- Apply must
+    /// surface WHY it silently didn't close, not just leave the dialog open with no explanation.</summary>
+    [AvaloniaFact]
+    public async Task ApplyCommand_SaveFails_SurfacesErrorAndStaysOpen()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+        settingsStore.SaveAsyncException = new IOException("disk full");
+
+        await vm.ApplyCommand.ExecuteAsync(null);
+
+        Assert.False(closeRaised);
+        Assert.Contains("disk full", vm.SaveErrorMessage);
+    }
+
+    /// <summary>Same failure-signaling gap, via the explicit Save button -- SaveCommand's own
+    /// pre-step-7 contract (silently doesn't close) is preserved, but now there IS a message.</summary>
+    [AvaloniaFact]
+    public async Task SaveCommand_SaveFails_SurfacesErrorAndDoesNotClose()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+        settingsStore.SaveAsyncException = new IOException("disk full");
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(closeRaised);
+        Assert.Contains("disk full", vm.SaveErrorMessage);
+    }
+
+    /// <summary>Plan-review risk: the Connect button must be disabled for the duration of the new
+    /// multi-second implicit save, not just while the actual connect I/O runs -- otherwise a rapid
+    /// double-click during the save could re-enter Connect. Uses a real, controllable gate (not a
+    /// sleep-based race) on the settings-store save, same convention as FakeSettingsStore.Gate for
+    /// LoadAsync elsewhere in this file.</summary>
+    [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_WhileImplicitSaveInFlight_CanToggleRadioConnectionIsFalse()
+    {
+        var gate = new TaskCompletionSource();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld" }, RadioSettingsJsonContext.Default.RadioConnectionSettings),
+            SaveGate = gate.Task,
+        };
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "rigctld-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsRigctldBackendSelected = true;
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var connectTask = vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.CanToggleRadioConnection);
+
+        gate.SetResult();
+        await connectTask;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanToggleRadioConnection);
+        Assert.Equal(1, radioSession.ConnectUsingSettingsCallCount);
+    }
+
     [AvaloniaFact]
     public void Dispose_UnsubscribesFromConnectionEvents()
     {
@@ -2879,6 +3148,221 @@ public sealed class OptionsWindowViewModelTests
         // above, which default to Off/false.
         Assert.True(vm.NrRstEnabled);
         Assert.Null(vm.NrRstText);
+        Assert.Null(vm.SoundFileMmvPath);
+        Assert.False(vm.IsIdMethodSoundFileSelected);
+    }
+
+    [AvaloniaFact]
+    public void IsIdMethodSoundFileSelected_Set_UpdatesCwIdModeAndSiblingProperties()
+    {
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsIdMethodSoundFileSelected = true;
+
+        Assert.Equal(CwIdMode.SoundFile, vm.CwIdMode);
+        Assert.True(vm.IsIdMethodSoundFileSelected);
+        Assert.False(vm.IsIdMethodOffSelected);
+        Assert.False(vm.IsIdMethodCwSelected);
+    }
+
+    [AvaloniaFact]
+    public async Task BrowseSoundFileCommand_SetsPathFromPicker()
+    {
+        var filePickerService = new FakeFilePickerService { MmvPathToReturn = "/tmp/station-id.mmv" };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), filePickerService, new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.BrowseSoundFileCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("/tmp/station-id.mmv", vm.SoundFileMmvPath);
+    }
+
+    /// <summary>ui_transition_plan.md step 8 (T2-2): a typed/picked path re-validates (debounced,
+    /// same shape as TxVolumePercent's own persist debounce) via
+    /// ISstvSessionService.ValidateStationIdSoundFileAsync, showing a real duration on success.</summary>
+    [AvaloniaFact]
+    public async Task SoundFileMmvPath_Changed_ValidatesAndShowsDurationOnSuccess()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/good.mmv";
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Options.Radio.SoundFileId.Valid", vm.SoundFileIdSuccessMessage);
+        Assert.Null(vm.SoundFileIdErrorMessage);
+        Assert.Contains("/tmp/good.mmv", sstvSession.ValidateStationIdSoundFileCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task SoundFileMmvPath_Changed_ShowsErrorMessageOnFailure()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.UnplayableHeader);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/bad.mmv";
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Options.Radio.SoundFileId.Error.UnplayableHeader", vm.SoundFileIdErrorMessage);
+        Assert.Null(vm.SoundFileIdSuccessMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task SoundFileMmvPath_ClearedToBlank_ClearsBothMessagesWithoutValidating()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/good.mmv";
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.SoundFileIdSuccessMessage);
+        sstvSession.ValidateStationIdSoundFileCalls.Clear();
+
+        vm.SoundFileMmvPath = null;
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.SoundFileIdSuccessMessage);
+        Assert.Null(vm.SoundFileIdErrorMessage);
+        Assert.Empty(sstvSession.ValidateStationIdSoundFileCalls);
+    }
+
+    /// <summary>Switching AWAY from the sound-file ID method must not leave a stale error/success
+    /// message showing once the operator can no longer even see the path field.</summary>
+    [AvaloniaFact]
+    public async Task IsIdMethodSoundFileSelected_SwitchedAway_ClearsValidationMessages()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.FileNotFound);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/bad.mmv";
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(vm.SoundFileIdErrorMessage);
+
+        vm.IsIdMethodOffSelected = true;
+
+        Assert.Null(vm.SoundFileIdErrorMessage);
+        Assert.Null(vm.SoundFileIdSuccessMessage);
+    }
+
+    /// <summary>Code-review finding: ApplyFromSnapshot sets CwIdMode BEFORE SoundFileMmvPath, so a
+    /// persisted SoundFileMmvPath left over from a PREVIOUS SoundFile-method session, now loaded
+    /// with CwIdMode = Cw/Off, must not validate or show a stale message under a path field the
+    /// operator can't even see -- OnCwIdModeChanged's own clear-on-switch-away branch never fires
+    /// here (CwIdMode isn't changing value at load, just being initialized), so the guard has to live
+    /// in OnSoundFileMmvPathChanged itself.</summary>
+    [AvaloniaFact]
+    public async Task Constructor_CwIdModeNotSoundFileButPathPersisted_DoesNotValidateOrShowStaleMessage()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                StationIdSettings.SectionKey,
+                new StationIdSettings { CwIdMode = CwIdMode.Cw, SoundFileMmvPath = "/tmp/leftover.mmv" },
+                StationIdSettingsJsonContext.Default.StationIdSettings),
+        };
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/leftover.mmv"] = SoundFileIdValidationResult.Ok(1.5);
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+
+        Dispatcher.UIThread.RunJobs();
+        // Code-review finding: must actually wait past the debounce -- an assert taken immediately
+        // after construction passes trivially either way, since the (pre-fix) fire-and-forget
+        // validation would still be sitting on its own 400ms Task.Delay at that point regardless of
+        // whether the guard this test exists to pin was ever added.
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("/tmp/leftover.mmv", vm.SoundFileMmvPath);
+        Assert.False(vm.IsIdMethodSoundFileSelected);
+        Assert.Null(vm.SoundFileIdSuccessMessage);
+        Assert.Null(vm.SoundFileIdErrorMessage);
+        Assert.Empty(sstvSession.ValidateStationIdSoundFileCalls);
+    }
+
+    /// <summary>ui_transition_plan.md step 8 (T2-2): the primary bug this step fixes -- an enabled
+    /// sound-file ID pointing at a genuinely broken file used to fail SILENTLY at TX time only. Save
+    /// must now refuse outright, with a real reason, matching every other SaveCoreUnguardedAsync
+    /// failure's own SaveErrorMessage surfacing (ui_transition_plan.md step 7).</summary>
+    [AvaloniaFact]
+    public async Task SaveCommand_SoundFileIdEnabledButInvalid_BlocksSaveAndSurfacesError()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.FileTooLarge);
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/bad.mmv";
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(closeRaised);
+        Assert.Equal("Options.Radio.SoundFileId.Error.BlocksSave", vm.SaveErrorMessage);
+        // Nothing persisted at all -- a blocked Save must not partially commit other fields either,
+        // same all-or-nothing contract as every other pre-persist SaveCoreUnguardedAsync gate.
+        Assert.Null(settingsStore.Settings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings));
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_SoundFileIdEnabledAndValid_Succeeds()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsIdMethodSoundFileSelected = true;
+        vm.SoundFileMmvPath = "/tmp/good.mmv";
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.Null(vm.SaveErrorMessage);
+        var persisted = settingsStore.Settings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)!;
+        Assert.Equal("/tmp/good.mmv", persisted.SoundFileMmvPath);
+    }
+
+    /// <summary>An invalid path configured while the method is OFF/Cw must never block Save -- only
+    /// SELECTED sound-file IDs are validated (same "nothing to validate when unused" convention as
+    /// every other conditional field in this dialog).</summary>
+    [AvaloniaFact]
+    public async Task SaveCommand_SoundFileIdNotSelected_DoesNotValidateOrBlockEvenWithBadPathConfigured()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsIdMethodCwSelected = true;
+        vm.SoundFileMmvPath = "/tmp/never-validated.mmv"; // no entry in SoundFileValidationResults
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.Null(vm.SaveErrorMessage);
+        Assert.DoesNotContain("/tmp/never-validated.mmv", sstvSession.ValidateStationIdSoundFileCalls);
     }
 
     [AvaloniaFact]
@@ -2946,6 +3430,7 @@ public sealed class OptionsWindowViewModelTests
         vm.FskIdRxEnabled = true;
         vm.NrRstEnabled = false;
         vm.NrRstText = "599123";
+        vm.SoundFileMmvPath = "/tmp/station-id.mmv";
 
         vm.ResetIdentificationToDefaultCommand.Execute(null);
 
@@ -2957,6 +3442,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.FskIdRxEnabled);
         Assert.True(vm.NrRstEnabled);
         Assert.Null(vm.NrRstText);
+        Assert.Null(vm.SoundFileMmvPath);
     }
 
     [AvaloniaFact]
@@ -2973,6 +3459,7 @@ public sealed class OptionsWindowViewModelTests
         vm.FskIdRxEnabled = true;
         vm.NrRstEnabled = false;
         vm.NrRstText = "599123";
+        vm.SoundFileMmvPath = "/tmp/station-id.mmv";
 
         await vm.SaveCommand.ExecuteAsync(null);
 
@@ -2987,6 +3474,7 @@ public sealed class OptionsWindowViewModelTests
         Assert.True(reloaded.FskIdRxEnabled);
         Assert.False(reloaded.NrRstEnabled);
         Assert.Equal("599123", reloaded.NrRstText);
+        Assert.Equal("/tmp/station-id.mmv", reloaded.SoundFileMmvPath);
     }
 
     /// <summary>Unlike <see cref="SaveAsync_PersistsIdentificationFields_ReloadedCorrectlyOnNextConstruction"/>'s
@@ -3215,7 +3703,8 @@ public sealed class OptionsWindowViewModelTests
         FakeReceiveHistoryStore? historyStore = null,
         FakeAppLocationsService? appLocationsService = null,
         FakeApplicationRestarter? applicationRestarter = null,
-        FakeFilePickerService? filePickerService = null)
+        FakeFilePickerService? filePickerService = null,
+        FakeSstvSessionService? sstvSession = null)
     {
         var settingsStore = new FakeSettingsStore();
         var vm = new OptionsWindowViewModel(
@@ -3227,7 +3716,7 @@ public sealed class OptionsWindowViewModelTests
             new FakeRadioSessionService(),
             new FakeHamlibDiscoveryService(),
             filePickerService ?? new FakeFilePickerService(),
-            new FakeSstvSessionService(),
+            sstvSession ?? new FakeSstvSessionService(),
             new FakeSerialPortEnumerator(),
             historyStore ?? new FakeReceiveHistoryStore(),
             appLocationsService ?? new FakeAppLocationsService(),
@@ -3256,6 +3745,79 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("/db/current", vm.DatabaseDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
         Assert.Equal("/logs/current", vm.LogDirectory);
+    }
+
+    // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: General tab's Audio row.
+
+    [AvaloniaFact]
+    public void Constructor_PreFillsTheAudioRow_WithTheRealPersistedEnabledFlagAndDirectory()
+    {
+        var historyStore = new FakeReceiveHistoryStore { AutoSaveAudioEnabled = true, AudioDirectory = "/audio/current" };
+
+        var vm = CreateViewModelForStorageTests(historyStore);
+
+        Assert.True(vm.AudioSaveEnabled);
+        Assert.Equal("/audio/current", vm.AudioDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task BrowseAudioDirectoryCommand_UpdatesAudioDirectory_OnAPick()
+    {
+        var filePickerService = new FakeFilePickerService { FolderPathToReturn = "/audio/browsed" };
+        var vm = CreateViewModelForStorageTests(filePickerService: filePickerService);
+
+        await vm.BrowseAudioDirectoryCommand.ExecuteAsync(null);
+
+        Assert.Equal("/audio/browsed", vm.AudioDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task BrowseAudioDirectoryCommand_WhenTheUserCancels_LeavesAudioDirectoryUnchanged()
+    {
+        var filePickerService = new FakeFilePickerService { FolderPathToReturn = null };
+        var vm = CreateViewModelForStorageTests(filePickerService: filePickerService);
+        vm.AudioDirectory = "/audio/already-typed";
+
+        await vm.BrowseAudioDirectoryCommand.ExecuteAsync(null);
+
+        Assert.Equal("/audio/already-typed", vm.AudioDirectory);
+    }
+
+    /// <summary>ISstvSessionService.SetAutoSaveAudioEnabled/SetAudioDirectory's own doc comments
+    /// require an Apply/Save flow to call BOTH the persisted store write AND the live-apply
+    /// counterpart, so a running decode session picks up the change without a restart -- this pins
+    /// that ApplyAudioDirectoryCommand actually does both, not just the store write.</summary>
+    [AvaloniaFact]
+    public async Task ApplyAudioDirectoryCommand_PersistsToTheStore_AndLiveAppliesToTheSession()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModelForStorageTests(historyStore, sstvSession: sstvSession);
+        vm.AudioSaveEnabled = true;
+        vm.AudioDirectory = "/audio/applied";
+
+        await vm.ApplyAudioDirectoryCommand.ExecuteAsync(null);
+
+        Assert.True(historyStore.AutoSaveAudioEnabled);
+        Assert.Equal("/audio/applied", historyStore.AudioDirectory);
+        Assert.Equal([true], sstvSession.SetAutoSaveAudioEnabledCalls);
+        Assert.Equal(["/audio/applied"], sstvSession.SetAudioDirectoryCalls);
+        Assert.Null(vm.AudioDirectoryErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyAudioDirectoryCommand_StoreThrows_SetsErrorMessage_DoesNotLiveApply()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ThrowOnSetAudioSettings = true };
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModelForStorageTests(historyStore, sstvSession: sstvSession);
+        vm.AudioDirectory = "/audio/applied";
+
+        await vm.ApplyAudioDirectoryCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.AudioDirectoryErrorMessage);
+        Assert.Empty(sstvSession.SetAutoSaveAudioEnabledCalls);
+        Assert.Empty(sstvSession.SetAudioDirectoryCalls);
     }
 
     [AvaloniaFact]

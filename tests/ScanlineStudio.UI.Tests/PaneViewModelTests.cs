@@ -660,6 +660,52 @@ public sealed class PaneViewModelTests
         Assert.False(vm.IsRedecoding);
     }
 
+    // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: Gallery/RX-details "Re-decode this
+    // frame" entry point -- shares DecodeFileAsync with RedecodeCommand above (see that method's own
+    // doc comment), so these pin the two behaviors specific to this second entry point: no
+    // file-picker step, and the real failure reason (not a generic message) for a documented
+    // InvalidOperationException.
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeFromPathCommand_DecodesTheGivenPath_NoFilePickerInvolved()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var filePicker = new FakeFilePickerService { OpenWavPathToReturn = "/tmp/should-not-be-used.wav" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), filePicker, new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeFromPathCommand.ExecuteAsync("/tmp/from-history.wav");
+
+        Assert.Null(vm.RedecodeErrorMessage);
+        Assert.False(vm.IsRedecoding);
+        Assert.Equal(["/tmp/from-history.wav"], sstvSession.DecodeFromFileCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeFromPathCommand_InvalidOperationException_ShowsTheRealReasonNotAGenericMessage()
+    {
+        var sstvSession = new FakeSstvSessionService { ThrowOnDecodeFromFile = new InvalidOperationException("Cannot decode a file while auto-detect is paused.") };
+        var localization = new FakeLocalizationService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeFromPathCommand.ExecuteAsync("/tmp/from-history.wav");
+
+        Assert.Equal("Panes.RxImage.Error.RedecodeFailedWithReason", vm.RedecodeErrorMessage);
+        Assert.Equal(["Cannot decode a file while auto-detect is paused."], localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RedecodeFromPathCommand_NonInvalidOperationException_ShowsTheGenericMessage()
+    {
+        // A raw I/O failure's own Message is not written to be operator-facing the way the
+        // documented InvalidOperationException reasons are -- see DecodeFileAsync's own doc comment.
+        var sstvSession = new FakeSstvSessionService { ThrowOnDecodeFromFile = new IOException("Disk read error at offset 0x4000.") };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        await vm.RedecodeFromPathCommand.ExecuteAsync("/tmp/from-history.wav");
+
+        Assert.Equal("Panes.RxImage.Error.RedecodeFailed", vm.RedecodeErrorMessage);
+    }
+
     // Wired 2026-08-18: RxFrameMeta's Note/Flag controls were disabled -- "this pane has no way to
     // learn a just-saved frame's ReceiveHistoryEntry id yet." IReceiveHistoryStore.Recorded is the
     // real hook; OnHistoryRecorded correlates it back to the currently-displayed frame by matching
@@ -730,6 +776,156 @@ public sealed class PaneViewModelTests
         var frame = Assert.Single(vm.PreviousFrames);
         Assert.Equal("entry1", frame.Entry.Id);
         Assert.NotNull(frame.Thumbnail);
+    }
+
+    /// <summary>ui_transition_plan.md step 6 (T2-4) -- the exact regression shape the plan item
+    /// itself specifies: "station A frame, retune, station B frame -- A's stored frequency
+    /// unchanged." "Retune" here means station B's OnHistoryRecorded latches a DIFFERENT
+    /// FrequencyHz/RigMode than A's, proving the display reflects the CURRENT frame's own entry,
+    /// never live radio state re-read later, and that A's own already-recorded row is untouched by
+    /// B ever completing.</summary>
+    [AvaloniaFact]
+    public async Task LatchedFrequencyDisplay_StationAThenRetuneThenStationB_EachFrameKeepsItsOwnFrequency()
+    {
+        // Auditor code-review finding (2026-08-29): LatchedFrequencyDisplay formats with the
+        // thread's CurrentCulture (same convention as the production RadioStatusViewModel.FrequencyDisplay
+        // it mirrors), so a hardcoded "14.230000" literal would fail on a non-invariant-decimal-style
+        // dev machine (e.g. de-DE's comma separator). Scoped narrowly via try/finally, restored
+        // immediately after -- this test has no yield point that would let another test observe the
+        // mutated culture in between.
+        var originalCulture = System.Globalization.CultureInfo.CurrentCulture;
+        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
+        try
+        {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var modeA = TestMode;
+        var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
+
+        Assert.Equal("—", vm.LatchedFrequencyDisplay);
+
+        // Station A completes on 14.230000 MHz USB.
+        sstvSession.RaiseModeDetected(modeA);
+        Dispatcher.UIThread.RunJobs();
+        receivedImage.RaiseSaved("/tmp/stationA.png", receivedImage.Generation);
+        Dispatcher.UIThread.RunJobs();
+        var entryA = new ReceiveHistoryEntry("a", DateTimeOffset.UtcNow, modeA.Id, "/tmp/stationA.png", null, ReceiveDecodeState.Completed, FrequencyHz: 14_230_000, RigMode: RadioMode.Usb);
+        await historyStore.RecordAsync(entryA);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("14.230000 MHz · Usb", vm.LatchedFrequencyDisplay);
+
+        // A new reception starts (the operator retunes in between) -- must go back to "—", not
+        // keep showing A's frequency, until B's own entry actually lands.
+        sstvSession.RaiseModeDetected(modeA);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("—", vm.LatchedFrequencyDisplay);
+
+        // Station B completes on a different frequency/mode.
+        receivedImage.RaiseSaved("/tmp/stationB.png", receivedImage.Generation);
+        Dispatcher.UIThread.RunJobs();
+        var entryB = new ReceiveHistoryEntry("b", DateTimeOffset.UtcNow, modeA.Id, "/tmp/stationB.png", null, ReceiveDecodeState.Completed, FrequencyHz: 7_171_000, RigMode: RadioMode.Lsb);
+        await historyStore.RecordAsync(entryB);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("7.171000 MHz · Lsb", vm.LatchedFrequencyDisplay);
+
+        // A's own row, independently, is untouched by B ever completing.
+        var storedA = historyStore.RecordedEntries.Single(e => e.Id == "a");
+        Assert.Equal(14_230_000, storedA.FrequencyHz);
+        Assert.Equal(RadioMode.Usb, storedA.RigMode);
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = originalCulture;
+        }
+    }
+
+    // ui_transition_plan.md step 3 (T1-5): full-size viewer entry points off this pane
+    // (live incoming-frame double-tap and a Previous-Frames thumbnail double-tap).
+
+    [AvaloniaFact]
+    public void OpenImageViewerCommand_WithNoDependenciesSupplied_IsASilentNoOp()
+    {
+        // The 3 trailing optional constructor params are omitted here -- same convention as
+        // TxImageEditorPaneViewModel's own canTransmitNow default, so this class's ~100 other
+        // direct-construction test call sites don't need updating for a feature they don't
+        // exercise.
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotEmpty(vm.PreviousFrames);
+
+        var raised = false;
+        vm.ImageViewerRequested += _ => raised = true;
+        vm.OpenImageViewerCommand.Execute(null);
+
+        Assert.False(raised);
+    }
+
+    [AvaloniaFact]
+    public void OpenImageViewerCommand_BeforeAnyReceptionCompleted_IsASilentNoOp()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(
+            sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance,
+            new FakeUrlLauncher(), new FakeClipboardImageService(), NullLogger<ImageViewerWindowViewModel>.Instance);
+        Assert.Empty(vm.PreviousFrames);
+
+        var raised = false;
+        vm.ImageViewerRequested += _ => raised = true;
+        vm.OpenImageViewerCommand.Execute(null);
+
+        Assert.False(raised);
+    }
+
+    [AvaloniaFact]
+    public void OpenImageViewerCommand_NullStartEntry_OpensAtTheMostRecentFrame()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(
+            sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance,
+            new FakeUrlLauncher(), new FakeClipboardImageService(), NullLogger<ImageViewerWindowViewModel>.Instance);
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("older", DateTimeOffset.UtcNow.AddMinutes(-1), "sc1", "/tmp/older.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("newer", DateTimeOffset.UtcNow, "sc1", "/tmp/newer.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        // PreviousFrames is sorted most-recent-first -- see that property's own doc comment.
+        Assert.Equal(["newer", "older"], vm.PreviousFrames.Select(f => f.Entry.Id));
+
+        ImageViewerWindowViewModel? requested = null;
+        vm.ImageViewerRequested += viewerVm => requested = viewerVm;
+        vm.OpenImageViewerCommand.Execute(null);
+
+        Assert.NotNull(requested);
+        Assert.Equal(0, requested!.CurrentIndex);
+        Assert.Equal("newer", requested.Current!.Entry.Id);
+    }
+
+    [AvaloniaFact]
+    public void OpenImageViewerCommand_WithASpecificEntry_OpensAtThatEntrysIndex()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(
+            sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance,
+            new FakeUrlLauncher(), new FakeClipboardImageService(), NullLogger<ImageViewerWindowViewModel>.Instance);
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("older", DateTimeOffset.UtcNow.AddMinutes(-1), "sc1", "/tmp/older.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("newer", DateTimeOffset.UtcNow, "sc1", "/tmp/newer.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+
+        ImageViewerWindowViewModel? requested = null;
+        vm.ImageViewerRequested += viewerVm => requested = viewerVm;
+        vm.OpenImageViewerCommand.Execute(vm.PreviousFrames.Single(f => f.Entry.Id == "older"));
+
+        Assert.NotNull(requested);
+        Assert.Equal("older", requested!.Current!.Entry.Id);
     }
 
     [AvaloniaFact]
@@ -1318,6 +1514,24 @@ public sealed class PaneViewModelTests
         Assert.Equal("Panes.RxSync.AutoCorrectValue.Locked", vm.AutoCorrectDisplay);
         Assert.Equal("Panes.RxInput.ClippingValue.Overdriven", vm.ClippingDisplay);
         Assert.Equal("Panes.RxSync.SourceValue.Locked", vm.SyncSourceDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_PollTelemetry_PollsIsAudioAutoSaveActive()
+    {
+        // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: real, varying backing for the
+        // main-window status bar's auto-save-audio chip -- see ISstvSessionService.
+        // IsAudioAutoSaveActive's own doc comment for why this must poll a real property, not
+        // reflect the Options enable toggle alone.
+        var sstvSession = new FakeSstvSessionService { IsAudioAutoSaveActive = false };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.PollTelemetry();
+        Assert.False(vm.IsAudioAutoSaveActive);
+
+        sstvSession.IsAudioAutoSaveActive = true;
+        vm.PollTelemetry();
+        Assert.True(vm.IsAudioAutoSaveActive);
     }
 
     [AvaloniaTheory]
@@ -1951,6 +2165,92 @@ public sealed class PaneViewModelTests
         Assert.Equal(0, sstvSession.ForceModeCallCount);
     }
 
+    /// <summary>ui_transition_plan.md step 10 (T2-5): persistent RX mode lock -- explicit target via
+    /// the quick-mode grid's own "Hold this mode" context-menu entry, not "whatever was last
+    /// quick-selected" or "whatever is currently detected" (both rejected in plan-review: the first
+    /// is undefined while not receiving, the second is never nulled at end-of-reception and would
+    /// hold a stale value).</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_HoldModeCommand_SetsHeldModeAndCallsSetModeLock()
+    {
+        var mode = TestMode;
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.HoldModeCommand.Execute(mode);
+
+        Assert.Equal(mode.Id, vm.HeldMode?.Id);
+        Assert.Equal(1, sstvSession.SetModeLockCallCount);
+        Assert.Equal(mode.Id, sstvSession.LastLockedMode?.Id);
+        // FakeLocalizationService.GetString echoes the raw key -- the real interpolated text isn't
+        // asserted here (see PaneViewModelTests' own established convention for this fake).
+        Assert.Equal("Panes.RxImage.QuickMode.HoldingValue", vm.HeldModeDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ReleaseHeldModeCommand_ClearsHeldModeAndCallsSetModeLockNull()
+    {
+        var mode = TestMode;
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.HoldModeCommand.Execute(mode);
+        Assert.True(vm.ReleaseHeldModeCommand.CanExecute(null));
+
+        vm.ReleaseHeldModeCommand.Execute(null);
+
+        Assert.Null(vm.HeldMode);
+        Assert.Null(vm.HeldModeDisplay);
+        Assert.Equal(2, sstvSession.SetModeLockCallCount);
+        Assert.Null(sstvSession.LastLockedMode);
+    }
+
+    /// <summary>Code-review finding: ISstvSessionService.SetModeLock's own doc comment documents AVT
+    /// as an unsupported lock target (locking to it takes Commit's own AVT branch for a signal that
+    /// isn't AVT-shaped, skipping anchor correction/AFC/slant entirely) -- nothing enforced this
+    /// before the fix, so every one of the 43 reassignment entries, AVT included, was reachable via
+    /// "Hold this mode" with no gate at all.</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_HoldModeCommand_AvtMode_CannotExecute()
+    {
+        var avtMode = TestMode;
+        var sstvSession = new FakeSstvSessionService { VisHeaderInfoToReturn = (VisHeaderKind.Avt, 0) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.False(vm.HoldModeCommand.CanExecute(avtMode));
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_HoldModeCommand_NonAvtMode_CanExecute()
+    {
+        var sstvSession = new FakeSstvSessionService { VisHeaderInfoToReturn = (VisHeaderKind.Standard, 8) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.True(vm.HoldModeCommand.CanExecute(TestMode));
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ReleaseHeldModeCommand_NothingHeld_CannotExecute()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Null(vm.HeldModeDisplay);
+        Assert.False(vm.ReleaseHeldModeCommand.CanExecute(null));
+    }
+
+    /// <summary>Each quick-mode slot's own HoldModeCommand must be the SAME captured-once-at-
+    /// construction command as the parent's (same pattern as SelectCommand/ReassignCommand) -- not a
+    /// cross-DataTemplate binding path.</summary>
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_QuickModeSlots_ShareTheSameHoldModeCommandInstance()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.NotEmpty(vm.QuickModeSlots);
+        Assert.All(vm.QuickModeSlots, slot => Assert.Same(vm.HoldModeCommand, slot.HoldModeCommand));
+    }
+
     [AvaloniaFact]
     public void RxImagePaneViewModel_QuickSelectMode_UnknownModeId_IsASafeNoOp()
     {
@@ -2490,6 +2790,34 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_SoundFileIdOnlyEnabled_TailShowsSoundFileOnly()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with { SoundFileIdEnabled = true },
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxId.TailSoundFileOnly", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
+    public void TxControlsPaneViewModel_Constructed_FskAndSoundFileIdEnabled_TailShowsBothSoundFile()
+    {
+        var sstvSession = new FakeSstvSessionService
+        {
+            AvailableModes = [TestMode],
+            StationIdTransmitOptionsToReturn = StationIdTransmitOptions.None with { FskIdEnabled = true, SoundFileIdEnabled = true },
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxId.TailBothSoundFile", vm.TailDisplay);
+    }
+
+    [AvaloniaFact]
     public void TxControlsPaneViewModel_SelectedModeChanges_RaisesPropertyChangedForToneMapText()
     {
         var narrowMode = TestMode with { Id = "narrow" }; // LuminanceMinHz/MaxHz not overridden here -- this test only needs a DIFFERENT mode instance, not different Hz values, to prove the reactive wiring fires
@@ -2728,6 +3056,68 @@ public sealed class PaneViewModelTests
         Assert.Same(firstEditor, ExtractCurrentEditor(vm));
     }
 
+    /// <summary>ui_transition_plan.md step 5 (T1-6): "Copy to TX" seeds the new editor's HIS
+    /// CALL/HIS GRID template variables from CurrentContactRequested, so a reply-card template
+    /// comes up pre-filled with the received station's own callsign/grid.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_SeedsHisCallAndHisGridFromCurrentContactRequested()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+
+        var editor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call} {his_grid}";
+
+        Assert.Equal("W1AW", editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal("FN31pr", editor.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
+    /// <summary>Code-review finding: a whitespace-only callsign must NOT seed "his_call" as an empty
+    /// string -- MacroTextResolver resolves a present-but-empty variable to "" (token vanishes from
+    /// the transmitted card), while an absent one resolves verbatim to "{his_call}" (an obvious
+    /// unfilled placeholder). Asserts on ResolvedText, not the fill-bar row value, since the row
+    /// reads empty either way -- a row-value-only assertion would pass against the bug.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_WhitespaceOnlyCallsign_LeavesTokenUnresolved()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("   ", null),
+        };
+
+        var editor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call}";
+
+        Assert.Contains("{his_call}", element.ResolvedText);
+    }
+
+    /// <summary>No RX pane wired (CurrentContactRequested left null, e.g. a headless/host-not-fully-
+    /// constructed scenario) must not throw -- the editor opens with genuinely empty rows instead.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_CurrentContactRequestedUnwired_OpensWithEmptyRows()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call}";
+
+        Assert.Equal(string.Empty, editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_TransmitCommand_InvokesSstvSessionServiceWhenImageLoaded()
     {
@@ -2748,6 +3138,62 @@ public sealed class PaneViewModelTests
 
         Assert.Single(sstvSession.TransmitCalls);
         Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
+    }
+
+    /// <summary>ui_transition_plan.md step 2 (T1-2): one click applies AND starts the transmit --
+    /// the whole point of the SEND row's new primary action is that the operator doesn't have to
+    /// separately find and click Transmit in the sidebar afterward.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ApplyAndTransmitCommand_OnTheOpenEditor_ClosesEditorAndStartsTransmit()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.True(vm.IsEditorOpen);
+        Assert.True(editor.ApplyAndTransmitCommand.CanExecute(null));
+
+        editor.ApplyAndTransmitCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditorOpen);
+        Assert.Single(sstvSession.TransmitCalls);
+        Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
+    }
+
+    /// <summary>Companion to the test above: while an editor is already open and the SIDEBAR
+    /// Transmit button starts transmitting a PREVIOUSLY applied image (a re-edit-in-progress
+    /// scenario), the open editor's own Apply &amp; Transmit button must live-disable -- otherwise
+    /// clicking it would try to start a second, overlapping transmission.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ApplyAndTransmitCommand_DisablesWhileSidebarTransmitIsRunning()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var filePicker = new FakeFilePickerService();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        firstEditor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.TransmitCommand.CanExecute(null));
+
+        sstvSession.BlockUntilCancelled = true;
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+
+        // A second editor open (e.g. re-editing while the first transmission is still running) --
+        // its Apply & Transmit must reflect the PARENT's live IsTransmitting, not just its own
+        // freshly-constructed state.
+        var secondEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.False(secondEditor.ApplyAndTransmitCommand.CanExecute(null));
+
+        vm.StopTransmitCommand.Execute(null);
+        await transmitTask;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(secondEditor.ApplyAndTransmitCommand.CanExecute(null));
     }
 
     [AvaloniaFact]
@@ -3639,6 +4085,132 @@ public sealed class PaneViewModelTests
         Assert.NotNull(entry.Thumbnail);
     }
 
+    /// <summary>ui_transition_plan.md step 9 (T2-7): the Storage card's folder path was previously
+    /// read-only text -- this makes the already-auto-archived location actually reachable.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenStorageFolderCommand_OpensTheResolvedImagesDirectory()
+    {
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
+        await vm.LoadImagesDirectoryAsync();
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.OpenStorageFolderCommand.CanExecute(null));
+
+        vm.OpenStorageFolderCommand.Execute(null);
+
+        Assert.Contains("/tmp/scanlinestudio-history", urlLauncher.OpenedUrls);
+    }
+
+    /// <summary>Code-review finding: the resolved default images directory is only ever CREATED on
+    /// the first saved frame -- on a fresh profile with nothing received yet, opening it must not
+    /// silently no-op (IUrlLauncher.Open's own swallow-and-log Process.Start failure against a
+    /// nonexistent path).</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenStorageFolderCommand_FreshProfile_CreatesTheDirectoryFirst()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}");
+        Assert.False(Directory.Exists(directory));
+        try
+        {
+            var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = directory };
+            var urlLauncher = new FakeUrlLauncher();
+            var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
+            await vm.LoadImagesDirectoryAsync();
+            Dispatcher.UIThread.RunJobs();
+
+            vm.OpenStorageFolderCommand.Execute(null);
+
+            Assert.True(Directory.Exists(directory));
+            Assert.Contains(directory, urlLauncher.OpenedUrls);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory);
+            }
+        }
+    }
+
+    /// <summary>A path that can never become a real directory (it already exists as a FILE) must
+    /// surface an error, not silently do nothing.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenStorageFolderCommand_CreateFails_SurfacesErrorAndDoesNotOpen()
+    {
+        var blockingFile = Path.Combine(Path.GetTempPath(), $"scanlinestudio-test-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(blockingFile, "not a directory");
+        try
+        {
+            var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = blockingFile };
+            var urlLauncher = new FakeUrlLauncher();
+            var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
+            await vm.LoadImagesDirectoryAsync();
+            Dispatcher.UIThread.RunJobs();
+
+            vm.OpenStorageFolderCommand.Execute(null);
+
+            Assert.Empty(urlLauncher.OpenedUrls);
+            Assert.NotNull(vm.ErrorMessage);
+        }
+        finally
+        {
+            File.Delete(blockingFile);
+        }
+    }
+
+    // ui_transition_plan.md step 3 (T1-5 + T2-6): full-size viewer entry point off the Gallery grid.
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenImageViewerCommand_OpensOverFilteredEntries_AtTheTappedEntrysIndex()
+    {
+        var entryA = new ReceiveHistoryEntry("a", DateTimeOffset.UtcNow.AddMinutes(-1), "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var entryB = new ReceiveHistoryEntry("b", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entryA, entryB],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var tapped = vm.FilteredEntries.Single(e => e.Entry.Id == "b");
+
+        ImageViewerWindowViewModel? requested = null;
+        vm.ImageViewerRequested += viewerVm => requested = viewerVm;
+        vm.OpenImageViewerCommand.Execute(tapped);
+
+        Assert.NotNull(requested);
+        Assert.Equal("b", requested!.Current!.Entry.Id);
+
+        // Round-trips through to the SAME url launcher this VM was constructed with -- confirms
+        // the viewer VM was actually wired to this pane's own dependencies, not fresh no-op ones.
+        requested.OpenFileLocationCommand.Execute(null);
+        Assert.Equal("/tmp", Assert.Single(urlLauncher.OpenedUrls));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenImageViewerCommand_WithAnEntryNotInFilteredEntries_IsASilentNoOp()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("a", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var notInList = new RxHistoryEntryViewModel(
+            new ReceiveHistoryEntry("gone", DateTimeOffset.UtcNow, "robot36", "/tmp/gone.png", null, ReceiveDecodeState.Completed), Thumbnail: null);
+
+        var raised = false;
+        vm.ImageViewerRequested += _ => raised = true;
+        vm.OpenImageViewerCommand.Execute(notInList);
+
+        Assert.False(raised);
+    }
+
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_SelectingAnEntry_LoadsAReadOnlyPreview_NeverTouchingTheLiveReceivedImageBuffer()
     {
@@ -4441,6 +5013,448 @@ public sealed class PaneViewModelTests
         Assert.Equal(85, Assert.Single(frameExporter.Calls).JpegQuality);
     }
 
+    // ui_transition_plan.md step 4 (T1-4, reframed): per-item manual delete.
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_CanExecute_MatchesSelection()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.DeleteSelectedEntryCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.DeleteSelectedEntryCommand.CanExecute(null));
+    }
+
+    /// <summary>Auditor-caught regression (2026-08-29): OnSelectedEntryChanged originally omitted
+    /// DeleteSelectedEntryCommand.NotifyCanExecuteChanged() from its fan-out (only OpenInLog/Export
+    /// were included) -- the button rendered as a live, full-strength IndustryBtnDanger (no disabled
+    /// style, by design) that silently did nothing on the ordinary click-a-thumbnail path. Same
+    /// "subscribe to the real event, don't just poll CanExecute(null)" discipline as
+    /// RxHistoryPaneViewModel_ExportFrameCommand_CanExecuteChangedFiresWhenSelectionChanges's own doc
+    /// comment explains -- confirmed via mutation testing here too: CanExecute(null) alone stayed
+    /// green with the NotifyCanExecuteChanged() call removed.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_CanExecuteChangedFiresWhenSelectionChanges()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.DeleteSelectedEntryCommand.CanExecuteChanged += (_, _) => fireCount++;
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry became non-null.");
+
+        fireCount = 0;
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry was cleared.");
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_Confirmed_DeletesAndRefreshesTheList()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Equal("1", Assert.Single(historyStore.DeletedEntries).Id);
+        Assert.Empty(vm.Entries);
+        Assert.Null(vm.SelectedEntry);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_Declined_DoesNotDelete()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        vm.ConfirmRequested = _ => Task.FromResult(false);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Empty(historyStore.DeletedEntries);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_UnwiredConfirmRequested_DeclinesByDefault()
+    {
+        // Safe default for a destructive action -- same reasoning as
+        // ConfigurationsManagerWindowViewModel.RequestConfirmAsync's own doc comment.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Empty(historyStore.DeletedEntries);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_EntryWithInvestment_UsesTheStrongerConfirmMessage()
+    {
+        var flagged = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, IsFlagged: true);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [flagged],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        string? messageSeen = null;
+        vm.ConfirmRequested = confirmVm =>
+        {
+            messageSeen = confirmVm.Message;
+            return Task.FromResult(false);
+        };
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Equal("Panes.RxHistory.ConfirmDeleteFlaggedMessage", messageSeen);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_PlainEntry_UsesTheOrdinaryConfirmMessage()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        string? messageSeen = null;
+        vm.ConfirmRequested = confirmVm =>
+        {
+            messageSeen = confirmVm.Message;
+            return Task.FromResult(false);
+        };
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Equal("Panes.RxHistory.ConfirmDeleteMessage", messageSeen);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_StoreThrows_SetsErrorMessage_LeavesEntryInPlace()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+            ThrowOnDelete = new IOException("disk error"),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.ErrorMessage);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_EntryAlreadyGone_SetsEntryNoLongerExistsError()
+    {
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        // Simulates another session/tab deleting it first -- DeleteAsync returns false, not throw.
+        historyStore.EntriesToReturn.Remove(entry);
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+
+        Assert.Equal("Panes.RxHistory.Error.EntryNoLongerExists", vm.ErrorMessage);
+    }
+
+    /// <summary>Auditor-caught (2026-08-29): the delete path originally only called RefreshAsync,
+    /// unlike OnRecorded's own arrival path which fires RefreshAsync AND LoadFramesTodayCountAsync
+    /// -- deleting a frame received today left the status bar's count inflated.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_DeleteSelectedEntryCommand_Confirmed_RefreshesFramesTodayCount()
+    {
+        var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(1, vm.FramesTodayCount);
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.DeleteSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, vm.FramesTodayCount);
+    }
+
+    // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: Gallery/RX-details audio actions.
+
+    /// <summary>Auditor-caught BLOCKER (round 1 code-review): RxAudioAutoSaver.AudioAttached had ZERO
+    /// subscribers anywhere in the app -- a just-received frame's in-memory ReceiveHistoryEntry never
+    /// picked up its AudioFilePath until some unrelated later refresh re-queried the DB, so the two
+    /// new Gallery buttons stayed hidden for the frame the operator just received (the primary use
+    /// case), and DeleteSelectedEntryAsync's own stale in-memory snapshot would silently orphan the
+    /// WAV on delete. This pins that subscribing IRxAudioAutoSaver.AudioAttached actually patches the
+    /// live, already-held entry in place -- not just that a fresh RefreshAsync would eventually see it.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AudioAttachedEvent_PatchesTheAlreadyHeldEntryInPlace()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var audioAutoSaver = new FakeRxAudioAutoSaver();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, audioAutoSaver: audioAutoSaver);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.Entries[0].Entry.AudioFilePath);
+
+        audioAutoSaver.RaiseAudioAttached("1", "/tmp/a.wav");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("/tmp/a.wav", vm.Entries[0].Entry.AudioFilePath);
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.OpenAudioFileLocationCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenAudioFileLocationCommand_CanExecute_MatchesAudioFilePathPresence()
+    {
+        var withAudio = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed) { AudioFilePath = "/tmp/a.wav" };
+        var withoutAudio = new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [withAudio, withoutAudio],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.OpenAudioFileLocationCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.OpenAudioFileLocationCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.OpenAudioFileLocationCommand.CanExecute(null));
+    }
+
+    /// <summary>Auditor-caught (round 1 code-review): a bare CanExecute(null) assertion alone can't
+    /// distinguish "OnSelectedEntryChanged correctly re-notifies this command" from "it doesn't, but
+    /// re-evaluating the predicate live happens to return the right answer anyway" -- same discipline
+    /// RxHistoryPaneViewModel_ExportFrameCommand_CanExecuteChangedFiresWhenSelectionChanges's own doc
+    /// comment explains. Both new commands share ONE OnSelectedEntryChanged fan-out, so one test
+    /// covering both is sufficient (not two near-identical copies).</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AudioActionCommands_CanExecuteChangedFiresWhenSelectionChanges()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed) { AudioFilePath = "/tmp/a.wav" }],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var openFireCount = 0;
+        var redecodeFireCount = 0;
+        vm.OpenAudioFileLocationCommand.CanExecuteChanged += (_, _) => openFireCount++;
+        vm.RedecodeSelectedEntryCommand.CanExecuteChanged += (_, _) => redecodeFireCount++;
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(openFireCount > 0, "Expected OpenAudioFileLocationCommand.CanExecuteChanged to fire when SelectedEntry became non-null.");
+        Assert.True(redecodeFireCount > 0, "Expected RedecodeSelectedEntryCommand.CanExecuteChanged to fire when SelectedEntry became non-null.");
+
+        openFireCount = 0;
+        redecodeFireCount = 0;
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(openFireCount > 0, "Expected OpenAudioFileLocationCommand.CanExecuteChanged to fire when SelectedEntry was cleared.");
+        Assert.True(redecodeFireCount > 0, "Expected RedecodeSelectedEntryCommand.CanExecuteChanged to fire when SelectedEntry was cleared.");
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_OpenAudioFileLocationCommand_OpensTheAudioFilesOwnContainingFolder()
+    {
+        // Deliberately the file's OWN folder, not the currently-configured AudioDirectory setting --
+        // the operator may have changed that setting since this particular file was saved.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed) { AudioFilePath = "/some/other/folder/a.wav" }],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.OpenAudioFileLocationCommand.Execute(null);
+
+        Assert.Equal(Path.Combine("/some", "other", "folder"), Assert.Single(urlLauncher.OpenedUrls));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RedecodeSelectedEntryCommand_CanExecute_MatchesAudioFilePathPresence()
+    {
+        var withAudio = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed) { AudioFilePath = "/tmp/a.wav" };
+        var withoutAudio = new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [withAudio, withoutAudio],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.RedecodeSelectedEntryCommand.CanExecute(null));
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.RedecodeSelectedEntryCommand.CanExecute(null));
+    }
+
+    /// <summary>RxHistoryPaneViewModel deliberately does not depend on ISstvSessionService (see
+    /// RedecodeRequested's own doc comment) -- this pins that the command raises the event with the
+    /// entry's own audio path rather than calling any decode service directly.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RedecodeSelectedEntryCommand_RaisesRedecodeRequestedWithThePath()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed) { AudioFilePath = "/tmp/a.wav" }],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        string? raisedPath = null;
+        vm.RedecodeRequested += path => raisedPath = path;
+
+        vm.RedecodeSelectedEntryCommand.Execute(null);
+
+        Assert.Equal("/tmp/a.wav", raisedPath);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_LoadAudioStorageInfoAsync_SumsRealFileSizesInTheAudioDirectory()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"scanline-studio-audio-storage-test-{Guid.NewGuid()}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            await File.WriteAllBytesAsync(Path.Combine(directory, "a.wav"), new byte[1000]);
+            await File.WriteAllBytesAsync(Path.Combine(directory, "b.wav"), new byte[2000]);
+
+            var historyStore = new FakeReceiveHistoryStore { AutoSaveAudioEnabled = true, AudioDirectory = directory };
+            var vm = CreateRxHistoryPaneViewModel(historyStore);
+
+            await vm.LoadAudioStorageInfoAsync();
+
+            Assert.Equal(3000L, vm.AudioStorageBytes);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_LoadAudioStorageInfoAsync_DirectoryDoesNotExistYet_RendersAnHonestEmDash()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            AudioDirectory = Path.Combine(Path.GetTempPath(), $"scanline-studio-audio-storage-test-{Guid.NewGuid()}-does-not-exist"),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+
+        await vm.LoadAudioStorageInfoAsync();
+
+        Assert.Null(vm.AudioStorageBytes);
+        Assert.Equal("—", vm.AudioStorageBytesDisplay);
+    }
+
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_ExportFrameAsync_OutOfRangeSettingsQuality_IsClamped()
     {
@@ -4711,7 +5725,10 @@ public sealed class PaneViewModelTests
         FakeReceiveHistoryStore historyStore,
         FakeReceivedFrameExporter? frameExporter = null,
         FakeFilePickerService? filePicker = null,
-        FakeSettingsStore? settingsStore = null) =>
+        FakeSettingsStore? settingsStore = null,
+        FakeUrlLauncher? urlLauncher = null,
+        FakeClipboardImageService? clipboardImageService = null,
+        FakeRxAudioAutoSaver? audioAutoSaver = null) =>
         new(
             historyStore,
             new FakeLocalizationService(),
@@ -4720,7 +5737,11 @@ public sealed class PaneViewModelTests
             NullLogger<QsoLinkWindowViewModel>.Instance,
             frameExporter ?? new FakeReceivedFrameExporter(),
             filePicker ?? new FakeFilePickerService(),
-            settingsStore ?? new FakeSettingsStore());
+            settingsStore ?? new FakeSettingsStore(),
+            urlLauncher ?? new FakeUrlLauncher(),
+            clipboardImageService ?? new FakeClipboardImageService(),
+            NullLogger<ImageViewerWindowViewModel>.Instance,
+            audioAutoSaver ?? new FakeRxAudioAutoSaver());
 
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_NoFilterActive_FilteredEntriesMatchesEntries()
@@ -5047,8 +6068,9 @@ public sealed class PaneViewModelTests
         Assert.Equal("Some Op", vm.FormName);
         Assert.Equal("Somewhere", vm.FormQth);
         Assert.Equal("AB12cd", vm.FormGridSquare);
-        // No radio-state auto-fill mechanism exists yet (spec/08-logging.md) -- must stay untouched,
-        // not silently defaulted to something.
+        // ui_transition_plan.md step 5 (T1-6): frequencyHz/radioMode are now real trailing optional
+        // params (see PrefillForNewEntry's own doc comment) -- omitted here, so they stay null, same
+        // as every other unset nullable field, not a fake default.
         Assert.Null(vm.FormFrequencyHz);
         Assert.Null(vm.FormMode);
         // Round-1 plan-review finding: must use New()'s full "start clean" semantics, not just
@@ -5059,6 +6081,86 @@ public sealed class PaneViewModelTests
         // already has -- an accepted tradeoff (rx-log-qso.md), not fixed further here.
         Assert.False(vm.IsEditing);
         Assert.Null(vm.SelectedEntry);
+    }
+
+    /// <summary>ui_transition_plan.md step 5 (T1-6): the actual new behavior -- when the caller DOES
+    /// pass a frequency/mode (sourced from the RX frame's latched metadata or live radio state, per
+    /// MainWindow.axaml.cs's own LogQsoRequested handler), it lands in the form, still freely
+    /// editable.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_WithFrequencyAndMode_SetsBothFormFields()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null, 14_230_000, RadioMode.Usb);
+
+        Assert.Equal(14_230_000, vm.FormFrequencyHz);
+        Assert.Equal(RadioMode.Usb, vm.FormMode);
+        Assert.Equal("14.230000", vm.FormFrequencyMhzText);
+    }
+
+    /// <summary>ui_transition_plan.md step 5 (T2-8): FormFrequencyHz stays the stored/ADIF unit;
+    /// FormFrequencyMhzText is the MHz-facing edit surface the form actually binds to.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_FormFrequencyMhzText_RoundTripsThroughFormFrequencyHz()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(string.Empty, vm.FormFrequencyMhzText);
+
+        vm.FormFrequencyMhzText = "7.171000";
+        Assert.Equal(7_171_000, vm.FormFrequencyHz);
+
+        vm.FormFrequencyHz = 14_230_000;
+        Assert.Equal("14.230000", vm.FormFrequencyMhzText);
+
+        // Auditor-anticipated finding: an in-progress/invalid keystroke must not blank out an
+        // otherwise-valid stored value -- Avalonia's default TextBox binding trigger fires on every
+        // keystroke, not just on lost-focus.
+        vm.FormFrequencyMhzText = "14.2x";
+        Assert.Equal(14_230_000, vm.FormFrequencyHz);
+
+        // Explicitly clearing the field IS the recognized way to null it.
+        vm.FormFrequencyMhzText = string.Empty;
+        Assert.Null(vm.FormFrequencyHz);
+    }
+
+    /// <summary>Code-review finding: an out-of-range double (e.g. a pasted "1e20") converts to
+    /// `long` with an unspecified result if unchecked -- must be rejected like any other unparseable
+    /// input, not stored as garbage into the QSO row/ADIF FREQ.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_FormFrequencyMhzText_OutOfRangeValue_IsRejected()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+        vm.FormFrequencyHz = 14_230_000;
+
+        vm.FormFrequencyMhzText = "1e20";
+
+        Assert.Equal(14_230_000, vm.FormFrequencyHz);
+    }
+
+    /// <summary>Code-review finding: FormFrequencyMhzText was originally a computed proxy re-raising
+    /// its own PropertyChanged from inside the FormFrequencyHz setter's own write -- a real risk of
+    /// Avalonia rewriting the TextBox mid-keystroke. This pins the fix's actual mechanism: setting
+    /// the text property must not re-enter and overwrite itself with the reformatted value while the
+    /// edit is still "in progress" (an in-progress edit is only observable via the guard flag's
+    /// effect -- an unparseable value mid-edit leaves the text AS TYPED, not reformatted/reverted).</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_FormFrequencyMhzText_InProgressEdit_TextIsNotRewrittenMidKeystroke()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormFrequencyMhzText = "14.2";
+
+        // "14.2" parses fine (partial-but-valid mid-entry), so FormFrequencyHz updates -- but the
+        // text the operator is looking at must stay exactly what they typed, not "14.200000".
+        Assert.Equal("14.2", vm.FormFrequencyMhzText);
+        Assert.Equal(14_200_000, vm.FormFrequencyHz);
     }
 
     [AvaloniaFact]

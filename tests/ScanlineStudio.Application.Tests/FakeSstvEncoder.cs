@@ -52,6 +52,16 @@ internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguratio
 
     public double? LastSampleRateOffsetHz { get; private set; }
 
+    /// <summary>Options stub backlog item 3 -- same reasoning as <see cref="LastSampleRateOffsetHz"/>
+    /// above, lets a test assert on the TX BPF/LPF settings-resolution logic directly.</summary>
+    public bool? LastTxBpfEnabled { get; private set; }
+
+    public int? LastTxBpfTapCount { get; private set; }
+
+    public bool? LastTxLpfEnabled { get; private set; }
+
+    public double? LastTxLpfFrequencyHz { get; private set; }
+
     public long EstimateSampleCount(SstvModeDefinition mode, IImageSource image, StationIdTransmitOptions? stationId = null, double sampleRateOffsetHz = 0.0)
     {
         LastEstimateStationIdOptions = stationId;
@@ -71,10 +81,18 @@ internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguratio
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
         double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = 24,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         LastStationIdOptions = stationId;
         LastSampleRateOffsetHz = sampleRateOffsetHz;
+        LastTxBpfEnabled = txBpfEnabled;
+        LastTxBpfTapCount = txBpfTapCount;
+        LastTxLpfEnabled = txLpfEnabled;
+        LastTxLpfFrequencyHz = txLpfFrequencyHz;
         if (BeforeFirstYield is { } beforeFirstYield)
         {
             await beforeFirstYield();

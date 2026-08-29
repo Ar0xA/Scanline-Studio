@@ -1977,23 +1977,36 @@
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
                             <TextBlock Grid.Column="1" Classes="IndustryKicker" HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding SendMetaText}" />
                         </Grid>
-                        <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                            <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
-                                 discards all edits with no confirmation." Arm/confirm — see
-                                 IsCancelArmed's own doc comment. Classes.IndustryBtnDanger dynamically
-                                 toggled on top of the normal Secondary look, same visual language a
-                                 destructive action already uses elsewhere in this design system. -->
-                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsCancelArmed}"
-                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                    Command="{Binding CancelCommand}">
-                                <Panel>
-                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.Cancel}" IsVisible="{Binding !IsCancelArmed}" />
-                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmCancelDiscardShort}" IsVisible="{Binding IsCancelArmed}" />
-                                </Panel>
-                            </Button>
-                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                    Content="{loc:Translate Panes.TxImageEditor.Apply}"
-                                    Command="{Binding ApplyCommand}" />
+                        <!-- ui_transition_plan.md step 2 (T1-2): SEND used to mean apply-only, with
+                             the real Transmit button off in TxControlsPaneView's own sidebar column
+                             (potentially below its scroll position) — a human finishing a card
+                             expects the large action HERE to send it. Apply & Transmit is now the
+                             primary action; plain Apply (still real, still needed for a card the
+                             operator wants staged but not sent yet) demotes to Secondary. -->
+                        <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
+                            <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                                <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
+                                     discards all edits with no confirmation." Arm/confirm — see
+                                     IsCancelArmed's own doc comment. Classes.IndustryBtnDanger dynamically
+                                     toggled on top of the normal Secondary look, same visual language a
+                                     destructive action already uses elsewhere in this design system. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsCancelArmed}"
+                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Command="{Binding CancelCommand}">
+                                    <Panel>
+                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.Cancel}" IsVisible="{Binding !IsCancelArmed}" />
+                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmCancelDiscardShort}" IsVisible="{Binding IsCancelArmed}" />
+                                    </Panel>
+                                </Button>
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.Apply}"
+                                        ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Apply.Help}"
+                                        Command="{Binding ApplyCommand}" />
+                            </Grid>
+                            <Button Grid.Row="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Content="{loc:Translate Panes.TxImageEditor.ApplyAndTransmit}"
+                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.ApplyAndTransmit.Help}"
+                                    Command="{Binding ApplyAndTransmitCommand}" />
                         </Grid>
                     </StackPanel>
                 </Grid>

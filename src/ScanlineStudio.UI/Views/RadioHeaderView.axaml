@@ -50,18 +50,54 @@
                              Theme="{StaticResource IndustryBlueprintBorderTheme}"
                              Padding="14,5,14,5">
                 <StackPanel Orientation="Horizontal" Spacing="14">
-                    <StackPanel>
+                    <!-- MinWidth (code-review fix): the readout renders at FontSize="40" mono
+                         (e.g. "1296.000000 MHz" is ~320px wide there) while the entry TextBox is
+                         only Width="180" — toggling edit mode reflowed the whole VFO card's
+                         Auto-width column, shifting every card to its right. Set to the wider of the
+                         two so the column doesn't resize either way. -->
+                    <StackPanel MinWidth="320">
                         <TextBlock Classes="IndustryKicker wide" Text="{Binding VfoKickerDisplay}" />
                         <!-- 40px mono frequency readout. The ".000" dimmed-gray tail-split from
                              LAYOUT-SPEC is deferred exactly as the pre-Phase-2 code already
                              deferred it (real FrequencyDisplay format doesn't share mock2's own
-                             grouping to split on) — single-color, unchanged scope. -->
-                        <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}"
+                             grouping to split on) — single-color, unchanged scope.
+                             ui_transition_plan.md step 11 (T2-1): click swaps this readout for the
+                             TextBox below (BeginEditFrequencyCommand/IsEditingFrequency, RadioStatusViewModel.cs
+                             — SetFrequencyCommand/FrequencyInputMhz were already fully built and
+                             tested, just unreachable from any View before this). Not a Button (no
+                             chrome/hover-highlight wanted on a passive readout that only ever gets
+                             ONE thing done to it) — a PointerPressed handler in
+                             RadioHeaderView.axaml.cs instead, same "code-behind for an interaction
+                             AXAML alone can't express" precedent as this app's own thumbnail
+                             double-tap handlers. -->
+                        <TextBlock x:Name="FrequencyReadout"
+                                   FontFamily="{StaticResource IndustryMonoFontFamily}"
                                    FontSize="40" FontWeight="Medium"
                                    LetterSpacing="-1.2" LineHeight="41"
                                    Foreground="{StaticResource IndustryText}"
                                    Margin="0,2,0,0"
-                                   Text="{Binding FrequencyDisplay}" />
+                                   Text="{Binding FrequencyDisplay}"
+                                   Cursor="Hand"
+                                   ToolTip.Tip="{loc:Translate RadioStatus.FrequencyReadout.Help}"
+                                   IsVisible="{Binding !IsEditingFrequency}"
+                                   PointerPressed="OnFrequencyReadoutPointerPressed" />
+                        <!-- Enter/Escape handled in RadioHeaderView.axaml.cs — same "code-behind
+                             KeyDown, Enter commits, Escape cancels" idiom as
+                             TxImageEditorPaneView.axaml.cs's own inline text-edit TextBox. -->
+                        <!-- Height/MinHeight="41" (code-review fix): IndustryInput's own style sets
+                             Height/MinHeight="24", which this control's FontSize="24" override alone
+                             doesn't widen — the 24px font clipped inside a 22px content box without
+                             this. -->
+                        <TextBox x:Name="FrequencyEntry"
+                                 Classes="Industry IndustryInput"
+                                 FontFamily="{StaticResource IndustryMonoFontFamily}"
+                                 FontSize="24" Margin="0,2,0,0" Width="180"
+                                 Height="41" MinHeight="41"
+                                 Text="{Binding FrequencyInputMhz}"
+                                 Watermark="{loc:Translate RadioStatus.FrequencyEntry.Watermark}"
+                                 IsVisible="{Binding IsEditingFrequency}"
+                                 KeyDown="OnFrequencyEntryKeyDown"
+                                 LostFocus="OnFrequencyEntryLostFocus" />
                     </StackPanel>
                     <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,Auto"
                           ColumnSpacing="14" RowSpacing="4" VerticalAlignment="Center">

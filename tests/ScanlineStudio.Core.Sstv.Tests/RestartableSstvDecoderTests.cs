@@ -170,6 +170,74 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void RequestPllTuning_SurvivesAPeriodicSwap()
+    {
+        // Options stub backlog item 1 (docs/plans/options-stub-item1-pll-tuning-plan.md), round-2
+        // plan-review correction: unlike RequestNotch above, the re-seed on rebuild is via
+        // CreateInner's own AnalogFmSstvDecoder ctor arguments (real ctor params exist for PLL
+        // tuning, unlike notch), and it must be UNCONDITIONAL (no off-state to gate on, unlike
+        // notch's own `if (_notchEnabled)`). Same non-vacuous proof requirement as RequestNotch's own
+        // test above -- assert the LIVE inner decoder's own tuning post-swap via
+        // InnerPllTuningForTests, not just that the wrapper remembers what it was told.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
+        var initialTuning = decoder.InnerPllTuningForTests;
+        Assert.Equal(1.0, initialTuning.VcoGain); // legacy default, confirms the re-seed test below is a real change, not a no-op
+
+        decoder.RequestPllTuning(vcoGain: 2.5, loopOrder: 6, loopCutoffHz: 1300, outputOrder: 8, outputCutoffHz: 850);
+        decoder.PushSamples(new float[1]); // RequestPllTuning only queues -- ApplyPendingPllTuningRequest drains it inside PushSamplesCore
+        var afterRequest = decoder.InnerPllTuningForTests;
+        Assert.Equal(2.5, afterRequest.VcoGain);
+        Assert.Equal(6, afterRequest.LoopOrder);
+        Assert.Equal(1300, afterRequest.LoopCutoffHz);
+        Assert.Equal(8, afterRequest.OutputOrder);
+        Assert.Equal(850, afterRequest.OutputCutoffHz);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        var afterSwap = decoder.InnerPllTuningForTests;
+        Assert.Equal(2.5, afterSwap.VcoGain);
+        Assert.Equal(6, afterSwap.LoopOrder);
+        Assert.Equal(1300, afterSwap.LoopCutoffHz);
+        Assert.Equal(8, afterSwap.OutputOrder);
+        Assert.Equal(850, afterSwap.OutputCutoffHz);
+    }
+
+    [Fact]
+    public void RequestZeroCrossingTuning_SurvivesAPeriodicSwap()
+    {
+        // Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md) --
+        // same unconditional store-forward-and-re-seed shape as RequestPllTuning_SurvivesAPeriodicSwap
+        // above, mutation-tested by hand the same way.
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000);
+        var initialTuning = decoder.InnerZeroCrossingTuningForTests;
+        Assert.Equal(ZeroCrossingSmoothingMode.Iir, initialTuning.SmoothingMode); // legacy default, confirms the re-seed test below is a real change, not a no-op
+
+        decoder.RequestZeroCrossingTuning(ZeroCrossingSmoothingMode.Fir, outputOrder: 8, outputCutoffHz: 850, smoothingFrequencyHz: 2600);
+        decoder.PushSamples(new float[1]); // RequestZeroCrossingTuning only queues -- ApplyPendingZeroCrossingTuningRequest drains it inside PushSamplesCore
+        var afterRequest = decoder.InnerZeroCrossingTuningForTests;
+        Assert.Equal(ZeroCrossingSmoothingMode.Fir, afterRequest.SmoothingMode);
+        Assert.Equal(8, afterRequest.OutputOrder);
+        Assert.Equal(850, afterRequest.OutputCutoffHz);
+        Assert.Equal(2600, afterRequest.SmoothingFrequencyHz);
+
+        for (var i = 0; i < 3; i++)
+        {
+            decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+        }
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+        var afterSwap = decoder.InnerZeroCrossingTuningForTests;
+        Assert.Equal(ZeroCrossingSmoothingMode.Fir, afterSwap.SmoothingMode);
+        Assert.Equal(8, afterSwap.OutputOrder);
+        Assert.Equal(850, afterSwap.OutputCutoffHz);
+        Assert.Equal(2600, afterSwap.SmoothingFrequencyHz);
+    }
+
+    [Fact]
     public void SenseLevel_ConstructorValue_SurvivesAPeriodicSwap()
     {
         // User-reported (2026-08-27, "Squelch level" live control): SenseLevel is deliberately

@@ -75,7 +75,8 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:QuickModeSlotViewModel">
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1"
-                                    Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}">
+                                    Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}"
+                                    ToolTip.Tip="{loc:Translate Panes.TxControls.QuickMode.ReassignHint}">
                                 <Button.ContextMenu>
                                     <ContextMenu Classes="Industry" ItemsSource="{Binding MenuEntries}" ItemContainerTheme="{StaticResource QuickModeGridMenuItemThemeWithDuration}" />
                                 </Button.ContextMenu>

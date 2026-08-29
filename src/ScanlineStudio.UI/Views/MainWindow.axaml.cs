@@ -250,6 +250,10 @@ public partial class MainWindow : Window
                             // refresh-the-Gallery-Storage-card-on-close behavior, now for General
                             // tab's Images row instead.
                             _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                            // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same
+                            // refresh-on-close reasoning as the Images row just above, now for the
+                            // new Audio row.
+                            _ = vm.RxHistory.LoadAudioStorageInfoAsync();
                             // Receive tab's "Lookup QRZ" button gate -- re-checks whether QRZ
                             // lookup is configured, so enabling/disabling it in Options takes
                             // effect immediately without an app restart, same reasoning as every
@@ -372,15 +376,81 @@ public partial class MainWindow : Window
                         Log.LogQsoRequested(logger);
                     }
 
+                    // ui_transition_plan.md step 5 (T1-6): frequency/mode now real -- prefer the RX
+                    // frame's own LATCHED metadata (step 6, T2-4), falling back to live radio state
+                    // only when the frame has none (see LogbookPaneViewModel.PrefillForNewEntry's own
+                    // doc comment for why -- both stay null, never a fabricated value, if neither
+                    // source has one).
                     vm.Logbook.PrefillForNewEntry(
                         vm.RxImage.OverrideCallsign,
                         vm.RxImage.DetectedMode?.Id,
                         vm.RxImage.StartedAt ?? DateTimeOffset.UtcNow,
                         vm.RxImage.LookupName,
                         vm.RxImage.LookupQth,
-                        vm.RxImage.LookupGrid);
+                        vm.RxImage.LookupGrid,
+                        vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
+                        vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull);
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
+
+                // ui_transition_plan.md step 3 (T1-5 + T2-6): non-modal (Show, not ShowDialog) --
+                // an operator inspecting a weak-signal frame closely shouldn't be locked out of the
+                // rest of the app while a new reception is still coming in. Both Receive
+                // (PreviousFrames) and Gallery (FilteredEntries) route through the same event/View
+                // shape; each source VM already builds the ImageViewerWindowViewModel itself (same
+                // "source VM constructs, this handler just wraps it in a View" convention
+                // MacrosReferenceRequested below uses), so this handler needs no knowledge of which
+                // list it came from.
+                vm.RxImage.ImageViewerRequested += viewerViewModel =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingImageViewerWindow(logger);
+                    }
+
+                    var window = new ImageViewerWindowView { DataContext = viewerViewModel };
+                    window.Show(this);
+                };
+                vm.RxHistory.ImageViewerRequested += viewerViewModel =>
+                {
+                    if (logger is not null)
+                    {
+                        Log.ConstructingImageViewerWindow(logger);
+                    }
+
+                    var window = new ImageViewerWindowView { DataContext = viewerViewModel };
+                    window.Show(this);
+                };
+
+                // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: RxHistoryPaneViewModel
+                // deliberately does not depend on ISstvSessionService (see RedecodeRequested's own
+                // doc comment) -- RxImagePaneViewModel already owns this exact responsibility for the
+                // Receive tab's own "Decode WAV…" button, so this just reaches across to it.
+                vm.RxHistory.RedecodeRequested += path =>
+                {
+                    // Auditor-caught (round 1 code-review): ICommand.Execute does not consult
+                    // CanExecute the way a bound Button would -- explicit check so a Gallery click
+                    // while the Receive tab's own file-picker decode is already in flight is a no-op
+                    // here too, not just inside RedecodeFromPathAsync's own belt-and-suspenders guard.
+                    if (vm.RxImage.RedecodeFromPathCommand.CanExecute(path))
+                    {
+                        vm.RxImage.RedecodeFromPathCommand.Execute(path);
+                    }
+                };
+
+                // ui_transition_plan.md step 4 (T1-4, reframed): same delegate-property shape as
+                // ConfigurationsManagerWindowViewModel.ConfirmRequested's own wiring below -- a
+                // genuine request/response the Delete command awaits before continuing.
+                vm.RxHistory.ConfirmRequested = async confirmVm =>
+                {
+                    var confirmView = new ConfirmActionDialogView { DataContext = confirmVm };
+                    return await confirmView.ShowDialog<bool>(this);
+                };
+
+                // ui_transition_plan.md step 5 (T1-6): same two values LogQsoRequested's own handler
+                // above already trusts as "the received station's callsign/grid" -- see
+                // TxControlsPaneViewModel.CurrentContactRequested's own doc comment.
+                vm.TxControls.CurrentContactRequested = () => (vm.RxImage.OverrideCallsign, vm.RxImage.LookupGrid);
 
                 // Stub survey Tier 3 (2026-08-26). Same shape as OptionsRequested above --
                 // DI-resolved view-model. Storage's own former entry here (stub survey Tier 2) was
@@ -428,6 +498,7 @@ public partial class MainWindow : Window
                     _ = vm.TxControls.LoadOutputDeviceNameAsync();
                     _ = vm.TxControls.LoadIdentificationSummaryAsync();
                     _ = vm.RxHistory.LoadImagesDirectoryAsync();
+                    _ = vm.RxHistory.LoadAudioStorageInfoAsync();
                     _ = vm.RxImage.LoadQrzLookupConfiguredAsync();
                     vm.RxImage.RefreshSenseLevelFromSession();
                     vm.RxImage.RefreshAutoSlantEnabledFromSession();
@@ -698,8 +769,41 @@ public partial class MainWindow : Window
         };
     }
 
+    // ui_transition_plan.md step 3 (T1-5): three DoubleTapped entry points into the full-size
+    // viewer, each reading its own per-item DataContext directly off the tapped control (same
+    // "code-behind pointer handler inside a DataTemplate" convention TxImageEditorPaneView.axaml.cs's
+    // own crop-handle handlers already use) rather than trying to bind a routed event to a command
+    // in AXAML.
+
+    private void OnIncomingFrameDoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxImage.OpenImageViewerCommand.Execute(null);
+        }
+    }
+
+    private void OnPreviousFrameThumbnailDoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
+        {
+            vm.RxImage.OpenImageViewerCommand.Execute(entry);
+        }
+    }
+
+    private void OnGalleryThumbnailDoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.OpenImageViewerCommand.Execute(entry);
+        }
+    }
+
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing ImageViewerWindowView")]
+        public static partial void ConstructingImageViewerWindow(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing OptionsWindowView")]
         public static partial void ConstructingOptionsWindow(ILogger logger);
 

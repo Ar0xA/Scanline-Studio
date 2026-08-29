@@ -70,6 +70,16 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Offline user guide: plain static files copied beside the executable so Help > User guide
+       can hand help/index.html to the OS default browser. Keep the maintainer README and Node
+       structural check in the repository only; they are not application runtime assets. -->
+  <ItemGroup>
+    <None Include="..\..\docs\help\index.html" Link="help\index.html" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\help\styles.css" Link="help\styles.css" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\help\help-search.js" Link="help\help-search.js" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\help\help.js" Link="help\help.js" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- spec/18-path-to-1.0.md High item 5: previously not shipped with the app at all. A binary
        distribution had no delivery path for the LGPL notice these files satisfy (the roadmap's own
        stated gap: "the LGPL notice has no delivery path in a binary distribution without an About

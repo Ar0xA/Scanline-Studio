@@ -88,6 +88,26 @@
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyImagesDirectoryCommand}" />
                                     </StackPanel>
 
+                                    <!-- Audio: ui_transition_plan.md step 12 (Auto-save RX audio).
+                                         Combined enable+directory row, both applied together on one
+                                         Apply click (matches IReceiveHistoryStore.SetAudioSettingsAsync's
+                                         own combined-arguments contract). -->
+                                    <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                                  Content="{loc:Translate Options.General.Storage.Audio.Label}"
+                                                  IsChecked="{Binding AudioSaveEnabled}" />
+                                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                                            <TextBox Classes="Industry IndustryInput" Text="{Binding AudioDirectory}" />
+                                            <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                    Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseAudioDirectoryCommand}" />
+                                        </Grid>
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Audio.Caption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding AudioDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   IsVisible="{Binding AudioDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
+                                                Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyAudioDirectoryCommand}" />
+                                    </StackPanel>
+
                                     <!-- Config: settings.json's directory. Applies live, no restart
                                          needed (restart-required-settings backlog item 3, 2026-08-27)
                                          — same shape as Log below, not Database's staged/Restart-Now
@@ -163,26 +183,16 @@
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <!-- Disabled placeholder: legacy's 7 waterfall/spectrum colors (PCLow,
-                                 PCHigh, PCFFTB/PCFFT/PCFFTStg/PCSync/PCFreq); the new flat
-                                 design's palette isn't per-element customizable yet. -->
-                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
-                                <HeaderedContentControl.Header>
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                        <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.General.ColorsHeader}" />
-                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.General.ColorsHeader.Help}" />
-                                    </StackPanel>
-                                </HeaderedContentControl.Header>
-                                <WrapPanel>
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.Low}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.High}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftBackground}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSignal}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftHistory}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftSync}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="7,0" IsEnabled="False" Content="{loc:Translate Options.General.Color.FftFrequency}" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" Margin="0,0,4,4" />
-                                </WrapPanel>
-                            </HeaderedContentControl>
+                            <!-- Options stub backlog item 6 (7 per-element waterfall/spectrum
+                                 colors): REMOVED 2026-08-28, not wired — this port already has a
+                                 deliberately-designed, already-shipped fixed palette
+                                 (WaterfallPalette.cs's SDR-style heatmap gradient,
+                                 SpectrumTraceControl.cs's fixed trace/marker pens) replacing
+                                 legacy's raw per-element user-editable colors, per spec/09-ui.md's
+                                 own explicit exemption of this visualization from strict legacy-port
+                                 fidelity. Exposing 7 raw color pickers would let a user override that
+                                 already-shipped cohesive design, not fill a real gap — see
+                                 docs/removed-features.md's own entry for the full reasoning. -->
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
                         </StackPanel>
@@ -550,19 +560,17 @@
                                 </StackPanel>
                             </ContentControl>
 
-                            <!-- Disabled placeholders: legacy CBRTS/PTTLock; no PTT-during-RX
-                                 control surface on IRadioController yet. -->
-                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
-                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Radio.RtsOnRx}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                        <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Radio.PttLock}"
-                                                  IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.PttLock.Help}" />
-                                    </StackPanel>
-                                </StackPanel>
-                            </ContentControl>
+                            <!-- RTS on RX (legacy CBRTS) and PTT Lock (legacy PTTLock) both removed
+                                 2026-08-28 — see docs/removed-features.md's "Raw-serial RTS-pin PTT
+                                 keying" entry. Neither has a hookable equivalent in this port's
+                                 architecture (PTT goes through IRadioController.SetPttAsync via
+                                 whichever CAT backend is configured, which owns its own connection
+                                 lifecycle) with one narrow exception found and deliberately NOT
+                                 exposed: Hamlib's own ptt_share config key is a near-equivalent to
+                                 PTT Lock specifically, reachable via the same ApplyConf path
+                                 HamlibRadioProtocol.cs already uses for other settings — the port
+                                 chose removal anyway (direct user decision) rather than building a
+                                 narrow, Hamlib-only, DTR/RTS-only exposure of one config key. -->
 
                             <!-- Pwr + Tune: direct-request feature (user quote: "TUNE button that
                                  works like WSJTX ... so that we can set our Pwr slider to the TX
@@ -786,9 +794,7 @@
                                     <WrapPanel>
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.Off}" IsChecked="{Binding IsIdMethodOffSelected}" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.Cw}" IsChecked="{Binding IsIdMethodCwSelected}" />
-                                        <!-- Sound-file ID (OutputMMV) is unimplemented, out of v1 scope: stays individually
-                                             disabled rather than joining the live radio group (CwIdMode's own doc comment). -->
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="IdMethod" Content="{loc:Translate Options.Identification.IdMethod.SoundFile}" IsChecked="{Binding IsIdMethodSoundFileSelected}" />
                                     </WrapPanel>
 
                                     <StackPanel IsVisible="{Binding IsIdMethodCwSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
@@ -805,14 +811,22 @@
                                         </Grid>
                                     </StackPanel>
 
-                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                    <StackPanel IsVisible="{Binding IsIdMethodSoundFileSelected}" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.SoundFile}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.SoundFile.Help}" />
                                     </StackPanel>
-                                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{StaticResource IndustrySpacingSnug}">
-                                        <TextBox Classes="Industry IndustryInput" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Identification.SoundFile.Browse}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Grid IsVisible="{Binding IsIdMethodSoundFileSelected}" ColumnDefinitions="*,Auto" ColumnSpacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBox Classes="Industry IndustryInput" Text="{Binding SoundFileMmvPath}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Identification.SoundFile.Browse}" Command="{Binding BrowseSoundFileCommand}" />
                                     </Grid>
+                                    <StackPanel IsVisible="{Binding IsIdMethodSoundFileSelected}" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
+                                                   Text="{Binding SoundFileIdSuccessMessage}"
+                                                   IsVisible="{Binding SoundFileIdSuccessMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                        <TextBlock Classes="IndustryRowValue" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                                   Text="{Binding SoundFileIdErrorMessage}"
+                                                   IsVisible="{Binding SoundFileIdErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    </StackPanel>
 
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskEncode}"
                                               IsChecked="{Binding FskIdTxEnabled}" />
@@ -828,36 +842,26 @@
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
-                                <HeaderedContentControl.Header>
-                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Identification.VoxHeader}" />
-                                </HeaderedContentControl.Header>
-                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.Off}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="VoxModePlaceholder" Content="{loc:Translate Options.Identification.Vox.On}" />
-                                    </WrapPanel>
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Identification.Vox.EditTone}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                </StackPanel>
-                            </HeaderedContentControl>
+                            <!-- VOX leader-tone priming (legacy sys.m_VOX/m_VOXSound) REMOVED
+                                 2026-08-28, direct user request — see docs/removed-features.md's own
+                                 entry. -->
 
-                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
-                                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.TuneSatellite}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" VerticalAlignment="Center" />
-                                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Identification.TuneSatellite.Help}" />
-                                </StackPanel>
-                            </ContentControl>
+                            <!-- "Tune satellite" (legacy sys.m_TuneSat) removed 2026-08-28 — direct
+                                 user decision, real legacy behavior confirmed first (auto-switch to
+                                 TX when the Tune button's own timer elapses); see
+                                 docs/removed-features.md's "Tune-timer auto-switch-to-transmit" entry. -->
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetIdentificationToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
 
-                <!-- New tab: deep DSP/diagnostic internals. All disabled. Filter-response preview
-                     buttons (legacy DispTxBpf/DispLoopLPF/DispOutLPF/DispCrossOutLPF/RxBpfBtn) are
-                     intentionally not included; they preview filters that are themselves
-                     disabled placeholders, so there is nothing real to preview yet. -->
+                <!-- Deep DSP/diagnostic internals — every row here is now real (Options stub
+                     backlog items 1-3, see each group's own doc comment below), not a placeholder.
+                     Filter-response preview buttons (legacy DispTxBpf/DispLoopLPF/DispOutLPF/
+                     DispCrossOutLPF/RxBpfBtn) are still intentionally not included — they'd need a
+                     real live filter-response plot, a separate, unbuilt piece of work, not blocked
+                     on the underlying settings being wired (which they now are). -->
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Advanced.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -870,17 +874,40 @@
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.PllHeader.Help}" />
                                     </StackPanel>
                                 </HeaderedContentControl.Header>
-                                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                <!-- Options stub backlog item 1 (docs/plans/options-stub-item1-pll-tuning-plan.md):
+                                     real values now, not placeholders — legacy's own CPLL constructor
+                                     defaults (1.0/1/1500/3/900), verified against 3 independent legacy
+                                     sites, NOT this block's own former hardcoded guesses (2600/1/200/1200).
+                                     IsEnabled bound to IsDemodTypePllSelected — the PENDING radio
+                                     selection, matching legacy's own real GBPLL.Enabled gate
+                                     (Option.cpp:179-196, RGDemTypeClick calls UpdateUI on every radio
+                                     click, not just on Save). OutOrder is a NEW row — legacy's real
+                                     dialog has it (pllOutOrder, Option.h:76) but this port's AXAML
+                                     never did. Ranges: LoopOrder/OutOrder [1,32] (legacy-faithful —
+                                     order 32 = 16 IIR sections, exactly IIRMAX, not an overflow, see
+                                     the plan doc's own round-2/3 correction). Cutoffs: static
+                                     Maximum=3900 here is UI affordance only (a comfortable ceiling for
+                                     the lowest selectable 8000 Hz sample rate's Nyquist) — the REAL
+                                     enforcement is PllFmDemodulator.SetTuning's own decoder-side clamp
+                                     against whatever sample rate is actually configured. VcoGain
+                                     [0.35,10]: 0.35 is the minimum that still covers the full
+                                     1500-2300 Hz SSTV tone range inside the capture window; 10 has no
+                                     legacy citation, a sane UI ceiling only. -->
+                                <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto,Auto,Auto" IsEnabled="{Binding IsDemodTypePllSelected}">
                                     <TextBlock Grid.Row="0" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.VcoGain}" />
-                                    <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="2600" Minimum="0" Maximum="100000" />
+                                    <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding PllVcoGain}" Increment="0.05" Minimum="0.35" Maximum="10" FormatString="0.00" />
                                     <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.LoopOrder}" />
-                                    <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1" Minimum="1" Maximum="32" />
+                                    <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding PllLoopOrder}" Minimum="1" Maximum="32" />
                                     <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.LoopCutoff}" />
-                                    <NumericUpDown Grid.Row="1" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="200" Minimum="0" Maximum="10000" />
-                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.OutCutoff}" />
-                                    <NumericUpDown Grid.Row="1" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1200" Minimum="0" Maximum="10000" />
+                                    <NumericUpDown Grid.Row="1" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding PllLoopCutoffHz}" Minimum="1" Maximum="3900" />
+                                    <TextBlock Grid.Row="1" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.OutOrder}" />
+                                    <NumericUpDown Grid.Row="1" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding PllOutputOrder}" Minimum="1" Maximum="32" />
+                                    <TextBlock Grid.Row="2" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Pll.OutCutoff}" />
+                                    <NumericUpDown Grid.Row="2" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding PllOutputCutoffHz}" Minimum="1" Maximum="3900" />
                                 </Grid>
                             </HeaderedContentControl>
+
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAdvancedToDefaultCommand}" />
 
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>
@@ -889,17 +916,43 @@
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Advanced.CrossingHeader.Help}" />
                                     </StackPanel>
                                 </HeaderedContentControl.Header>
-                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto,Auto" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
+                                <!-- Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md):
+                                     real values now, not placeholders. Outer StackPanel IsEnabled
+                                     bound to IsDemodTypeZeroCrossingSelected, matching legacy's real
+                                     GBCROSS.Enabled gate (Option.cpp:179-196). RGcrossType 3-way radio
+                                     (IIR/FIR/OFF) is a NEW control — legacy has it (Option.dfm's
+                                     RGcrossType) but this port's AXAML never did. IIR sub-group
+                                     (order+cutoff) and FIR sub-group (smoothing frequency) each grey
+                                     further per legacy's real GBCOI/GBCOF.Enabled gate
+                                     (Option.cpp:197-212) — shown always rather than replicating
+                                     legacy's own hide/show elsewhere, same precedent as the PLL group
+                                     above. Smoothing frequency is a free-entry field clamped [500,8000]
+                                     (legacy's real two-sided range, Option.cpp:536-540) rather than a
+                                     preset dropdown — legacy's own crossSmooz preset list could not be
+                                     read from the binary .dfm, see the plan doc's own note. -->
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}" IsEnabled="{Binding IsDemodTypeZeroCrossingSelected}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingSnug}">
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="ZeroCrossingSmoothingMode" Content="{loc:Translate Options.Advanced.Crossing.ModeIir}" IsChecked="{Binding IsZeroCrossingSmoothingIirSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="ZeroCrossingSmoothingMode" Content="{loc:Translate Options.Advanced.Crossing.ModeFir}" IsChecked="{Binding IsZeroCrossingSmoothingFirSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="ZeroCrossingSmoothingMode" Content="{loc:Translate Options.Advanced.Crossing.ModeOff}" IsChecked="{Binding IsZeroCrossingSmoothingOffSelected}" />
+                                    </StackPanel>
+                                    <Grid ColumnDefinitions="Auto,*,Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" RowSpacing="{StaticResource IndustrySpacingSnug}" RowDefinitions="Auto" IsEnabled="{Binding IsZeroCrossingIirGroupEnabled}">
                                         <TextBlock Grid.Row="0" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Order}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1" Minimum="1" Maximum="32" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding ZeroCrossingOutputOrder}" Minimum="1" Maximum="32" />
                                         <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Cutoff}" />
-                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="1200" Minimum="0" Maximum="10000" />
-                                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Smoothing}" />
-                                        <NumericUpDown Grid.Row="1" Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="2000" Minimum="500" Maximum="8000" />
+                                        <NumericUpDown Grid.Row="0" Grid.Column="3" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding ZeroCrossingOutputCutoffHz}" Minimum="1" Maximum="3900" />
                                     </Grid>
-                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.Differentiator}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" IsEnabled="{Binding IsZeroCrossingFirGroupEnabled}">
+                                        <TextBlock Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.Crossing.Smoothing}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding ZeroCrossingSmoothingFrequencyHz}" Minimum="500" Maximum="8000" />
+                                    </Grid>
+                                    <!-- "Differentiator" (sys.m_Differentiator, a picture-channel
+                                         edge-enhancement filter) REMOVED 2026-08-28, not wired — see
+                                         docs/removed-features.md's own entry. Legacy's own
+                                         GetPictureLevelDiff calls GetPixelLevel internally, the exact
+                                         same missing decoder-side pixel-correction hook already found
+                                         and documented for the polynomial-calibration removal above
+                                         in this same tab. -->
                                 </StackPanel>
                             </HeaderedContentControl>
 
@@ -907,11 +960,30 @@
                                 <HeaderedContentControl.Header>
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.TxFilterHeader}" />
                                 </HeaderedContentControl.Header>
+                                <!-- Options stub backlog item 3 (docs/plans/options-stub-item3-tx-bpf-lpf-plan.md):
+                                     real values now — a REVERSAL of a documented, deliberate prior
+                                     removal (docs/removed-features.md's former "TX output bandpass
+                                     filter toggle/tap setting" entry, deleted now that this ships) —
+                                     the underlying filter math was already correctly ported and
+                                     applied unconditionally; only the toggle/tap control was missing.
+                                     TX LPF is genuinely new work, never ported before. Tap count
+                                     [2,512] step 2 (even-only, legacy's own MakeFilter leaves one
+                                     coefficient slot uninitialized for an odd count — a real UB
+                                     divergence this port sidesteps). LPF frequency [100,3000], legacy's
+                                     own real Save-handler range (Option.cpp:452-459). -->
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.TxBpf}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding TxBpfEnabled}" />
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" IsEnabled="{Binding TxBpfEnabled}">
+                                        <TextBlock Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxBpf.TapCount}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding TxBpfTapCount}" Increment="2" Minimum="2" Maximum="512" />
+                                    </Grid>
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.TxLpf}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
+                                              IsChecked="{Binding TxLpfEnabled}" />
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{StaticResource IndustrySpacingSnug}" IsEnabled="{Binding TxLpfEnabled}">
+                                        <TextBlock Grid.Column="0" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Advanced.TxLpf.FrequencyHz}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding TxLpfFrequencyHz}" Minimum="100" Maximum="3000" />
+                                    </Grid>
                                     <!-- TX sample clock offset stub removed 2026-08-26 (Clock
                                          calibration, stub survey Tier 3, code-review finding): this
                                          was a duplicate, disabled, permanently-showing-0 control for
@@ -921,28 +993,24 @@
                                 </StackPanel>
                             </HeaderedContentControl>
 
-                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
-                                <HeaderedContentControl.Header>
-                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Advanced.MiscHeader}" />
-                                </HeaderedContentControl.Header>
-                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Advanced.Loopback}" />
-                                    <WrapPanel IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}">
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Off}" IsChecked="True" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.Internal}" />
-                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="LoopbackPlaceholder" Content="{loc:Translate Options.Advanced.Loopback.External}" />
-                                    </WrapPanel>
-                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Advanced.PolynomialCalibration}"
-                                              IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    <!-- ClockAdjustWizard button removed 2026-08-27: a leftover twin
-                                         of the Calibration-menu clock-calibration wizard already
-                                         removed 2026-08-26 (superseded by Auto Slant's live per-line
-                                         correction) — see docs/removed-features.md. -->
-                                    <WrapPanel>
-                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Options.Advanced.LevelCalibrationWizard}" IsEnabled="False" ToolTip.Tip="{loc:Translate Options.NotImplemented.Help}" />
-                                    </WrapPanel>
-                                </StackPanel>
-                            </HeaderedContentControl>
+                            <!-- Options stub backlog items 4 (Loopback mode / RGLoopBack) and 5
+                                 (Polynomial demod-level calibration + Level Calibration Wizard):
+                                 the whole "Misc"/Diagnostics group is now empty and REMOVED,
+                                 2026-08-28 — see docs/removed-features.md's own entries for the full
+                                 reasoning (two DIFFERENT root causes, not one shared cause — a
+                                 code-review pass caught and corrected an earlier draft of this
+                                 comment that wrongly claimed item 5 shared item 4's own blocker).
+                                 Item 4 (RGLoopBack): a locked prior architectural decision — this
+                                 port's TX/RX are mutually exclusive (capture pauses for a
+                                 transmission's whole duration), which real full-duplex TX-while-RX
+                                 monitoring needs and this port doesn't support. Item 5 (polynomial
+                                 calibration): the wizard itself is actually a pure in-process
+                                 software sweep (no hardware, no real TX involved) and would be
+                                 buildable — the real blocker is that this port's decoder has no
+                                 pixel-level-correction hook of any kind for a calibration table to
+                                 plug into at all (legacy's own linear DemOff/DemWhite/DemBlack stage
+                                 was never ported either), a genuinely large retrofit out of scope
+                                 for an Options-stub fill. -->
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -1072,9 +1140,12 @@
             </TabControl>
 
             <!-- Bottom bar: destructive "Reset ALL" on the left with its own inline confirm step
-                 (IsConfirmingResetAll), Cancel/Save on the right. Per-section resets above are a
-                 single click each since nothing is persisted until Save. -->
-            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}">
+                 (IsConfirmingResetAll), a SaveErrorMessage slot in the middle, Cancel/Apply/Save on
+                 the right. Per-section resets above are a single click each (an accidental reset
+                 before the next Save/Apply/Connect costs nothing — see ui_transition_plan.md step
+                 7's own class-doc-comment update for why this is no longer "nothing is persisted
+                 until Save"). -->
+            <Grid Grid.Row="1" ColumnDefinitions="Auto,*,Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}">
                 <Button Grid.Column="0" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                         Content="{loc:Translate Options.ResetAll}"
                         Command="{Binding RequestResetAllCommand}"
@@ -1085,8 +1156,11 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetAll.ConfirmNo}" Command="{Binding CancelResetAllCommand}" />
                 </StackPanel>
 
-                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
-                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Options.Save}" Command="{Binding SaveCommand}" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <TextBlock Grid.Column="1" Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" Text="{Binding SaveErrorMessage}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="8,0" IsVisible="{Binding SaveErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" ToolTip.Tip="{loc:Translate Options.Cancel.Help}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Apply}" Command="{Binding ApplyCommand}" ToolTip.Tip="{loc:Translate Options.Apply.Help}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
+                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Options.Save}" Command="{Binding SaveCommand}" IsVisible="{Binding !IsConfirmingResetAll}" />
             </Grid>
 
         </Grid>

@@ -32,8 +32,10 @@ public interface ISstvSessionService : IAsyncDisposable
     /// VIS header -- exposed here (not <c>ScanlineStudio.Core.Sstv.AnalogFmSstvEncoder</c> directly) for
     /// the same layering reason as <see cref="AvailableModes"/> above. See
     /// <c>AnalogFmSstvEncoder.GetLeaderToneDurationMs</c>'s own doc comment for why this isn't called
-    /// "VOX tone" despite backing the TX pane's "VOX tone" display field (that field's name predates
-    /// this piece; legacy's real VOX feature is a different, unported thing).</summary>
+    /// "VOX tone" -- the TX pane's own display field for it was originally named "VOX tone" too
+    /// (predating this piece) and was renamed to "Leader tone" (ui_transition_plan.md step 9, T2-9)
+    /// once the two were no longer even the same feature -- legacy's real VOX feature is a
+    /// different, unported thing.</summary>
     double GetLeaderToneDurationMs(SstvModeDefinition mode);
 
     /// <summary>Which VIS-header shape <paramref name="mode"/> transmits and its real on-air value --
@@ -163,6 +165,17 @@ public interface ISstvSessionService : IAsyncDisposable
     /// NOT transmit anything.</summary>
     Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default);
 
+    /// <summary>ui_transition_plan.md step 8 (T2-2): validates a sound-file station-ID path (exists,
+    /// under the size cap, a playable <c>.mmv</c> header) WITHOUT resolving it for actual playback --
+    /// lets the Options dialog show a real duration/failure reason for whatever path is currently
+    /// typed/picked, before Save, without duplicating
+    /// <c>ScanlineStudio.Core.Sstv.MmvSoundFile.ParseHeader</c>'s own rules in
+    /// <c>ScanlineStudio.UI</c> (banned by <c>UiLayeringArchitectureTests</c> in any case -- UI must
+    /// not reference <c>ScanlineStudio.Core.Sstv</c> directly). Side-effect-free; never throws (same
+    /// "never throws out of this method" contract as the real TX-time resolution this shares its
+    /// parsing core with).</summary>
+    Task<SoundFileIdValidationResult> ValidateStationIdSoundFileAsync(string path, CancellationToken ct = default);
+
     /// <summary>Ultracode audit finding #34's automatic-restart mechanism (see
     /// <c>ScanlineStudio.Core.Sstv.RestartableSstvDecoder</c>) has gone past its warning threshold
     /// without an opportunity to swap yet -- fires at most once per restart cycle, cleared by
@@ -205,6 +218,19 @@ public interface ISstvSessionService : IAsyncDisposable
     /// (the port of legacy's real spectrum-click notch control). Unlike <see cref="RequestReSync"/>,
     /// this is persistent state, not a one-shot command. Safe to call from any thread.</summary>
     void RequestNotch(bool enabled, double? frequencyHz);
+
+    /// <summary>Options Advanced-tab PLL demodulator tuning — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestPllTuning"/> for the full
+    /// contract (backlog item, `docs/plans/options-stub-item1-pll-tuning-plan.md`). Same persistent-
+    /// state, safe-from-any-thread shape as <see cref="RequestNotch"/> immediately above.</summary>
+    void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz);
+
+    /// <summary>Options Advanced-tab zero-crossing demodulator tuning — see
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.RequestZeroCrossingTuning"/> for the
+    /// full contract (backlog item, `docs/plans/options-stub-item2-zerocrossing-tuning-plan.md`). Same
+    /// persistent-state, safe-from-any-thread shape as <see cref="RequestNotch"/>/
+    /// <see cref="RequestPllTuning"/> above.</summary>
+    void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz);
 
     /// <summary>Arms a one-shot Decoder Trace capture from the decoder — see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ArmScopeCapture"/> for the full
@@ -433,6 +459,14 @@ public interface ISstvSessionService : IAsyncDisposable
     /// one-shot request applied on the next decoded chunk, not a persistent lock.</summary>
     void ForceMode(SstvModeDefinition mode);
 
+    /// <summary>ui_transition_plan.md step 10 (T2-5): pins every FUTURE detected reception to
+    /// <paramref name="mode"/> -- <see langword="null"/> unlocks. See
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SetModeLock"/> for the full contract
+    /// (genuinely new UI/workflow, no legacy precedent -- not a persistent version of
+    /// <see cref="ForceMode"/>, which is untouched by this and always wins its own reception as a
+    /// one-shot exception to an active lock). Safe to call from any thread.</summary>
+    void SetModeLock(SstvModeDefinition? mode);
+
     Task StartReceivingAsync(CancellationToken ct = default);
 
     Task StopReceivingAsync();
@@ -457,6 +491,72 @@ public interface ISstvSessionService : IAsyncDisposable
     /// failure for this explicit, user-initiated action, unlike <see cref="DisposeAsync"/>'s own
     /// best-effort finalize of an in-progress recording, which swallows and logs instead.</summary>
     Task StopRecordingAsync();
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): fires once a per-reception audio
+    /// slice's scratch-file write completes -- see
+    /// <c>docs/plans/step12-auto-save-rx-audio-plan.md</c>'s "Correlation" section for the full
+    /// design this is one half of. <c>ReceptionId</c> is the exact
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ReceptionSequence"/> value captured
+    /// at that slice's arm -- the identity a correlator keys its join on, NEVER queue position or
+    /// arrival order. <c>SampleRate</c> is the rate the slice was actually captured at. Raised only
+    /// AFTER the background encode+write completes, never synchronously at close -- never on the
+    /// audio drain thread. Same "raised synchronously from whichever call is doing the work, wrapped
+    /// in an internal try/catch" contract as <see cref="CapturePausedForTransmitChanged"/> below,
+    /// except this one's "whichever call" is always a background <see cref="Task.Run(Action)"/>
+    /// continuation, never a caller's own thread.</summary>
+    event Action<long, int>? AudioSliceReady;
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): raised on every RX stop/start
+    /// seam relevant to the auto-save audio capture ring (sample-rate change, capture-device change,
+    /// TX pause/resume, file-decode entry) -- clears the capture ring and discards any currently-open
+    /// armed slice (no partial slice is ever encoded or emitted for it; see the plan doc's "Accepted
+    /// v1 limitations"). Cleanup-only, never correctness-critical for the correlator itself: distinct
+    /// reception ids already make cross-attach impossible regardless of this event's timing. No
+    /// payload -- unlike <see cref="AudioSliceReady"/>, there's nothing to identify.
+    ///
+    /// <b>Threading contract:</b> raised synchronously from whichever call is doing the RX stop --
+    /// this CAN be the audio drain thread itself (a critically-overdue decoder restart can drive this
+    /// path inline), not always a caller's own arbitrary thread. Wrapped in an internal try/catch, but
+    /// a slow subscriber still blocks that call until it returns.</summary>
+    event Action? AudioCaptureReset;
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): moves the retained scratch file
+    /// for <paramref name="receptionId"/> (from a prior <see cref="AudioSliceReady"/> raise) to
+    /// <paramref name="path"/> -- a cheap rename, never a re-encode. Returns <see langword="false"/>
+    /// if no scratch file for that id is currently retained (already evicted by the retention cap, or
+    /// already consumed by an earlier call) rather than silently moving the wrong file. Safe to call
+    /// from any thread.</summary>
+    Task<bool> TrySaveReceptionAudioAsync(long receptionId, string path);
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): live-apply counterpart to the
+    /// persisted <c>IReceiveHistoryStore.SetAudioSettingsAsync</c> enable flag -- an Options
+    /// Apply/Save flow must call BOTH (this updates what the decode path actually reads; the store
+    /// call persists it across restarts). Toggling mid-reception takes effect only at the next arm --
+    /// an in-progress slice is never truncated-and-emitted early by a live toggle. Safe to call from
+    /// any thread.</summary>
+    void SetAutoSaveAudioEnabled(bool enabled);
+
+    /// <summary>Live-apply counterpart to <c>IReceiveHistoryStore.SetAudioSettingsAsync</c>'s
+    /// directory, same pairing contract as <see cref="SetAutoSaveAudioEnabled"/> above --
+    /// <paramref name="directory"/> should be passed the exact same value given to that call
+    /// (including <see langword="null"/>/whitespace to mean "reset to default"), so the two never
+    /// disagree about which folder is live. Takes effect for NEW scratch writes only --
+    /// already-retained scratch files under the old directory are left in place, not migrated. Safe
+    /// to call from any thread.</summary>
+    void SetAudioDirectory(string? directory);
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: whether a slice is
+    /// ACTIVELY armed and being captured right now -- <see langword="false"/> whenever auto-save is
+    /// disabled (arming never happens without it, see <see cref="SetAutoSaveAudioEnabled"/>'s own
+    /// contract) and whenever no reception is currently in progress, <see langword="true"/> only for
+    /// the window between a reception's arm and its close. Deliberately NOT a reflection of the
+    /// Options enable toggle alone -- a near-identical status-bar chip existed before bound to a
+    /// static claim with no backing property and was removed for being fake-live
+    /// (`MainWindow.axaml`'s own removed-AutosaveOn comment); this property exists specifically so
+    /// the replacement chip binds to something that actually varies. Meant to be polled on the same
+    /// cadence as other live telemetry (<see cref="SignalPeakLevel"/>, <see cref="BufferedSampleCount"/>),
+    /// not event-driven -- safe to call from any thread.</summary>
+    bool IsAudioAutoSaveActive { get; }
 
     /// <summary>Piece C2 (RX tab Re-decode port): decodes a previously-recorded WAV file at
     /// <paramref name="path"/> through the SAME decoder/waterfall/level-meter pipeline live capture

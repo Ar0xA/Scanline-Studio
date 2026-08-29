@@ -48,6 +48,25 @@ public sealed partial class MainWindowTabOrderTests
     }
 
     /// <summary>Same reasoning as <see cref="MainTabControl_LogbookTabIndex_PointsAtTheActualLogbookTab"/>
+    /// above, for <see cref="ViewModels.MainViewModel.SaveOrApplyCommand"/>'s contextual Ctrl+S
+    /// routing (ui_transition_plan.md step 2) -- a silent tab reorder would otherwise route Ctrl+S
+    /// to Apply on the wrong tab, or to Apply while Receive is selected.</summary>
+    [Fact]
+    public void MainTabControl_TransmitTabIndex_PointsAtTheActualTransmitTab()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var mainWindowPath = Path.Combine(uiSourceDirectory, "Views", "MainWindow.axaml");
+        var text = File.ReadAllText(mainWindowPath);
+
+        var headers = TabItemHeaderRegex().Matches(text).Select(m => m.Groups[1].Value).ToList();
+
+        Assert.True(
+            ViewModels.MainViewModel.TransmitTabIndex < headers.Count,
+            $"MainViewModel.TransmitTabIndex ({ViewModels.MainViewModel.TransmitTabIndex}) is out of range for the {headers.Count} top-level TabItems found in MainWindow.axaml.");
+        Assert.Equal("MainWindow.Tabs.Transmit", headers[ViewModels.MainViewModel.TransmitTabIndex]);
+    }
+
+    /// <summary>Same reasoning as <see cref="MainTabControl_LogbookTabIndex_PointsAtTheActualLogbookTab"/>
     /// above, for the header-row callsign chip's jump target: <see cref="ViewModels.OptionsWindowViewModel.TxTabIndex"/>
     /// is a hardcoded index into `OptionsWindowView.axaml`'s own `TabControl` -- nothing would catch a
     /// future tab reorder silently sending the chip to the wrong tab.</summary>
@@ -82,6 +101,19 @@ public sealed partial class MainWindowTabOrderTests
             ViewModels.OptionsWindowViewModel.RadioTabIndex < headers.Count,
             $"OptionsWindowViewModel.RadioTabIndex ({ViewModels.OptionsWindowViewModel.RadioTabIndex}) is out of range for the {headers.Count} top-level TabItems found in OptionsWindowView.axaml.");
         Assert.Equal("Options.Radio.Tab", headers[ViewModels.OptionsWindowViewModel.RadioTabIndex]);
+    }
+
+    [Fact]
+    public void HelpMenu_UserGuide_IsLocalizedAndBoundToItsCommand()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var mainWindowPath = Path.Combine(uiSourceDirectory, "Views", "MainWindow.axaml");
+        var text = File.ReadAllText(mainWindowPath);
+
+        Assert.Contains(
+            "Header=\"{loc:Translate MainWindow.Menu.Help.UserGuide}\" Command=\"{Binding OpenUserGuideCommand}\"",
+            text,
+            StringComparison.Ordinal);
     }
 
     private static string FindUiSourceDirectory()

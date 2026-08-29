@@ -49,6 +49,10 @@ public sealed class RestartableSstvEncoder : ISstvEncoder, ISstvEncoderReconfigu
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
         double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = TxOutputBandpassFilter.DefaultTapCount,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
         CancellationToken ct = default)
     {
         AnalogFmSstvEncoder inner;
@@ -57,7 +61,7 @@ public sealed class RestartableSstvEncoder : ISstvEncoder, ISstvEncoderReconfigu
             inner = _inner;
         }
 
-        return inner.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, ct);
+        return inner.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
     }
 
     public long EstimateSampleCount(

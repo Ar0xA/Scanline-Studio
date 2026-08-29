@@ -117,4 +117,25 @@ public sealed record AudioDeviceSettings
     /// (<c>SstvSessionService</c>'s transmit-settings resolution), matching this codebase's own
     /// <c>CwToneFrequencyHz</c> precedent.</summary>
     public double TxSampleRateOffsetHz { get; init; }
+
+    /// <summary>Options stub backlog item 3 (`docs/plans/options-stub-item3-tx-bpf-lpf-plan.md`) --
+    /// port of legacy's real, user-editable <c>CSSTVMOD</c> fields (<c>m_bpf</c>/<c>m_bpftap</c>/
+    /// <c>m_lpf</c>/<c>m_lpffq</c>, `sstv.cpp:2759-2761,2764`), same section as
+    /// <see cref="TxSampleRateOffsetHz"/> above (both are TX-encoder settings resolved at the exact
+    /// same site, <c>SstvSessionService.ResolveTransmitSettingsAsync</c>). Nullable because 3 of the
+    /// 4 desired defaults (<c>true</c>/24/2000.0) are NOT their type's CLR default -- same reasoning
+    /// as <see cref="SstvDecoderSettings"/>'s own <c>AutoStopEnabled</c> field elsewhere in this
+    /// codebase. Real legacy Save-handler validation ranges (`Option.cpp:452-459`): tap count
+    /// `[2,512]` (`TAPMAX`, `fir.h:27`), rounded to the nearest EVEN value (legacy's own `MakeFilter`
+    /// leaves one coefficient slot uninitialized for an odd tap count, a real UB divergence this port
+    /// sidesteps rather than replicates); LPF frequency `[100.0,3000.0]`. Both clamps applied at the
+    /// same read site as <see cref="TxSampleRateOffsetHz"/>'s own boundary validation, not here (this
+    /// section has no <c>Resolve()</c> method).</summary>
+    public bool? TxBpfEnabled { get; init; }
+
+    public int? TxBpfTapCount { get; init; }
+
+    public bool? TxLpfEnabled { get; init; }
+
+    public double? TxLpfFrequencyHz { get; init; }
 }
