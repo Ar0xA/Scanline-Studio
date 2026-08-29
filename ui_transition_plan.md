@@ -18,7 +18,7 @@ ui_findings.md tiers. Audit corrections that change the plan are folded in where
 11. Frequency entry / honest read-only header (T2-1)
 12. Auto-save RX audio (new — Options flag + per-frame WAV + retention) — **auditor cadence required**
 13. Scanline template bundle export/import (T1-7, half A)
-14. Legacy `.mtm` template import (T1-7, half B)
+14. Legacy `.mtm` template import (T1-7, half B) — **deferred 2026-08-29, "maybe one day," see below**
 
 Changes vs. the findings' own order and why:
 
@@ -41,6 +41,20 @@ Changes vs. the findings' own order and why:
   must go with it) and step 6's `ReceiveHistory` schema migration — do both `ADD COLUMN`s in one
   pass, since the store's migration code requires column order to match `CREATE TABLE` and that
   order becomes permanent once shipped.
+- Step 14 **deferred again, 2026-08-29** (explicit user decision, not a reversion to the earlier
+  false "unreverse-engineered" premise above — that premise stays corrected): parked as "maybe one
+  day," a plain prioritization call, no docs/removed-features.md entry (that doc is for a legacy
+  capability permanently NOT ported, not an open deferral). Fable was consulted on both open Tier-3
+  sub-questions before the deferral (verified against `Draw.cpp`/`Main.cpp`, not guessed): `.mti`
+  import would ride the same parser as `.mtm` (`LoadTemplate` calls the identical
+  `CDrawGroup::LoadFromStream` for both extensions, differing only in the file-dialog filter string
+  — Main.cpp:10090/10134), and the legacy `def1-5.mtm`/`Stock/*.mtm`/`Current.mtm` sample files
+  should NOT be committed as test fixtures (YONIQ's own `License.TXT` calls the *program* freeware
+  under the author's copyright, distinct from the LGPL source license, and the files embed
+  author-created bitmap artwork — the project's own "when in doubt, exclude" license-audit rule
+  applies); fresh fixtures saved from the running legacy binary on originally-authored content, the
+  same precedent already used for the committed `.mmv`/`.bmp` golden vectors, would be the safe
+  alternative if/when this is picked back up.
 - Step 13 (native template bundle) is fully independent of steps 1-12 (touches only
   `TemplateStore`/`PersistedTemplateElement`/`TxImageEditorPaneViewModel`/`FilePickerService`/
   `en.json`) and can be pulled forward anywhere dependency order doesn't force otherwise.
@@ -441,7 +455,9 @@ compare the rendered TX canvas against a legacy screenshot of the same template.
 - Camera/webcam TX source: accept/defer.
 - Copy / open-externally / print for received images: copy+open cheap to bundle into the step-3
   viewer; print separate — decide.
-- Legacy `.mti` (single template item) import alongside `.mtm` in step 14: accept/defer explicitly.
+- Legacy `.mti` (single template item) import alongside `.mtm` in step 14: **moot for now** — step
+  14 itself deferred 2026-08-29 (see the Sequencing section's own note); would accept alongside
+  `.mtm` if/when step 14 is picked back up (same parser, confirmed against `Draw.cpp`/`Main.cpp`).
 - Legacy `.mtm` **export** (write, not read): recommend reject — lossy against the shipped
   element model, not specced, no stated user need.
 - Richer Gallery filters/sort/bulk actions: accept/defer.
