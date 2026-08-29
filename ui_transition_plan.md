@@ -19,8 +19,11 @@ ui_findings.md tiers. Audit corrections that change the plan are folded in where
 12. Auto-save RX audio (new — Options flag + per-frame WAV + retention) — **auditor cadence required**
 13. Scanline template bundle export/import (T1-7, half A)
 14. Legacy `.mtm` template import (T1-7, half B) — **rejected 2026-08-29, see below and docs/removed-features.md**
-15. QSO delete + duplicate detection + QSL flags (Tier 3, accepted 2026-08-29) — resume from
-    `~/.claude/plans/logbook-deltas.md`, re-validated against current code first (not started).
+15. QSO delete + duplicate detection + QSL flags (Tier 3, accepted 2026-08-29) — **done
+    2026-08-29**, all 3 pieces (delete, QSL flags, duplicate detection), each auditor plan-reviewed
+    and code-reviewed. `~/.claude/plans/logbook-deltas.md`'s original design was re-validated
+    against current code first and needed real updates (a `_formGeneration` staleness guard and a
+    `MainWindow.axaml`-is-inline drift the 2-week-old plan predated) before any code was written.
 16. Copy / open-externally for received images (Tier 3, accepted 2026-08-29) — bundle into the
     step-3 full-size viewer, which already has the file on disk (not started).
 
@@ -461,9 +464,8 @@ compare the rendered TX canvas against a legacy screenshot of the same template.
 
 ## Tier 3 — scope decisions for the user (accept / defer / reject, one line each)
 
-- QSO delete + duplicate detection + QSL flags: **accepted 2026-08-29** — resume from the reviewed
-  plan at `~/.claude/plans/logbook-deltas.md` (not yet re-read/re-validated against current code
-  since it was written 2026-08-15; do that before implementing, don't assume it's still accurate as-is).
+- QSO delete + duplicate detection + QSL flags: **accepted 2026-08-29, done 2026-08-29** — see
+  step 15 in the Sequencing section above.
 - Camera/webcam TX source: **rejected 2026-08-29** — see docs/removed-features.md.
 - Copy / open-externally for received images: **accepted 2026-08-29** — not a legacy MMSSTV/YONIQ
   feature (no `TPrinter`/print-dialog usage found in `yoniq-old/`, and no clipboard-copy/open-
