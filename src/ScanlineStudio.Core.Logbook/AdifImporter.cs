@@ -17,13 +17,17 @@ namespace ScanlineStudio.Core.Logbook;
 public sealed class AdifImporter : IAdifImporter
 {
     /// <summary>Fields consumed unconditionally, regardless of value. <c>MODE</c>/<c>SUBMODE</c>/
-    /// <c>APP_SCANLINESTUDIO_SSTVMODE</c>/<c>APP_SCANLINESTUDIO_RADIOMODE</c> are deliberately NOT
-    /// here — they're only excluded from the unmapped-fields bag (<see cref="BuildNotes"/>) when
-    /// <see cref="MapFields"/> actually recovers a value from them, so an unrecognized <c>MODE</c>
-    /// token (e.g. a third-party <c>MODE=SSTV</c> with no submode/app field, an unrecognized
-    /// <c>SUBMODE</c> alongside a recognized <c>MODE</c>, or any token
-    /// <see cref="AdifRadioModeMapping.FromAdif"/> doesn't recognize) survives in <c>COMMENT</c>
-    /// instead of being silently dropped.</summary>
+    /// <c>APP_SCANLINESTUDIO_SSTVMODE</c>/<c>APP_SCANLINESTUDIO_RADIOMODE</c>/<c>QSL_SENT</c>/
+    /// <c>QSL_RCVD</c> are deliberately NOT here — they're only excluded from the unmapped-fields
+    /// bag (<see cref="BuildNotes"/>) when <see cref="MapFields"/> actually recovers a value from
+    /// them, so an unrecognized <c>MODE</c> token (e.g. a third-party <c>MODE=SSTV</c> with no
+    /// submode/app field, an unrecognized <c>SUBMODE</c> alongside a recognized <c>MODE</c>, or any
+    /// token <see cref="AdifRadioModeMapping.FromAdif"/> doesn't recognize) survives in
+    /// <c>COMMENT</c> instead of being silently dropped -- and, same reasoning, a
+    /// <c>QSL_SENT</c>/<c>QSL_RCVD</c> value this app's own plain-boolean model can't represent
+    /// (ADIF's full enumeration also has <c>N</c>/<c>R</c>/<c>Q</c>/<c>I</c>, not just <c>Y</c>)
+    /// survives the same way instead of silently downgrading another logger's real data to "false"
+    /// on a round-trip export.</summary>
     private static readonly HashSet<string> MappedFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "CALL", "QSO_DATE", "TIME_ON", "QSO_DATE_OFF", "TIME_OFF", "FREQ",
@@ -164,7 +168,7 @@ public sealed class AdifImporter : IAdifImporter
 
         string? sstvModeId = null;
         RadioMode? mode = null;
-        var consumedModeFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var consumedFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (fields.TryGetValue("MODE", out var modeValue))
         {
             if (modeValue.Equals("SSTV", StringComparison.OrdinalIgnoreCase))
@@ -174,20 +178,20 @@ public sealed class AdifImporter : IAdifImporter
                 if (fields.TryGetValue("APP_SCANLINESTUDIO_SSTVMODE", out var appMode))
                 {
                     sstvModeId = appMode;
-                    consumedModeFields.Add("APP_SCANLINESTUDIO_SSTVMODE");
+                    consumedFields.Add("APP_SCANLINESTUDIO_SSTVMODE");
                     if (fields.ContainsKey("SUBMODE"))
                     {
                         // AdifExporter always writes SUBMODE alongside APP_SCANLINESTUDIO_SSTVMODE for
                         // third-party interop even though this branch doesn't need it to recover
                         // sstvModeId -- still a recognized, expected companion field, not an unmapped one.
-                        consumedModeFields.Add("SUBMODE");
+                        consumedFields.Add("SUBMODE");
                     }
                     recoveredSomething = true;
                 }
                 else if (fields.TryGetValue("SUBMODE", out var subMode))
                 {
                     sstvModeId = subMode.ToLowerInvariant();
-                    consumedModeFields.Add("SUBMODE");
+                    consumedFields.Add("SUBMODE");
                     recoveredSomething = true;
                 }
 
@@ -201,13 +205,13 @@ public sealed class AdifImporter : IAdifImporter
                     Enum.TryParse<RadioMode>(radioModeValue, ignoreCase: true, out var parsedRadioMode))
                 {
                     mode = parsedRadioMode;
-                    consumedModeFields.Add("APP_SCANLINESTUDIO_RADIOMODE");
+                    consumedFields.Add("APP_SCANLINESTUDIO_RADIOMODE");
                     recoveredSomething = true;
                 }
 
                 if (recoveredSomething)
                 {
-                    consumedModeFields.Add("MODE");
+                    consumedFields.Add("MODE");
                 }
                 // else: MODE=SSTV present but nothing recoverable from it -- leave MODE unconsumed so
                 // "MODE=SSTV" itself survives via BuildNotes instead of vanishing.
@@ -219,13 +223,33 @@ public sealed class AdifImporter : IAdifImporter
                 mode = resolved;
                 if (resolved != RadioMode.Unknown)
                 {
-                    consumedModeFields.Add("MODE");
+                    consumedFields.Add("MODE");
                     if (submodeRecognized)
                     {
-                        consumedModeFields.Add("SUBMODE");
+                        consumedFields.Add("SUBMODE");
                     }
                 }
             }
+        }
+
+        // ui_transition_plan.md step 15, piece (b): only a Y/y (QSL_SENT) or Y/y/V/v (QSL_RCVD --
+        // ADIF's "Verified" value also means received) value is consumed and mapped to true. Any
+        // other value (N/R/Q/I, or an unrecognized token) is left UNCONSUMED so it survives via
+        // BuildNotes's unmapped-fields bag instead of being silently downgraded to false -- see
+        // MappedFields's own doc comment for why these two fields aren't in that static set.
+        var qslSent = false;
+        if (fields.TryGetValue("QSL_SENT", out var qslSentValue) && qslSentValue.StartsWith("Y", StringComparison.OrdinalIgnoreCase))
+        {
+            qslSent = true;
+            consumedFields.Add("QSL_SENT");
+        }
+
+        var qslReceived = false;
+        if (fields.TryGetValue("QSL_RCVD", out var qslReceivedValue)
+            && (qslReceivedValue.StartsWith("Y", StringComparison.OrdinalIgnoreCase) || qslReceivedValue.StartsWith("V", StringComparison.OrdinalIgnoreCase)))
+        {
+            qslReceived = true;
+            consumedFields.Add("QSL_RCVD");
         }
 
         return new QsoRecord(
@@ -242,19 +266,23 @@ public sealed class AdifImporter : IAdifImporter
             Qth: fields.GetValueOrDefault("QTH"),
             GridSquare: fields.GetValueOrDefault("GRIDSQUARE"),
             Country: fields.GetValueOrDefault("COUNTRY"),
-            Notes: BuildNotes(fields, consumedModeFields),
-            ReceivedImageId: null);
+            Notes: BuildNotes(fields, consumedFields),
+            ReceivedImageId: null,
+            QslSent: qslSent,
+            QslReceived: qslReceived);
     }
 
     /// <summary>Preserves anything not mapped onto a <see cref="QsoRecord"/> property (spec's
     /// "raw-fields bag" requirement) by appending it to <c>COMMENT</c> rather than dropping it.
-    /// <paramref name="consumedModeFields"/> is the caller's record-specific set of MODE-related field
-    /// names it actually recovered a value from — see <see cref="MappedFields"/>'s own doc comment for
-    /// why those three fields aren't in the static set.</summary>
-    private static string? BuildNotes(Dictionary<string, string> fields, HashSet<string> consumedModeFields)
+    /// <paramref name="consumedFields"/> is the caller's record-specific set of field names it
+    /// actually recovered a value from -- MODE-family fields (<c>MODE</c>/<c>SUBMODE</c>/
+    /// <c>APP_SCANLINESTUDIO_SSTVMODE</c>/<c>APP_SCANLINESTUDIO_RADIOMODE</c>) and QSL fields
+    /// (<c>QSL_SENT</c>/<c>QSL_RCVD</c>) alike -- see <see cref="MappedFields"/>'s own doc comment
+    /// for why those six fields aren't in the static set.</summary>
+    private static string? BuildNotes(Dictionary<string, string> fields, HashSet<string> consumedFields)
     {
         var comment = fields.GetValueOrDefault("COMMENT");
-        var unmapped = fields.Where(kv => !MappedFields.Contains(kv.Key) && !consumedModeFields.Contains(kv.Key))
+        var unmapped = fields.Where(kv => !MappedFields.Contains(kv.Key) && !consumedFields.Contains(kv.Key))
             .Select(kv => $"{kv.Key}={kv.Value}")
             .ToList();
 

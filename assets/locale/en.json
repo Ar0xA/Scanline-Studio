@@ -853,6 +853,8 @@
   "Panes.Logbook.Form.GridSquareWatermark": "Grid square",
   "Panes.Logbook.Form.CountryWatermark": "Country",
   "Panes.Logbook.Form.NotesWatermark": "Notes",
+  "Panes.Logbook.Form.QslSentLabel": "QSL sent",
+  "Panes.Logbook.Form.QslReceivedLabel": "QSL received",
   "Panes.Logbook.Log": "Log QSO",
   "Panes.Logbook.Update": "Save changes",
   "Panes.Logbook.AdifHeader": "ADIF IMPORT / EXPORT",

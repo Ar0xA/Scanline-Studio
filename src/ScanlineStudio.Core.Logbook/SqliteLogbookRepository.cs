@@ -40,8 +40,8 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId)
-            VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId)
+            INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived)
+            VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived)
             """;
         BindParameters(command, record);
 
@@ -80,7 +80,9 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
                 GridSquare = $gridSquare,
                 Country = $country,
                 Notes = $notes,
-                ReceivedImageId = $receivedImageId
+                ReceivedImageId = $receivedImageId,
+                QslSent = $qslSent,
+                QslReceived = $qslReceived
             WHERE Id = $id
             """;
         BindParameters(command, record);
@@ -105,7 +107,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId
+            SELECT Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived
             FROM Qso WHERE 1 = 1
             """;
 
@@ -148,7 +150,9 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetString(13),
-                reader.IsDBNull(14) ? null : reader.GetString(14)));
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.GetInt64(15) != 0,
+                reader.GetInt64(16) != 0));
         }
 
         return results;
@@ -207,15 +211,32 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         command.Parameters.AddWithValue("$country", (object?)record.Country ?? DBNull.Value);
         command.Parameters.AddWithValue("$notes", (object?)record.Notes ?? DBNull.Value);
         command.Parameters.AddWithValue("$receivedImageId", (object?)record.ReceivedImageId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$qslSent", record.QslSent ? 1 : 0);
+        command.Parameters.AddWithValue("$qslReceived", record.QslReceived ? 1 : 0);
     }
 
+    /// <summary>Creates the table on a fresh DB, and migrates an existing pre-QSL DB in place --
+    /// the first schema change this table has ever needed. Same lightweight `PRAGMA table_info`
+    /// probe + `ALTER TABLE ADD COLUMN` approach (NOT a versioned-migration framework) as
+    /// <see cref="SqliteReceiveHistoryStore.EnsureSchema"/> -- including that method's own
+    /// transaction discipline (auditor plan-review round-2 risk finding): the whole probe/alter
+    /// sequence runs inside one <see cref="SqliteConnection.BeginTransaction()"/> with
+    /// <c>deferred: false</c> explicit, taking the write lock up front, so two processes racing
+    /// against the SAME <c>history.db</c> file (this table and <c>ReceiveHistory</c> both live in
+    /// it) serialize correctly instead of both observing "column missing" and the second `ALTER`
+    /// throwing from inside this constructor-time call. `QslSent`/`QslReceived` are appended LAST
+    /// in both `CREATE TABLE`'s column list and the `ALTER TABLE` sequence below (after
+    /// `ReceivedImageId`) -- SQLite's `ADD COLUMN` always appends, so a migrated DB's column order
+    /// would otherwise permanently diverge from a fresh DB's the moment this ships.</summary>
     private void EnsureSchema()
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: false);
 
-        var command = connection.CreateCommand();
-        command.CommandText = """
+        var createCommand = connection.CreateCommand();
+        createCommand.Transaction = transaction;
+        createCommand.CommandText = """
             CREATE TABLE IF NOT EXISTS Qso (
                 Id TEXT PRIMARY KEY,
                 Callsign TEXT NOT NULL,
@@ -231,9 +252,46 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
                 GridSquare TEXT NULL,
                 Country TEXT NULL,
                 Notes TEXT NULL,
-                ReceivedImageId TEXT NULL
+                ReceivedImageId TEXT NULL,
+                QslSent INTEGER NOT NULL DEFAULT 0,
+                QslReceived INTEGER NOT NULL DEFAULT 0
             )
             """;
+        createCommand.ExecuteNonQuery();
+
+        var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var probeCommand = connection.CreateCommand();
+        probeCommand.Transaction = transaction;
+        probeCommand.CommandText = "PRAGMA table_info(Qso)";
+        using (var reader = probeCommand.ExecuteReader())
+        {
+            // Fully materialize into existingColumns before issuing any ALTER below -- running DDL
+            // against a connection with a live reader still open on it is a real SQLite failure
+            // mode, not just a style concern.
+            while (reader.Read())
+            {
+                existingColumns.Add(reader.GetString(reader.GetOrdinal("name")));
+            }
+        }
+
+        if (!existingColumns.Contains("QslSent"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN QslSent INTEGER NOT NULL DEFAULT 0");
+        }
+
+        if (!existingColumns.Contains("QslReceived"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN QslReceived INTEGER NOT NULL DEFAULT 0");
+        }
+
+        transaction.Commit();
+    }
+
+    private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
+    {
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = commandText;
         command.ExecuteNonQuery();
     }
 
