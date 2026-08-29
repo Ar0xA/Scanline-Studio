@@ -1962,6 +1962,28 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         return Task.FromResult(true);
     }
 
+    /// <summary>When non-null, the NEXT <see cref="FindLikelyDuplicateAsync"/> call returns this
+    /// (then leaves it in place -- a test that wants "no duplicate on the second check" sets this to
+    /// <see langword="null"/> itself between the two calls). Defaults to <see langword="null"/> (no
+    /// duplicate) so every EXISTING Log/Update test that doesn't care about this feature keeps
+    /// behaving as it did before it existed.</summary>
+    public QsoRecord? DuplicateResultToReturn { get; set; }
+
+    public Exception? ThrowOnFindLikelyDuplicate { get; set; }
+
+    public List<(string Callsign, DateTimeOffset StartUtc, long? FrequencyHz, string? ExcludeId)> FindLikelyDuplicateCalls { get; } = [];
+
+    public Task<QsoRecord?> FindLikelyDuplicateAsync(string callsign, DateTimeOffset startUtc, long? frequencyHz, string? excludeId, CancellationToken ct = default)
+    {
+        FindLikelyDuplicateCalls.Add((callsign, startUtc, frequencyHz, excludeId));
+        if (ThrowOnFindLikelyDuplicate is not null)
+        {
+            throw ThrowOnFindLikelyDuplicate;
+        }
+
+        return Task.FromResult(DuplicateResultToReturn);
+    }
+
     public QrzCallsignLookupResult LookupResultToReturn { get; set; } = new(true, "Test Name", "Test QTH", "AA00", null);
 
     public Exception? ThrowOnLookup { get; set; }

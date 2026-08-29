@@ -30,8 +30,15 @@ internal sealed class FakeLogbookRepository : ILogbookRepository
         return Task.CompletedTask;
     }
 
+    public Exception? ThrowOnSearch { get; set; }
+
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default)
     {
+        if (ThrowOnSearch is not null)
+        {
+            throw ThrowOnSearch;
+        }
+
         IEnumerable<QsoRecord> results = Records;
         if (query.Callsign is not null)
         {
