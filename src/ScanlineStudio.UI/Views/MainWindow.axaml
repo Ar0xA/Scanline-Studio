@@ -1553,6 +1553,14 @@
                                     <TextBox Classes="Industry IndustryInput" Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
                                     <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
 
+                                    <!-- ui_transition_plan.md step 15, piece (b) — plain booleans
+                                         (see QsoRecord.QslSent's own doc comment), same CheckBox
+                                         shape as the Gallery's own flag toggle above. -->
+                                    <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
+                                        <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Panes.Logbook.Form.QslSentLabel}" IsChecked="{Binding FormQslSent}" />
+                                        <CheckBox Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Panes.Logbook.Form.QslReceivedLabel}" IsChecked="{Binding FormQslReceived}" />
+                                    </Grid>
+
                                     <Grid ColumnDefinitions="*,*" ColumnSpacing="4">
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Log}" Command="{Binding LogCommand}" IsVisible="{Binding !IsEditing}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Update}" Command="{Binding UpdateCommand}" IsVisible="{Binding IsEditing}" />

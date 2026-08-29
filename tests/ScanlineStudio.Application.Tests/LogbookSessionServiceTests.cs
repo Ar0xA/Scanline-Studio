@@ -8,7 +8,7 @@ namespace ScanlineStudio.Application.Tests;
 public sealed class LogbookSessionServiceTests
 {
     private static QsoRecord SampleRecord(string id = "1") =>
-        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, "martin1", null, null, null, null, null, null, null, null);
+        new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, "martin1", null, null, null, null, null, null, null, null, false, false);
 
     private static LogbookSessionService CreateService(
         FakeLogbookRepository? repository = null,

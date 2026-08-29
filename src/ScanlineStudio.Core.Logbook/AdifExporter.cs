@@ -83,6 +83,21 @@ public sealed class AdifExporter : IAdifExporter
         WriteField(writer, "COUNTRY", record.Country);
         WriteField(writer, "COMMENT", record.Notes);
         WriteField(writer, "STATION_CALLSIGN", stationCallsign?.ToUpperInvariant());
+
+        // ui_transition_plan.md step 15, piece (b): plain booleans (see QsoRecord.QslSent's own doc
+        // comment), NOT ADIF's full Y/N/R/I/Q enumeration -- writing "Y" only when true and omitting
+        // the field entirely when false is deliberate. An absent ADIF field means "unknown," which is
+        // honest: this app doesn't distinguish "confirmed not sent" from "never asked," so emitting
+        // "N" would overclaim a negative this app never actually recorded.
+        if (record.QslSent)
+        {
+            WriteField(writer, "QSL_SENT", "Y");
+        }
+
+        if (record.QslReceived)
+        {
+            WriteField(writer, "QSL_RCVD", "Y");
+        }
     }
 
     private static void WriteField(TextWriter writer, string name, string? value)

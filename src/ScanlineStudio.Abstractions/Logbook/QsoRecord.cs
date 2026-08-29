@@ -9,8 +9,17 @@ namespace ScanlineStudio.Abstractions.Logbook;
 /// anticipating this type; callers supply <c>Guid.NewGuid().ToString()</c>, same as RX history
 /// entries do. <see cref="GridSquare"/> is not in the spec's original draft — added because it is
 /// required for a correct ADIF <c>GRIDSQUARE</c> tag and used by both GridTracker (grid-based
-/// mapping) and QRZ; everything else the roadmap flagged as a logbook gap (QSL flags, duplicate
-/// detection, contest exchange) is deliberately not added here.</summary>
+/// mapping) and QRZ; duplicate detection and contest exchange are deliberately not added here.
+///
+/// <paramref name="QslSent"/>/<paramref name="QslReceived"/> (ui_transition_plan.md step 15,
+/// piece (b)): plain booleans, not ADIF's full Y/N/R/I/Q enumeration -- matches this record's own
+/// existing minimalism (no other field tracks a "queued/requested" tri-state). Deliberately given
+/// NO C# default value, unlike e.g. <c>TemplateManifest.SchemaVersion</c>'s own trailing-default
+/// convention -- this record is never deserialized from JSON (it's read column-by-column from a
+/// SQLite reader, see <see cref="ScanlineStudio.Core.Logbook.SqliteLogbookRepository"/>), so there
+/// is no "missing JSON property" case a default would need to paper over; omitting the default
+/// instead forces the compiler to enumerate every construction site when these fields were added,
+/// which is what actually caught the real call sites needing updates.</summary>
 public sealed record QsoRecord(
     string Id,
     string Callsign,
@@ -26,7 +35,9 @@ public sealed record QsoRecord(
     string? GridSquare,
     string? Country,
     string? Notes,
-    string? ReceivedImageId);
+    string? ReceivedImageId,
+    bool QslSent,
+    bool QslReceived);
 
 public sealed record LogbookQuery(string? Callsign = null, DateTimeOffset? From = null, DateTimeOffset? To = null);
 

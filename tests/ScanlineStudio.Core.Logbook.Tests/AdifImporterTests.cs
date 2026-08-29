@@ -15,7 +15,7 @@ public sealed class AdifImporterTests
             new DateTimeOffset(2026, 8, 7, 14, 30, 0, TimeSpan.Zero),
             new DateTimeOffset(2026, 8, 7, 14, 35, 0, TimeSpan.Zero),
             14230000, RadioMode.Usb, "martin1", "59", "58",
-            "Alice", "Somewhere", "JO31", "Germany", "Nice signal", null);
+            "Alice", "Somewhere", "JO31", "Germany", "Nice signal", null, QslSent: true, QslReceived: true);
 
         var writer = new StringWriter();
         exporter.Export([original], writer);
@@ -34,6 +34,37 @@ public sealed class AdifImporterTests
         Assert.Equal(original.GridSquare, imported.GridSquare);
         Assert.Equal(original.Country, imported.Country);
         Assert.Equal(original.Notes, imported.Notes);
+        Assert.True(imported.QslSent);
+        Assert.True(imported.QslReceived);
+    }
+
+    [Fact]
+    public void Import_QslRcvdVerified_MapsToTrue()
+    {
+        // ui_transition_plan.md step 15, piece (b): ADIF's QSL_RCVD enumeration includes "V"
+        // (Verified), which also means received -- not just "Y".
+        var importer = new AdifImporter();
+        var adif = "<CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<QSL_RCVD:1>V<EOR>\n";
+
+        var imported = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.True(imported.QslReceived);
+    }
+
+    [Fact]
+    public void Import_QslSentOrRcvdNotY_DoesNotMapToTrue_PreservesTheRawValueInNotes()
+    {
+        // Round-2 plan-review decision: a value this app's plain-boolean model can't represent
+        // (N/R/Q/I) must survive on round-trip, not silently downgrade to false-as-if-unknown.
+        var importer = new AdifImporter();
+        var adif = "<CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:6>143000<QSL_SENT:1>R<QSL_RCVD:1>N<EOR>\n";
+
+        var imported = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.False(imported.QslSent);
+        Assert.False(imported.QslReceived);
+        Assert.Contains("QSL_SENT=R", imported.Notes);
+        Assert.Contains("QSL_RCVD=N", imported.Notes);
     }
 
     [Fact]
@@ -41,7 +72,7 @@ public sealed class AdifImporterTests
     {
         var exporter = new AdifExporter();
         var importer = new AdifImporter();
-        var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Fm, null, null, null, null, null, null, null, null, null);
+        var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Fm, null, null, null, null, null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([original], writer);
@@ -120,7 +151,7 @@ public sealed class AdifImporterTests
     {
         var exporter = new AdifExporter();
         var importer = new AdifImporter();
-        var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Lsb, "scottie2", null, null, null, null, null, null, null, null);
+        var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, RadioMode.Lsb, "scottie2", null, null, null, null, null, null, null, null, false, false);
 
         var writer = new StringWriter();
         exporter.Export([original], writer);
@@ -176,7 +207,7 @@ public sealed class AdifImporterTests
 
         foreach (var mode in new[] { RadioMode.Usb, RadioMode.Lsb, RadioMode.Pkt })
         {
-            var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null);
+            var original = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, mode, null, null, null, null, null, null, null, null, null, false, false);
             var writer = new StringWriter();
             exporter.Export([original], writer);
             var imported = Assert.Single(importer.Import(new StringReader(writer.ToString())));

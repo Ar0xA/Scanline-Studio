@@ -186,6 +186,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _formNotes;
 
+    [ObservableProperty]
+    private bool _formQslSent;
+
+    [ObservableProperty]
+    private bool _formQslReceived;
+
     public LogbookPaneViewModel(
         ILogbookSessionService logbook,
         IFilePickerService filePicker,
@@ -404,6 +410,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare = null;
         FormCountry = null;
         FormNotes = null;
+        FormQslSent = false;
+        FormQslReceived = false;
         UpdateCommand.NotifyCanExecuteChanged();
         DeleteSelectedCommand.NotifyCanExecuteChanged();
     }
@@ -426,6 +434,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare = record.GridSquare;
         FormCountry = record.Country;
         FormNotes = record.Notes;
+        FormQslSent = record.QslSent;
+        FormQslReceived = record.QslReceived;
         StatusMessage = null;
         UpdateCommand.NotifyCanExecuteChanged();
         DeleteSelectedCommand.NotifyCanExecuteChanged();
@@ -646,7 +656,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare,
         FormCountry,
         FormNotes,
-        receivedImageId);
+        receivedImageId,
+        FormQslSent,
+        FormQslReceived);
 
     /// <summary>ADIF-UDP forwarding status clause: a distinct "not forwarded (no destinations
     /// configured)" string when <see cref="LogQsoResult.AdifUdpEnabledCount"/> is 0, rather than a
