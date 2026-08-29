@@ -140,16 +140,18 @@ Full detail: `spec/14-roadmap-archive.md`.
   nothing today, matching legacy's own unconfigured-sound-file behavior — a benign no-op, not a
   lie, but not done either). Correction: an earlier `PROJECT_BRIEF.md` note claiming these were
   "bundled into CW-ID/FSK, done" was wrong, verified against source 2026-08-13.
-- ~~Logbook deltas~~ — **PARKED 2026-08-15, ACCEPTED AGAIN 2026-08-29** (user redirect, then
-  reversed): QSL sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO. Was
-  explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`); a full
-  2-round-plan-reviewed implementation plan exists at `/home/artien/.claude/plans/logbook-deltas.md`
+- ~~Logbook deltas~~ — **PARKED 2026-08-15, ACCEPTED AGAIN AND SHIPPED 2026-08-29** (user redirect,
+  then reversed): QSL sent/received flags, duplicate-QSO detection (by callsign/band), delete-a-QSO.
+  Was explicitly carved out of the shipped Logbook pane (`QsoRecord.cs:12-13`); a full
+  2-round-plan-reviewed implementation plan existed at `/home/artien/.claude/plans/logbook-deltas.md`
   but the user reframed scope before implementation started: "basics only" for the Logbook pane
   itself (already sufficient — add/edit/search/ADIF export), prioritize SSTV-side work over deeper
   logbook features (see `feedback_logbook_minimal_footprint` memory). **2026-08-29: accepted as a
-  `ui_transition_plan.md` Tier 3 decision** — resume from the existing plan doc, re-validating it
-  against current code first (it predates several shipped features and may be stale). **Correction
-  2026-08-14**
+  `ui_transition_plan.md` step 15 Tier 3 decision, then built and shipped the same day** (all 3
+  pieces, commit `6aef2b7`) — the resumed plan needed real updates before implementation (a
+  `_formGeneration` staleness guard and a `MainWindow.axaml`-is-inline drift the 2-week-old plan
+  predated), confirmed via re-validation against current code first, not assumed still accurate.
+  **Correction 2026-08-14**
   (predates the redirect, kept for history): Gallery "Log entry"/"Open in log" cross-pane wiring is
   NOT open — verified real, shipped 2026-08-11 (`OpenInLogCommand`/`QsoLinkWindowView`, commit
   `13a8ca7`, `spec/16`'s own entry).
