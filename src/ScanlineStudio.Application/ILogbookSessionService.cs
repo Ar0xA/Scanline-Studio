@@ -62,4 +62,17 @@ public interface ILogbookSessionService
     /// row itself was actually deleted (<see langword="false"/> means it no longer existed, e.g.
     /// deleted from another window/process) -- never throws for that case.</summary>
     Task<bool> DeleteQsoAsync(string id, CancellationToken ct = default);
+
+    /// <summary>ui_transition_plan.md step 15, piece (c) -- likely-duplicate check by callsign +
+    /// band, bounded to the SAME UTC CALENDAR DAY as <paramref name="startUtc"/> (matching contest/
+    /// LoTW dup-check convention) -- a regular sked partner worked again six months later must never
+    /// flag as a duplicate. Band comes from <see cref="AmateurBandLookup.BandFor"/>;
+    /// <paramref name="frequencyHz"/> <see langword="null"/> means no band, which the match also
+    /// requires equal (both sides "no band"), not a wildcard -- two QSOs with genuinely unknown
+    /// frequencies are not thereby "the same band." <paramref name="excludeId"/> (pass the QSO's own
+    /// id when editing) prevents a QSO from matching itself. Returns the first likely-duplicate
+    /// record found, or <see langword="null"/> if none -- also <see langword="null"/> on ANY
+    /// failure (fail OPEN: a transient DB hiccup must never block logging or saving a real QSO),
+    /// logged, never thrown.</summary>
+    Task<QsoRecord?> FindLikelyDuplicateAsync(string callsign, DateTimeOffset startUtc, long? frequencyHz, string? excludeId, CancellationToken ct = default);
 }
