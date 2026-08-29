@@ -20,6 +20,7 @@ using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Radio.Flrig;
 using ScanlineStudio.Core.Radio.Hamlib;
+using ScanlineStudio.Core.Radio.OmniRig;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -793,6 +794,10 @@ internal static partial class Program
         services.AddSingleton<IRadioProtocolFactory, RigctldProtocolFactory>();
         services.AddSingleton<IRadioProtocolFactory>(CreateHamlibProtocolFactory);
         services.AddSingleton<IRadioProtocolFactory, FlrigProtocolFactory>();
+        // OmniRigProtocolFactory.Create() is safe to register unconditionally on any OS -- it only
+        // throws PlatformNotSupportedException lazily, if a user actually selects OmniRig and tries
+        // to connect on a non-Windows machine (spec/03-cat-layer.md's OmniRig section).
+        services.AddSingleton<IRadioProtocolFactory, OmniRigProtocolFactory>();
         services.AddSingleton<IRadioController, RadioController>();
         // ui_transition_plan.md step 6 (T2-4): narrow adapter for ReceiveHistoryRecorder -- see
         // IRadioStateProvider's own doc comment for why this is a real adapter over IRadioController,

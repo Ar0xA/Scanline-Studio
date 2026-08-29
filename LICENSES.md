@@ -62,6 +62,7 @@ code is actually being redistributed.
 | Dependency | Relationship | License | Notes |
 |---|---|---|---|
 | Hamlib (`libhamlib`) | `ScanlineStudio.Core.Radio.Hamlib` P/Invokes against a **system-installed** copy the user's own OS/package manager provides — see [[spec/03-cat-layer]]'s "Linked Hamlib: bring-your-own-libhamlib." Scanline Studio never builds, forks, vendors, or ships Hamlib source/binaries. | LGPL-2.1-or-later | No header-derived data tables (e.g. `riglist.h` rig-model numbers) are copied in either — Scanline Studio has no `IRigRegistry` ([[spec/02-radio-layer]]). |
+| OmniRig | `ScanlineStudio.Core.Radio.OmniRig` activates a **user-installed** `OmniRig.exe` local COM server via its published CLSID/IIDs — see [[spec/03-cat-layer]]'s OmniRig section. Scanline Studio never builds, forks, vendors, or ships OmniRig source/binaries; the hand-authored `[ComImport]` interface declarations transcribe only publicly-documented GUIDs/DISPIDs, no OmniRig source. | **Unconfirmed** — not verified against OmniRig's own distribution at implementation time; confirm before treating this row as complete. | No header-derived data is bundled — same posture as the Hamlib row above. |
 
 ## Test fixtures captured by running the legacy binary
 

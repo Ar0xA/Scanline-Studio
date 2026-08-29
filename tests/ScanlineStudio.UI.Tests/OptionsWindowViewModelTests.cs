@@ -2452,6 +2452,48 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public void IsOmniRigBackendAvailable_MatchesOperatingSystemIsWindows() =>
+        Assert.Equal(OperatingSystem.IsWindows(), OptionsWindowViewModel.IsOmniRigBackendAvailable);
+
+    [AvaloniaFact]
+    public async Task CanConnectRadio_OmniRig_RequiresSuccessfulTestConnection_NoSeparatePttTest()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            RigId = "none",
+            TestConnectionResultToReturn = new RadioConnectionTestResult(true, "omnirig-client", RadioCapabilities.PttControl, null),
+        };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsOmniRigBackendSelected = true;
+
+        Assert.False(vm.CanConnectRadio);
+        Assert.Equal("Options.Radio.Connect.Help.NeedsTestConnection", vm.ConnectRadioTooltip);
+
+        await vm.TestOmniRigConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.CanConnectRadio); // unlike flrig/Hamlib, no separate PTT test is required
+    }
+
+    [AvaloniaFact]
+    public void ResetRadioToDefaultCommand_AlsoClearsOmniRigTestSucceeded()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.IsOmniRigBackendSelected = true;
+        vm.OmniRigTestSucceeded = true;
+
+        vm.ResetRadioToDefaultCommand.Execute(null);
+
+        Assert.Equal("none", vm.RadioBackendId);
+        Assert.False(vm.OmniRigTestSucceeded);
+    }
+
+    [AvaloniaFact]
     public void ResetRadioToDefaultCommand_AlsoClearsHamlibFields()
     {
         var settingsStore = new FakeSettingsStore
