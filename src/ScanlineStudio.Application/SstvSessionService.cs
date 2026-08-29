@@ -29,6 +29,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly Action<ReadOnlyMemory<float>> _waterfallHandler;
     private readonly Action<ReadOnlyMemory<float>> _levelMeterHandler;
     private readonly Action<ReadOnlyMemory<float>> _recordingHandler;
+    private readonly Action<ReadOnlyMemory<float>> _audioAutoSaveHandler;
 
     // Piece C1 (RX tab Re-decode port): guards _recordingChunks/_recordingPath, contended by the
     // single audio-capture drain thread (inside _recordingHandler, once per captured chunk) and
@@ -305,6 +306,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private int _decoderExceptionCount;
     private int _waterfallExceptionCount;
     private int _transmitProgressHandlerExceptionCount;
+    private int _audioAutoSaveExceptionCount;
 
     public SstvSessionService(
         IAudioEngine audioEngine,
@@ -381,13 +383,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     if (_autoDetectPauseDrainPending)
                     {
                         _autoDetectPauseDrainPending = false;
-                        _decoder.PushSamples(ReadOnlyMemory<float>.Empty);
+                        PushSamplesToDecoder(ReadOnlyMemory<float>.Empty);
                     }
 
                     return;
                 }
 
-                _decoder.PushSamples(samples);
+                PushSamplesToDecoder(samples);
             }
             catch (Exception ex)
             {
@@ -461,6 +463,36 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 }
             }
         };
+
+        // ui_transition_plan.md step 12 (Auto-save RX audio): a 5th fan-out target, but UNLIKE
+        // _recordingHandler above, subscribed/unsubscribed alongside _decoderHandler/_waterfallHandler/
+        // _levelMeterHandler in StartReceivingLockedAsync/StopReceivingLockedAsync -- this feature has
+        // no user-initiated start/stop of its own, it simply runs whenever RX is active and the
+        // setting is enabled, so it should stop/restart with capture the same way those three do
+        // (see SstvSessionService.AudioAutoSave.cs for the full implementation).
+        _audioAutoSaveHandler = samples =>
+        {
+            try
+            {
+                OnAudioAutoSaveSamplesCaptured(samples);
+            }
+            catch (Exception ex)
+            {
+                var count = Interlocked.Increment(ref _audioAutoSaveExceptionCount);
+                if (count == 1 || count % ExceptionLogEveryN == 0)
+                {
+                    SafeLog(() => Log.AudioAutoSavePushSamplesFailed(_logger, count, ex));
+                }
+            }
+        };
+
+        // Subscribed unconditionally, for this object's whole lifetime -- these fire regardless of
+        // live-capture state (including during a file decode, on the SAME shared _decoder), so this
+        // is NOT tied to StartReceivingLockedAsync/StopReceivingLockedAsync the way the SamplesCaptured
+        // handler above is. OnAudioAutoSaveModeDetected/OnAudioAutoSaveDecodeRestarted gate themselves
+        // on _fileDecodeInFlight internally -- see their own doc comments.
+        _decoder.ModeDetected += OnAudioAutoSaveModeDetected;
+        _decoder.DecodeRestarted += OnAudioAutoSaveDecodeRestarted;
 
         // Ultracode audit finding #34: ISstvDecoderMaintenance is an optional side-channel only
         // RestartableSstvDecoder implements (not on ISstvDecoder itself -- see that interface's own
@@ -1308,6 +1340,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.RequestNotch(enabled, frequencyHz);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestPllTuning"/>.</summary>
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+        Log.PllTuningRequested(_logger, vcoGain, loopOrder, loopCutoffHz, outputOrder, outputCutoffHz);
+        _decoder.RequestPllTuning(vcoGain, loopOrder, loopCutoffHz, outputOrder, outputCutoffHz);
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestZeroCrossingTuning"/>.</summary>
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz)
+    {
+        Log.ZeroCrossingTuningRequested(_logger, smoothingMode, outputOrder, outputCutoffHz, smoothingFrequencyHz);
+        _decoder.RequestZeroCrossingTuning(smoothingMode, outputOrder, outputCutoffHz, smoothingFrequencyHz);
+    }
+
     /// <summary>See <see cref="ISstvSessionService.ArmScopeCapture"/>.</summary>
     public void ArmScopeCapture(int size)
     {
@@ -1756,6 +1802,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.ForceMode(mode);
     }
 
+    /// <summary>See <see cref="ISstvSessionService.SetModeLock"/>.</summary>
+    public void SetModeLock(SstvModeDefinition? mode)
+    {
+        Log.ModeLockChanged(_logger, mode?.Id ?? "(unlocked)");
+        _decoder.SetModeLock(mode);
+    }
+
     // These three run synchronously on the audio drain thread, inside the same call stack as
     // ISstvDecoder.PushSamples -- _decoderHandler's own try/catch (constructor, above) wraps the
     // PushSamples call itself, but an exception thrown by one of THESE handlers would otherwise be
@@ -2026,6 +2079,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _audioEngine.SamplesCaptured += _levelMeterHandler;
+        _audioEngine.SamplesCaptured += _audioAutoSaveHandler;
         _isReceiving = true;
         // Configurations-preset backlog, Phase 1 (2026-08-28): latched here, at the exact point
         // capture is confirmed genuinely open -- see this field's own doc comment for why it isn't
@@ -2095,6 +2149,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured -= _decoderHandler;
         _audioEngine.SamplesCaptured -= _waterfallHandler;
         _audioEngine.SamplesCaptured -= _levelMeterHandler;
+        _audioEngine.SamplesCaptured -= _audioAutoSaveHandler;
         // RawInputPeakLevel's own contract: 0.0 whenever capture isn't running, never a stale
         // reading left over from before this stop -- no more buffers will arrive to overwrite it.
         _rawInputPeakLevel = 0f;
@@ -2203,6 +2258,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX stop)", ex));
         }
+
+        // ui_transition_plan.md step 12 (Auto-save RX audio): deliberately placed HERE, after
+        // StopCaptureAsync has been joined/timed-out above -- NOT right after the SamplesCaptured
+        // unsubscribes. Auditor-caught (round 2 code-review): `-=` on a multicast delegate cannot
+        // affect an invocation already in progress (MiniAudioEngine's own documented snapshot
+        // semantics), so a straggler `_audioAutoSaveHandler` call can still be running after the
+        // unsubscribe line above. Resetting the ring/arm before that straggler completes let it
+        // re-seed the pre-roll ring sized against the OLD (about-to-change) sample rate, silently
+        // undersizing it for the rest of the session. Placing this after the stop is actually
+        // awaited closes that window -- this ONE hook, gated by the same "only on a real transition"
+        // guard as the unsubscribes above, covers every AudioCaptureReset seam the plan doc calls for
+        // (sample-rate change, capture-device change, TX pause/resume, file-decode entry) --
+        // RequestSampleRateAsync/RequestCaptureDeviceAsync/PlayWithPttAsync/DecodeFromFileAsync all
+        // funnel through this method before doing their own respective mutation, so a single call
+        // site here is sufficient; no need to duplicate it at each of those 4 call sites separately.
+        HandleAudioCaptureReset();
 
         SafeLog(() => Log.RxStopped(_logger));
     }
@@ -2425,7 +2496,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             // decode failure on this explicit, single-shot, user-initiated call should
                             // propagate, not be silently swallowed the way an ambient hot-path capture
                             // callback's failure is.
-                            _decoder.PushSamples(chunk);
+                            PushSamplesToDecoder(chunk);
                             _waterfallHandler(chunk);
                             _levelMeterHandler(chunk);
                         }
@@ -2527,7 +2598,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     senseLevel: resolved.SenseLevel,
                     demodType: resolved.DemodType,
                     rxBpfPreset: resolved.RxBpfPreset,
-                    rxBufferMode: resolved.RxBufferMode);
+                    rxBufferMode: resolved.RxBufferMode,
+                    pllVcoGain: resolved.PllVcoGain,
+                    pllLoopOrder: resolved.PllLoopOrder,
+                    pllLoopCutoffHz: resolved.PllLoopCutoffHz,
+                    pllOutputOrder: resolved.PllOutputOrder,
+                    pllOutputCutoffHz: resolved.PllOutputCutoffHz,
+                    zeroCrossingSmoothingMode: resolved.ZeroCrossingSmoothingMode,
+                    zeroCrossingOutputOrder: resolved.ZeroCrossingOutputOrder,
+                    zeroCrossingOutputCutoffHz: resolved.ZeroCrossingOutputCutoffHz,
+                    zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz);
 
                 ArrayImageSource? lastImage = null;
                 int? previousLine = null;
@@ -2585,8 +2665,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
                             var count = 0;
 
                             // sampleRateOffsetHz: 0.0 and stationId: null (StationIdTransmitOptions.None) --
-                            // both deliberate, see this method's own interface doc comment.
-                            await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct)
+                            // both deliberate, see this method's own interface doc comment. TX BPF/LPF
+                            // (Options stub backlog item 3) left at their legacy-matching defaults for
+                            // the same reason -- this self-test is a minimal, deterministic decode
+                            // check, not a faithful mirror of the user's real TX settings.
+                            await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct: ct)
                                 .WithCancellation(ct).ConfigureAwait(false))
                             {
                                 buffer[count++] = sample;
@@ -2650,7 +2733,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
-        var (stationId, sampleRateOffsetHz) = await ResolveTransmitSettingsAsync(ct).ConfigureAwait(false);
+        var (stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz) = await ResolveTransmitSettingsAsync(resolveSoundFile: true, ct).ConfigureAwait(false);
 
         // Plan-review finding: MUST reuse this SAME resolved stationId/sampleRateOffsetHz for the
         // estimate below, not re-resolve either independently -- MacroTextResolver's CW-ID text can
@@ -2676,7 +2759,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         try
         {
             var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
-            await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+            await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
         }
         finally
         {
@@ -2695,7 +2778,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// exposes (see that member's own doc comment) -- <see cref="TransmitAsync"/> and that preview
     /// path share this exact same resolution, so they can never disagree with each other.</summary>
     public async Task<StationIdTransmitOptions> GetStationIdTransmitOptionsAsync(CancellationToken ct = default)
-        => (await ResolveTransmitSettingsAsync(ct).ConfigureAwait(false)).StationId;
+        // resolveSoundFile: false -- this is a read-only preview (TxControlsPaneViewModel's
+        // Identification summary, refreshed on every Options-dialog close), never a real
+        // transmission. A full file-read/resample/IIR-filter pass here would run on every dialog
+        // close for no reason -- StationIdTransmitOptions.SoundFileIdEnabled (a cheap, I/O-free flag)
+        // is what this preview should read instead of SoundFileSamples for a "configured" summary.
+        => (await ResolveTransmitSettingsAsync(resolveSoundFile: false, ct).ConfigureAwait(false)).StationId;
 
     /// <summary>Shared settings resolution for <see cref="TransmitAsync"/> and the read-only preview
     /// <see cref="GetStationIdTransmitOptionsAsync"/> exposes -- one <see cref="_settingsStore"/>
@@ -2704,7 +2792,22 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// calibration plan-review finding: an independent second load on this PTT-adjacent path would
     /// re-introduce the same unbounded-hang class <see cref="_cleanupTimeout"/> below already
     /// guards against once).</summary>
-    private async Task<(StationIdTransmitOptions StationId, double SampleRateOffsetHz)> ResolveTransmitSettingsAsync(CancellationToken ct)
+    /// <summary>Cap on the raw <c>.MMV</c> sound-file station-ID FILE READ (`docs/plans/sound-file-id-plan.md`'s
+    /// "File I/O / DSP layering" -- legacy's own `OutputMMV` has no read-size cap at all, but an
+    /// arbitrary user-picked file could be a mispicked multi-gigabyte file; comfortably larger than
+    /// any real multi-second mono 16-bit ID clip at any supported rate, a safety-only divergence, not
+    /// a fidelity change). Code-review correction: this bounds the FILE, not the resulting `float[]`
+    /// allocation -- a file declaring a low source rate (e.g. 6000Hz) resampled to a high TX rate
+    /// (e.g. 48000Hz) expands roughly 8x, so a file right at this cap can still produce an allocation
+    /// well over 500MB. Accepted as-is (matches legacy's own equally-unbounded worst case in kind,
+    /// just not degree) rather than adding a second cap on the output sample count -- a real user
+    /// would never configure a multi-hundred-MB station-ID clip in practice.</summary>
+    // Keep in sync with the "32 MB" figure hardcoded into
+    // en.json's Options.Identification.SoundFile.Help / Options.Radio.SoundFileId.Error.TooLarge --
+    // both are hand-maintained UI-facing text describing this constant, not derived from it.
+    private const long MaxSoundFileIdBytes = 32 * 1024 * 1024;
+
+    private async Task<(StationIdTransmitOptions StationId, double SampleRateOffsetHz, bool TxBpfEnabled, int TxBpfTapCount, bool TxLpfEnabled, double TxLpfFrequencyHz)> ResolveTransmitSettingsAsync(bool resolveSoundFile, CancellationToken ct)
     {
         // Round-15 finding (discovered while testing finding 3, not itself in the auditor's report):
         // same unbounded-external-read shape as ResolveDeviceAsync/GetTxVolumePercentAsync/
@@ -2777,6 +2880,37 @@ public sealed partial class SstvSessionService : ISstvSessionService
             cwResolvedText = cwResolvedText[..maxCwResolvedTextLength];
         }
 
+        // Main.cpp:7021-7025: sys.m_CWID is a single-value tri-state -- `cwEnabled` above already
+        // checks `== CwIdMode.Cw` specifically (not merely `!= Off`), so this check is naturally
+        // mutually exclusive with it already, no explicit if/else-if restructure needed.
+        var soundFileIdEnabled = stationIdSettings.CwIdMode == CwIdMode.SoundFile && !string.IsNullOrEmpty(stationIdSettings.SoundFileMmvPath);
+
+        // Cheap, I/O-free even when resolveSoundFile is false -- see SoundFileIdEnabled's own doc
+        // comment for why the read-only preview path needs this but must NOT trigger the real file
+        // read below.
+        ReadOnlyMemory<float>? soundFileSamples = null;
+        if (resolveSoundFile && soundFileIdEnabled)
+        {
+            var mmvPath = stationIdSettings.SoundFileMmvPath!;
+            var resolvedSamples = await Task.Run(() => TryResolveSoundFileSamples(mmvPath, _encoder.SampleRate), ct)
+                .WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+
+            // Deliberately an `if`, NOT a ternary ("soundFileSamples = resolvedSamples is null ? null
+            // : new ReadOnlyMemory<float>(resolvedSamples)") -- confirmed by a real failing test, not
+            // a hypothetical: ReadOnlyMemory<float> has an implicit operator FROM float[] (including a
+            // null array), so the C# conditional-expression common-type algorithm resolves the ternary
+            // through THAT conversion path even for the bare `null` literal branch, producing
+            // `ReadOnlyMemory<float>` (non-nullable, default/empty) as the ternary's type -- which then
+            // silently boxes into HasValue=true, Length=0 on assignment to this ReadOnlyMemory<float>?
+            // field, not the "unconfigured" null this method's whole contract depends on. Leaving
+            // soundFileSamples at its already-null default and only assigning in the non-null case
+            // sidesteps the whole conversion-path ambiguity.
+            if (resolvedSamples is not null)
+            {
+                soundFileSamples = new ReadOnlyMemory<float>(resolvedSamples);
+            }
+        }
+
         var stationId = new StationIdTransmitOptions
         {
             CwEnabled = cwEnabled,
@@ -2786,6 +2920,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
             FskIdEnabled = stationIdSettings.FskIdTxEnabled,
             Callsign = operatorSettings.Callsign ?? string.Empty,
             NrRstText = nrRstEnabled ? stationIdSettings.NrRstText : null,
+            SoundFileIdEnabled = soundFileIdEnabled,
+            SoundFileSamples = soundFileSamples,
         };
 
         // Settings-boundary validation, same shape/precedent as CwToneFrequencyHz above: a
@@ -2799,7 +2935,146 @@ public sealed partial class SstvSessionService : ISstvSessionService
             ? audioSettings.TxSampleRateOffsetHz
             : 0.0;
 
-        return (stationId, sampleRateOffsetHz);
+        // Options stub backlog item 3 (docs/plans/options-stub-item3-tx-bpf-lpf-plan.md):
+        // TxBpfEnabled/TxLpfEnabled default true/false when absent (legacy's own real CSSTVMOD ctor
+        // defaults, sstv.cpp:2759-2760). TxBpfTapCount/TxLpfFrequencyHz clamped to legacy's own real
+        // Save-handler ranges (Option.cpp:452-459) -- tap count [2,512] rounded to the nearest EVEN
+        // value (see TxOutputBandpassFilter's own doc comment for why odd is legacy UB), LPF
+        // frequency [100,3000] -- same settings-boundary-validation-lives-here precedent as
+        // sampleRateOffsetHz immediately above, not a separate Resolve() method (this section has
+        // none).
+        var txBpfEnabled = audioSettings.TxBpfEnabled ?? true;
+        // TxOutputBandpassFilter's own ClampTapCount is internal to ScanlineStudio.Core.Sstv, not
+        // visible here -- this clamp is trivial enough to duplicate independently at this layer,
+        // same precedent as SstvDecoderSettings.Resolve()'s own clamps duplicating decoder-side ones.
+        var txBpfTapCount = audioSettings.TxBpfTapCount is { } tap ? Math.Clamp(tap, 2, 512) : 24;
+        txBpfTapCount = txBpfTapCount % 2 == 0 ? txBpfTapCount : txBpfTapCount - 1;
+        var txLpfEnabled = audioSettings.TxLpfEnabled ?? false;
+        var txLpfFrequencyHz = audioSettings.TxLpfFrequencyHz is >= 100.0 and <= 3000.0
+            ? audioSettings.TxLpfFrequencyHz.Value
+            : 2000.0;
+
+        return (stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz);
+    }
+
+    /// <summary>Shared parse core for both <see cref="TryResolveSoundFileSamples"/> (the real
+    /// TX-time resolution) and <see cref="ValidateStationIdSoundFileAsync"/> (the Options dialog's
+    /// pre-Save validation, ui_transition_plan.md step 8/T2-2) -- exists/size-cap/header-parse are
+    /// identical for both callers; only what happens to the parsed payload differs (resample for TX,
+    /// just a duration calc for validation). Never throws -- see this class's own doc comment on the
+    /// original single-purpose method this was extracted from for the exact exception-widening
+    /// history.</summary>
+    private readonly record struct SoundFileParseOutcome(byte[]? FileBytes, MmvSoundFile.Header Header, SoundFileIdValidationFailure Failure);
+
+    private SoundFileParseOutcome TryParseSoundFile(string path)
+    {
+        try
+        {
+            var fileInfo = new FileInfo(path);
+            if (!fileInfo.Exists)
+            {
+                Log.SoundFileIdMissing(_logger, path);
+                return new SoundFileParseOutcome(null, default, SoundFileIdValidationFailure.FileNotFound);
+            }
+
+            if (fileInfo.Length > MaxSoundFileIdBytes)
+            {
+                Log.SoundFileIdTooLarge(_logger, path, MaxSoundFileIdBytes);
+                return new SoundFileParseOutcome(null, default, SoundFileIdValidationFailure.FileTooLarge);
+            }
+
+            var fileBytes = File.ReadAllBytes(path);
+            var header = MmvSoundFile.ParseHeader(fileBytes);
+            if (header is null)
+            {
+                Log.SoundFileIdUnplayableHeader(_logger, path);
+                return new SoundFileParseOutcome(null, default, SoundFileIdValidationFailure.UnplayableHeader);
+            }
+
+            return new SoundFileParseOutcome(fileBytes, header.Value, SoundFileIdValidationFailure.None);
+        }
+        // Code-review finding: the ORIGINAL catch clause covered only IOException/
+        // UnauthorizedAccessException, and only around the FileInfo/ReadAllBytes calls -- leaving
+        // MmvSoundFile.Resample's own call outside any try at all (a real crash bug, since fixed,
+        // used to be reachable through it) and missing exception types a free-text path TextBox can
+        // realistically produce (e.g. a trailing-space/invalid-character path throwing
+        // ArgumentException on some platforms). Widened to cover the whole method body and every
+        // exception type a bad user-supplied path or file could plausibly throw -- this method's own
+        // contract ("never throws out of this method," matching legacy's own unconfigured-sound-file
+        // silent-no-op behavior) must hold for EVERY failure mode, not just I/O ones.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            Log.SoundFileIdReadFailed(_logger, path, ex);
+            return new SoundFileParseOutcome(null, default, SoundFileIdValidationFailure.ReadError);
+        }
+    }
+
+    /// <summary>Reads, parses, and resamples a sound-file station-ID file (`docs/plans/sound-file-id-plan.md`)
+    /// to <paramref name="targetSampleRateHz"/>. Returns <see langword="null"/> for any failure --
+    /// missing/unreadable/oversized file, or an unplayable header (<see cref="MmvSoundFile.ParseHeader"/>'s
+    /// own doc comment) -- matching legacy's own "unconfigured sound file -&gt; silent no-op"
+    /// behavior; never throws out of this method. The actual parsing/resampling math is pure and
+    /// lives in <c>ScanlineStudio.Core.Sstv.MmvSoundFile</c> -- this method owns only the file I/O
+    /// boundary, per this port's established "Application does I/O, Core.Sstv does pure DSP"
+    /// split.</summary>
+    private float[]? TryResolveSoundFileSamples(string path, int targetSampleRateHz)
+    {
+        var outcome = TryParseSoundFile(path);
+        if (outcome.FileBytes is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var payload = outcome.FileBytes.AsSpan(outcome.Header.PayloadOffset);
+            return MmvSoundFile.Resample(payload, outcome.Header.SampleRateIndex, targetSampleRateHz);
+        }
+        // Code-review finding (step 8 refactor): TryParseSoundFile's own catch only covers ITS OWN
+        // body (exists/size-cap/File.ReadAllBytes/ParseHeader) -- Resample runs after that method
+        // returns, so it needs this same widened exception set repeated here, or the real crash bug
+        // this catch was originally added to fix (Resample's own call outside any try at all) comes
+        // back for the TX path specifically.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException)
+        {
+            Log.SoundFileIdReadFailed(_logger, path, ex);
+            return null;
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<SoundFileIdValidationResult> ValidateStationIdSoundFileAsync(string path, CancellationToken ct = default)
+    {
+        try
+        {
+            return await Task.Run(() =>
+            {
+                var outcome = TryParseSoundFile(path);
+                if (outcome.FileBytes is null)
+                {
+                    return SoundFileIdValidationResult.Fail(outcome.Failure);
+                }
+
+                // Duration from the file's own ORIGINAL sample rate -- see this method's own
+                // interface doc comment for why this is deliberately NOT resampled to any TX target
+                // rate.
+                var payloadBytes = outcome.FileBytes.Length - outcome.Header.PayloadOffset;
+                var sampleCount = payloadBytes / 2; // MmvSoundFile's own 16-bit-mono trailing-odd-byte truncation.
+                var sourceRateHz = MmvSoundFile.GetSourceSampleRateHz(outcome.Header.SampleRateIndex);
+                return SoundFileIdValidationResult.Ok(sampleCount / (double)sourceRateHz);
+            }, ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+        }
+        // Code-review finding: TryParseSoundFile's File.ReadAllBytes can hang indefinitely against a
+        // wedged network mount -- the TX-time caller of the same parse core already bounds this
+        // (TransmitAsync's own WaitAsync(_cleanupTimeout, ct) around TryResolveSoundFileSamples).
+        // Without the same bound here, a hung Options-dialog validation would hold OptionsWindowViewModel's
+        // own _saveGate open indefinitely, wedging every subsequent Save/Apply/Connect. This method's
+        // own "never throws" contract still holds -- a timeout maps to a real, if generic, failure
+        // reason rather than propagating.
+        catch (TimeoutException)
+        {
+            return SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.ReadError);
+        }
     }
 
     // Round-18 finding 3 (round-17's own deferral (b), now fixed): a generous backstop, not a UX
@@ -4669,6 +4944,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading settings section '{SectionKey}' failed; falling back to defaults")]
         public static partial void SettingsSectionReadFailed(ILogger logger, string sectionKey, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sound-file station ID '{Path}' could not be read; transmitting no sound-file ID")]
+        public static partial void SoundFileIdReadFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sound-file station ID '{Path}' does not exist; transmitting no sound-file ID")]
+        public static partial void SoundFileIdMissing(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sound-file station ID '{Path}' exceeds the {MaxBytes} byte size cap; transmitting no sound-file ID")]
+        public static partial void SoundFileIdTooLarge(ILogger logger, string path, long maxBytes);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Sound-file station ID '{Path}' has an unplayable header; transmitting no sound-file ID")]
+        public static partial void SoundFileIdUnplayableHeader(ILogger logger, string path);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "Waterfall PushSamples threw ({Count} occurrences so far)")]
         public static partial void WaterfallPushSamplesFailed(ILogger logger, int count, Exception ex);
 
@@ -4686,6 +4973,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX notch {Enabled} (frequency {FrequencyHz} Hz)")]
         public static partial void NotchRequested(ILogger logger, bool enabled, double? frequencyHz);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "PLL tuning requested: VcoGain={VcoGain}, LoopOrder={LoopOrder}, LoopCutoffHz={LoopCutoffHz}, OutputOrder={OutputOrder}, OutputCutoffHz={OutputCutoffHz}")]
+        public static partial void PllTuningRequested(ILogger logger, double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Zero-crossing tuning requested: SmoothingMode={SmoothingMode}, OutputOrder={OutputOrder}, OutputCutoffHz={OutputCutoffHz}, SmoothingFrequencyHz={SmoothingFrequencyHz}")]
+        public static partial void ZeroCrossingTuningRequested(ILogger logger, ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX mode lock changed to {ModeId}")]
+        public static partial void ModeLockChanged(ILogger logger, string modeId);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Decoder Trace capture armed ({Size} samples)")]
         public static partial void ScopeCaptureArmed(ILogger logger, int size);

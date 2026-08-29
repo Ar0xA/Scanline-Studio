@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Settings;
 
@@ -34,9 +35,11 @@ public sealed partial class ReceiveHistoryRecorder
     // DecodeRestarted blanking it). Held solely to raise NotifySaved after a completed-image write,
     // the only hook a live UI pane (RxImagePaneViewModel) has for correlating its Note/Flag controls
     // and file-size readout to the just-recorded frame.
+    private readonly ISstvDecoder _decoder;
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ISettingsStore _settingsStore;
+    private readonly IRadioStateProvider _radioState;
     private readonly ILogger<ReceiveHistoryRecorder> _logger;
 
     private SstvModeDefinition? _currentMode;
@@ -44,6 +47,13 @@ public sealed partial class ReceiveHistoryRecorder
     private int? _observedStep;
     private bool _recordedForCurrentImage;
     private PixelSnapshot? _lastImage;
+
+    // ui_transition_plan.md step 12 (Auto-save RX audio): the CURRENT reception's identity, set
+    // every OnModeDetected from _decoder.ReceptionSequence (same callback, same value the audio
+    // side arms with -- see docs/plans/step12-auto-save-rx-audio-plan.md's "Correlation" section).
+    // Used ONLY by the completed-image path -- a completed image is by definition still the current
+    // reception, never a candidate for the abandon discriminator below.
+    private long _currentReceptionId;
 
     // Abandoned-image-save state (port of legacy's m_ReqSave, sstv.cpp:2134-2137 -- see
     // OnDecodeRestarted's own doc comment for the full design and the three rounds of review this
@@ -56,6 +66,13 @@ public sealed partial class ReceiveHistoryRecorder
     private int? _pendingAbandonLine;
     private int? _pendingAbandonStep;
 
+    // ui_transition_plan.md step 12: the reception id stashed alongside the abandon-candidate state
+    // above -- correct in the MINORITY ordering, where _currentReceptionId has already advanced past
+    // the abandoned reception's own id by the time OnDecodeRestarted runs. Same stash/clear lifecycle
+    // as its siblings above; never a live _currentReceptionId read at abandon time (see
+    // OnDecodeRestarted's own doc comment for why both branches need their own id source).
+    private long _pendingAbandonReceptionId;
+
     // Second code-level review finding: whether the stashed image had ALREADY been handled (normal
     // completion, or an earlier DecodeRestarted already consumed it) at the moment it was stashed --
     // gating the STASH ITSELF on "not yet handled" (an earlier draft's approach) made the stash
@@ -67,11 +84,13 @@ public sealed partial class ReceiveHistoryRecorder
     // to save here" without discarding the stash slot's own mode identity.
     private bool _pendingAbandonRecorded;
 
-    public ReceiveHistoryRecorder(ISstvDecoder decoder, IReceivedImageBuffer receivedImage, IReceiveHistoryStore historyStore, ISettingsStore settingsStore, ILogger<ReceiveHistoryRecorder> logger)
+    public ReceiveHistoryRecorder(ISstvDecoder decoder, IReceivedImageBuffer receivedImage, IReceiveHistoryStore historyStore, ISettingsStore settingsStore, IRadioStateProvider radioState, ILogger<ReceiveHistoryRecorder> logger)
     {
+        _decoder = decoder;
         _receivedImage = receivedImage;
         _historyStore = historyStore;
         _settingsStore = settingsStore;
+        _radioState = radioState;
         _logger = logger;
 
         decoder.ModeDetected += OnModeDetected;
@@ -98,6 +117,7 @@ public sealed partial class ReceiveHistoryRecorder
             _pendingAbandonLine = _previousLine;
             _pendingAbandonStep = _observedStep;
             _pendingAbandonRecorded = _recordedForCurrentImage;
+            _pendingAbandonReceptionId = _currentReceptionId;
         }
         else
         {
@@ -109,6 +129,10 @@ public sealed partial class ReceiveHistoryRecorder
         _observedStep = null;
         _recordedForCurrentImage = false;
         _lastImage = null;
+        // ui_transition_plan.md step 12: read from the SAME callback the audio side arms from --
+        // ISstvDecoder.ReceptionSequence is already bumped by the decoder BEFORE this handler runs,
+        // so both sides agree on this reception's identity with no coordination needed between them.
+        _currentReceptionId = _decoder.ReceptionSequence;
     }
 
     // Port of legacy's m_ReqSave (sstv.cpp:2134-2137, consumed at Main.cpp:4931-4934's DrawSSTV/
@@ -146,12 +170,19 @@ public sealed partial class ReceiveHistoryRecorder
         PixelSnapshot? candidateImage = null;
         int? candidateLine = null;
         int? candidateStep = null;
+        // ui_transition_plan.md step 12: which id to attach to an abandoned save -- selected by the
+        // SAME dominant/minority discriminator as the image/line/step above, never a live
+        // _currentReceptionId read regardless of which branch runs (by the time an abandon actually
+        // records, a LATER OnModeDetected may already have advanced it past the abandoned
+        // reception's own id -- exactly the minority-ordering case this stash exists for).
+        long candidateReceptionId = 0;
 
         if (_pendingAbandonMode == abandonedMode)
         {
             // Minority ordering -- deliberately does NOT touch _recordedForCurrentImage: live state
             // already describes the NEW image at this point, and marking it handled here would
             // prevent it ever being recorded once it completes.
+            candidateReceptionId = _pendingAbandonReceptionId;
             if (!_pendingAbandonRecorded && _pendingAbandonImage is not null && _pendingAbandonLine is not null)
             {
                 candidateImage = _pendingAbandonImage;
@@ -161,6 +192,7 @@ public sealed partial class ReceiveHistoryRecorder
         }
         else if (_currentMode == abandonedMode)
         {
+            candidateReceptionId = _currentReceptionId;
             // Dominant ordering. "Mark this mode's image as handled" and "is there actually
             // something to save" are deliberately two SEPARATE conditions here (an earlier draft
             // conflated them, gating the flag on image presence -- caught by auditor review: that
@@ -213,13 +245,19 @@ public sealed partial class ReceiveHistoryRecorder
         // (Snapshot(), below), not a live decoder-owned alias -- see that method's own doc comment.
         var modeId = abandonedMode.Id;
         var snapshot = image;
+        // ui_transition_plan.md step 6 (T2-4): same synchronous-capture reasoning as OnLineDecoded's
+        // own completed-image save.
+        var radioState = _radioState.Current;
+        // ui_transition_plan.md step 12: hoisted synchronously, same reasoning as the fields above --
+        // already selected by the correct branch-specific discriminator, never re-read live.
+        var receptionId = candidateReceptionId;
 
         // Fire-and-forget, isolated -- same reasoning as OnLineDecoded's own completed-image save.
         _ = Task.Run(async () =>
         {
             try
             {
-                await RecordAbandonedImageAsync(modeId, snapshot).ConfigureAwait(false);
+                await RecordAbandonedImageAsync(modeId, snapshot, radioState, receptionId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -293,6 +331,20 @@ public sealed partial class ReceiveHistoryRecorder
         // IReceivedImageBuffer.Saved's own doc comment for what the generation guards against).
         var generation = _receivedImage.Generation;
 
+        // ui_transition_plan.md step 6 (T2-4): hoisted synchronously, same reasoning as
+        // snapshot/generation above -- the radio could be retuned in the gap between this line
+        // finishing and the fire-and-forget Task.Run below actually running (a settings-file disk
+        // read + PNG encode happen first), so this must capture "the rig's state at the instant
+        // this reception completed," not whatever it is later. Auditor plan-review (2026-08-29).
+        var radioState = _radioState.Current;
+
+        // ui_transition_plan.md step 12: hoisted synchronously, same reasoning as snapshot/generation/
+        // radioState above -- a completed image is by definition still the CURRENT reception, so this
+        // always uses _currentReceptionId (never the abandon-path discriminator, which doesn't apply
+        // here), but still must be read NOW, not from inside the closure below: a new OnModeDetected
+        // could advance _currentReceptionId before the closure actually runs.
+        var receptionId = _currentReceptionId;
+
         // Fire-and-forget, isolated -- must not block the caller (the audio drain thread, same
         // threading contract as SstvSessionService's own _decoderHandler/_waterfallHandler; disk +
         // SQLite I/O here would otherwise stall live decoding).
@@ -300,7 +352,7 @@ public sealed partial class ReceiveHistoryRecorder
         {
             try
             {
-                await RecordCompletedImageAsync(modeId, snapshot, generation).ConfigureAwait(false);
+                await RecordCompletedImageAsync(modeId, snapshot, generation, radioState, receptionId).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -313,7 +365,7 @@ public sealed partial class ReceiveHistoryRecorder
         });
     }
 
-    private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation)
+    private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation, RadioState? radioState, long receptionId)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
         Directory.CreateDirectory(directory);
@@ -347,7 +399,12 @@ public sealed partial class ReceiveHistoryRecorder
             Log.NotifySavedFailed(_logger, filePath, ex);
         }
 
-        var entry = new ReceiveHistoryEntry(entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed);
+        var entry = new ReceiveHistoryEntry(
+            entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed,
+            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode)
+        {
+            ReceptionId = receptionId,
+        };
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
 
         Log.ImageSaved(_logger, filePath);
@@ -363,7 +420,7 @@ public sealed partial class ReceiveHistoryRecorder
     // `_partial` suffix, on top of RecordCompletedImageAsync's own millisecond+entry-id
     // uniqueness scheme -- gives the user a visible marker distinguishing a partial/abandoned save
     // from a genuinely completed one, which neither legacy nor an unsuffixed filename would.
-    private async Task RecordAbandonedImageAsync(string modeId, PixelSnapshot snapshot)
+    private async Task RecordAbandonedImageAsync(string modeId, PixelSnapshot snapshot, RadioState? radioState, long receptionId)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
         Directory.CreateDirectory(directory);
@@ -381,7 +438,12 @@ public sealed partial class ReceiveHistoryRecorder
 
         await SaveSnapshotAsync(snapshot, filePath).ConfigureAwait(false);
 
-        var entry = new ReceiveHistoryEntry(entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Abandoned);
+        var entry = new ReceiveHistoryEntry(
+            entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Abandoned,
+            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode)
+        {
+            ReceptionId = receptionId,
+        };
         await _historyStore.RecordAsync(entry).ConfigureAwait(false);
 
         Log.AbandonedImageSaved(_logger, filePath);
@@ -427,6 +489,7 @@ public sealed partial class ReceiveHistoryRecorder
         _pendingAbandonLine = null;
         _pendingAbandonStep = null;
         _pendingAbandonRecorded = false;
+        _pendingAbandonReceptionId = 0;
     }
 
     private Task<string> ResolveImagesDirectoryAsync() => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore);

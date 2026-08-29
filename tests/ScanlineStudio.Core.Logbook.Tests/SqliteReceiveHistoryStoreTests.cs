@@ -2,6 +2,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using SixLabors.ImageSharp;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Core.Logbook.Tests;
@@ -28,6 +29,89 @@ public sealed class SqliteReceiveHistoryStoreTests
             Assert.Equal(ReceiveDecodeState.Completed, loaded.DecodeState);
             Assert.Null(loaded.Note);
             Assert.False(loaded.IsFlagged);
+            Assert.Null(loaded.FrequencyHz);
+            Assert.Null(loaded.RigMode);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>ui_transition_plan.md step 6 (T2-4).</summary>
+    [Fact]
+    public async Task RecordAsync_ThenQueryAsync_RoundTripsFrequencyHzAndRigMode()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry(
+                "1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed,
+                FrequencyHz: 14_230_000, RigMode: RadioMode.Usb);
+
+            await store.RecordAsync(entry);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+
+            Assert.Equal(14_230_000, loaded.FrequencyHz);
+            Assert.Equal(RadioMode.Usb, loaded.RigMode);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>No radio connected at the moment of reception -- null, never a fake zero. Same
+    /// convention <see cref="RadioState"/>'s own doc comment establishes for its optional fields.
+    /// </summary>
+    [Fact]
+    public async Task RecordAsync_WithNoFrequencyOrRigMode_RoundTripsAsNull()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed);
+
+            await store.RecordAsync(entry);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+
+            Assert.Null(loaded.FrequencyHz);
+            Assert.Null(loaded.RigMode);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>Auditor code-review finding (2026-08-29): mirrors
+    /// SqliteLogbookRepositoryTests.SearchAsync_UnrecognizedModeValue_FallsBackToUnknown_InsteadOfThrowing
+    /// -- <see cref="SqliteReceiveHistoryStore"/>'s own <c>ParseRigMode</c> claims the identical
+    /// DBNull-means-null / garbage-means-Unknown-not-throw contract, but nothing exercised the
+    /// garbage-string half of it. Writes the bad value via raw SQL, bypassing RecordAsync's own enum
+    /// serialization (which can never itself produce an unrecognized value).</summary>
+    [Fact]
+    public async Task QueryAsync_UnrecognizedRigModeValue_FallsBackToUnknown_InsteadOfThrowing()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, FrequencyHz: 14_230_000, RigMode: RadioMode.Usb));
+
+            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await connection.OpenAsync();
+                var command = connection.CreateCommand();
+                command.CommandText = "UPDATE ReceiveHistory SET RigMode = 'SomeFutureMode' WHERE Id = '1'";
+                await command.ExecuteNonQueryAsync();
+            }
+
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+
+            Assert.Equal(RadioMode.Unknown, loaded.RigMode);
         }
         finally
         {
@@ -443,7 +527,7 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
-    public async Task EnsureSchema_FreshDatabase_HasAllEightColumnsFromCreateTableAlone()
+    public async Task EnsureSchema_FreshDatabase_HasAllElevenColumnsFromCreateTableAlone()
     {
         var dbPath = TempDbPath();
         try
@@ -452,8 +536,121 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var columns = await ReadColumnNamesAsync(dbPath);
 
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
             Assert.Equal(expectedColumns, columns);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>Auditor plan-review finding (2026-08-29): every OTHER migration test in this file
+    /// seeds a 5-column pre-`Note`/`IsFlagged`/`DecodeState` DB, but every CURRENT user's
+    /// `history.db` already has all 8 of those columns -- this is the actual migration path
+    /// FrequencyHz/RigMode ship against in production, and nothing exercised it before this test.
+    /// Also asserts column ORDER equality against a fresh DB -- the method's own doc comment claims
+    /// this invariant is protected, but no prior test actually checked it.</summary>
+    [Fact]
+    public async Task EnsureSchema_ExistingEightColumnDatabase_AddsFrequencyHzAndRigMode_InTheSameOrderAsAFreshDatabase()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL,
+                        DecodeState TEXT NOT NULL DEFAULT 'Completed',
+                        Note TEXT NULL,
+                        IsFlagged INTEGER NOT NULL DEFAULT 0
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged) VALUES ('a', $receivedAt, 'robot36', '/tmp/a.png', NULL, 'Completed', NULL, 0)";
+                insert.Parameters.AddWithValue("$receivedAt", DateTimeOffset.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            var migratedColumns = await ReadColumnNamesAsync(dbPath);
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
+            Assert.Equal(expectedColumns, migratedColumns);
+
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Null(loaded.FrequencyHz);
+            Assert.Null(loaded.RigMode);
+            Assert.Null(loaded.AudioFilePath);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): same reasoning as the
+    /// FrequencyHz/RigMode migration test above -- seeds a DB at the shape every CURRENT user's
+    /// `history.db` actually has (10 columns, pre-`AudioFilePath`), the real migration path this
+    /// column ships against in production, and asserts column ORDER equality (AudioFilePath
+    /// appended last) against a fresh DB.</summary>
+    [Fact]
+    public async Task EnsureSchema_ExistingTenColumnDatabase_AddsAudioFilePath_InTheSameOrderAsAFreshDatabase()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL,
+                        DecodeState TEXT NOT NULL DEFAULT 'Completed',
+                        Note TEXT NULL,
+                        IsFlagged INTEGER NOT NULL DEFAULT 0,
+                        FrequencyHz INTEGER NULL,
+                        RigMode TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode) VALUES ('a', $receivedAt, 'robot36', '/tmp/a.png', NULL, 'Completed', NULL, 0, NULL, NULL)";
+                insert.Parameters.AddWithValue("$receivedAt", DateTimeOffset.UtcNow.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            var migratedColumns = await ReadColumnNamesAsync(dbPath);
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
+            Assert.Equal(expectedColumns, migratedColumns);
+
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Null(loaded.AudioFilePath);
+
+            // Idempotent across two startups (plan doc Verification: "Migration adds the column in
+            // the right position and is idempotent across two startups") -- a second store instance
+            // against the ALREADY-migrated DB must not throw (a naive unconditional ALTER TABLE would
+            // fail with "duplicate column name").
+            var secondStore = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            Assert.Equal(expectedColumns, await ReadColumnNamesAsync(dbPath));
+            _ = secondStore;
         }
         finally
         {
@@ -529,6 +726,8 @@ public sealed class SqliteReceiveHistoryStoreTests
             // The ADD COLUMN defaults for the other 2 new columns, not just DecodeState's backfill.
             Assert.Null(loadedA.Note);
             Assert.False(loadedA.IsFlagged);
+            Assert.Null(loadedA.FrequencyHz);
+            Assert.Null(loadedA.RigMode);
         }
         finally
         {
@@ -655,6 +854,148 @@ public sealed class SqliteReceiveHistoryStoreTests
             Assert.False(await store.SetNoteAsync("missing", "note"));
             Assert.False(await store.SetFlaggedAsync("missing", true));
             Assert.False(await store.SetLinkedQsoIdAsync("missing", "qso-1"));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    // ui_transition_plan.md step 4 (T1-4, reframed): per-item manual delete.
+
+    [Fact]
+    public async Task DeleteAsync_ExistingEntry_RemovesRowAndFile_ReturnsTrue_RaisesDeleted()
+    {
+        var dbPath = TempDbPath();
+        var imagePath = Path.Combine(Path.GetTempPath(), $"scanline-studio-delete-test-{Guid.NewGuid()}.png");
+        try
+        {
+            await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed);
+            await store.RecordAsync(entry);
+
+            ReceiveHistoryEntry? raised = null;
+            store.Deleted += e => raised = e;
+
+            var deleted = await store.DeleteAsync(entry);
+
+            Assert.True(deleted);
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.False(File.Exists(imagePath));
+            Assert.NotNull(raised);
+            Assert.Equal("1", raised!.Id);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (File.Exists(imagePath))
+            {
+                File.Delete(imagePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_FileAlreadyMissingOnDisk_StillRemovesTheRow_ReturnsTrue_DoesNotThrow()
+    {
+        // The referenced file being gone already is an expected, tolerated state (a manual
+        // on-disk delete, or a prior partial cleanup) -- not an error this method should surface.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/does-not-exist-scanline-studio.png", null, ReceiveDecodeState.Completed);
+            await store.RecordAsync(entry);
+
+            var deleted = await store.DeleteAsync(entry);
+
+            Assert.True(deleted);
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: delete-linked-WAV.
+
+    [Fact]
+    public async Task DeleteAsync_ExistingEntryWithLinkedAudio_RemovesRowImageAndAudioFile()
+    {
+        var dbPath = TempDbPath();
+        var imagePath = Path.Combine(Path.GetTempPath(), $"scanline-studio-delete-test-{Guid.NewGuid()}.png");
+        var audioPath = Path.Combine(Path.GetTempPath(), $"scanline-studio-delete-test-{Guid.NewGuid()}.wav");
+        try
+        {
+            await File.WriteAllBytesAsync(imagePath, [1, 2, 3]);
+            await File.WriteAllBytesAsync(audioPath, [4, 5, 6]);
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed) { AudioFilePath = audioPath };
+            await store.RecordAsync(entry);
+
+            var deleted = await store.DeleteAsync(entry);
+
+            Assert.True(deleted);
+            Assert.False(File.Exists(imagePath));
+            Assert.False(File.Exists(audioPath));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (File.Exists(imagePath))
+            {
+                File.Delete(imagePath);
+            }
+
+            if (File.Exists(audioPath))
+            {
+                File.Delete(audioPath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_AudioFileAlreadyMissingOnDisk_StillRemovesTheRow_DoesNotThrow()
+    {
+        // Same tolerated-state reasoning as DeleteAsync_FileAlreadyMissingOnDisk_StillRemovesTheRow_
+        // ReturnsTrue_DoesNotThrow above, applied to the linked audio file.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/does-not-exist-scanline-studio.png", null, ReceiveDecodeState.Completed)
+            {
+                AudioFilePath = "/tmp/does-not-exist-scanline-studio.wav",
+            };
+            await store.RecordAsync(entry);
+
+            var deleted = await store.DeleteAsync(entry);
+
+            Assert.True(deleted);
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_NonexistentEntryId_ReturnsFalse_DoesNotRaiseDeleted()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var raised = false;
+            store.Deleted += _ => raised = true;
+
+            var deleted = await store.DeleteAsync(new ReceiveHistoryEntry("missing", DateTimeOffset.UtcNow, "robot36", "/tmp/whatever.png", null, ReceiveDecodeState.Completed));
+
+            Assert.False(deleted);
+            Assert.False(raised);
         }
         finally
         {

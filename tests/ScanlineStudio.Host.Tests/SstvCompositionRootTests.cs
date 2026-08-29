@@ -283,6 +283,18 @@ public sealed class SstvCompositionRootTests
                     SenseLevel = 3,
                     DemodType = DemodType.Pll,
                     RxBpfPreset = RxBpfPreset.Narrow,
+                    // Options stub backlog item 1 -- non-default values, same "no assertion can pass
+                    // vacuously against a parameter default" discipline as every other field here.
+                    PllVcoGain = 2.5,
+                    PllLoopOrder = 6,
+                    PllLoopCutoffHz = 1300,
+                    PllOutputOrder = 8,
+                    PllOutputCutoffHz = 850,
+                    // Options stub backlog item 2 -- same non-default discipline.
+                    ZeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Fir,
+                    ZeroCrossingOutputOrder = 9,
+                    ZeroCrossingOutputCutoffHz = 700,
+                    ZeroCrossingSmoothingFrequencyHz = 3000,
                 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
         var services = new ServiceCollection();
@@ -301,6 +313,17 @@ public sealed class SstvCompositionRootTests
         Assert.Equal(3, decoder.InnerSenseLevelForTests);
         Assert.Equal(DemodType.Pll, decoder.InnerDemodTypeForTests);
         Assert.Equal(RxBpfPreset.Narrow, decoder.InnerRxBpfPresetForTests);
+        var pllTuning = decoder.InnerPllTuningForTests;
+        Assert.Equal(2.5, pllTuning.VcoGain);
+        Assert.Equal(6, pllTuning.LoopOrder);
+        Assert.Equal(1300, pllTuning.LoopCutoffHz);
+        Assert.Equal(8, pllTuning.OutputOrder);
+        Assert.Equal(850, pllTuning.OutputCutoffHz);
+        var zeroCrossingTuning = decoder.InnerZeroCrossingTuningForTests;
+        Assert.Equal(ZeroCrossingSmoothingMode.Fir, zeroCrossingTuning.SmoothingMode);
+        Assert.Equal(9, zeroCrossingTuning.OutputOrder);
+        Assert.Equal(700, zeroCrossingTuning.OutputCutoffHz);
+        Assert.Equal(3000, zeroCrossingTuning.SmoothingFrequencyHz);
     }
 
     [Fact]

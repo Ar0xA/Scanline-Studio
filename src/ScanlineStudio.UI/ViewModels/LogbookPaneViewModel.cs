@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -98,6 +99,65 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
     [ObservableProperty]
     private long? _formFrequencyHz;
+
+    /// <summary>ui_transition_plan.md step 5 (T2-8): the rest of this app speaks MHz
+    /// (<see cref="RadioStatusViewModel.FrequencyDisplay"/>, <c>RxImagePaneViewModel.LatchedFrequencyDisplay</c>)
+    /// -- <see cref="FormFrequencyHz"/> itself stays Hz (the storage/ADIF unit, unchanged), this is
+    /// the MHz-facing edit surface the form actually binds to. Same 6-decimal-place (1 Hz)
+    /// resolution as those other displays' own "{0:0.000000} MHz" format. Invalid/empty input on
+    /// SET is a no-op, not a value-clearing side effect -- an in-progress keystroke (Avalonia's
+    /// default TextBox binding trigger fires per-keystroke, not on lost-focus) must not blank out an
+    /// otherwise-valid <see cref="FormFrequencyHz"/> just because the operator briefly typed
+    /// something unparseable while editing (e.g. a trailing "14." mid-entry) -- explicitly clearing
+    /// the field (Backspace to empty) is the one recognized way to null it, matching every other
+    /// nullable form field's own "empty means unset" convention here.
+    /// Code-review finding: this is a REAL backing field, not a computed proxy over
+    /// <see cref="FormFrequencyHz"/> -- a computed proxy re-raises its own PropertyChanged from
+    /// inside the setter's own write, which risks Avalonia rewriting the TextBox mid-keystroke.
+    /// <see cref="OnFormFrequencyHzChanged"/> pushes model -> text only for non-editing-driven
+    /// changes (guarded by <see cref="_isEditingFrequencyMhzText"/>); <see cref="OnFormFrequencyMhzTextChanged"/>
+    /// pushes text -> model.</summary>
+    [ObservableProperty]
+    private string _formFrequencyMhzText = string.Empty;
+
+    private bool _isEditingFrequencyMhzText;
+
+    partial void OnFormFrequencyMhzTextChanged(string value)
+    {
+        _isEditingFrequencyMhzText = true;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                FormFrequencyHz = null;
+                return;
+            }
+
+            // Range guard: an out-of-range double (e.g. a pasted "1e20") converts to `long` with an
+            // unspecified result -- reject instead of storing garbage into the QSO row/ADIF FREQ.
+            if (double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz)
+                && double.IsFinite(mhz) && mhz is >= 0 and <= 1_000_000)
+            {
+                FormFrequencyHz = (long)Math.Round(mhz * 1_000_000.0);
+            }
+        }
+        finally
+        {
+            _isEditingFrequencyMhzText = false;
+        }
+    }
+
+    partial void OnFormFrequencyHzChanged(long? value)
+    {
+        if (_isEditingFrequencyMhzText)
+        {
+            return;
+        }
+
+        FormFrequencyMhzText = value is { } hz
+            ? (hz / 1_000_000.0).ToString("0.000000", CultureInfo.InvariantCulture)
+            : string.Empty;
+    }
 
     [ObservableProperty]
     private RadioMode? _formMode;
@@ -285,18 +345,21 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// what that pane already knows live. Uses <see cref="New"/>'s full "start clean" semantics
     /// (clears <see cref="StatusMessage"/> too, not just <see cref="ResetForm"/>'s form fields) --
     /// landing on a freshly-prefilled form under a stale "Logged. ADIF forwarded 1/1..." message
-    /// left over from a previous action would read as "this was already logged." Deliberately does
-    /// NOT set <see cref="FormFrequencyHz"/>/<see cref="FormMode"/> -- no radio-state auto-fill
-    /// mechanism exists in this pane at all yet (spec/08-logging.md's own "Auto-fill from radio and
-    /// DSP state" section describes this as planned, not built); inventing a partial auto-fill here
-    /// would be a worse inconsistency than leaving both blank for the user to fill by hand, same as
-    /// every other manually-started entry. <paramref name="name"/>/<paramref name="qth"/>/
-    /// <paramref name="gridSquare"/> DO carry over (code-review finding, rx-log-qso.md) -- unlike
-    /// frequency/mode these come from a QRZ lookup the RX pane already performed
-    /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>), not an unbuilt
-    /// auto-fill mechanism; dropping them would silently discard a lookup the user already did and
-    /// make them repeat it on this tab.</summary>
-    public void PrefillForNewEntry(string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare)
+    /// left over from a previous action would read as "this was already logged."
+    ///
+    /// <paramref name="frequencyHz"/>/<paramref name="radioMode"/> (ui_transition_plan.md step 5,
+    /// T1-6): now real, sourced from the RX frame's own LATCHED metadata (step 6, T2-4) -- the
+    /// caller passes <c>RxImagePaneViewModel.LatchedFrequencyHz</c>/<c>LatchedRigMode</c>, falling
+    /// back to <c>RadioStatusViewModel.CurrentFrequencyHz</c>/<c>CurrentRadioModeOrNull</c> only when
+    /// the frame has none (an abandoned/partial frame, or one received before this feature existed).
+    /// Both stay <see langword="null"/> -- never a fabricated value -- when neither source has one;
+    /// the form fields remain freely editable either way, same as every other prefilled field here.
+    /// <paramref name="name"/>/<paramref name="qth"/>/<paramref name="gridSquare"/> carry over
+    /// (code-review finding, rx-log-qso.md) from a QRZ lookup the RX pane already performed
+    /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>); dropping them
+    /// would silently discard a lookup the user already did and make them repeat it on this tab.
+    /// </summary>
+    public void PrefillForNewEntry(string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare, long? frequencyHz = null, RadioMode? radioMode = null)
     {
         Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
         _formGeneration++;
@@ -308,6 +371,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormName = name;
         FormQth = qth;
         FormGridSquare = gridSquare;
+        FormFrequencyHz = frequencyHz;
+        FormMode = radioMode;
     }
 
     /// <summary>Also clears <see cref="SelectedEntry"/> -- without this, selecting row A, clicking
@@ -324,6 +389,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormStartUtc = DateTimeOffset.UtcNow;
         FormEndUtc = null;
         FormFrequencyHz = null;
+        // Code-review nit: an equal-value assignment above raises no PropertyChanged (source
+        // generator suppresses it), so OnFormFrequencyHzChanged wouldn't fire if FormFrequencyHz was
+        // already null -- an unparseable value the operator left typed in the box would otherwise
+        // survive a New click. Display-only staleness (BuildRecordFromForm reads FormFrequencyHz,
+        // never the text), but clear it explicitly so New always shows an empty field.
+        FormFrequencyMhzText = string.Empty;
         FormMode = null;
         FormSstvModeId = null;
         FormRstSent = null;

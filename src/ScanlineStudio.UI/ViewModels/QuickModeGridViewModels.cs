@@ -93,10 +93,11 @@ public static class QuickModeGridAssignment
 /// cleared/repopulated -- see that type's own doc comment.</summary>
 public sealed partial class QuickModeSlotViewModel : ObservableObject
 {
-    public QuickModeSlotViewModel(int slotIndex, SstvModeDefinition currentMode, ICommand selectCommand)
+    public QuickModeSlotViewModel(int slotIndex, SstvModeDefinition currentMode, ICommand selectCommand, ICommand? holdModeCommand = null)
     {
         SlotIndex = slotIndex;
         SelectCommand = selectCommand;
+        HoldModeCommand = holdModeCommand;
         _currentMode = currentMode;
         _shortCaption = QuickModeShortNames.GetShortName(currentMode);
     }
@@ -104,6 +105,13 @@ public sealed partial class QuickModeSlotViewModel : ObservableObject
     public int SlotIndex { get; }
 
     public ICommand SelectCommand { get; }
+
+    /// <summary>ui_transition_plan.md step 10 (T2-5): the RX quick-mode grid's own "Hold this mode"
+    /// context-menu entry -- <see langword="null"/> for the TX pane's grid (this feature is RX-only;
+    /// TX mode selection has no auto-detect to hold against, per the plan's own scoping). Same
+    /// captured-once-at-construction pattern as <see cref="SelectCommand"/> above, not a
+    /// cross-DataTemplate binding path.</summary>
+    public ICommand? HoldModeCommand { get; }
 
     public ObservableCollection<QuickModeMenuEntryViewModel> MenuEntries { get; } = [];
 

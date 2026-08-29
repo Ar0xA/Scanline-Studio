@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Settings;
 
@@ -7,6 +8,63 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 
 public sealed class ReceiveHistoryRecorderTests
 {
+    /// <summary>ui_transition_plan.md step 6 (T2-4): the rig's state must be captured SYNCHRONOUSLY
+    /// inside OnLineDecoded (before the fire-and-forget Task.Run that actually writes the entry),
+    /// not re-read later -- auditor plan-review (2026-08-29) confirmed the alternative reopens a
+    /// smaller version of the exact race this feature exists to close (the radio could be retuned
+    /// in the gap between line-decode completing and the write actually running). This is fully
+    /// deterministic, not a timing-dependent race test: OnLineDecoded's capture happens on THIS
+    /// thread, synchronously, before RaiseLineDecoded even returns below -- changing
+    /// radioState.Current immediately afterward provably happens after the capture already ran, not
+    /// "usually" after it.</summary>
+    [Fact]
+    public async Task CompletedImage_CapturesRadioStateAtCompletionTime_NotWhateverItIsWhenTheWriteLaterRuns()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer();
+        var radioState = new FakeRadioStateProvider { Current = new RadioState(14_230_000, RadioMode.Usb, false, null, DateTimeOffset.UtcNow) };
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), radioState, NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, FakeImage)); // last line -- capture already happened by the time this call returns
+
+        // Simulates a retune landing in the gap before the fire-and-forget write actually runs.
+        radioState.Current = new RadioState(7_171_000, RadioMode.Lsb, false, null, DateTimeOffset.UtcNow);
+
+        var entry = await historyStore.WaitForRecordAsync();
+
+        Assert.Equal(14_230_000, entry.FrequencyHz);
+        Assert.Equal(RadioMode.Usb, entry.RigMode);
+    }
+
+    /// <summary>No radio connected -- null, not a fake zero (same convention <see cref="RadioState"/>'s
+    /// own doc comment establishes).</summary>
+    [Fact]
+    public async Task CompletedImage_WithNoRadioState_RecordsNullFrequencyAndRigMode()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        for (var line = 0; line < 4; line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        var entry = await historyStore.WaitForRecordAsync();
+
+        Assert.Null(entry.FrequencyHz);
+        Assert.Null(entry.RigMode);
+    }
+
     [Fact]
     public async Task SingleScanSegmentMode_RecordsExactlyOnce_OnlyAfterTheLastLine()
     {
@@ -14,7 +72,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -45,7 +103,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 6); // paired: groups at 0, 2, 4
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -77,7 +135,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
         var receivedImage = new FakeReceivedImageBuffer { Generation = 7 };
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 4; line++)
@@ -99,7 +157,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, new FakeSettingsStore(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, new FakeSettingsStore(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -124,7 +182,12 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        // ui_transition_plan.md step 6 (T2-4): the abandoned-image path captures radio state
+        // independently of the completed-image path (different method, different early-return
+        // structure -- see ReceiveHistoryRecorder.OnDecodeRestarted's own capture site) -- pinned
+        // below, not just implied by the completed-image tests.
+        var radioState = new FakeRadioStateProvider { Current = new RadioState(14_230_000, RadioMode.Usb, false, null, DateTimeOffset.UtcNow) };
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), radioState, NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 66; line++) // 66/100 >= 65% threshold (66 >= 100*65/100 = 65)
@@ -137,6 +200,8 @@ public sealed class ReceiveHistoryRecorderTests
         var entry = await historyStore.WaitForRecordAsync();
         Assert.Equal(mode.Id, entry.ModeId);
         Assert.Contains("_partial", entry.FilePath);
+        Assert.Equal(14_230_000, entry.FrequencyHz);
+        Assert.Equal(RadioMode.Usb, entry.RigMode);
         Assert.Single(historyStore.RecordedEntries);
     }
 
@@ -147,7 +212,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         decoder.RaiseDecodeRestarted(mode); // no LineDecoded at all yet -- _lastImage/_previousLine still null
@@ -168,7 +233,7 @@ public sealed class ReceiveHistoryRecorderTests
         var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
         var newMode = MakeMode(imageHeight: 50, modeId: "new-mode");
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(abandonedMode);
         for (var line = 0; line < 66; line++) // >= 65% of 100
@@ -199,7 +264,7 @@ public sealed class ReceiveHistoryRecorderTests
         var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
         var newMode = MakeMode(imageHeight: 4, modeId: "new-mode"); // small, single-scan-segment
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(abandonedMode);
         decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
@@ -218,6 +283,142 @@ public sealed class ReceiveHistoryRecorderTests
         Assert.Single(historyStore.RecordedEntries);
     }
 
+    // ---- ui_transition_plan.md step 12 (Auto-save RX audio): ReceptionId propagation ----
+
+    [Fact]
+    public async Task CompletedImage_RecordsTheCurrentReceptionSequenceAsReceptionId()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode); // ReceptionSequence bumped to 1 by the fake, matching the real contract
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, FakeImage));
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(1L, entry.ReceptionId);
+    }
+
+    [Fact]
+    public async Task TwoCompletedReceptions_GetDistinctIncreasingReceptionIds()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, FakeImage));
+        var first = await historyStore.WaitForRecordAsync();
+
+        decoder.RaiseModeDetected(mode); // dominant-shaped: no restart in between, just a fresh arm
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, FakeImage));
+
+        // Two entries now exist with the same FilePath uniqueness scheme but different ReceptionIds --
+        // WaitForRecordAsync's own "already recorded" short-circuit (RecordedEntries.IsEmpty check)
+        // would return the FIRST one again, so read the bag directly instead.
+        await Task.Delay(50);
+        Assert.Equal(2, historyStore.RecordedEntries.Count);
+        Assert.Equal(1L, first.ReceptionId);
+        Assert.Contains(historyStore.RecordedEntries, e => e.ReceptionId == 2L);
+    }
+
+    [Fact]
+    public async Task CompletedImage_SecondReceptionStartsWhileFirstsWriteIsInFlight_FirstStillRecordsItsOwnOldReceptionId()
+    {
+        // Auditor-suggested (round 1 code-review, step 12): OnLineDecoded hoists `receptionId` into a
+        // local BEFORE the fire-and-forget Task.Run (see that method's own doc comment) -- this test
+        // proves that hoist actually closes the race, rather than merely asserting the id is right in
+        // the single-reception-at-a-time case every other test above uses. Gates
+        // ResolveImagesDirectoryAsync's first await (LoadAsync) so a second ModeDetected can fire
+        // WHILE the first reception's background write is still suspended there, before releasing it.
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 4);
+        var receivedImage = new FakeReceivedImageBuffer();
+        var settingsStore = TempImagesDirectorySettings();
+        var loadGate = new TaskCompletionSource();
+        settingsStore.LoadGate = loadGate;
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, settingsStore, new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode); // reception 1
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(1, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(2, FakeImage));
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(3, FakeImage)); // last line -- receptionId(1) hoisted synchronously, THEN Task.Run suspends on LoadAsync
+
+        decoder.RaiseModeDetected(mode); // reception 2 starts while reception 1's write is still gated
+
+        loadGate.SetResult(); // release reception 1's write
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(1L, entry.ReceptionId); // NOT 2 -- must be the value hoisted before the await, not a live re-read
+    }
+
+    [Fact]
+    public async Task DecodeRestarted_DominantOrdering_AbandonedImage_RecordsTheOldReceptionId()
+    {
+        // Dominant ordering: DecodeRestarted fires BEFORE the new mode's own ModeDetected, so
+        // _currentReceptionId still correctly identifies the ABANDONED reception at the moment this
+        // fires (the live counter hasn't advanced past it yet).
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 100);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode); // reception 1
+        for (var line = 0; line < 66; line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        decoder.RaiseDecodeRestarted(mode);
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(1L, entry.ReceptionId);
+    }
+
+    [Fact]
+    public async Task DecodeRestarted_MinorityOrdering_AbandonedImage_RecordsTheStashedOldReceptionId_NotTheLiveNewOne()
+    {
+        // Minority ordering: ModeDetected for the NEW reception fires first (bumping the live counter
+        // to 2 BEFORE this restart runs), so a live _currentReceptionId read here would wrongly return
+        // 2 (the new reception) instead of 1 (the one actually being abandoned) -- this is exactly why
+        // the abandon path must use the STASHED id, captured at stash time, never a live read.
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
+        var newMode = MakeMode(imageHeight: 50, modeId: "new-mode");
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(abandonedMode); // reception 1
+        for (var line = 0; line < 66; line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        decoder.RaiseModeDetected(newMode); // reception 2 -- live counter now 2, BEFORE the restart below
+        decoder.RaiseDecodeRestarted(abandonedMode);
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(abandonedMode.Id, entry.ModeId);
+        Assert.Equal(1L, entry.ReceptionId); // NOT 2 -- must come from the stash, not a live read
+    }
+
     [Fact]
     public async Task DecodeRestarted_TwoBackToBackMinorityOrderingRestarts_SecondNeverConsumesTheFirstsStash()
     {
@@ -231,7 +432,7 @@ public sealed class ReceiveHistoryRecorderTests
         var secondAbandoned = MakeMode(imageHeight: 100, modeId: "second-abandoned");
         var finalMode = MakeMode(imageHeight: 50, modeId: "final-mode");
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         // First restart: minority ordering, well below threshold.
         decoder.RaiseModeDetected(firstAbandoned);
@@ -268,7 +469,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100, modeId: "avt");
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 66; line++) // >= 65%
@@ -313,7 +514,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4);
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 4; line++)
@@ -346,7 +547,7 @@ public sealed class ReceiveHistoryRecorderTests
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 4, modeId: "avt");
         var receivedImage = new FakeReceivedImageBuffer();
-        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
         for (var line = 0; line < 4; line++)

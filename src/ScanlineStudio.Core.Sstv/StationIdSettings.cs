@@ -90,4 +90,14 @@ public sealed record StationIdSettings
     /// auto-fill), so v1 treats it as a simple, separately user-configured static value instead of
     /// live contest-exchange automation. <see langword="null"/>/empty both mean nothing to send.</summary>
     public string? NrRstText { get; init; }
+
+    /// <summary><c>sys.m_MMVID</c> -- the sound-file path for <see cref="CwIdMode.SoundFile"/>
+    /// (`Main.cpp:6847-6902`'s <c>OutputMMV</c>). <see langword="null"/>/empty means unconfigured,
+    /// matching legacy's own <c>!sys.m_MMVID.IsEmpty()</c> gate -- same "no first-run hint text to
+    /// accidentally resurrect" convention as <see cref="NrRstText"/>, NOT <see cref="CwText"/>'s
+    /// (which needs its own "?? string.Empty" persistence guard specifically because it has a
+    /// pre-fill default this field has no equivalent of). `ScanlineStudio.Application.SstvSessionService`
+    /// reads, parses, and resamples the file this points to (via <c>MmvSoundFile</c>); this settings
+    /// record itself does no file I/O.</summary>
+    public string? SoundFileMmvPath { get; init; }
 }

@@ -1,0 +1,94 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.ImageViewerWindowView"
+        x:DataType="vm:ImageViewerWindowViewModel"
+        Title="{loc:Translate ImageViewer.Title}"
+        Width="900" Height="720"
+        MinWidth="420" MinHeight="320"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource IndustryBg}">
+
+    <!-- ui_transition_plan.md step 3 (T1-5 + T2-6): non-modal (see MainWindow.axaml.cs's own
+         ImageViewerRequested handler — Show(owner), not ShowDialog) — an operator inspecting a
+         weak-signal frame closely shouldn't be locked out of the rest of the app while a new
+         reception is still coming in. Modeled loosely on QsoLinkWindowView.axaml's own Grid
+         RowDefinitions="*,Auto" shape, extended to 3 rows for a toolbar. -->
+
+    <Window.KeyBindings>
+        <KeyBinding Gesture="Left" Command="{Binding PreviousCommand}" />
+        <KeyBinding Gesture="Right" Command="{Binding NextCommand}" />
+        <KeyBinding Gesture="Escape" Command="{Binding CloseCommand}" />
+    </Window.KeyBindings>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <Border Grid.Row="0" Classes="Industry" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,0,0,1" Padding="{StaticResource IndustryPaddingGroup}">
+            <Grid ColumnDefinitions="140,Auto,44,Auto,*,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                <Grid ColumnDefinitions="*,*">
+                    <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="ImageViewerZoomMode"
+                                 Content="{loc:Translate ImageViewer.FitToWindow}" IsChecked="{Binding IsFitToWindow}" Command="{Binding FitToWindowCommand}" />
+                    <RadioButton Grid.Column="1" Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="ImageViewerZoomMode"
+                                 Content="{loc:Translate ImageViewer.ActualSize}" IsChecked="{Binding !IsFitToWindow}" Command="{Binding ActualSizeCommand}" />
+                </Grid>
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.ZoomOut}" Command="{Binding ZoomOutCommand}" />
+                <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" HorizontalAlignment="Center" Text="{Binding ZoomPercentDisplay}" />
+                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.ZoomIn}" Command="{Binding ZoomInCommand}" />
+                <Button Grid.Column="5" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Copy}" Command="{Binding CopyCommand}" />
+                <Button Grid.Column="6" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.OpenFileLocation}" Command="{Binding OpenFileLocationCommand}" />
+                <Button Grid.Column="7" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Close}" Command="{Binding CloseCommand}" />
+            </Grid>
+        </Border>
+
+        <Panel Grid.Row="1">
+            <!-- Fit mode: Viewbox uniformly scales to whatever space this Panel has, tracking a
+                 window resize automatically with no VM-side viewport-size plumbing needed. -->
+            <Viewbox Stretch="Uniform" Margin="{StaticResource IndustryPaddingGroup}" IsVisible="{Binding IsFitToWindow}">
+                <Image Source="{Binding FullImage}" />
+            </Viewbox>
+
+            <!-- Zoom mode: native-pixel-times-ZoomFactor sizing inside a scrolling viewport, same
+                 "bake the scale directly into Width/Height, no RenderTransform" approach
+                 TxImageEditorPaneView.axaml's own EditorCanvas already uses (that file's own Phase 7
+                 doc comment: a LayoutTransformControl-based design had real composition-invalidation
+                 bugs on this exact codebase/Avalonia combination). Pan-by-drag and wheel-zoom are
+                 code-behind (ImageViewerWindowView.axaml.cs) — routed pointer/wheel events aren't
+                 bindable to VM commands directly in AXAML. Wheel-zoom is wired in code-behind via
+                 Tunnel-routed AddHandler, NOT a plain PointerWheelChanged attribute here (Bubble
+                 routing would run after — and lose to — ScrollContentPresenter's own wheel-scroll
+                 handling once the content overflows the viewport; see the constructor's own comment).
+                 -->
+            <ScrollViewer x:Name="ZoomScrollViewer"
+                          HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                          HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                          IsVisible="{Binding !IsFitToWindow}">
+                <Image x:Name="ZoomImage"
+                       Source="{Binding FullImage}"
+                       Width="{Binding DisplayWidth}" Height="{Binding DisplayHeight}"
+                       Stretch="Fill"
+                       PointerPressed="OnZoomImagePointerPressed"
+                       PointerMoved="OnZoomImagePointerMoved"
+                       PointerCaptureLost="OnZoomImagePointerCaptureLost"
+                       PointerReleased="OnZoomImagePointerReleased" />
+            </ScrollViewer>
+
+            <TextBlock Text="{loc:Translate ImageViewer.Loading}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Classes="IndustryRowLabel" IsVisible="{Binding IsLoading}" />
+            <TextBlock Text="{Binding ErrorMessage}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap" MaxWidth="400"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        </Panel>
+
+        <Border Grid.Row="2" Classes="Industry" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,1,0,0" Padding="{StaticResource IndustryPaddingGroup}">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Previous}" Command="{Binding PreviousCommand}" />
+                <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource IndustrySpacingGroup}">
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding PositionText}" />
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding Current.Entry.ModeId}" />
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding Current.Entry.ReceivedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss} UTC}" />
+                </StackPanel>
+                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Next}" Command="{Binding NextCommand}" />
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

@@ -213,7 +213,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         : null;
 
     /// <summary>The selected mode's fixed pre-VIS leader-tone burst duration -- backs mock2's
-    /// Transmit tab "VOX tone" field. See <see cref="ISstvSessionService.GetLeaderToneDurationMs"/>'s
+    /// Transmit tab "VOX tone" field, renamed to "Leader tone" in the app itself
+    /// (ui_transition_plan.md step 9, T2-9). See <see cref="ISstvSessionService.GetLeaderToneDurationMs"/>'s
     /// own doc comment for why this isn't legacy's actual (unported) VOX feature.</summary>
     public string? VoxToneText => SelectedMode is { } mode
         ? _localization.GetString("Panes.TxControls.VoxToneFormat", _sstvSession.GetLeaderToneDurationMs(mode))
@@ -400,6 +401,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
     private double _identificationCwToneFrequencyHz;
 
+    /// <summary><c>CwIdMode.SoundFile</c> configured (`docs/plans/sound-file-id-plan.md`) --
+    /// mutually exclusive with <see cref="CwIdEnabled"/> by construction (both come from
+    /// <c>StationIdTransmitOptions</c>'s own CW/sound-file exclusivity), so <see cref="TailDisplay"/>
+    /// treats "both true" as CW-wins (matching every other exclusivity check this feature already
+    /// has), the same defensive posture as an unreachable-but-handled case.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(TailDisplay))]
+    private bool _soundFileIdEnabled;
+
     /// <summary>Mockup's own "DL2QSK"-shaped value -- the callsign as-configured (not the
     /// wire-normalized form <c>AnalogFmSstvEncoder</c> actually sends; see
     /// <c>StationIdTransmitOptions.Callsign</c>'s own doc comment for why normalization happens
@@ -416,17 +426,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         : _localization.GetString("Panes.TxId.Off");
 
     /// <summary>Summary of what actually gets appended after the image
-    /// (<c>Main.cpp:7018-7025</c>'s real order: FSK-ID packet first, then CW-ID -- independent, not
-    /// mutually exclusive, matching <c>AnalogFmSstvEncoder.GenerateFrequencySegments</c>'s own
-    /// append order). Genuinely new wording (mockup's own "CW after frame" is one specific
-    /// combination, not a format this reuses verbatim) -- a reasonable, low-risk reading of what
-    /// this row is for, not a citation-backed legacy string.</summary>
-    public string TailDisplay => (FskIdEnabled, CwIdEnabled) switch
+    /// (<c>Main.cpp:7018-7025</c>'s real order: FSK-ID packet first, then CW-ID/sound-file ID --
+    /// independent of FSK, not mutually exclusive with it, matching
+    /// <c>AnalogFmSstvEncoder.GenerateFrequencySegments</c>'s own append order). Genuinely new
+    /// wording (mockup's own "CW after frame" is one specific combination, not a format this reuses
+    /// verbatim) -- a reasonable, low-risk reading of what this row is for, not a citation-backed
+    /// legacy string. <c>(_, true, true)</c> (CW AND sound-file both reported enabled) is a state
+    /// <c>SstvSessionService.ResolveTransmitSettingsAsync</c>'s own resolution should never actually
+    /// produce (CW/sound-file are mutually exclusive, `docs/plans/sound-file-id-plan.md`) -- handled
+    /// here as CW-wins anyway, matching every other exclusivity check this feature already has, not
+    /// left as an unreachable gap.</summary>
+    public string TailDisplay => (FskIdEnabled, CwIdEnabled, SoundFileIdEnabled) switch
     {
-        (true, true) => _localization.GetString("Panes.TxId.TailBoth"),
-        (true, false) => _localization.GetString("Panes.TxId.TailFskOnly"),
-        (false, true) => _localization.GetString("Panes.TxId.TailCwOnly"),
-        (false, false) => _localization.GetString("Panes.TxId.Off"),
+        (true, true, _) => _localization.GetString("Panes.TxId.TailBoth"),
+        (true, false, true) => _localization.GetString("Panes.TxId.TailBothSoundFile"),
+        (true, false, false) => _localization.GetString("Panes.TxId.TailFskOnly"),
+        (false, true, _) => _localization.GetString("Panes.TxId.TailCwOnly"),
+        (false, false, true) => _localization.GetString("Panes.TxId.TailSoundFileOnly"),
+        (false, false, false) => _localization.GetString("Panes.TxId.Off"),
     };
 
     public TxControlsPaneViewModel(
@@ -577,6 +594,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             CwIdEnabled = stationId.CwEnabled;
             IdentificationCwWpm = stationId.CwWpm;
             IdentificationCwToneFrequencyHz = stationId.CwToneFrequencyHz;
+            SoundFileIdEnabled = stationId.SoundFileIdEnabled;
         }
         catch (Exception ex)
         {
@@ -1005,6 +1023,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         await OpenEditorForSourceAsync(entry, entry.FileName);
     }
 
+    /// <summary>ui_transition_plan.md step 5 (T1-6). Deliberately a settable delegate PROPERTY, not
+    /// an event -- same "genuine request/response the command reads before continuing" reasoning as
+    /// <see cref="RxHistoryPaneViewModel.ConfirmRequested"/>'s own doc comment, since this VM has no
+    /// reference to <see cref="RxImagePaneViewModel"/> and never should (sibling panes, both
+    /// coordinated by <c>MainViewModel</c>/<c>MainWindow.axaml.cs</c> only). Set exactly once, by
+    /// <c>MainWindow.axaml.cs</c>, to read <c>RxImagePaneViewModel.OverrideCallsign</c>/
+    /// <c>LookupGrid</c> -- the SAME two values the Logbook's own "Log QSO" prefill already trusts
+    /// as "the received station's callsign/grid" (see <c>LogbookPaneViewModel.PrefillForNewEntry</c>).
+    /// Returns <see langword="null"/> for either half (or is unwired entirely) when unwired/unknown
+    /// -- Copy-to-TX must still work with no HIS CALL/HIS GRID auto-fill in that case, not fail.
+    /// </summary>
+    public Func<(string? Callsign, string? Grid)>? CurrentContactRequested { get; set; }
+
     /// <summary>RX pane's "Copy to TX" stub (legacy precedent: <c>fileview.cpp</c>'s
     /// <c>CopyRectBitmap(pBitmapTXM)</c> -- copies the received bitmap into the TX slot as a fresh
     /// base image, not an overlay). Distinct from the already-shipped <c>AddLastRxImage</c> (the "+
@@ -1013,7 +1044,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// "nothing received yet" guard as <c>AddLastRxImage</c> (that command's own doc comment covers
     /// why the buffer's 1x1 black placeholder default needs an explicit check, and why this is a
     /// body-level no-op rather than a CanExecute gate -- no lifecycle hook to unsubscribe from
-    /// <see cref="IReceivedImageBuffer.Updated"/> from this VM).</summary>
+    /// <see cref="IReceivedImageBuffer.Updated"/> from this VM).
+    ///
+    /// ui_transition_plan.md step 5 (T1-6): also seeds the new editor's HIS CALL/HIS GRID template
+    /// variables via <see cref="CurrentContactRequested"/> -- this is the one entry point that gets
+    /// this seed (Browse/Stock/blank-mode-open don't -- an arbitrary photo or a blank canvas isn't
+    /// "replying to a station"). This is what makes a template referencing {his_call}/{his_grid}
+    /// come up already filled with the received station's own identity, instead of the operator
+    /// retyping what the RX pane (or Logbook's own "Log QSO" prefill) already knows.</summary>
     [RelayCommand]
     private async Task CopyReceivedImageToTxAsync()
     {
@@ -1035,7 +1073,23 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
 
         var fileName = _localization.GetString("Panes.TxControls.CopyToTx.FileName");
-        await OpenEditorWithLoadedSourceAsync(current, fileName);
+        var (callsign, grid) = CurrentContactRequested?.Invoke() ?? (null, null);
+        // Code-review finding: a blank/whitespace-only value must stay UNSEEDED, not seeded as "" --
+        // MacroTextResolver resolves a present-but-empty variable to "" (token vanishes), while an
+        // absent one resolves verbatim to "{his_call}" (an obvious unfilled placeholder). Seeding ""
+        // would silently blank the token on the transmitted card.
+        Dictionary<string, string>? contactVariables = null;
+        if (!string.IsNullOrWhiteSpace(callsign))
+        {
+            (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_call"] = callsign.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(grid))
+        {
+            (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_grid"] = grid.Trim();
+        }
+
+        await OpenEditorWithLoadedSourceAsync(current, fileName, contactVariables);
     }
 
     /// <summary>Shared gate for every "load a fresh source into the editor" entry point (Browse,
@@ -1156,7 +1210,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// photo loaded yet" without being visually jarring against the rest of the chrome.</summary>
     private static readonly Rgb24 BlankPlaceholderColor = new(0xE9, 0xE9, 0xEA);
 
-    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName)
+    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables = null)
     {
         // SelectedMode may have changed while the original was loading -- always target whatever
         // mode is current NOW, not the one in effect when the pick started.
@@ -1183,8 +1237,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var editor = new TxImageEditorPaneViewModel(
                 original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
-                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _readyRackLogger));
+                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _readyRackLogger),
+                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                currentContactVariables: currentContactVariables);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
+            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1235,6 +1292,23 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
         EditorClosed?.Invoke();
+    }
+
+    /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's "Apply &amp; Transmit" chain --
+    /// closes the editor exactly like a plain Apply (<see cref="OnEditorApplied"/>), then starts
+    /// the transmission itself. Re-checks <see cref="CanTransmit"/> rather than trusting the
+    /// editor's own (necessarily slightly stale) gate: OnEditorApplied above already ran by the
+    /// time this checks, so _loadedImage is guaranteed non-null here, but IsTransmitting/
+    /// IsRunningLoopbackSelfTest could in principle have flipped true between the button click and
+    /// this handler running (both are UI-thread-only today, so not reachable in practice, but the
+    /// guard costs nothing and avoids depending on that staying true).</summary>
+    private void OnEditorAppliedAndTransmit(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
+    {
+        OnEditorApplied(fileName, editor, final);
+        if (TransmitCommand.CanExecute(null))
+        {
+            TransmitCommand.Execute(null);
+        }
     }
 
     /// <summary>Auditor-found regression (2026-08-17, usability-gap review): with the editor now
@@ -1336,12 +1410,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _readyRackLogger),
-                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables));
+                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables),
+                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest);
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
             // this point (the guard above) guarantees SelectedFileName was set at the same time.
             var fileName = SelectedFileName!;
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
+            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1411,6 +1487,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         TransmitCommand.NotifyCanExecuteChanged();
         StopTransmitCommand.NotifyCanExecuteChanged();
         RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
+        _currentEditor?.NotifyTransmitAvailabilityChanged();
 
         _transmitCts = new CancellationTokenSource();
         try
@@ -1450,6 +1527,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             TransmitCommand.NotifyCanExecuteChanged();
             StopTransmitCommand.NotifyCanExecuteChanged();
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
+            _currentEditor?.NotifyTransmitAvailabilityChanged();
         }
     }
 
@@ -1492,6 +1570,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // IsRunningLoopbackSelfTest now -- must be notified at both toggle points, same as
         // RunLoopbackSelfTestCommand itself is notified at TransmitAsync's own toggle points.
         TransmitCommand.NotifyCanExecuteChanged();
+        _currentEditor?.NotifyTransmitAvailabilityChanged();
         try
         {
             var result = await _sstvSession.RunLoopbackSelfTestAsync(mode, image);
@@ -1507,6 +1586,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             IsRunningLoopbackSelfTest = false;
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             TransmitCommand.NotifyCanExecuteChanged();
+            _currentEditor?.NotifyTransmitAvailabilityChanged();
         }
     }
 

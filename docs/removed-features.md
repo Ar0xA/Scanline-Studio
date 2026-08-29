@@ -182,12 +182,31 @@ and its resolution, verified directly against current source, not inferred from 
   Options Radio tab: this port never opens or manages a raw serial port for PTT itself, so there is no
   "RTS pin" or "keep the port open across TX/RX" concept in this architecture for these two settings
   to gate — the backend owns its own connection lifecycle entirely.
+- **Correction (2026-08-28)**: the 2026-08-12 investigation above was wrong about `m_TxRxLock`
+  specifically, on two points — its actual behavior is "hold the PTT serial port open across TX/RX
+  transitions instead of closing and reopening it every time" (not a failure-handling policy, an
+  earlier misreading this same day), and Hamlib (already linked in-process) DOES expose a near-exact
+  equivalent: its own `ptt_share` config key (`hamlib/src/conf.c`, applied in `hamlib/src/rig.c` for
+  `RIG_PTT_SERIAL_DTR`/`RIG_PTT_SERIAL_RTS`), reachable through the same `ApplyConf` path
+  `HamlibRadioProtocol.cs` already uses for other settings. So a narrow, Hamlib-only,
+  DTR/RTS-PTT-type-only exposure of this WAS technically buildable, contrary to the original "no
+  concept in this architecture" claim. Found during a fresh plan-review pass on the still-present
+  disabled Options-tab placeholder (never actually deleted from the UI back in 2026-08-12 despite
+  being documented as removed here) — the port chose removal anyway (direct user decision, informed
+  by the corrected facts): `ptt_share`'s applicability is narrow enough (2 of several PTT types, one
+  backend of three) that a real toggle for it wasn't judged worth building. `m_RTSonRX`'s own removal
+  reasoning is unaffected by this correction — no equivalent was found for that one, corrected or
+  otherwise.
 - **Impact**: users of any Hamlib/rigctld/flrig-supported rig are unaffected — PTT keying works the
   same way regardless of whether legacy's own RTS-pin timing quirks would have mattered. No known
   real-world case is lost: `m_RTSonRX`'s "toggle RTS during an auto-scan" behavior and `m_TxRxLock`'s
   "avoid the port-reopen delay/glitch on every TX/RX transition" were both workarounds for the raw
   serial-port ownership model specifically, not independent user-facing features with their own value
-  outside that model.
+  outside that model. A user relying on Hamlib's own `ptt_share=0` default (hold the port open, the
+  same behavior legacy's own default (`m_TxRxLock=1`) already matched) gets it automatically from
+  Hamlib itself with no app-level setting needed; a user who specifically wants `ptt_share=1`
+  (release the port between transmits, e.g. to let a separate logger share it) has no way to request
+  that in this port.
 
 ## YONIQ-fork external "log connection" (raw IP:port socket)
 
@@ -220,21 +239,6 @@ and its resolution, verified directly against current source, not inferred from 
   user reports needing header-only lock (e.g. to avoid false-triggering on a busy band's sync-like
   interference) — the fix is a new `SstvDecoderSettings` flag mirroring `SyncRestartEnabled`'s own
   existing wiring, not a DSP change.
-
-## TX output bandpass filter toggle/tap setting
-
-- **Legacy**: `CSSTVMOD::Do`'s always-on filter (`sstv.cpp:2914`) is actually gated by a user
-  checkbox, `m_bpf` (`CBTXBPF`, persisted as `TXBPF`, `Option.cpp:266-289,450`), and its tap count,
-  `m_bpftap` (`TxBpfTap`/`TXBPFTAP`), is user-editable, rebuilt via `CalcFilter`
-  (`sstv.cpp:2918-2928`) whenever changed. Both default on/24 (`sstv.cpp:2759,2764`).
-- **Replacement**: none. Found during the functional-audit sweep (Tier A Batch 7, chunk 7d, round 1,
-  2026-08-21). `TxOutputBandpassFilter.cs` always applies the filter at a fixed 24 taps, matching
-  legacy's shipped defaults exactly.
-- **Impact**: unaffected at shipped defaults (the common case — most users never touch this
-  checkbox/setting). A legacy user who had disabled the TX output filter, or changed its tap count
-  for a narrower/wider transmit passband, has no way to reproduce that in this port. No golden-vector
-  or decode-correctness impact for the default case — this is a TX-side spectral-shaping option, not
-  a core DSP-math difference — but it is a real, silently-dropped user-facing capability.
 
 ## RX history retention limit (auto-delete beyond newest 32)
 
@@ -276,7 +280,7 @@ and its resolution, verified directly against current source, not inferred from 
 
 ## RGLoopBack hardware loopback (Internal/External)
 
-- **Legacy**: `sys.m_LoopBack` (`Option.cpp`'s `RGLoopBack` 3-way radio group — Off/Internal/
+- **Legacy**: `sys.m_echo` (`Option.cpp`'s `RGLoopBack` 3-way radio group — Off/Internal/
   External, `[Define] TXLoopBack`) runs a REAL, simultaneous TX+RX session: audio is genuinely
   transmitted while capture keeps running, either looped back internally in software (`Sound.cpp`'s
   "Interno" path) or through real external hardware (a physical audio cable from output back to
@@ -301,6 +305,164 @@ and its resolution, verified directly against current source, not inferred from 
   give: a way to sanity-check that the current TX image/mode round-trips through this port's own
   encoder→decoder pipeline before going on air — a real, useful diagnostic, just a narrower one than
   either legacy mode provided.
+- **Addendum (2026-08-28)**: the disabled `RGLoopBack`-shaped placeholder radio group left over in
+  `OptionsWindowView.axaml`'s Advanced tab was removed — a leftover UI stub from before this decision
+  shipped, not a new decision. No behavior change; this decision was already final.
+
+## Polynomial (piecewise-linear) demod-level calibration + Level Calibration Wizard
+
+- **Legacy**: `sys.m_DemCalibration` (`CBCalWay`, `Option.cpp:372/558`, ini key `[Define]
+  ColorCalibration` — a misleading key name, unrelated to color) toggles an alternative, nonlinear
+  demodulated-PIXEL-LEVEL/brightness correction curve in place of the default linear `sys.m_DemOff`
+  offset correction (`GetPixelLevel`, `Main.cpp:4038-4046`). Not a frequency-domain or TX correction.
+  `MakeCalibrationTable()` (`Main.cpp:12556-12588`) is NOT a fitted polynomial despite the name (a
+  `pow(x,i)`-based `Teira()` function exists in the source but is dead, `#if 0`d out) — the real,
+  shipped algorithm is a 17-breakpoint piecewise-linear lookup table (`sys.m_Dem17[17]`, ini section
+  `[Polynomial]`, another misleading key name), built once into a cached 4097-entry `short` table and
+  re-applied per pixel. Per-profile, not global — part of the same `SetProFile`/`InitProfile` demod-
+  profile-slot system items 1/2 of this backlog both already found and ported (`ComLib.h`'s
+  `DemCalibration`/`Dem17[17]` fields on `m_DemPro[9]`, `Main.cpp:12344-12346` save,
+  `:12389-12391` load).
+- **Correction (2026-08-28, code-review finding): the "Level Calibration Wizard" does NOT require
+  simultaneous TX+RX — an earlier version of this entry claimed it shared item 4's (`RGLoopBack`)
+  architectural blocker, and that claim is wrong, verified directly against source.**
+  `TOptionDlg::TimerTimer` (`Option.cpp:880-963`) sweeps a synthetic test tone (`sys.m_TestDem`)
+  across 17 points (1500Hz + 16×50Hz steps), averaging 3 samples per point into `sys.m_Dem17[]` — but
+  `SBTestClick` explicitly leaves TX first if it was active (`Option.cpp:988`,
+  `if(SBTX->Down||SBTune->Down) ToRX();`), and the sweep itself is a PURE IN-PROCESS SOFTWARE
+  round trip: `sys.m_TestDem` makes the modulator's `Do()` return the synthetic tone directly
+  (`sstv.cpp:2857-2859`), the RX capture buffer is overwritten IN PLACE with that synthetic output
+  (`Sound.cpp:336-340`) — the real microphone input is discarded, nothing is ever sent to the output
+  device (`Wave.OutAbort()`, `Sound.cpp:322`, `m_Tx==0`) — and `pDem->m_CurSig` is read back from
+  that same synthetic signal (`sstv.cpp:2309-2320`). **No audio hardware carries the signal** — the
+  capture device stays open and its own read call still paces the demod loop (`Wave.InRead`,
+  `Sound.cpp:327-333`), but every SAMPLE it returns is discarded and overwritten before use. This
+  is architecturally closer to this port's own already-shipped `RunLoopbackSelfTestAsync` (encode
+  synthetically, decode synthetically, all in-process) than to `RGLoopBack`'s real full-duplex
+  requirement — a genuinely different, and considerably more buildable, mechanism than first assumed.
+  The wizard ALSO doubles as the measurement pass for the (separately still-unported) LINEAR
+  `DemOff`/`DemWhite`/`DemBlack` correction fields (`Option.cpp:895/913/931`, disabled when the
+  polynomial checkbox is checked, `:213-219`) — not exclusively a polynomial-table data-collection
+  tool.
+- **The real reason this stays out of scope: this port's decoder has NO pixel-level-correction hook
+  at all to plug a calibration table into, not an architecture blocker on the wizard itself.** Legacy's
+  `GetPixelLevel` (`Main.cpp:4038-4046`) is a real, configurable, ALWAYS-PRESENT correction stage
+  (linear `DemOff` by default, this nonlinear table as the alternative) that every decoded pixel
+  passes through. This port's own decoder has never ported that stage at all — pixel levels use
+  hardcoded legacy-default constants directly (`YCbCr.cs:20-22`), with no live `DemOff`/`DemWhite`/
+  `DemBlack` UI and no correction hook of any kind. Building JUST the polynomial-table application
+  half means first retrofitting a whole new configurable per-pixel correction stage the decoder
+  doesn't have today — genuinely large, out of scope for an Options-stub fill (matches this
+  backlog's own original framing of this item as "the largest confirmed item"). The wizard could be
+  built (it's simpler than first thought), but without a decoder-side hook to feed, it has nothing to
+  calibrate.
+- **Replacement**: none. Removed entirely (both the "enable polynomial calibration" checkbox AND the
+  wizard button) rather than building a wizard with no decoder-side effect. Found and removed during
+  the Options-tab stub backlog (item 5, 2026-08-28); a code-review pass caught and corrected the
+  wizard's own real mechanism after this entry's first draft got it wrong (see the correction above) —
+  the removal call itself survives on the corrected, narrower grounds stated here.
+- **A real safety note for anyone reconsidering this later, corrected**: legacy's own
+  `MakeCalibrationTable()` divides by the gap between adjacent breakpoints (`16.0 /
+  (sys.m_Dem17[j] - sys.m_Dem17[j-1])`, `Main.cpp:12572`) with no zero-guard — but `InitProfile`
+  (`Main.cpp:12205-12245`) seeds all 9 built-in profiles with a real, strictly-monotonic 17-value
+  default table, so the "all-zero, never-configured" scenario an earlier draft of this entry
+  described is NOT reachable in legacy. The real reachable trigger is narrower: a hand-corrupted
+  `[Polynomial]` ini section producing `Dem17[0] == Dem17[1]` (the `j==1` case only — for `j>=2`,
+  reaching that branch already implies a non-zero gap by construction). Any future port of the
+  table-application half would still need an explicit adjacent-breakpoint-equality guard legacy
+  itself never had, just for this narrower, corrupted-config case rather than a default-state one.
+- **Impact**: an alternative nonlinear brightness-correction curve, used by a small minority of legacy
+  users who ran the wizard (2 of legacy's 9 built-in demod profiles ship with the flag pre-enabled,
+  `Main.cpp:12256,12264` — their actual `Dem17[]` values weren't inspected, out of this research
+  pass's scope). Corrected wording (code-review finding — the original said the linear correction was
+  "already fully ported," contradicting this entry's own point above): legacy's default linear
+  `sys.m_DemOff`/`m_DemWhite`/`m_DemBlack` values are baked into this port's decoders as fixed
+  constants (`RobotScanlineDecoder.cs:33`'s `PixelLevelScaleFactor`), not ported as a configurable
+  stage — so behavior matches legacy's own default (unchecked) state, but there is no live `DemOff`
+  setting behind it either, same as the polynomial table's own missing hook.
+
+## 7 per-element waterfall/spectrum colors (PCLow/PCHigh/PCFFTB/PCFFT/PCFFTStg/PCSync/PCFreq)
+
+- **Legacy**: `sys.m_ColorLow`/`m_ColorHigh` (waterfall gradient endpoints, real defaults `clBlack`/
+  `clWhite`, `Main.cpp:806-807`), `m_ColorFFTB` (FFT panel background, `TColor(4227327)` = RGB
+  `(255,128,64)`, VCL's BGR-order encoding), `m_ColorFFT` (main spectrum trace, `clYellow`),
+  `m_ColorFFTStg` (the max-hold trace over `m_FFTMAX`, `Main.cpp:3391-3396`, gated by the `m_FFTStg`
+  setting, `Main.cpp:11578-11596`; `clBlue`), `m_ColorFFTSync`/`m_ColorFFTFreq` (sync/
+  frequency marker lines, `clLime`/`clYellow`) — all 7 real, independently user-editable colors
+  (`Option.cpp:269-275` load, `:577-583` save), persisted individually (`[Color]` ini section,
+  `Main.cpp:1840-1846` load / `:2354-2360` save). Applied via direct VCL `Brush`/`Pen->Color`
+  assignment at several `Main.cpp` draw sites (`:971-972,3210,3263-3281,3319,3392,3462`) and
+  `InitColorTable(sys.m_ColorLow, sys.m_ColorHigh)` (`ComLib.cpp:338-361`), which builds a flat
+  2-color LINEAR gradient table for the waterfall.
+- **Replacement**: a fixed, deliberately-designed modern palette, not a per-element user override.
+  `WaterfallPalette.cs` (already shipped, its own doc comment cites `spec/09-ui.md` explicitly
+  exempting this visualization from strict legacy-port fidelity, and `spec/14-roadmap.md`'s own
+  waterfall backlog entry inviting exactly this) replaces legacy's flat black/white 2-stop
+  interpolation with a 6-stop SDR-style multi-hue heatmap gradient (WSJT-X/SDR++/GQRX convention) —
+  a deliberate, already-shipped design improvement, not a stub. `SpectrumTraceControl.cs` similarly
+  already has fixed, cohesive equivalents for the 4 trace/marker colors (`TracePen`/`PeakHoldPen`/
+  `SyncMarkerPen`/`FreqMarkerPen`, plus a `NotchMarkerPen` legacy never had at all); the FFT-panel
+  background equivalent lives in the shared theme instead (`Atoms.axaml`'s `IndustryPlot` style,
+  `Background="{StaticResource IndustryAccent900}"`) — all 7 legacy colors have a fixed, non-
+  user-editable equivalent SOMEWHERE in this port's already-shipped code, just not all in one file.
+  This is a real prior design decision this backlog item's own research surfaced, not something
+  invented to justify removal.
+- **Why not build the 7-color-picker UI instead**: doing so would let a user override this already-
+  shipped, deliberately cohesive palette with arbitrary colors that clash with the surrounding
+  "Industry" design system — working against a design decision already made and shipped, not filling
+  a genuine gap. Found and removed during the Options-tab stub backlog (item 6, 2026-08-28), the same
+  pattern items 4-5 of that backlog already established (research revealing a real reason not to
+  build as originally scoped, not an oversight).
+- **Impact**: a user cannot recolor individual waterfall/spectrum elements to their own taste the way
+  legacy allowed. The waterfall's own low-to-high semantic (weakest signal -> near-black, strongest
+  -> red) is preserved, just via a richer fixed gradient instead of a user-chosen 2-color one.
+
+## Differentiator (picture-channel edge-enhancement filter)
+
+- **Legacy**: `sys.m_Differentiator` (`CBDiff`, `Option.cpp:253,508`) + `sys.m_DiffLevelP`/
+  `m_DiffLevelM` (a slider mapped 0.0-10.0 in 0.1 steps — `TBDiff`'s own real `Min`/`Max` live in a
+  binary `.dfm`, unreadable as text, so the 0-100 slider-position range is a reasonable inference from
+  the ×10/÷10 scaling, `Option.cpp:254,509-510`, not independently confirmed; `m_DiffLevelM =
+  m_DiffLevelP / 3.0` always, an asymmetric attenuation) — real GLOBAL default `Differentiator=0`
+  (off), `DiffLevelP=1.0` (`Main.cpp:827-829`) — but the PER-PROFILE default differs: `InitProfile`
+  seeds `DiffLevel=0.8` (`Main.cpp:12225`), not 1.0. Persisted per-profile (same `SetProFile`/
+  `InitProfile` system items 1/2/5 of this backlog all hit, `ComLib.h:161-162`'s `Differentiator`/
+  `DiffLevel` fields, `Main.cpp:12348-12349` save/`:12395-12397` load) and also to `[Define]`
+  `Differentiator`/`DiffLevel` ini keys (`Main.cpp:1867-1869` load/`:2421-2422` save). Applied via
+  `GetPictureLevelDiff` (`Main.cpp:4075-4100`), a discrete Laplacian-like (second-derivative) sharpening
+  kernel — `o = -0.5*d + m_Z[0] - 0.5*m_Z[1] + m_Z[2]` — with asymmetric post-gain applied by sign;
+  only 2 DISTINCT history taps, not 3 (`m_Z[2] = m_Z[0] = d` on the same line, `:4098`, so `m_Z[2]`
+  always duplicates `m_Z[0]`) — dispatched from `DrawSSTV` (`:4113-4120`) in place of the normal
+  drawing path whenever the checkbox is on and the current mode isn't `smSCTDX` (reason for that
+  specific exclusion not found in the source).
+  **Corrected (code-review finding): NOT luminance-only.** An earlier draft of this entry claimed the
+  differentiator applies to luminance only — false, checked directly against every mode-family case in
+  `DrawSSTVDiff`. It runs on ALL THREE R/G/B channels for RGB-family modes (`smSCT1`/`smSCT2`,
+  `Main.cpp:4595-4636`; the `default:` case covering most remaining modes, `:4822-4851`) — luminance-
+  only ONLY for the YC-family modes (R36 `:4644`, R24/R72/MRxx/MLxx `:4695`, PD/MP/MN `:4750`, RM8/RM12
+  `:4804`, the YC-paired Y channel `:4786`). What IS accurate: every CHROMA (R-Y/B-Y) extraction site
+  stays a plain, undifferentiated `GetPixelLevel` read in every mode family, including RGB ones (the
+  R/G/B "channels" in an RGB-family mode ARE its picture channels, not a chroma pair) — the
+  differentiator never touches a true chroma-difference channel, in any mode.
+- **The real blocker: `GetPictureLevelDiff` itself calls `GetPixelLevel` internally** (`d =
+  GetPixelLevel(ip+SSTVSET.m_KSB)` or `d = GetPixelLevel(ip)`, `Main.cpp:4079-4087`) — the exact
+  same decoder-side pixel-level-correction hook already found missing from this port entirely (see
+  the "Polynomial (piecewise-linear) demod-level calibration" entry above): this port's decoder uses
+  hardcoded legacy-default pixel-level constants directly (`RobotScanlineDecoder.cs:33`'s
+  `PixelLevelScaleFactor`, `PixelSampleReader.cs`'s own raw-sample-read/KSB-peak-pick, the
+  dereference half of `GetPixelLevel` with no correction half behind it),
+  with no configurable correction stage of any kind to layer a sharpening filter on top of. Porting
+  the differentiator would ALSO mean touching every one of this port's 5 concrete per-mode-family
+  decoder classes at their own picture-channel extraction call site(s) — one site for the YC families,
+  THREE sites (R/G/B) for the RGB families, given the corrected scope above — contained in shape per
+  class, but touching all 5, not a single isolated addition, and still resting on the same missing
+  foundational hook.
+- **Replacement**: none. Removed 2026-08-28 alongside the polynomial-calibration removal above, same
+  backlog pass, same root cause (not a coincidence — the Differentiator is literally built on top of
+  the calibration feature's own `GetPixelLevel` call).
+- **Impact**: no luminance edge-enhancement/sharpening option for the decoded image. A small minority
+  of legacy users who enabled this (default off) lose it; the vast majority (default configuration)
+  see no change, since legacy's own default is off.
 
 ## Audio-tab performance placeholders: RX/TX FIFO size, Sound card thread priority, App priority
 
@@ -357,3 +519,72 @@ and its resolution, verified directly against current source, not inferred from 
   points (a menu item, then a placeholder button) pointing at it are gone. A user who needs
   faster-than-Auto-Slant clock lock on a reception's very first lines has no path to that in this
   port; no user has asked for this since Auto Slant shipped.
+
+## Tune-timer auto-switch-to-transmit ("satellite" mode)
+
+- **Legacy**: `sys.m_TuneSat` (`Option.h`/`Option.cpp`), checked in `TMmsstv`'s main timer loop
+  (`Main.cpp:3689-3697`) against `m_TuneTimer` (armed at `Main.cpp:7680-7686` when the Tune button is
+  pressed, set to `::GetTickCount() + sys.m_TuneTXTime * 1000`, or `+30s` if `TuneTXTime` is negative).
+  When the timer expires while Tune is still held, legacy calls `ToTX()` instead of the normal
+  `ToRX()` if `m_TuneSat` is enabled — auto-switching straight to transmit once the tune tone's
+  duration elapses, for satellite passes where TX should follow tuning immediately with no manual
+  step in between.
+- **Replacement**: none. This port's Options > Identification tab has an already-disabled
+  `IsEnabled="False"` "Tune satellite" placeholder checkbox (with help text already describing this
+  exact legacy behavior, written before this entry existed) — removed outright 2026-08-28, not
+  implemented.
+- **Why**: direct user decision, made with the real legacy behavior in hand (an initial research pass
+  incorrectly reported no legacy grounding at all, since the field is named `m_TuneSat` rather than
+  containing the literal word "satellite" — corrected before this decision was made, not after). This
+  app has no supported satellite-pass workflow the auto-switch would serve.
+- **Impact**: a user tuning ahead of a satellite pass must switch from Tune to Transmit manually once
+  ready, instead of it happening automatically when the tune timer elapses. No other Tune-button
+  behavior is affected — the timer/duration mechanism itself (`TuneTXTime`) has no other consumer in
+  this port to begin with.
+
+## VOX leader-tone priming
+
+- **Legacy**: `sys.m_VOX` (`RGV`, a 2-way radio group Off/On, `Option.cpp:401,621`, `[Define] VOX`
+  ini key, real default `0`/off, `Main.cpp:822`). **Correction — the earlier backlog inventory row
+  for this item mischaracterized its real mechanism** (guessed "needs an audio-level-triggered PTT
+  path `IRadioSessionService` doesn't have," an assumption never checked against source): the real
+  feature is nothing like that. It is a fully self-contained TX-audio-generation change with no
+  external hardware/detection dependency at all. `OutHEAD` (`Main.cpp:7270-7351`, the function that
+  writes the fixed 8-tone leader-tone burst before every VIS header — already fully ported in this
+  codebase as `AnalogFmSstvEncoder.GetLeaderToneDurationMs`/its own header-generation path) branches
+  on `sys.m_VOX`: mode 0 (off) writes legacy's normal fixed leader pattern, unchanged, matching this
+  port's own current always-on behavior; mode 1 (on) instead parses `sys.m_VOXSound` — **not a file
+  path despite the field name** — a plain, directly user-editable comma-separated
+  frequency(Hz)/duration(ms) text string (real default
+  `"1500,100,1700,100,2300,100,2100,100,1900,100,1500,100"`, 6 pairs, `Main.cpp:824`; edited via the
+  "Edit VOX tone" button's own text-box dialog, `Option.cpp:1184`; persisted directly as that string,
+  `[Define] VOXTone` ini key with a Japanese-locale CR/LF escape encoding, `Main.cpp:1898-1899,2407`)
+  — and writes THOSE tones instead (each tone's frequency clamped `[0,2800]` Hz and duration
+  defaulted to 100ms if `<=0`, `Main.cpp:7324-7329`), capped at a total duration limit (1800ms for AVT
+  mode, 8000ms otherwise, `Main.cpp:7320-7336`). THREE directives are recognized in place of a tone
+  sequence, not two: `#id` (send FSK ID instead) and `#cw` (send CW ID instead), `Main.cpp:7300-7308`
+  — plus `#<n>` (skip `n` further lines of the underlying multi-line tone-sequence text and use the
+  line landed on instead, `Main.cpp:7309-7315`; the "Edit VOX tone" dialog opens the field as a real
+  multi-line text box, `Option.cpp:1184`'s own `TRUE` argument, so multi-line values are reachable, not
+  theoretical). The real-world purpose: priming an external VOX-activated transmitter/relay with a
+  longer or differently-shaped tone sequence than the normal 8-tone burst, giving that external
+  hardware's own voice-operated-switch circuit enough time to key up before the actual SSTV picture
+  data begins — a real ham-radio accessory-compatibility feature, genuinely simpler to build than
+  first assumed. **`sys.m_VOX` also gates the TX FOOTER, not just the leader**
+  (`Main.cpp:6999-7008`/`SendSSTV`): with VOX off (this port's own only-modeled state) and a non-
+  narrow mode, the footer sends a capped carrier (`WriteC(1500, min(m_TW, SampFreq/2))`) followed by
+  an alternating 1900/1500/1900/1500 tail; VOX on instead sends a plain, non-alternating `WriteC(1900,
+  ...)` carrier with no tail — this port's own encoder code already correctly models only the VOX-off
+  footer arm (`AnalogFmSstvEncoder.cs`'s own `FooterAlternatingToneDurationMs` and its neighboring
+  comment, corrected 2026-08-28 alongside this entry), the same real default legacy itself ships.
+- **Replacement**: none. Removed by direct user request (2026-08-28), after the corrected finding
+  above was reported — the feature turned out buildable (no architecture gap, unlike several other
+  items this session), but the user chose removal anyway rather than building it. Note: "Edit VOX
+  tone" above is THIS PORT'S OWN button label (`Options.Identification.Vox.EditTone`, now deleted) —
+  legacy's real equivalent prompt was Spanish, `"Tono del VOX  freq(Hz), tiempo(ms), ..."`
+  (`Option.cpp:1184`, this YONIQ fork's own localization), not an English label.
+- **Impact**: a user relying on an external VOX-activated transmitter/relay behind this port's TX
+  audio output cannot customize the leader-tone priming sequence (or get the alternate footer shape)
+  to suit that hardware's own VOX timing — this port always sends legacy's fixed 8-tone burst and
+  alternating footer (mode 0's own behavior), matching
+  legacy's own default (unchecked) state.

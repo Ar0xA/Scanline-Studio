@@ -38,6 +38,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public event Action? Restarted;
 
+    public long ReceptionSequence { get; private set; }
+
     public int ResetAgcCallCount { get; private set; }
 
     public void ResetAgc() => ResetAgcCallCount++;
@@ -57,6 +59,47 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
         RequestNotchCallCount++;
         LastNotchEnabled = enabled;
         LastNotchFrequencyHz = frequencyHz;
+    }
+
+    public int RequestPllTuningCallCount { get; private set; }
+
+    public double LastPllVcoGain { get; private set; }
+
+    public int LastPllLoopOrder { get; private set; }
+
+    public double LastPllLoopCutoffHz { get; private set; }
+
+    public int LastPllOutputOrder { get; private set; }
+
+    public double LastPllOutputCutoffHz { get; private set; }
+
+    public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
+    {
+        RequestPllTuningCallCount++;
+        LastPllVcoGain = vcoGain;
+        LastPllLoopOrder = loopOrder;
+        LastPllLoopCutoffHz = loopCutoffHz;
+        LastPllOutputOrder = outputOrder;
+        LastPllOutputCutoffHz = outputCutoffHz;
+    }
+
+    public int RequestZeroCrossingTuningCallCount { get; private set; }
+
+    public ZeroCrossingSmoothingMode LastZeroCrossingSmoothingMode { get; private set; }
+
+    public int LastZeroCrossingOutputOrder { get; private set; }
+
+    public double LastZeroCrossingOutputCutoffHz { get; private set; }
+
+    public double LastZeroCrossingSmoothingFrequencyHz { get; private set; }
+
+    public void RequestZeroCrossingTuning(ZeroCrossingSmoothingMode smoothingMode, int outputOrder, double outputCutoffHz, double smoothingFrequencyHz)
+    {
+        RequestZeroCrossingTuningCallCount++;
+        LastZeroCrossingSmoothingMode = smoothingMode;
+        LastZeroCrossingOutputOrder = outputOrder;
+        LastZeroCrossingOutputCutoffHz = outputCutoffHz;
+        LastZeroCrossingSmoothingFrequencyHz = smoothingFrequencyHz;
     }
 
     public int ArmScopeCaptureCallCount { get; private set; }
@@ -85,6 +128,16 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
     {
         ForceModeCallCount++;
         LastForcedMode = mode;
+    }
+
+    public int SetModeLockCallCount { get; private set; }
+
+    public SstvModeDefinition? LastLockedMode { get; private set; }
+
+    public void SetModeLock(SstvModeDefinition? mode)
+    {
+        SetModeLockCallCount++;
+        LastLockedMode = mode;
     }
 
     public int RequestAbandonReceptionCallCount { get; private set; }
@@ -139,7 +192,17 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
         }
     }
 
-    public void RaiseModeDetected(SstvModeDefinition mode) => ModeDetected?.Invoke(mode);
+    public void RaiseModeDetected(SstvModeDefinition mode)
+    {
+        // ISstvDecoder.ReceptionSequence: bumped before the raise, matching the real
+        // implementations' contract (see that property's own doc comment) -- first value is 1, 0
+        // means "unset." A test that needs the minority-ordering shape (ModeDetected then
+        // DecodeRestarted within the "same push") raises both from the same synchronous call site
+        // it controls -- this fake has no separate push-epoch concept of its own (that machinery is
+        // internal to SstvSessionService, not part of ISstvDecoder).
+        ReceptionSequence++;
+        ModeDetected?.Invoke(mode);
+    }
 
     public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
 

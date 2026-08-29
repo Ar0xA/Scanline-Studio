@@ -28,6 +28,11 @@ public partial class MainViewModel : ViewModelBase
     /// above) -- drives <see cref="OnSelectedTabIndexChanged"/>'s disk/DB reconcile trigger.</summary>
     public const int GalleryTabIndex = 2;
 
+    /// <summary>Same reasoning/guard-test convention as <see cref="LogbookTabIndex"/> -- drives
+    /// <see cref="SaveOrApply"/>'s contextual Ctrl+S routing (ui_transition_plan.md step 2,
+    /// T1-3).</summary>
+    public const int TransmitTabIndex = 1;
+
     private readonly IServiceProvider _services;
     private readonly OptionsSettingsService _optionsSettingsService;
     private readonly ISettingsStore _settingsStore;
@@ -48,6 +53,12 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>Repo's own GitHub URL (README.md's own citation, `git remote -v`) -- the Help
     /// menu's "Open on GitHub" target.</summary>
     private const string RepositoryUrl = "https://github.com/Ar0xA/Scanline-Studio";
+
+    /// <summary>The Host project copies the dependency-free HTML guide to this stable location
+    /// beside the executable for both build and publish output. Keeping this relative to
+    /// <see cref="AppContext.BaseDirectory"/> makes the same command work for framework-dependent,
+    /// self-contained, and relocated installations.</summary>
+    private static string UserGuidePath => Path.Combine(AppContext.BaseDirectory, "help", "index.html");
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
@@ -292,6 +303,13 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenUserGuide()
+    {
+        Log.OpenUserGuideInvoked(_logger);
+        _urlLauncher.Open(UserGuidePath);
+    }
+
+    [RelayCommand]
     private void OpenOnGitHub()
     {
         Log.OpenOnGitHubInvoked(_logger);
@@ -310,6 +328,45 @@ public partial class MainViewModel : ViewModelBase
     {
         Log.ExitInvoked(_logger);
         ExitRequested?.Invoke();
+    }
+
+    /// <summary>ui_transition_plan.md step 2 (T1-3): Ctrl+S used to always mean "save the current RX
+    /// frame" (see the former `MainWindow.axaml` File &gt; Export received frame… gesture, now moved
+    /// to Ctrl+Shift+E), even while editing a TX card -- undo/redo/paste/templates establish an editor
+    /// mental model where Ctrl+S means "save my edit," a real risk of the operator believing a
+    /// template was preserved when the RX save dialog silently opened behind/over it instead.
+    /// Dispatches by SELECTED TAB, matching how the rest of this shell already reasons about "what
+    /// is the operator doing right now" (there is no per-control focus-scoped key handling
+    /// elsewhere to hook into instead). Auditor-caught (2026-08-28): unlike
+    /// <see cref="TxImageEditorPaneViewModel.ApplyCommand"/> (always safe to run -- Apply has no
+    /// internal guard because it needs none), <see cref="RxImagePaneViewModel.SaveFrameCommand"/>'s
+    /// own body has NO "nothing decoded yet" guard -- it goes straight to the file picker. A bare
+    /// <c>Execute(null)</c> would open a save dialog and silently write a blank placeholder image on
+    /// a fresh launch, before anything has ever been received. Both branches now check CanExecute
+    /// first, same as a real button click would.</summary>
+    [RelayCommand]
+    private void SaveOrApply()
+    {
+        if (SelectedTabIndex == TransmitTabIndex && ActiveEditor is { } editor)
+        {
+            if (!editor.ApplyCommand.CanExecute(null))
+            {
+                return;
+            }
+
+            Log.SaveOrApplyInvoked(_logger, "Apply");
+            editor.ApplyCommand.Execute(null);
+        }
+        else
+        {
+            if (!RxImage.SaveFrameCommand.CanExecute(null))
+            {
+                return;
+            }
+
+            Log.SaveOrApplyInvoked(_logger, "SaveFrame");
+            RxImage.SaveFrameCommand.Execute(null);
+        }
     }
 
     /// <summary>Not private: also called from <c>MainWindow.axaml.cs</c>'s <see cref="OptionsRequested"/>
@@ -362,6 +419,9 @@ public partial class MainViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenAbout command invoked")]
         public static partial void OpenAboutInvoked(ILogger logger);
 
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Open user guide command invoked")]
+        public static partial void OpenUserGuideInvoked(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOnGitHub command invoked")]
         public static partial void OpenOnGitHubInvoked(ILogger logger);
 
@@ -370,6 +430,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Ctrl+S dispatched to {Target}")]
+        public static partial void SaveOrApplyInvoked(ILogger logger, string target);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator callsign failed; menu-row chip stays hidden")]
         public static partial void LoadCallsignFailed(ILogger logger, Exception ex);

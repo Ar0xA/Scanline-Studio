@@ -40,11 +40,15 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
         double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = TxOutputBandpassFilter.DefaultTapCount,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
         CancellationToken ct = default)
     {
         ValidateImageDimensions(mode, image);
 
-        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, ct);
+        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
     }
 
     /// <summary>Resolves <see cref="SampleRate"/> + <paramref name="sampleRateOffsetHz"/> into the
@@ -61,6 +65,20 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         var effective = SampleRate + sampleRateOffsetHz;
         return double.IsFinite(effective) && effective > 0 ? effective : SampleRate;
     }
+
+    /// <summary>Options stub backlog item 3: <c>CFQC::CalcLPF</c>::SetCount</c>'s TX-LPF sibling
+    /// window-size formula, <c>CSSTVMOD::CalcFilter</c> (`sstv.cpp:2929`,
+    /// <c>avgLPF.SetCount(int(SampFreq/m_lpffq + 0.5))</c>) -- rounds via <c>+0.5</c> BEFORE
+    /// truncation, NOT <c>CFQC::CalcLPF</c>'s own bare-truncation formula (item 2,
+    /// `ZeroCrossingFrequencyCounter.SetTuning`) -- a real, easy-to-miss difference between this
+    /// port's own two <c>CSmooz</c> consumers, code-review round 1 finding: extracted into one shared
+    /// method (was duplicated verbatim in <see cref="EncodeAsyncCore"/> and
+    /// <see cref="RenderSegments"/>) specifically so this formula has exactly one place to test and
+    /// one place to get right, after a review found NO test actually exercised the <c>+0.5</c> at a
+    /// frequency where it changes the result (the chosen test frequency happened to make rounding and
+    /// truncation agree).</summary>
+    internal static int ResolveLpfWindowSize(double sampleRate, double lpfFrequencyHz) =>
+        Math.Max(1, (int)(sampleRate / Math.Clamp(lpfFrequencyHz, 100.0, 3000.0) + 0.5));
 
     /// <summary>Spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
     /// Replicates <see cref="EncodeAsyncCore"/>'s own running-accumulator expression verbatim
@@ -91,21 +109,40 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     {
         ValidateImageDimensions(mode, image);
 
+        var options = stationId ?? StationIdTransmitOptions.None;
         var effectiveSampleRate = ResolveEffectiveSampleRate(sampleRateOffsetHz);
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var idealSamplesSoFar = 0.0;
-        foreach (var (_, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, stationId ?? StationIdTransmitOptions.None))
+        foreach (var (_, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, options))
         {
             idealSamplesSoFar += durationMs / 1000.0 * effectiveSampleRate;
         }
 
-        return (long)idealSamplesSoFar;
+        // Sound-file station ID (Main.cpp:7021-7025's `sys.m_CWID==2` -> OutputMMV): raw samples are
+        // appended AFTER the whole tone/segment stream (docs/plans/sound-file-id-plan.md's variant
+        // A', not interleaved into GenerateFrequencySegments at all), so their count is added here
+        // directly rather than recomputed from a duration -- no floating-point rounding drift. Mutual
+        // exclusivity with CwEnabled (legacy's own single-value sys.m_CWID tri-state) is enforced with
+        // THIS EXACT expression at both this method and EncodeAsyncCore below -- must stay identical
+        // at both sites so the estimate and the real encode can never disagree on whether a sound-file
+        // block plays at all.
+        var soundFile = options.CwEnabled ? null : options.SoundFileSamples;
+
+        // Cast BEFORE adding the raw sample count, matching EncodeAsyncCore's own real emission
+        // exactly (it emits (long)idealSamplesSoFar tone samples, then soundFile.Length raw ones) --
+        // folding the raw count into idealSamplesSoFar before this cast is a DIFFERENT, not
+        // guaranteed-equal computation (the two truncations can round across an integer boundary
+        // differently).
+        return (long)idealSamplesSoFar + (soundFile?.Length ?? 0);
     }
 
     /// <summary>Duration of the fixed leader-tone burst <see cref="GenerateFrequencySegments"/>
     /// unconditionally sends before every mode's VIS header (legacy's <c>TMmsstv::OutHEAD</c>,
-    /// <c>m_VOX==0</c> case only -- legacy's real VOX feature, <c>m_VOX==1</c>, a user-configured
-    /// sound file with an optional FSK ID, is a different thing this port doesn't implement; see
+    /// <c>m_VOX==0</c> case only -- legacy's real VOX feature, <c>m_VOX==1</c>, a user-editable
+    /// comma-separated frequency/duration tone sequence that replaces this burst (used to prime an
+    /// external VOX-activated transmitter/relay), is a different, self-contained TX-audio-generation
+    /// feature this port deliberately doesn't implement (removed by direct user request, 2026-08-28,
+    /// see `docs/removed-features.md`'s "VOX leader-tone priming" entry); see
     /// <c>Main.cpp:7274-7304</c>). Named for what it actually is, not "VOX tone" -- this is the
     /// always-on leader burst, not the configurable VOX feature.</summary>
     public static double GetLeaderToneDurationMs(SstvModeDefinition mode) =>
@@ -155,6 +192,10 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         IImageSource image,
         StationIdTransmitOptions stationId,
         double sampleRateOffsetHz,
+        bool txBpfEnabled,
+        int txBpfTapCount,
+        bool txLpfEnabled,
+        double txLpfFrequencyHz,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
@@ -166,15 +207,31 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         var effectiveSampleRate = ResolveEffectiveSampleRate(sampleRateOffsetHz);
 
         // ultracode audit finding #26: legacy's TX output bandpass filter is applied to EVERY emitted
-        // sample, unconditionally, as the last step of CSSTVMOD::Do() -- constructed locally, not as
+        // sample, as the last step of CSSTVMOD::Do() -- constructed locally, not as
         // a field, so every EncodeAsync call gets fresh (zeroed) filter state, matching legacy's own
         // per-transmission InitTXBuf -> m_BPF.Clear() reset (this encoder is a DI singleton; a
         // ctor-field filter would leak state across calls). See TxOutputBandpassFilter's own doc
         // comment for why this can't just reuse SearchBandpassFilter. Deliberately the NOMINAL
         // SampleRate, not effectiveSampleRate -- legacy builds this same filter from the nominal
         // rate too, never the TX-offset-corrected one (sstv.cpp:2768/2771/2923/2926), a Clock
-        // calibration plan-review finding (round 1).
-        var bandpassFilter = new TxOutputBandpassFilter(SampleRate);
+        // calibration plan-review finding (round 1). Options stub backlog item 3: the on/off gate
+        // (legacy's m_bpf) now lives at the ProcessSample call site below, not inside the filter
+        // class -- matches legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (sstv.cpp:2914) exactly,
+        // the delay line is never advanced at all when off, not merely bypassed post-construction.
+        var bandpassFilter = new TxOutputBandpassFilter(SampleRate, txBpfTapCount);
+
+        // Options stub backlog item 3 (docs/plans/options-stub-item3-tx-bpf-lpf-plan.md): legacy's
+        // TX LPF (CSSTVMOD::avgLPF, a CSmooz moving average -- the exact same class already ported
+        // as MovingAverage) smooths the discrete per-segment target FREQUENCY, applied PRE-VCO, once
+        // per audio sample (sstv.cpp:2869, inside the m_Cnt-active/f>0 branch only). Fresh-per-call
+        // here, NOT matching legacy's own InitTXBuf-clears-m_BPF-only precedent (avgLPF genuinely
+        // PERSISTS across legacy transmissions, only SetCount clears it, sstv.cpp:2827,2929) -- a
+        // deliberate, documented DIVERGENCE (simpler, deterministic, practically indistinguishable
+        // after one window's worth of samples), not a faithfully-ported behavior. SetCount uses the
+        // NOMINAL SampleRate (matching CalcFilter's own bare SampFreq, sstv.cpp:2929, and legacy's
+        // own separate VCO-rate re-pointing at the offset-corrected rate, Main.cpp:959/7948) --
+        // rounds via +0.5 before truncation, NOT CFQC::CalcLPF's bare-truncation formula (item 2).
+        var lpfAverage = new MovingAverage(ResolveLpfWindowSize(SampleRate, txLpfFrequencyHz));
 
         // Running accumulator, not "round(durationMs -> samples) per segment": with ~245,000
         // individual per-pixel segments in a full image, independently rounding each one's sample
@@ -208,8 +265,6 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             var samplesToEmit = targetEmitted - emittedSamples;
             emittedSamples = targetEmitted;
 
-            var phaseIncrement = 2 * Math.PI * frequencyHz / effectiveSampleRate;
-
             for (var i = 0; i < samplesToEmit; i++)
             {
                 double sample;
@@ -222,17 +277,28 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                     // when the buffered value is <= 0), so a tone immediately after a gap resumes
                     // in-phase rather than restarting from phase 0. The output bandpass filter
                     // still runs over the zero samples below (sstv.cpp:2914), same as every other
-                    // segment -- do not special-case it out of the filter call. Doc correction (Tier
-                    // A Batch 8 chunk 8c): for this branch's ONLY reachable trigger (frequencyHz
-                    // exactly 0 -- GenerateFrequencySegments never emits a negative frequency),
-                    // "skip the phase advance" and "advance by 0" are behaviorally identical
-                    // (`phaseIncrement` is itself 0), so the distinction from a zeroed-and-restarted
-                    // phase doesn't actually bite here; it would matter only for a hypothetical
-                    // future f&lt;0 segment, which is why the branch is written as `&lt;= 0`, not `== 0`.
+                    // segment -- do not special-case it out of the filter call. Options stub backlog
+                    // item 3: the TX LPF moving average is ALSO skipped here (sstv.cpp:2867's
+                    // `if(f>0)` gates both the VCO advance AND avgLPF.Avg together) -- its history
+                    // holds through the gap and resumes smoothing, not resets, once a real tone
+                    // follows, matching legacy exactly.
                     sample = 0.0;
                 }
                 else
                 {
+                    // Options stub backlog item 3: legacy re-reads and re-smooths this SAME
+                    // per-segment-constant frequencyHz on EVERY audio sample (m_TXBuf holds one
+                    // discrete frequency code per requested duration, Do() reads+smooths it once per
+                    // call, sstv.cpp:2866-2870) -- avgLPF converges toward each new segment's target
+                    // like a glide filter rather than an instant jump. phaseIncrement is therefore
+                    // now derived PER SAMPLE from the (optionally smoothed) frequency, not once per
+                    // segment. Smoothing the raw Hz value directly (not legacy's normalized
+                    // (f-1100)/1200) is algebraically identical, not a divergence -- CSmooz/
+                    // MovingAverage is a linear operator (mean(a*x+b) = a*mean(x)+b) and legacy's VCO
+                    // conversion is itself affine, so a boxcar mean commutes through it exactly.
+                    var smoothedFrequencyHz = txLpfEnabled ? lpfAverage.Add(frequencyHz) : frequencyHz;
+                    var phaseIncrement = 2 * Math.PI * smoothedFrequencyHz / effectiveSampleRate;
+
                     phase += phaseIncrement;
                     if (phase >= 2 * Math.PI)
                     {
@@ -244,8 +310,41 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
                 // Filtered in double, narrowed to float only here -- legacy's whole chain
                 // (CSSTVMOD::Do's `d`) is double; narrowing before filtering would lose precision
-                // the filter itself doesn't need to lose.
-                yield return (float)bandpassFilter.ProcessSample(sample);
+                // the filter itself doesn't need to lose. Options stub backlog item 3: the bandpass
+                // filter's own on/off gate (legacy's m_bpf) lives here, at the call site, not inside
+                // the filter class -- when off, the delay line is never advanced at all, matching
+                // legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (sstv.cpp:2914) exactly.
+                yield return (float)(txBpfEnabled ? bandpassFilter.ProcessSample(sample) : sample);
+            }
+        }
+
+        // Sound-file station ID (Main.cpp:7021-7025's `sys.m_CWID==2` -> OutputMMV): NOT interleaved
+        // into GenerateFrequencySegments at all (docs/plans/sound-file-id-plan.md's variant A' --
+        // simpler than a reserved sentinel frequency value, and avoids the RenderSegments test-seam
+        // exposure a sentinel would have). Legacy's own row-playback branch
+        // (sstv.cpp:2903-2907, `else if(m_RowCnt)`) is a separate `else if` from the tone/VCO branch
+        // entirely, and is always the LAST thing SendSSTV emits (sys.m_CWID==1/==2 are mutually
+        // exclusive, Main.cpp:7021-7025) -- so a plain second loop, placed after every tone segment
+        // has already been emitted, reproduces the same effective ordering with no branch inside the
+        // hot per-segment loop above. THIS EXACT expression must stay identical to
+        // EstimateSampleCount's own copy -- CW wins if a caller somehow set both fields.
+        var soundFile = stationId.CwEnabled ? null : stationId.SoundFileSamples;
+        if (soundFile is { Length: > 0 })
+        {
+            var samples = soundFile.Value;
+            for (var i = 0; i < samples.Length; i++)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                // No VCO advance (phase is untouched) and no TX LPF smoothing -- matches legacy's
+                // row-playback branch being outside the `f>0` tone branch entirely
+                // (sstv.cpp:2867-2870 gates avgLPF the same way it gates the VCO). The output
+                // bandpass filter DOES still run, matching legacy's own shared `d=m_BPF.Do(d)` call
+                // (sstv.cpp:2914) -- the only stage row playback and tone generation actually share.
+                // `.Span[i]` is a transient rvalue, never a declared local -- a ReadOnlySpan<float>
+                // local can't be declared inside this async iterator method (CS4012).
+                var raw = samples.Span[i];
+                yield return (float)(txBpfEnabled ? bandpassFilter.ProcessSample(raw) : raw);
             }
         }
 
@@ -269,10 +368,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     internal static IEnumerable<float> RenderSegments(
         IEnumerable<(double FrequencyHz, double DurationMs)> segments,
         double sampleRate,
-        bool applyFilter = true)
+        bool applyFilter = true,
+        int tapCount = TxOutputBandpassFilter.DefaultTapCount,
+        bool applyLpf = false,
+        double lpfFrequencyHz = 2000.0)
     {
         var phase = 0.0;
-        var bandpassFilter = new TxOutputBandpassFilter(sampleRate);
+        var bandpassFilter = new TxOutputBandpassFilter(sampleRate, tapCount);
+        var lpfAverage = new MovingAverage(ResolveLpfWindowSize(sampleRate, lpfFrequencyHz));
         var idealSamplesSoFar = 0.0;
         var emittedSamples = 0L;
 
@@ -283,8 +386,6 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
             var samplesToEmit = targetEmitted - emittedSamples;
             emittedSamples = targetEmitted;
 
-            var phaseIncrement = 2 * Math.PI * frequencyHz / sampleRate;
-
             for (var i = 0; i < samplesToEmit; i++)
             {
                 double sample;
@@ -294,6 +395,9 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 }
                 else
                 {
+                    var smoothedFrequencyHz = applyLpf ? lpfAverage.Add(frequencyHz) : frequencyHz;
+                    var phaseIncrement = 2 * Math.PI * smoothedFrequencyHz / sampleRate;
+
                     phase += phaseIncrement;
                     if (phase >= 2 * Math.PI)
                     {
@@ -456,13 +560,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     //
     // Code-review correction: an earlier version of this comment justified the always-off assumption
     // below by "no radio/PTT layer exists yet" -- stale, ScanlineStudio.Application.SstvSessionService's
-    // PlayWithPttAsync now keys/un-keys PTT for every TX call. The real reason is narrower: `sys.m_VOX`
-    // is a hardware Voice/Voltage-Operated-eXchange auto-keying MODE, not something this port's own
-    // software PTT control has any equivalent concept of at all (regardless of whether a PTT layer
-    // exists) -- defaults to legacy's own default, off (`Main.cpp:822`), which is also the more common
-    // case for typical (non-VOX-triggered) transmit anyway. If VOX support is ever modeled, this
-    // condition needs `|| isVoxEnabled` alongside the narrow-mode check below; flagged here rather
-    // than silently baked in as "always off" forever.
+    // PlayWithPttAsync now keys/un-keys PTT for every TX call. A LATER version of this comment then
+    // claimed `sys.m_VOX` was "a hardware Voice/Voltage-Operated-eXchange auto-keying MODE" -- also
+    // wrong (self-caught, corrected 2026-08-28): it is a self-contained TX-audio-generation toggle
+    // (a user-editable tone sequence replacing the fixed leader burst, to prime an external VOX-
+    // activated transmitter/relay), not a hardware PTT-triggering concept at all. VOX itself was
+    // removed by direct user request (2026-08-28, see `docs/removed-features.md`'s "VOX leader-tone
+    // priming" entry) after being told the corrected mechanism -- this hardcoded always-off arm
+    // matches legacy's own real default (`Main.cpp:822`) and needs no further consideration.
     internal const double FooterAlternatingToneDurationMs = 100.0;
 
     // SSTVSET.m_TW (`sstv.cpp:1109`) is one line's duration *in samples*; the footer's trailing

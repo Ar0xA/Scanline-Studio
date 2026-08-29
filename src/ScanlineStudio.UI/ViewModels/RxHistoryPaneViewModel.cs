@@ -46,6 +46,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private readonly IReceivedFrameExporter _frameExporter;
     private readonly IFilePickerService _filePicker;
     private readonly ISettingsStore _settingsStore;
+    private readonly IUrlLauncher _urlLauncher;
+    private readonly IClipboardImageService _clipboardImageService;
+    private readonly ILogger<ImageViewerWindowViewModel> _imageViewerLogger;
 
     /// <summary>Chains <see cref="PersistFlaggedAsync"/> calls so a rapid double-toggle can't
     /// complete out of order -- see that method's own doc comment. Deliberately a plain
@@ -197,7 +200,48 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <summary>Resolved saved-image folder for the Gallery tab's Storage card -- real, loaded
     /// once via <see cref="IReceiveHistoryStore.GetImagesDirectoryAsync"/>.</summary>
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(OpenStorageFolderCommand))]
     private string? _imagesDirectory;
+
+    /// <summary>ui_transition_plan.md step 9 (T2-7): every received frame is already auto-archived
+    /// here (ReceiveHistoryRecorder writes it on every completed decode, not just on an explicit
+    /// Export/Save) -- this makes that folder actually reachable, not just readable as text, same
+    /// "open the containing folder" idiom as <c>ImageViewerWindowViewModel.OpenFileLocation</c>.</summary>
+    private bool CanOpenStorageFolder() => ImagesDirectory is not null;
+
+    [RelayCommand(CanExecute = nameof(CanOpenStorageFolder))]
+    private void OpenStorageFolder()
+    {
+        if (ImagesDirectory is not { } directory)
+        {
+            return;
+        }
+
+        // Cleared on entry, same convention as every other command in this class (e.g.
+        // DeleteSelectedEntryAsync/ExportFrameAsync below) -- otherwise a stale error from a
+        // PREVIOUS failed attempt keeps showing after the operator fixes the underlying problem
+        // and retries successfully.
+        ErrorMessage = null;
+
+        // Code-review finding: the resolved default (~/Pictures/ScanlineStudio/History) is only
+        // ever CREATED on the first saved frame (ReceiveHistoryRecorder's own doc comment) -- on a
+        // fresh profile with nothing received yet, this button was enabled but pointed at a folder
+        // that doesn't exist, so IUrlLauncher.Open's own swallow-and-log Process.Start failure left
+        // the operator with no folder and no explanation. Same "validate by creating" precedent as
+        // IReceiveHistoryStore.SetImagesDirectoryAsync's own doc comment for a user-chosen folder.
+        try
+        {
+            Directory.CreateDirectory(directory);
+        }
+        catch (Exception ex)
+        {
+            Log.OpenStorageFolderFailed(_logger, directory, ex);
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.OpenStorageFolderFailed");
+            return;
+        }
+
+        _urlLauncher.Open(directory);
+    }
 
     /// <summary>Free space, in gibibytes, on <see cref="ImagesDirectory"/>'s own volume -- real,
     /// via <see cref="DriveInfo"/>. <see langword="null"/> when the read fails (path unmounted,
@@ -208,6 +252,23 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DiskFreeDisplay))]
     private double? _diskFreeGigabytes;
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: resolved auto-save-audio
+    /// folder for the Gallery tab's Storage card -- loaded once via
+    /// <see cref="IReceiveHistoryStore.GetAudioSettingsAsync"/>, same "loaded when the tab loads,
+    /// not polled live" cadence as <see cref="ImagesDirectory"/> above.</summary>
+    [ObservableProperty]
+    private string? _audioDirectory;
+
+    /// <summary>Total bytes across every <c>*.wav</c> file directly in <see cref="AudioDirectory"/> --
+    /// real, non-recursive (see <see cref="UpdateAudioStorageBytesAsync"/>'s own doc comment for why
+    /// that also keeps <c>SstvSessionService</c>'s own <c>scratch/</c> subtree out of this figure).
+    /// <see langword="null"/> when the directory doesn't exist yet (nothing has auto-saved there yet)
+    /// or the read fails, rendered as an honest em-dash by <see cref="AudioStorageBytesDisplay"/> --
+    /// same convention as <see cref="DiskFreeGigabytes"/> above.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AudioStorageBytesDisplay))]
+    private long? _audioStorageBytes;
 
     /// <summary>Gallery tab's "Received" header count caption -- real, recomputed off
     /// <see cref="Entries"/>' own <see cref="ObservableCollection{T}.CollectionChanged"/> rather
@@ -249,6 +310,41 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// show the actual <c>QsoLinkWindowView</c>.</summary>
     public event Action<QsoLinkWindowViewModel>? QsoLinkRequested;
 
+    /// <summary>ui_transition_plan.md step 3 (T1-5 + T2-6). Same "carries the freshly-resolved
+    /// dialog VM" shape as <see cref="QsoLinkRequested"/> above, handled in MainWindow.axaml.cs.
+    /// </summary>
+    public event Action<ImageViewerWindowViewModel>? ImageViewerRequested;
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: "Re-decode this frame"
+    /// carries the already-known audio file path, NOT a request this class fulfills itself -- this
+    /// class deliberately does not depend on <c>ISstvSessionService</c> (see this file's own top
+    /// doc comment: browsing history must never appear to interrupt a live RX decode), so the actual
+    /// decode call is made by <c>RxImagePaneViewModel</c> (the class that already owns that
+    /// responsibility for the Receive tab's own "Decode WAV…" button), wired from
+    /// <c>MainWindow.axaml.cs</c> the same way <see cref="QsoLinkRequested"/>/<see cref="ImageViewerRequested"/>
+    /// reach across to a sibling pane.</summary>
+    public event Action<string>? RedecodeRequested;
+
+    /// <summary>Opens the full-size viewer over <see cref="FilteredEntries"/> -- the Gallery grid's
+    /// own currently-filtered/visible list, NOT the unfiltered <see cref="Entries"/>, so
+    /// Previous/Next inside the viewer only ever steps through what the operator can actually see
+    /// selected behind it. A no-op if <paramref name="startEntry"/> can't be found there (e.g. a
+    /// filter changed between the double-tap and this running -- not reachable synchronously
+    /// today, but cheap to guard).</summary>
+    [RelayCommand]
+    private void OpenImageViewer(RxHistoryEntryViewModel startEntry)
+    {
+        var startIndex = FilteredEntries.IndexOf(startEntry);
+        if (startIndex < 0)
+        {
+            return;
+        }
+
+        var viewerViewModel = new ImageViewerWindowViewModel(
+            new List<RxHistoryEntryViewModel>(FilteredEntries), startIndex, _historyStore, _urlLauncher, _clipboardImageService, _localization, _imageViewerLogger);
+        ImageViewerRequested?.Invoke(viewerViewModel);
+    }
+
     public RxHistoryPaneViewModel(
         IReceiveHistoryStore historyStore,
         ILocalizationService localization,
@@ -257,7 +353,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         ILogger<QsoLinkWindowViewModel> qsoLinkLogger,
         IReceivedFrameExporter frameExporter,
         IFilePickerService filePicker,
-        ISettingsStore settingsStore)
+        ISettingsStore settingsStore,
+        IUrlLauncher urlLauncher,
+        IClipboardImageService clipboardImageService,
+        ILogger<ImageViewerWindowViewModel> imageViewerLogger,
+        IRxAudioAutoSaver audioAutoSaver)
     {
         _historyStore = historyStore;
         _localization = localization;
@@ -267,6 +367,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         _frameExporter = frameExporter;
         _filePicker = filePicker;
         _settingsStore = settingsStore;
+        _urlLauncher = urlLauncher;
+        _clipboardImageService = clipboardImageService;
+        _imageViewerLogger = imageViewerLogger;
+
+        // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: auditor-caught round 1 -- this
+        // was the ONLY missing subscriber for RxAudioAutoSaver.AudioAttached anywhere in the app, so a
+        // just-received frame's in-memory entry never picked up AudioFilePath until some unrelated
+        // later refresh re-queried the DB. Marshaled through Dispatcher -- see UpdateEntryInPlace's
+        // own doc comment for why every OTHER in-place patch in this class already does the same
+        // (AudioAttached's own contract also documents it can fire on an arbitrary background thread).
+        audioAutoSaver.AudioAttached += (entryId, path) => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { AudioFilePath = path }));
 
         Entries.CollectionChanged += (_, _) =>
         {
@@ -281,6 +392,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // the pane empty rather than blocking construction; RefreshCommand lets the user retry.
         _ = RefreshAsync();
         _ = LoadImagesDirectoryAsync();
+        _ = LoadAudioStorageInfoAsync();
         _ = LoadFramesTodayCountAsync();
     }
 
@@ -338,6 +450,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// underlying value, single source of truth rather than two independently-drifting reads.</summary>
     public string DiskFreeDisplay => DiskFreeGigabytes is { } gb
         ? _localization.GetString("Panes.RxHistory.DiskFreeValueFormat", gb)
+        : "—";
+
+    public string AudioStorageBytesDisplay => AudioStorageBytes is { } bytes
+        ? _localization.GetString("Panes.RxHistory.AudioStorageValueFormat", bytes / 1_048_576.0)
         : "—";
 
     private void UpdateEntryCountText() => EntryCountText = Entries.Count switch
@@ -474,6 +590,56 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             DiskFreeGigabytes = null;
             Log.GetDiskFreeSpaceFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same "loaded when the tab
+    /// loads, not polled live" cadence as <see cref="LoadImagesDirectoryAsync"/> -- also re-run from
+    /// <c>MainWindow.axaml.cs</c>'s own Storage settings dialog Closed handler, same reasoning as that
+    /// method's own doc comment.</summary>
+    public async Task LoadAudioStorageInfoAsync()
+    {
+        try
+        {
+            var audioSettings = await _historyStore.GetAudioSettingsAsync();
+            AudioDirectory = audioSettings.Directory;
+        }
+        catch (Exception ex)
+        {
+            Log.GetAudioSettingsFailed(_logger, ex);
+            return;
+        }
+
+        await UpdateAudioStorageBytesAsync();
+    }
+
+    /// <summary>Best-effort, same reasoning as <see cref="UpdateDiskFreeSpace"/> -- a directory that
+    /// doesn't exist yet (nothing has auto-saved there yet) is NOT an error, just an honest "—".
+    /// Only <c>*.wav</c> files count (auditor-caught round 1: an unfiltered sum would also count any
+    /// foreign file a user happens to keep in a shared, non-dedicated folder, mislabeled as
+    /// "auto-saved audio") -- non-recursive, so <c>SstvSessionService</c>'s own
+    /// <c>{AudioDirectory}/scratch/{sessionGuid}/</c> subtree (still-in-flight receptions, up to its
+    /// own separate 256 MB retention cap) is never double-counted here regardless.
+    ///
+    /// The enumeration + per-file <see cref="FileInfo"/> stat runs off the UI thread (auditor-caught
+    /// round 1: a folder with many/large files would otherwise visibly hitch the UI, unlike
+    /// <see cref="UpdateDiskFreeSpace"/>'s O(1) <see cref="DriveInfo"/> read next to it).</summary>
+    private async Task UpdateAudioStorageBytesAsync()
+    {
+        if (AudioDirectory is not { } directory || !Directory.Exists(directory))
+        {
+            AudioStorageBytes = null;
+            return;
+        }
+
+        try
+        {
+            AudioStorageBytes = await Task.Run(() => Directory.EnumerateFiles(directory, "*.wav").Sum(f => new FileInfo(f).Length));
+        }
+        catch (Exception ex)
+        {
+            AudioStorageBytes = null;
+            Log.GetAudioStorageBytesFailed(_logger, ex);
         }
     }
 
@@ -686,6 +852,113 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         QsoLinkRequested?.Invoke(qsoLinkVm);
     }
 
+    /// <summary>ui_transition_plan.md step 4 (T1-4, reframed). Deliberately a settable delegate
+    /// PROPERTY, not an event -- same "genuine request/response, the command awaits the typed
+    /// answer" reasoning as <see cref="ConfigurationsManagerWindowViewModel.ConfirmRequested"/>'s
+    /// own doc comment. Set exactly once, by <c>MainWindow.axaml.cs</c>. Returns
+    /// <see langword="false"/> (decline) when unwired -- the safe default for a destructive action.
+    /// </summary>
+    public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
+
+    private async Task<bool> RequestConfirmAsync(string title, string message)
+    {
+        if (ConfirmRequested is null)
+        {
+            return false;
+        }
+
+        var confirmVm = new ConfirmActionDialogViewModel(title, message);
+        return await ConfirmRequested(confirmVm).ConfigureAwait(true);
+    }
+
+    private bool CanDeleteSelectedEntry() => SelectedEntry is not null;
+
+    /// <summary>Per-item manual delete -- the retention-cap AUTO-delete stays removed
+    /// (`docs/removed-features.md`); this is the operator explicitly discarding one bad capture.
+    /// Captures <see cref="SelectedEntry"/> as <c>entry</c> BEFORE the confirm dialog's own
+    /// await (same discipline <see cref="ExportFrameAsync"/>'s own doc comment describes) and never
+    /// reads <see cref="SelectedEntry"/> again afterward -- a <see cref="IReceiveHistoryStore.Recorded"/>-
+    /// triggered <see cref="RefreshAsync"/> could null/replace it while the confirm dialog is open,
+    /// and this method must keep deleting the entry the operator actually clicked. A stronger
+    /// confirmation message when the entry carries a note, a flag, or a QSO link -- the same
+    /// "this row represents real investment" signal the old (now-removed) retention-trim logic used
+    /// to exempt such rows from auto-deletion for.</summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedEntry))]
+    private async Task DeleteSelectedEntryAsync()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        var hasInvestment = entry.Entry.IsFlagged || !string.IsNullOrEmpty(entry.Entry.Note) || entry.Entry.LinkedQsoId is not null;
+        var confirmed = await RequestConfirmAsync(
+            _localization.GetString("Panes.RxHistory.ConfirmDeleteTitle"),
+            _localization.GetString(hasInvestment ? "Panes.RxHistory.ConfirmDeleteFlaggedMessage" : "Panes.RxHistory.ConfirmDeleteMessage"));
+        if (!confirmed)
+        {
+            return;
+        }
+
+        Log.DeleteInvoked(_logger, entry.Entry.Id);
+        ErrorMessage = null;
+        try
+        {
+            var deleted = await _historyStore.DeleteAsync(entry.Entry).ConfigureAwait(true);
+            if (!deleted)
+            {
+                ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists");
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.DeleteFailed(_logger, entry.Entry.Id, ex);
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.DeleteFailed");
+            return;
+        }
+
+        await RefreshAsync();
+        // Auditor-caught (2026-08-29): OnRecorded's own arrival path fires both RefreshAsync AND
+        // this, so the status bar's "frames today" count would otherwise stay inflated after
+        // deleting a frame received today, until the pane is reconstructed.
+        _ = LoadFramesTodayCountAsync();
+    }
+
+    private bool CanOpenAudioFileLocation() => SelectedEntry?.Entry.AudioFilePath is not null;
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4 -- same "open the
+    /// containing folder" idiom as <see cref="ImageViewerWindowViewModel.OpenFileLocation"/>, applied
+    /// to the linked audio file instead of the image. Opens the file's OWN containing folder, not the
+    /// currently-configured <c>AudioDirectory</c> setting -- the operator may have changed that
+    /// setting since this particular file was saved.</summary>
+    [RelayCommand(CanExecute = nameof(CanOpenAudioFileLocation))]
+    private void OpenAudioFileLocation()
+    {
+        if (SelectedEntry?.Entry.AudioFilePath is not { } path)
+        {
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        _urlLauncher.Open(string.IsNullOrEmpty(directory) ? path : directory);
+    }
+
+    private bool CanRedecodeSelectedEntry() => SelectedEntry?.Entry.AudioFilePath is not null;
+
+    /// <summary>See <see cref="RedecodeRequested"/>'s own doc comment for why this class raises an
+    /// event here instead of calling <c>ISstvSessionService.DecodeFromFileAsync</c> directly.</summary>
+    [RelayCommand(CanExecute = nameof(CanRedecodeSelectedEntry))]
+    private void RedecodeSelectedEntry()
+    {
+        if (SelectedEntry?.Entry.AudioFilePath is not { } path)
+        {
+            return;
+        }
+
+        RedecodeRequested?.Invoke(path);
+    }
+
     private bool CanExportFrame() => SelectedEntry is not null;
 
     /// <summary>Gallery pane's "Export" button -- saves the selected frame's already-auto-saved PNG
@@ -751,6 +1024,14 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // to fire it.
         OpenInLogCommand.NotifyCanExecuteChanged();
         ExportFrameCommand.NotifyCanExecuteChanged();
+        // Auditor-caught (2026-08-29): omitted here originally -- left the Delete button rendering
+        // as a live, full-strength IndustryBtnDanger (no disabled style, by design, see that class's
+        // own comment) that silently did nothing on the ordinary click-a-thumbnail path, recovering
+        // only if the Gallery tab was detached/reattached (which re-runs Avalonia's own attach-time
+        // CanExecute probe).
+        DeleteSelectedEntryCommand.NotifyCanExecuteChanged();
+        OpenAudioFileLocationCommand.NotifyCanExecuteChanged();
+        RedecodeSelectedEntryCommand.NotifyCanExecuteChanged();
 
         if (_isRepopulating && value is null)
         {
@@ -1042,8 +1323,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "GetImagesDirectoryAsync failed")]
         public static partial void GetImagesDirectoryFailed(ILogger logger, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "OpenStorageFolder: creating '{Directory}' failed")]
+        public static partial void OpenStorageFolderFailed(ILogger logger, string directory, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading disk free space failed")]
         public static partial void GetDiskFreeSpaceFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "GetAudioSettingsAsync failed")]
+        public static partial void GetAudioSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Reading total auto-saved audio storage bytes failed")]
+        public static partial void GetAudioStorageBytesFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading the frames-today count failed")]
         public static partial void LoadFramesTodayCountFailed(ILogger logger, Exception ex);
@@ -1077,6 +1367,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenInLog invoked: entryId={EntryId}")]
         public static partial void OpenInLogInvoked(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "DeleteSelectedEntry invoked: entryId={EntryId}")]
+        public static partial void DeleteInvoked(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "DeleteAsync failed for entry {EntryId}")]
+        public static partial void DeleteFailed(ILogger logger, string entryId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading preview image failed")]
         public static partial void LoadPreviewFailed(ILogger logger, Exception ex);

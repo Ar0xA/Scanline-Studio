@@ -168,9 +168,10 @@ internal static class VisHeader
     /// (`Main.cpp:7270-7292`), the pre-VIS leader-tone burst -- called UNCONDITIONALLY at the very
     /// start of every real transmission (`Main.cpp:7393`, <c>OutHEAD()</c>, immediately before the
     /// VIS/narrow-FSK header block at `:7395`), at legacy's shipped <c>sys.m_VOX==0</c> default (the
-    /// only branch this port can model -- no VOX/PTT layer exists yet, matching
-    /// <see cref="AnalogFmSstvEncoder.GenerateFooterSegments"/>'s own identical <c>m_VOX</c> scoping
-    /// note). This was a real missing TX segment before this fix -- no code comment, no
+    /// only branch this port models -- legacy's own <c>m_VOX==1</c> alternative (a user-editable tone
+    /// sequence replacing this burst) was removed by direct user request, 2026-08-28, see
+    /// `docs/removed-features.md`'s "VOX leader-tone priming" entry. This was a real missing TX segment
+    /// before this fix -- no code comment, no
     /// docs/removed-features.md entry, same class of gap S27's CQ100 omission was before it got
     /// fixed. Not a decode blocker for a real legacy RX (it still locks on the VIS leader itself
     /// regardless of what precedes it), but genuinely the FIRST audio any real transmission carries,

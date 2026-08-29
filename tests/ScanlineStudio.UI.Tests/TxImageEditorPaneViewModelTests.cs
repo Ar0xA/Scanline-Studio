@@ -91,6 +91,23 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             templateStore, imageSourceWriter, readyRack ?? CreateReadyRack(templateStore));
 
+    /// <summary>ui_transition_plan.md step 2 (T1-2) overload -- exposes the parent's
+    /// canTransmitNow delegate for <see cref="TxImageEditorPaneViewModelTests.ApplyAndTransmitCommand_CanExecute_ReflectsTheParentsCanTransmitNowDelegate"/>
+    /// and friends. Every OTHER <c>CreateEditor</c> overload omits it (defaults to "always
+    /// allowed" -- see the production constructor's own doc comment), matching how the real
+    /// production call sites are the only ones that ever pass a real delegate.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, Func<bool> canTransmitNow) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), canTransmitNow: canTransmitNow);
+
+    /// <summary>ui_transition_plan.md step 5 (T1-6) overload -- exposes the "Copy to TX" HIS
+    /// CALL/HIS GRID seed.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, IReadOnlyDictionary<string, string> currentContactVariables) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), currentContactVariables: currentContactVariables);
+
     private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
         new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ReadyRackViewModel>.Instance);
 
@@ -385,6 +402,59 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(SmallMode.ImageWidth, applied!.Width);
         Assert.Equal(SmallMode.ImageHeight, applied.Height);
         Assert.Same(original, preparer.CropSources[^1]);
+    }
+
+    /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's new primary action -- same
+    /// pipeline as plain Apply, but through <see cref="TxImageEditorPaneViewModel.AppliedAndTransmitRequested"/>
+    /// instead of <see cref="TxImageEditorPaneViewModel.Applied"/>, and must fire ONLY that one --
+    /// a caller (TxControlsPaneViewModel) that handled both would double-apply the same output.
+    /// </summary>
+    [AvaloniaFact]
+    public void ApplyAndTransmit_RunsTheSamePipelineAsApply_AndFiresOnlyAppliedAndTransmitRequested()
+    {
+        var original = CreateSource(20, 20);
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(original, SmallMode, preparer);
+
+        IImageSource? appliedAndTransmit = null;
+        var plainAppliedFired = false;
+        vm.Applied += _ => plainAppliedFired = true;
+        vm.AppliedAndTransmitRequested += img => appliedAndTransmit = img;
+
+        vm.ApplyAndTransmitCommand.Execute(null);
+
+        Assert.NotNull(appliedAndTransmit);
+        Assert.Equal(SmallMode.ImageWidth, appliedAndTransmit!.Width);
+        Assert.Equal(SmallMode.ImageHeight, appliedAndTransmit.Height);
+        Assert.Same(original, preparer.CropSources[^1]);
+        Assert.False(plainAppliedFired);
+    }
+
+    [AvaloniaFact]
+    public void ApplyAndTransmitCommand_DefaultsToAlwaysAllowed_WhenNoDelegateIsSupplied()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.True(vm.ApplyAndTransmitCommand.CanExecute(null));
+    }
+
+    /// <summary>CommunityToolkit does not auto-requery a CanExecute predicate that closes over
+    /// another object's property (see <see cref="TxImageEditorPaneViewModel.NotifyTransmitAvailabilityChanged"/>'s
+    /// own doc comment) -- this asserts the parent's re-notify contract actually flips the
+    /// command's CanExecute, not just that the delegate itself would return the right value.
+    /// </summary>
+    [AvaloniaFact]
+    public void ApplyAndTransmitCommand_CanExecute_ReflectsTheParentsCanTransmitNowDelegate()
+    {
+        var canTransmitNow = false;
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), () => canTransmitNow);
+
+        Assert.False(vm.ApplyAndTransmitCommand.CanExecute(null));
+
+        canTransmitNow = true;
+        vm.NotifyTransmitAvailabilityChanged();
+
+        Assert.True(vm.ApplyAndTransmitCommand.CanExecute(null));
     }
 
     [AvaloniaFact]
@@ -4535,6 +4605,60 @@ public sealed class TxImageEditorPaneViewModelTests
         var row = Assert.Single(vm.TemplateVariableRows);
         Assert.Equal("his_call", row.Key);
         Assert.Equal(string.Empty, row.Value);
+    }
+
+    /// <summary>ui_transition_plan.md step 5 (T1-6): "Copy to TX"'s HIS CALL seed -- a template
+    /// referencing {his_call} comes up already filled with the received station's own callsign,
+    /// instead of an empty row the operator has to retype.</summary>
+    [AvaloniaFact]
+    public void CurrentContactVariables_HisCallReferenced_PrefillsTheFillBarRow()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new Dictionary<string, string> { ["his_call"] = "W1AW", ["his_grid"] = "FN31pr" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "DE {his_call} {his_grid}";
+
+        Assert.Equal("W1AW", vm.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal("FN31pr", vm.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
+    /// <summary>A key the seed didn't provide (no callsign known yet, e.g. no radio/FSK-decode) must
+    /// stay a genuinely empty, editable row -- never a fabricated value.</summary>
+    [AvaloniaFact]
+    public void CurrentContactVariables_KeyNotProvided_LeavesTheFillBarRowEmpty()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new Dictionary<string, string> { ["his_call"] = "W1AW" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "{his_call} {his_grid}";
+
+        Assert.Equal("W1AW", vm.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal(string.Empty, vm.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
+    /// <summary>The seed must never overwrite a value the operator ALREADY typed -- not reachable via
+    /// the real "Copy to TX" entry point today (a brand-new editor has nothing typed yet), but this
+    /// pins the ordering documented on the constructor itself, matching how the analogous
+    /// EditorInitialState.TemplateVariables restore is documented to win too.</summary>
+    [AvaloniaFact]
+    public void CurrentContactVariables_DoesNotOverwriteAnAlreadyTypedValue()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new Dictionary<string, string> { ["his_call"] = "W1AW" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "{his_call}";
+        var row = vm.TemplateVariableRows.Single(r => r.Key == "his_call");
+        row.Value = "N0CALL";
+
+        // Re-triggering the scan (e.g. editing the text and back) must not clobber the typed value.
+        element.Text = "DE {his_call}";
+
+        Assert.Equal("N0CALL", vm.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
     }
 
     [AvaloniaFact]

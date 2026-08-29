@@ -88,7 +88,10 @@ public class AnalogFmSstvEncoderSilenceTests
         // implementation instead special-cased silence by skipping the filter call entirely, EVERY
         // gap sample would be zero immediately -- indistinguishable from this test failing.
         const double toneHz = 1000.0;
-        const int tapCount = 24; // TxOutputBandpassFilter.Tap, kept in sync manually (internal const).
+        // Options stub backlog item 3: tap count is now a real (variable) constructor parameter, not
+        // a compile-time constant -- reference the real default instead of a hand-kept-in-sync magic
+        // number, which is no longer even accurate once a caller passes a non-default tap count.
+        const int tapCount = TxOutputBandpassFilter.DefaultTapCount;
 
         var samples = AnalogFmSstvEncoder
             .RenderSegments([(toneHz, 20.0), (0.0, 20.0)], SampleRate)

@@ -170,6 +170,17 @@ internal static partial class Program
             Log.ReceiveHistoryRecorderResolveFailed(logger, ex);
         }
 
+        // ui_transition_plan.md step 12: same "eagerly resolved so its constructor's event
+        // subscriptions actually happen" reasoning as ReceiveHistoryRecorder immediately above.
+        try
+        {
+            host.Services.GetRequiredService<RxAudioAutoSaver>();
+        }
+        catch (Exception ex)
+        {
+            Log.RxAudioAutoSaverResolveFailed(logger, ex);
+        }
+
         // Tier C audit finding (blocker): restoring a persisted non-English culture was never
         // actually implemented, despite two separate doc comments (LocalizationSettings.cs's own,
         // JsonLocalizationService.cs's own) explicitly assigning this exact step to the composition
@@ -635,6 +646,7 @@ internal static partial class Program
 
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
+        services.AddSingleton<IClipboardImageService, ClipboardImageService>();
 
         // Options > General's Config/Database/Log storage-location rows (see AppLocationOverrides'
         // own doc comment). IApplicationRestarter backs the Config/Database "Restart Now" action --
@@ -710,6 +722,16 @@ internal static partial class Program
         services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
         services.AddSingleton<ReceiveHistoryRecorder>();
 
+        // ui_transition_plan.md step 12 (Auto-save RX audio): eagerly resolved just below (same
+        // "resolved once, explicitly" shape as ReceiveHistoryRecorder immediately above) so its
+        // constructor's ISstvSessionService/IReceiveHistoryStore event subscriptions start even if
+        // nothing else in the DI graph ever asks for it -- but RxHistoryPaneViewModel ALSO depends on
+        // it (via IRxAudioAutoSaver, auditor-caught: without a live AudioAttached subscriber, a
+        // just-received frame's in-memory entry never picked up its audio path). The interface
+        // registration below forwards to this SAME singleton instance, not a second one.
+        services.AddSingleton<RxAudioAutoSaver>();
+        services.AddSingleton<IRxAudioAutoSaver>(sp => sp.GetRequiredService<RxAudioAutoSaver>());
+
         // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
         // (same history.db file as RX history above), ADIF import/export, ADIF-over-UDP streaming
         // (generalized 2026-08-15 from a GridTracker-only streamer to fan the same WSJT-X
@@ -772,6 +794,10 @@ internal static partial class Program
         services.AddSingleton<IRadioProtocolFactory>(CreateHamlibProtocolFactory);
         services.AddSingleton<IRadioProtocolFactory, FlrigProtocolFactory>();
         services.AddSingleton<IRadioController, RadioController>();
+        // ui_transition_plan.md step 6 (T2-4): narrow adapter for ReceiveHistoryRecorder -- see
+        // IRadioStateProvider's own doc comment for why this is a real adapter over IRadioController,
+        // not a cast of IRadioSessionService.
+        services.AddSingleton<IRadioStateProvider, RadioStateProvider>();
 
         // flrig's own named HttpClient -- explicit Timeout backstop (see FlrigClientProtocol's own
         // doc comment for why a per-call CancellationToken alone isn't enough: the un-key retry path
@@ -795,7 +821,7 @@ internal static partial class Program
         // ScanlineStudio.Application services -- the only things ScanlineStudio.UI is allowed to depend on
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
-        services.AddSingleton<ISstvSessionService, SstvSessionService>();
+        services.AddSingleton<ISstvSessionService>(CreateSstvSessionService);
         services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
 
         // Configurations-preset backlog, Phase 3 (2026-08-28) -- orchestrates across both session
@@ -827,6 +853,38 @@ internal static partial class Program
         }
 
         return HamlibProtocolFactory.Create(radioSettings.HamlibLibraryPath, loggerFactory);
+    }
+
+    /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): constructs the normal DI-resolved
+    /// <see cref="SstvSessionService"/>, then applies the PERSISTED auto-save-audio setting to it via
+    /// <see cref="ISstvSessionService.SetAutoSaveAudioEnabled"/>/<see cref="ISstvSessionService.SetAudioDirectory"/>
+    /// before returning it -- without this, the feature would stay off from app launch even if the
+    /// user enabled it in a previous session, until they happened to re-open and re-save Options.
+    /// Mirrors <see cref="CreateSstvDecoder"/>'s own "read settings synchronously inside the DI
+    /// factory" pattern. Deliberately does NOT give <see cref="SstvSessionService"/> itself an
+    /// <see cref="IReceiveHistoryStore"/> constructor dependency -- that would blur the layering the
+    /// plan doc's Correlation design depends on (only the not-yet-built <c>RxAudioAutoSaver</c> needs
+    /// that reference).</summary>
+    internal static SstvSessionService CreateSstvSessionService(IServiceProvider services)
+    {
+        var service = ActivatorUtilities.CreateInstance<SstvSessionService>(services);
+
+        var loggerFactory = services.GetRequiredService<ILoggerFactory>();
+        try
+        {
+            var audioSettings = services.GetRequiredService<IReceiveHistoryStore>().GetAudioSettingsAsync().GetAwaiter().GetResult();
+            service.SetAutoSaveAudioEnabled(audioSettings.Enabled);
+            service.SetAudioDirectory(audioSettings.Directory);
+        }
+        catch (Exception ex)
+        {
+            // Same "log and fall back to defaults (off)" pattern as CreateSstvDecoder's own settings
+            // reads -- a corrupt/unreadable settings section must not prevent the whole app from
+            // starting, and "auto-save-audio stays off" is a safe, non-destructive fallback.
+            Log.SettingsSectionReadFailed(loggerFactory.CreateLogger(nameof(Program)), ReceiveHistorySettings.SectionKey, ex);
+        }
+
+        return service;
     }
 
     internal static void RegisterSstvServices(IServiceCollection services)
@@ -893,6 +951,15 @@ internal static partial class Program
             demodType: resolved.DemodType,
             rxBpfPreset: resolved.RxBpfPreset,
             rxBufferMode: resolved.RxBufferMode,
+            pllVcoGain: resolved.PllVcoGain,
+            pllLoopOrder: resolved.PllLoopOrder,
+            pllLoopCutoffHz: resolved.PllLoopCutoffHz,
+            pllOutputOrder: resolved.PllOutputOrder,
+            pllOutputCutoffHz: resolved.PllOutputCutoffHz,
+            zeroCrossingSmoothingMode: resolved.ZeroCrossingSmoothingMode,
+            zeroCrossingOutputOrder: resolved.ZeroCrossingOutputOrder,
+            zeroCrossingOutputCutoffHz: resolved.ZeroCrossingOutputCutoffHz,
+            zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz,
             sampleRate: sampleRate,
             loggerFactory: loggerFactory);
     }
@@ -922,6 +989,9 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve ReceiveHistoryRecorder; RX images will not be auto-saved to history")]
         public static partial void ReceiveHistoryRecorderResolveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve RxAudioAutoSaver; RX audio will not be attached to history entries")]
+        public static partial void RxAudioAutoSaverResolveFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Avalonia lifetime started")]
         public static partial void AvaloniaLifetimeStarted(ILogger logger);

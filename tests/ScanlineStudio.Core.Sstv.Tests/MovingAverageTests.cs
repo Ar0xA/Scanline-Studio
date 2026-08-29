@@ -46,4 +46,52 @@ public class MovingAverageTests
 
         Assert.Equal(5.0, average.Add(5.0), precision: 12);
     }
+
+    // Options stub backlog item 2 (docs/plans/options-stub-item2-zerocrossing-tuning-plan.md):
+    // SetCount is the one CSmooz operation MovingAverage didn't have yet -- ZeroCrossingFrequencyCounter's
+    // own SetTuning needs it to resize/reset the FIR smoothing window on demand.
+
+    [Fact]
+    public void SetCount_ToANewSize_ReallocatesAndClears()
+    {
+        var average = new MovingAverage(3);
+        average.Add(10.0);
+        average.Add(10.0);
+        average.Add(10.0); // full: avg == 10
+
+        average.SetCount(5);
+
+        // New, larger window, genuinely empty -- reflects only the single new value.
+        Assert.Equal(4.0, average.Add(4.0), precision: 12);
+        Assert.Equal(3.0, average.Add(2.0), precision: 12); // avg of [4,2]
+    }
+
+    [Fact]
+    public void SetCount_ToTheSameSize_StillClears()
+    {
+        // sstv.h:125-127's else branch, same real legacy quirk Clear_RestartsFromGenuinelyEmpty above
+        // exercises via the parameterless Clear() -- SetCount itself must reproduce it too, since
+        // ZeroCrossingFrequencyCounter.SetTuning calls SetCount unconditionally on every apply, even
+        // when the resolved window size hasn't changed.
+        var average = new MovingAverage(3);
+        average.Add(10.0);
+        average.Add(10.0);
+        average.Add(10.0); // full: avg == 10
+
+        average.SetCount(3);
+
+        Assert.Equal(5.0, average.Add(5.0), precision: 12);
+    }
+
+    [Fact]
+    public void SetCount_Zero_FloorsToOne()
+    {
+        // CSmooz::SetCount: `if (!n) n = 1;`
+        var average = new MovingAverage(3);
+
+        average.SetCount(0);
+
+        Assert.Equal(7.0, average.Add(7.0), precision: 12);
+        Assert.Equal(9.0, average.Add(9.0), precision: 12); // window size 1: the OLD value is gone
+    }
 }

@@ -6,6 +6,7 @@ using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -167,12 +168,13 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
     [Fact]
     public async Task SwitchToPresetAsync_DecoderBundleChanged_PushesTheWholeBundle()
     {
-        // All 6 Request* calls asserted, not just 3 -- round-1 code-review nit: the original version
+        // All Request* calls asserted, not just some -- round-1 code-review nit: the original version
         // of this test only checked SenseLevel/AutoSyncEnabled/the reconfiguration bundle, so deleting
         // any of the RequestAutoStopEnabled/RequestAutoSlantEnabled/RequestSyncRestartEnabled lines in
         // PushDecoderChanges would still have passed. AutoStopEnabled/AutoSlantEnabled/SyncRestartEnabled
         // set to the OPPOSITE of both FakeSstvDecoder's own construction defaults and
         // SstvDecoderSettings.Resolve()'s own defaults, so a genuine change is actually exercised.
+        // PLL tuning fields (Options stub backlog item 1) added the same way, non-default values.
         var (service, decoder, _, _, _, _, presetStore, _) = CreateService();
         var preset = new AppSettings().WithSection(
             SstvDecoderSettings.SectionKey,
@@ -180,6 +182,8 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
             {
                 SenseLevel = 3, AutoSyncEnabled = false, AutoStopEnabled = true, AutoSlantEnabled = false,
                 SyncRestartEnabled = false, RxBpfPreset = RxBpfPreset.Narrow, DemodType = DemodType.Pll, RxBufferMode = RxBufferMode.Off,
+                PllVcoGain = 2.5, PllLoopOrder = 6, PllLoopCutoffHz = 1300, PllOutputOrder = 8, PllOutputCutoffHz = 850,
+                ZeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Fir, ZeroCrossingOutputOrder = 9, ZeroCrossingOutputCutoffHz = 700, ZeroCrossingSmoothingFrequencyHz = 3000,
             },
             SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
         await presetStore.SavePresetAsync("Test", preset);
@@ -194,6 +198,17 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         Assert.False(decoder.SyncRestartEnabled);
         Assert.Equal(1, decoder.RequestReconfigurationCallCount);
         Assert.Equal((RxBpfPreset.Narrow, DemodType.Pll, RxBufferMode.Off), decoder.LastRequestedReconfiguration);
+        Assert.Equal(1, decoder.RequestPllTuningCallCount);
+        Assert.Equal(2.5, decoder.LastPllVcoGain);
+        Assert.Equal(6, decoder.LastPllLoopOrder);
+        Assert.Equal(1300, decoder.LastPllLoopCutoffHz);
+        Assert.Equal(8, decoder.LastPllOutputOrder);
+        Assert.Equal(850, decoder.LastPllOutputCutoffHz);
+        Assert.Equal(1, decoder.RequestZeroCrossingTuningCallCount);
+        Assert.Equal(ZeroCrossingSmoothingMode.Fir, decoder.LastZeroCrossingSmoothingMode);
+        Assert.Equal(9, decoder.LastZeroCrossingOutputOrder);
+        Assert.Equal(700, decoder.LastZeroCrossingOutputCutoffHz);
+        Assert.Equal(3000, decoder.LastZeroCrossingSmoothingFrequencyHz);
     }
 
     [Fact]
@@ -208,6 +223,59 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         await service.SwitchToPresetAsync("Test");
 
         Assert.Equal(0, decoder.RequestReconfigurationCallCount);
+    }
+
+    // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: auditor-caught round 1 -- without
+    // this push, a preset switch left capture following the PREVIOUS preset's enable flag/directory
+    // until an app restart, even though settingsStore/Options/the Gallery Storage card all already
+    // show the new preset's values (ISstvSessionService.SetAutoSaveAudioEnabled/SetAudioDirectory are
+    // volatile fields cached at the decode path, never re-read from settings on their own).
+
+    [Fact]
+    public async Task SwitchToPresetAsync_ReceiveHistorySectionPresent_LiveAppliesAutoSaveAudioEnabledAndTheResolvedDirectory()
+    {
+        // Behavioral, not a call-count assertion -- proves the live-apply actually took effect, not
+        // just that some method was invoked. Directory is deliberately the RAW value a preset would
+        // carry (never normalized the way SqliteReceiveHistoryStore.SetAudioSettingsAsync's own
+        // Path.GetFullPath call normalizes a live Options edit) -- PushReceiveHistoryChanges must
+        // resolve it itself via ReceiveHistorySettings.ResolveAudioDirectory, not assume it's already
+        // resolved.
+        var (service, decoder, _, sstvSession, _, _, presetStore, audioEngine) = CreateService();
+        var presetAudioDirectory = Directory.CreateTempSubdirectory("scanlinestudio-preset-audio-test-").FullName;
+        _presetDirectories.Add(presetAudioDirectory);
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            ReceiveHistorySettings.SectionKey,
+            new ReceiveHistorySettings { AutoSaveAudioEnabled = true, AudioDirectory = presetAudioDirectory },
+            ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings));
+
+        var result = await service.SwitchToPresetAsync("Test");
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+
+        decoder.SampleRate = 50;
+        await sstvSession.StartReceivingAsync();
+
+        // SetAutoSaveAudioEnabled(true) applied live: arming now happens on ModeDetected, which it
+        // would not if the session were still following the OLD (disabled) preset's cached flag.
+        decoder.RaiseModeDetected(SstvModeRegistry.Robot36);
+        Assert.True(sstvSession.IsAudioAutoSaveActive);
+
+        // SetAudioDirectory(<resolved>) applied live: the resulting scratch subtree lands under the
+        // PRESET's own directory, not SstvSessionService's own DefaultAudioDirectory fallback. Waits
+        // for the actual background encode+write, matching SstvSessionServiceAudioAutoSaveTests' own
+        // WaitForAudioSliceReadyAsync pattern -- the scratch directory is only created inside that
+        // background write, not synchronously on the capture-push thread.
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        sstvSession.AudioSliceReady += (_, _) => tcs.TrySetResult();
+        audioEngine.PushCapturedSamples(new float[10]);
+        audioEngine.PushCapturedSamples(new float[10]);
+        decoder.RaiseDecodeRestarted(SstvModeRegistry.Robot36);
+        using var cts = new CancellationTokenSource(2000);
+        await using (cts.Token.Register(() => tcs.TrySetCanceled()))
+        {
+            await tcs.Task;
+        }
+
+        Assert.True(Directory.Exists(Path.Combine(presetAudioDirectory, "scratch")));
     }
 
     [Fact]

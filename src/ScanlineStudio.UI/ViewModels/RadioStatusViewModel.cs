@@ -52,11 +52,61 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// property for a different display context.</summary>
     public string FrequencyDisplayOrPlaceholder => _currentFrequencyHz > 0 ? FrequencyDisplay : "—";
 
+    /// <summary>ui_transition_plan.md step 5 (T1-6): the raw live value behind
+    /// <see cref="FrequencyDisplayOrPlaceholder"/>, for a consumer that needs the number itself (the
+    /// Logbook prefill's fallback when the RX frame has no latched frequency of its own -- see
+    /// <c>MainWindow.axaml.cs</c>'s own <c>LogQsoRequested</c> handler). Same "no rig has ever
+    /// reported a frequency this session" null convention as that property.</summary>
+    public long? CurrentFrequencyHz => _currentFrequencyHz > 0 ? _currentFrequencyHz : null;
+
+    /// <summary>Companion to <see cref="CurrentFrequencyHz"/> -- gated on the SAME "has a rig ever
+    /// reported" condition, deliberately NOT just <see cref="SelectedRadioMode"/> directly: that
+    /// property defaults to <see cref="RadioMode.Usb"/> even with no radio ever connected (a
+    /// TX-mode-picker default, not a claim about a real rig), so using it unconditionally as a
+    /// Logbook fallback would fabricate "USB" out of thin air for an operator who never had a radio
+    /// connected at all.</summary>
+    public RadioMode? CurrentRadioModeOrNull => _currentFrequencyHz > 0 ? SelectedRadioMode : null;
+
     [ObservableProperty]
     private string _modeDisplay;
 
     [ObservableProperty]
     private string _frequencyInputMhz = string.Empty;
+
+    /// <summary>ui_transition_plan.md step 11 (T2-1): the VFO card's 40px frequency readout was
+    /// display-only -- <see cref="SetFrequencyCommand"/>/<see cref="FrequencyInputMhz"/> above were
+    /// already fully built and tested (this class' own doc comment already called out "an editable
+    /// frequency/mode control" as the piece's intent), just never reachable from any View. This flag
+    /// swaps the readout for an inline <c>TextBox</c> bound to <see cref="FrequencyInputMhz"/> --
+    /// Enter applies via <see cref="SetFrequencyCommand"/> (which now also exits edit mode on
+    /// success only, per <c>RadioHeaderView.axaml.cs</c>'s own key-handling doc comment), Escape
+    /// reverts without applying.</summary>
+    [ObservableProperty]
+    private bool _isEditingFrequency;
+
+    /// <summary>Backs the readout's click-to-edit affordance -- pre-fills
+    /// <see cref="FrequencyInputMhz"/> from whatever is CURRENTLY displayed (not a blank field), so
+    /// clicking to fix a typo or nudge the frequency doesn't require retyping the whole value. Empty
+    /// when no rig has ever reported a frequency this session (<see cref="CurrentFrequencyHz"/> is
+    /// null), matching every other "no radio yet" placeholder convention in this class -- editing
+    /// still works from blank, it just doesn't fabricate a starting number.</summary>
+    [RelayCommand]
+    private void BeginEditFrequency()
+    {
+        // Auditor-caught gap: without this increment, a double-Enter on a slow backend (Community
+        // Toolkit's [RelayCommand] defaults to AllowConcurrentExecutions=true, confirmed directly
+        // against AsyncRelayCommand.Execute -- no CanExecute check blocks the second call) starts a
+        // second in-flight SetFrequencyAsync under the SAME session id. If the operator closes that
+        // edit and reopens a new one before the second call finishes, its stale completion still
+        // matches _frequencyEditSessionId and clobbers the new session -- the exact race
+        // _frequencyEditSessionId exists to prevent.
+        _frequencyEditSessionId++;
+        FrequencyInputMhz = CurrentFrequencyHz is { } hz
+            ? (hz / 1_000_000.0).ToString("0.000000", CultureInfo.InvariantCulture)
+            : string.Empty;
+        ErrorMessage = null;
+        IsEditingFrequency = true;
+    }
 
     /// <summary>Any of this strip's commands can call into <see cref="IRadioSessionService"/> while no
     /// radio is connected (a routine, common state, not an edge case) -- that throws
@@ -256,10 +306,14 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(VfoKickerDisplay))]
     private bool _isKeyed;
 
-    /// <summary>VFO card kicker text. "VFO A" stays a fixed label -- no dual-VFO/memory-channel
-    /// concept exists anywhere in <see cref="IRadioSessionService"/> to back a real "A", and the
-    /// former "M1" segment was dropped for the same reason (stub sweep, 2026-08-26). RX/TX now
-    /// reflects <see cref="IsKeyed"/> for real, replacing what used to be a static "RX" literal.</summary>
+    /// <summary>VFO card kicker text -- just "RX"/"TX", reflecting <see cref="IsKeyed"/> for real.
+    /// ui_transition_plan.md step 11 (T2-1): the "VFO A" prefix this used to carry was dropped
+    /// outright -- no dual-VFO/memory-channel concept exists anywhere in
+    /// <see cref="IRadioSessionService"/> to back a real "A" (the former "M1" segment was dropped
+    /// for the same reason, stub sweep 2026-08-26), and no CAT backend this app supports (Hamlib,
+    /// rigctld, flrig) reports which VFO is actually active, so claiming "A" specifically would be
+    /// fabricated, not just imprecise. Add it back for real only if a CAT layer ever exposes the
+    /// active VFO -- don't guess "A" as a placeholder in the meantime.</summary>
     public string VfoKickerDisplay => _localization.GetString(
         IsKeyed ? "RadioStatus.VfoCaptionTx" : "RadioStatus.VfoCaptionRx");
 
@@ -681,14 +735,48 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
+    /// <summary>ui_transition_plan.md step 11 (T2-1): a plausible RADIO range, not a protocol/rig-
+    /// specific limit -- code-review correction: an amateur-transceiver-only range (0.1-1500 MHz)
+    /// was too tight for what this app's own Hamlib backend actually enumerates
+    /// (<see cref="ScanlineStudio.Core.Radio.Hamlib.HamlibDiscoveryService"/> walks EVERY Hamlib rig
+    /// model with no transceiver-only curation -- real, in-use wideband receivers like the IC-R8600
+    /// (10 kHz-3 GHz) or SDR backends easily exceed both ends). Widened to 1 kHz-30 GHz: still
+    /// catches the actual failure mode this guard exists for (a raw Hz value like "14230000" typed
+    /// into an MHz field, ~4 orders of magnitude over any real antenna/rig range) without rejecting
+    /// real hardware this app supports. A rig's own real range (if narrower) still rejects
+    /// out-of-band values as a genuine <see cref="RadioProtocolException"/> -&gt;
+    /// <see cref="ErrorMessage"/>, same as <see cref="SetBandwidthAsync"/>'s own doc comment already
+    /// accepts for bandwidth.</summary>
+    private const double MinPlausibleFrequencyMhz = 0.001;
+
+    private const double MaxPlausibleFrequencyMhz = 30_000.0;
+
+    /// <summary>Code-review finding: a slow CAT backend (flrig's own frequency-set verifies via a
+    /// readback poll loop, up to ~2.65s) can complete well after the operator cancelled that edit
+    /// and opened a NEW one -- without this, the stale completion's own
+    /// <c>Dispatcher.UIThread.Post</c> (success OR failure) would close/error the WRONG, unrelated,
+    /// still-in-progress edit session, discarding whatever the operator had already typed into it.
+    /// UI-thread-only (every read/write happens on a RelayCommand invocation or inside a
+    /// Dispatcher.UIThread.Post callback, never a background thread), so a plain int is sufficient --
+    /// no Interlocked needed, unlike this class' own cross-thread request latches in
+    /// ScanlineStudio.Core.Sstv.</summary>
+    private int _frequencyEditSessionId;
+
     [RelayCommand]
     private async Task SetFrequencyAsync()
     {
-        if (!double.TryParse(FrequencyInputMhz, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz))
+        if (!double.TryParse(FrequencyInputMhz, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz)
+            || !double.IsFinite(mhz) || mhz is < MinPlausibleFrequencyMhz or > MaxPlausibleFrequencyMhz)
         {
+            // Stays in edit mode (IsEditingFrequency unchanged) -- an invalid entry is rejected
+            // inline so the operator can see why and correct it, not silently reverted.
+            ErrorMessage = _localization.GetString("RadioStatus.Error.ImplausibleFrequency");
             return;
         }
 
+        // Captured BEFORE the first await, on the UI thread -- see _frequencyEditSessionId's own
+        // doc comment for why a stale completion must not touch a DIFFERENT, later edit session.
+        var session = _frequencyEditSessionId;
         Log.SetFrequencyInvoked(_logger, mhz);
         try
         {
@@ -698,12 +786,41 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
             // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
             await _radioSession.SetFrequencyAsync((long)Math.Round(mhz * 1_000_000)).ConfigureAwait(false);
+            // Success only -- exits the inline editor back to the plain readout. Posted, not a bare
+            // assignment: this continuation can resume off the UI thread (ConfigureAwait(false)
+            // above), same reasoning as the catch block's own Dispatcher.UIThread.Post immediately
+            // below.
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_frequencyEditSessionId == session)
+                {
+                    IsEditingFrequency = false;
+                }
+            });
         }
         catch (Exception ex)
         {
             Log.SetFrequencyFailed(_logger, mhz, ex);
-            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (_frequencyEditSessionId == session)
+                {
+                    ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected");
+                }
+            });
         }
+    }
+
+    /// <summary>Bound to the inline frequency-entry TextBox's own Escape handling
+    /// (<c>RadioHeaderView.axaml.cs</c>) -- reverts without applying, same "Escape means cancel, no
+    /// side effect" contract as every other inline-edit surface in this app
+    /// (<c>OverlayElementViewModel.IsEditingText</c>'s own Escape branch).</summary>
+    [RelayCommand]
+    private void CancelEditFrequency()
+    {
+        _frequencyEditSessionId++;
+        ErrorMessage = null;
+        IsEditingFrequency = false;
     }
 
     /// <summary>Explicit-apply command backing the BW pill's staged <see cref="BandwidthInputHz"/>
@@ -732,6 +849,20 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [RelayCommand]
     private async Task ApplyPresetAsync(FrequencyPreset preset)
     {
+        // Code-review finding: a preset persisted before this validation existed, or hand-edited in
+        // the settings file, could still carry an implausible frequency -- SavePresetsInternalAsync's
+        // own new guard only protects presets saved AFTER this fix, not ones already on disk.
+        var presetMhz = preset.FrequencyHz / 1_000_000.0;
+        if (!double.IsFinite(presetMhz) || presetMhz is < MinPlausibleFrequencyMhz or > MaxPlausibleFrequencyMhz)
+        {
+            Log.ApplyPresetFailed(_logger, preset.Label, new InvalidOperationException("Implausible preset frequency."));
+            // InvalidPresetFrequency, not ImplausibleFrequency (auditor nit): this fires from a
+            // button click with nothing typed by the operator -- the direct-entry field's wording
+            // ("Enter a frequency between...") doesn't fit; the preset-labeled wording does.
+            ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetFrequency", preset.Label);
+            return;
+        }
+
         Log.ApplyPresetInvoked(_logger, preset.Label, preset.FrequencyHz, preset.Mode);
         try
         {
@@ -818,6 +949,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 // success. Now aborts the whole save instead, leaving EditorRows untouched -- same
                 // "report the error, don't discard unsaved edits" contract as the exception handler
                 // below.
+                Log.SavePresetsInvalidFrequency(_logger, row.Label);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetFrequency", row.Label));
+                return false;
+            }
+
+            // Code-review finding: this parse path had no plausibility check at all, so a Favourite
+            // could store/apply a value SetFrequencyAsync's own direct-entry field would reject
+            // (same bounds as MinPlausibleFrequencyMhz/MaxPlausibleFrequencyMhz above).
+            if (!double.IsFinite(mhz) || mhz is < MinPlausibleFrequencyMhz or > MaxPlausibleFrequencyMhz)
+            {
                 Log.SavePresetsInvalidFrequency(_logger, row.Label);
                 Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetFrequency", row.Label));
                 return false;

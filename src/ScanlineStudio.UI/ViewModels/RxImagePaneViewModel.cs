@@ -8,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
+using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
@@ -58,6 +59,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     private readonly IReceiveHistoryStore _historyStore;
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<RxImagePaneViewModel> _logger;
+    private readonly IUrlLauncher? _urlLauncher;
+    private readonly IClipboardImageService? _clipboardImageService;
+    private readonly ILogger<ImageViewerWindowViewModel>? _imageViewerLogger;
     private readonly DispatcherTimer _telemetryTimer;
     private readonly object _gate = new();
 
@@ -93,6 +97,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// ReceiveHistoryEntry id yet").</summary>
     private string? _currentEntryId;
 
+    /// <summary>ui_transition_plan.md step 6 (T2-4). The rig's frequency/mode LATCHED from
+    /// <see cref="ReceiveHistoryEntry.FrequencyHz"/>/<see cref="ReceiveHistoryEntry.RigMode"/> at
+    /// <see cref="OnHistoryRecorded"/> -- read off the DB entry itself, NEVER re-read from live radio
+    /// state, so the on-screen row and the stored row are identical by construction (auditor
+    /// plan-review, 2026-08-29). <see langword="null"/> for the whole duration of a reception (from
+    /// <see cref="OnModeDetected"/>'s reset until this frame's own <see cref="OnHistoryRecorded"/>
+    /// fires) -- a deliberate, accepted behavior change from the old always-live row: showing the
+    /// live VFO while still decoding would still be "correct" in the moment, but reintroduces
+    /// exactly the machinery (a second live-vs-latched code path) this fix exists to remove, for a
+    /// value that's about to be overwritten anyway once the frame completes.</summary>
+    private long? _latchedFrequencyHz;
+
+    private RadioMode? _latchedRigMode;
+
     /// <summary>Guards <see cref="OnNoteChanged"/>/<see cref="OnIsFlaggedChanged"/> while
     /// <see cref="OnHistoryRecorded"/>/<see cref="OnModeDetected"/> are themselves assigning
     /// <see cref="Note"/>/<see cref="IsFlagged"/> from a freshly-recorded/reset entry -- same
@@ -111,6 +129,33 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     public ObservableCollection<RxHistoryEntryViewModel> PreviousFrames { get; } = [];
 
     private const int PreviousFramesCapacity = 2;
+
+    /// <summary>ui_transition_plan.md step 3 (T1-5). Handled in MainWindow.axaml.cs, same
+    /// "source VM constructs the child view-model, the handler just wraps it in a View" convention
+    /// <see cref="MainViewModel.MacrosReferenceRequested"/> already uses.</summary>
+    public event Action<ImageViewerWindowViewModel>? ImageViewerRequested;
+
+    /// <summary>Opens the full-size viewer over <see cref="PreviousFrames"/>. A null
+    /// <paramref name="startEntry"/> (the live incoming-frame area's own double-tap -- it has no
+    /// single <c>ReceiveHistoryEntry</c> of its own while still decoding) defaults to index 0:
+    /// <see cref="PreviousFrames"/> is sorted most-recent-first (see its own doc comment), so index
+    /// 0 is the most recently COMPLETED reception, the closest real stand-in for "the current
+    /// picture" once one exists. A silent no-op before any reception has completed, or when the
+    /// optional viewer dependencies are unset (see this class's own constructor doc comment).
+    /// </summary>
+    [RelayCommand]
+    private void OpenImageViewer(RxHistoryEntryViewModel? startEntry)
+    {
+        if (PreviousFrames.Count == 0 || _urlLauncher is null || _clipboardImageService is null || _imageViewerLogger is null)
+        {
+            return;
+        }
+
+        var startIndex = startEntry is null ? 0 : Math.Max(PreviousFrames.IndexOf(startEntry), 0);
+        var viewerViewModel = new ImageViewerWindowViewModel(
+            new List<RxHistoryEntryViewModel>(PreviousFrames), startIndex, _historyStore, _urlLauncher, _clipboardImageService, _localization, _imageViewerLogger);
+        ImageViewerRequested?.Invoke(viewerViewModel);
+    }
 
     /// <summary>Same thumbnail size as <c>RxHistoryPaneViewModel.ThumbnailMaxDimension</c> -- kept as
     /// its own constant rather than a shared one since the two view-models have no common base to
@@ -278,15 +323,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(AgcGainDisplay))]
     private double _signalPeakLevel;
 
+    /// <summary>ui_transition_plan.md step 12, Step 4: real, varying backing for the main-window
+    /// status bar's auto-save-audio chip -- see <see cref="ISstvSessionService.IsAudioAutoSaveActive"/>'s
+    /// own doc comment for why this must never be a static reflection of the Options enable toggle.</summary>
+    [ObservableProperty]
+    private bool _isAudioAutoSaveActive;
+
     /// <summary>The currently (or most recently) auto-detected RX mode -- real data from
     /// <see cref="ISstvSessionService.ModeDetected"/>. spec/18-path-to-1.0.md High item 7 update:
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/> still always auto-detects via
     /// the VIS header by default, but a one-shot manual override now exists --
     /// <see cref="QuickSelectModeCommand"/> (backed by <see cref="ISstvSessionService.ForceMode"/>)
     /// forces the NEXT decode into a specific mode, matching legacy's real quick-mode-button click;
-    /// it is NOT a persistent lock (auto-detect resumes for the transmission after). mock2's Auto/
-    /// Locked segmented control still shows "Locked" disabled (Auto statically checked) because no
-    /// PERSISTENT lock feature exists to back it -- see that control's own tooltip.</summary>
+    /// it is NOT a persistent lock (auto-detect resumes for the transmission after). mock2's own
+    /// Auto/Locked segmented control (which used to show "Locked" permanently disabled, with no
+    /// feature behind it) was removed outright 2026-08-26; the real persistent-lock feature this
+    /// summary used to describe as missing now exists as a SEPARATE, differently-shaped mechanism --
+    /// see <see cref="HeldMode"/>/<see cref="HoldModeCommand"/> below.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LogQsoCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveFrameCommand))]
@@ -395,6 +448,26 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// is a Try-pattern for exactly this reason.</summary>
     public string GridDisplay => $"{LookupGrid ?? "—"} / {(MaidenheadLocator.TryComputeDistanceBearing(OperatorGrid, LookupGrid, out var distanceKm, out _) ? MaidenheadLocator.FormatDistance(distanceKm) : "--")}";
 
+    /// <summary>ui_transition_plan.md step 6 (T2-4). Same "{0:0.000000} MHz" format
+    /// <see cref="RadioStatusViewModel.FrequencyDisplay"/> already uses -- duplicated deliberately
+    /// (a one-line format string, same "two view-models, no common base to hang it on" precedent
+    /// <see cref="PreviousFramesThumbnailMaxDimension"/>'s own doc comment already establishes in
+    /// this class), not shared across layers for this. "—" while no reception has completed yet
+    /// (see <see cref="_latchedFrequencyHz"/>'s own doc comment for why that's the whole decoding
+    /// duration, not a transient gap).</summary>
+    public string LatchedFrequencyDisplay => _latchedFrequencyHz is { } hz
+        ? _latchedRigMode is { } mode
+            ? $"{hz / 1_000_000.0:0.000000} MHz · {mode}"
+            : $"{hz / 1_000_000.0:0.000000} MHz"
+        : "—";
+
+    /// <summary>ui_transition_plan.md step 5 (T1-6): raw accessors for the Logbook prefill (Log QSO,
+    /// wired in <c>MainWindow.axaml.cs</c>) -- <see cref="LatchedFrequencyDisplay"/> is a formatted
+    /// STRING, not a value a form field can bind/edit.</summary>
+    public long? LatchedFrequencyHz => _latchedFrequencyHz;
+
+    public RadioMode? LatchedRigMode => _latchedRigMode;
+
     [ObservableProperty]
     private string? _qrzLookupErrorMessage;
 
@@ -411,7 +484,24 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     private bool _isQrzLookupConfigured = true;
 
-    public RxImagePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization, ILogbookSessionService logbookSession, IFilePickerService filePickerService, IReceiveHistoryStore historyStore, ISettingsStore settingsStore, ILogger<RxImagePaneViewModel> logger)
+    /// <summary>ui_transition_plan.md step 3 (T1-5): the trailing 3 dependencies are optional
+    /// (nullable, default null) purely so this class's ~100 existing direct-construction test call
+    /// sites don't all need updating for a feature most of them never exercise -- same trade-off
+    /// <see cref="TxImageEditorPaneViewModel"/>'s own <c>canTransmitNow</c> parameter documents.
+    /// Production DI always supplies all three; <see cref="OpenImageViewerCommand"/> is a silent
+    /// no-op without them (nothing a test that doesn't care about this feature would ever notice).
+    /// </summary>
+    public RxImagePaneViewModel(
+        ISstvSessionService sstvSession,
+        ILocalizationService localization,
+        ILogbookSessionService logbookSession,
+        IFilePickerService filePickerService,
+        IReceiveHistoryStore historyStore,
+        ISettingsStore settingsStore,
+        ILogger<RxImagePaneViewModel> logger,
+        IUrlLauncher? urlLauncher = null,
+        IClipboardImageService? clipboardImageService = null,
+        ILogger<ImageViewerWindowViewModel>? imageViewerLogger = null)
     {
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
@@ -421,6 +511,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _historyStore = historyStore;
         _settingsStore = settingsStore;
         _logger = logger;
+        _urlLauncher = urlLauncher;
+        _clipboardImageService = clipboardImageService;
+        _imageViewerLogger = imageViewerLogger;
         // Direct field assignment, NOT the generated property setter -- this property has no
         // per-change side effect (unlike SenseLevel below), but seeding the field directly keeps
         // both settings' construction-time init consistent.
@@ -1011,6 +1104,64 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _sstvSession.ForceMode(mode);
     }
 
+    /// <summary>ui_transition_plan.md step 10 (T2-5): persistent RX mode lock -- genuinely NEW
+    /// UI/workflow, no legacy precedent (see <see cref="ISstvSessionService.SetModeLock"/>'s own doc
+    /// comment for the full design and the 2 rounds of plan-review it went through). Deliberately
+    /// worded "Hold"/"Holding"/"Release" throughout, not "Lock"/"Locked" -- that word is already
+    /// used for this SAME tab's sync-lock state (<see cref="SyncSourceDisplay"/>'s own
+    /// "Locked"/"Searching" values), and legacy's own "Lock" (SBLK) is a different feature entirely
+    /// (<c>SyncRestartEnabled</c>). <see langword="null"/> means nothing is held -- ordinary VIS
+    /// auto-detection, unaffected by this feature at all.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HeldModeDisplay))]
+    [NotifyCanExecuteChangedFor(nameof(ReleaseHeldModeCommand))]
+    private SstvModeDefinition? _heldMode;
+
+    /// <summary>Status text for the quick-mode grid header -- <see langword="null"/> (hidden) when
+    /// nothing is held.</summary>
+    public string? HeldModeDisplay => HeldMode is { } mode
+        ? _localization.GetString("Panes.RxImage.QuickMode.HoldingValue", QuickModeShortNames.GetShortName(mode))
+        : null;
+
+    /// <summary>Bound to each quick-mode slot's own "Hold this mode" context-menu entry
+    /// (<see cref="QuickModeSlotViewModel.HoldModeCommand"/>) -- explicit target, not "whatever was
+    /// last quick-selected" or "whatever is currently displayed as detected" (both real, cheaper
+    /// options a plan-review round rejected: the first is undefined while not receiving, since
+    /// <see cref="QuickSelectMode"/> early-returns in that state; the second,
+    /// <see cref="DetectedMode"/>, is never nulled at end-of-reception and would silently hold a
+    /// stale mode). Independent of <see cref="ISstvSessionService.ForceMode"/>: holding a mode does
+    /// not force the current reception into it -- it takes effect starting with the NEXT detected
+    /// reception (see <see cref="ISstvSessionService.SetModeLock"/>'s own timing contract).</summary>
+    [RelayCommand(CanExecute = nameof(CanHoldMode))]
+    private void HoldMode(SstvModeDefinition mode)
+    {
+        Log.HoldModeInvoked(_logger, mode.Id);
+        HeldMode = mode;
+        _sstvSession.SetModeLock(mode);
+    }
+
+    /// <summary>Code-review finding: <see cref="ISstvSessionService.SetModeLock"/>'s own doc comment
+    /// documents AVT as unsupported ("locking to or from AVT is not supported" -- a detected AVT
+    /// signal always trains/commits as AVT regardless, and substituting an AVT signal's own commit
+    /// TO AVT would take <c>Commit</c>'s AVT branch for a non-AVT-shaped signal, skipping anchor
+    /// correction/AFC/slant entirely), but nothing enforced it -- every one of the 43 reassignment
+    /// entries, AVT included, was reachable via "Hold this mode" with no gate at all. Discriminated
+    /// via <see cref="ISstvSessionService.GetVisHeaderInfo"/>, not a direct
+    /// <c>ScanlineStudio.Core.Sstv.SstvModeRegistry</c> reference (UI must not reference
+    /// <c>ScanlineStudio.Core.Sstv</c> directly -- same layering rule
+    /// <see cref="TxControlsPaneViewModel.VisHeaderText"/> already follows for this exact call).</summary>
+    private bool CanHoldMode(SstvModeDefinition mode) => _sstvSession.GetVisHeaderInfo(mode).Kind != VisHeaderKind.Avt;
+
+    private bool CanReleaseHeldMode() => HeldMode is not null;
+
+    [RelayCommand(CanExecute = nameof(CanReleaseHeldMode))]
+    private void ReleaseHeldMode()
+    {
+        Log.ReleaseHeldModeInvoked(_logger);
+        HeldMode = null;
+        _sstvSession.SetModeLock(null);
+    }
+
     /// <summary>The 16-slot quick-mode grid -- one entry per grid button, independent of the TX
     /// pane's own grid by design (confirmed with the user: reassigning here never touches
     /// <c>TxControlsPaneViewModel.QuickModeSlots</c>). Built synchronously from
@@ -1024,7 +1175,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         var resolved = QuickModeGridAssignment.Resolve(ids, _sstvSession.AvailableModes);
         for (var i = 0; i < resolved.Count; i++)
         {
-            var slot = new QuickModeSlotViewModel(i, resolved[i], QuickSelectModeCommand);
+            var slot = new QuickModeSlotViewModel(i, resolved[i], QuickSelectModeCommand, HoldModeCommand);
             foreach (var mode in _sstvSession.AvailableModes)
             {
                 slot.MenuEntries.Add(new QuickModeMenuEntryViewModel(mode, ReassignQuickModeSlotCommand, i));
@@ -1147,6 +1298,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         BufferedSampleCount = _sstvSession.BufferedSampleCount;
         SignalPeakLevel = _sstvSession.SignalPeakLevel;
         CaptureOverrunCount = _sstvSession.CaptureOverrunCount;
+        IsAudioAutoSaveActive = _sstvSession.IsAudioAutoSaveActive;
     }
 
     partial void OnDetectedModeChanged(SstvModeDefinition? value)
@@ -1192,6 +1344,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             // this one (accidentally flagging/annotating the wrong saved image).
             _lastSavedPath = null;
             _currentEntryId = null;
+            // ui_transition_plan.md step 6 (T2-4): same per-RECEPTION category as the two resets
+            // above -- station B's reception must start with no latched frequency/mode showing
+            // (station A's, or worse, unset-and-stale) until B's own OnHistoryRecorded fires.
+            _latchedFrequencyHz = null;
+            _latchedRigMode = null;
+            OnPropertyChanged(nameof(LatchedFrequencyDisplay));
             // Tier B audit finding: try/finally, not a bare set-then-reset -- these two property sets
             // raise PropertyChanged into live Avalonia bindings, which can throw; a throw here used to
             // leave _suppressFrameMetadataEdits stuck true for the process lifetime AND skip every
@@ -1491,6 +1649,11 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         }
 
         _currentEntryId = entry.Id;
+        // ui_transition_plan.md step 6 (T2-4): read OFF THE ENTRY, never re-read from live radio
+        // state -- see _latchedFrequencyHz's own doc comment for why.
+        _latchedFrequencyHz = entry.FrequencyHz;
+        _latchedRigMode = entry.RigMode;
+        OnPropertyChanged(nameof(LatchedFrequencyDisplay));
         // Tier B audit finding: try/finally -- see OnModeDetected's own comment on the same fix for
         // the same flag.
         try
@@ -1914,13 +2077,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// <summary>Piece C2 (RX tab Re-decode port): opens a WAV file via
     /// <see cref="IFilePickerService.PickOpenWavFileAsync"/> and decodes it via
     /// <see cref="ISstvSessionService.DecodeFromFileAsync"/> -- the SAME command backs both the RX
-    /// pane's own "Re-decode" button and the Tools menu's "Re-decode from WAV…" item (they are one
+    /// pane's own "Decode WAV…" button and the Tools menu's "Decode WAV file…" item (they are one
     /// feature with two entry points, not two separate features).</summary>
     [ObservableProperty]
     private string? _redecodeErrorMessage;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RedecodeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RedecodeFromPathCommand))]
     private bool _isRedecoding;
 
     private bool CanRedecode() => !IsRedecoding;
@@ -1935,10 +2099,55 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             return;
         }
 
+        await DecodeFileAsync(picked, ct);
+    }
+
+    /// <summary>Gallery/RX-details "Re-decode this frame" entry point (ui_transition_plan.md step 12,
+    /// Step 4) -- same decode call as <see cref="RedecodeAsync"/> above, but <paramref name="path"/>
+    /// (a completed reception's own auto-saved audio file) is already known, so there is no
+    /// file-picker step. Wired from <c>RxHistoryPaneViewModel.RedecodeRequested</c> via
+    /// <c>MainWindow.axaml.cs</c> -- see that event's own doc comment for why
+    /// <c>RxHistoryPaneViewModel</c> itself never calls <see cref="ISstvSessionService"/> directly
+    /// (it deliberately does not depend on it, to keep Gallery browsing from ever appearing to
+    /// interrupt a live RX decode).</summary>
+    [RelayCommand(CanExecute = nameof(CanRedecode))]
+    private async Task RedecodeFromPathAsync(string path, CancellationToken ct) => await DecodeFileAsync(path, ct);
+
+    /// <summary>Shared by both entry points above. Surfaces <see cref="ISstvSessionService.DecodeFromFileAsync"/>'s
+    /// own REAL failure reason (already-in-progress, transmit-in-flight, auto-detect-paused, sample-
+    /// rate mismatch, empty file -- see that method's own doc comment) rather than a generic message
+    /// -- it already throws a descriptive <see cref="InvalidOperationException"/> for every one of
+    /// those cases, so this just surfaces <see cref="Exception.Message"/> through a localized
+    /// template, same interpolation precedent as <c>OptionsWindowViewModel</c>'s
+    /// <c>Options.General.Storage.Error.SaveFailed</c>. Any OTHER exception type (e.g. a raw I/O
+    /// failure reading the WAV) still falls back to the generic message -- its <c>Message</c> is not
+    /// written to be operator-facing the way the documented <see cref="InvalidOperationException"/>
+    /// reasons are.</summary>
+    private async Task DecodeFileAsync(string path, CancellationToken ct)
+    {
+        // Auditor-caught (round 1 code-review): RedecodeFromPathCommand is invoked via a plain
+        // ICommand.Execute(path) from MainWindow.axaml.cs's cross-pane wiring, which does NOT consult
+        // CanExecute the way a bound Button would -- without this guard, a Gallery click while the
+        // Receive tab's own file-picker decode is already in flight would still enter this method,
+        // and its own `finally` would clear IsRedecoding out from under the FIRST (still-running)
+        // decode, re-enabling that button mid-decode. ISstvSessionService.DecodeFromFileAsync's own
+        // _fileDecodeInFlight guard already rejects the underlying decode either way (no data
+        // hazard), but this stops the state-clobber the exception path would otherwise cause.
+        if (IsRedecoding)
+        {
+            return;
+        }
+
+        RedecodeErrorMessage = null;
         IsRedecoding = true;
         try
         {
-            await _sstvSession.DecodeFromFileAsync(picked, ct);
+            await _sstvSession.DecodeFromFileAsync(path, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Log.RedecodeFailed(_logger, ex);
+            RedecodeErrorMessage = _localization.GetString("Panes.RxImage.Error.RedecodeFailedWithReason", ex.Message);
         }
         catch (Exception ex)
         {
@@ -1976,6 +2185,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode button pressed for unknown mode id {ModeId} -- no matching AvailableModes entry")]
         public static partial void QuickSelectModeUnknownId(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX mode hold set to {ModeId}")]
+        public static partial void HoldModeInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX mode hold released")]
+        public static partial void ReleaseHeldModeInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Abort invoked, abandoning current reception")]
         public static partial void AbortInvoked(ILogger logger);

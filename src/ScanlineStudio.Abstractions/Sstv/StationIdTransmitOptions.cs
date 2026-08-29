@@ -61,4 +61,30 @@ public sealed record StationIdTransmitOptions
     /// own "pass null when disabled" contract -- the caller collapses gate+value into this one
     /// nullable field rather than carrying a separate bool.</summary>
     public string? NrRstText { get; init; }
+
+    /// <summary><c>sys.m_CWID == 2</c>'s sound-file station ID (<c>OutputMMV</c>,
+    /// <c>Main.cpp:6847-6902</c>) -- already parsed, resampled to the TX rate, and normalized to this
+    /// port's `float` [-1.0, 1.0] contract by <c>MmvSoundFile.Resample</c> (no file I/O in
+    /// <c>AnalogFmSstvEncoder</c> itself). Non-null and non-empty means "play these samples," mirroring
+    /// how <see cref="CwEnabled"/>/<see cref="FskIdEnabled"/> are pre-resolved, not raw settings.
+    /// Mutually exclusive with <see cref="CwEnabled"/> (legacy's own single-value <c>sys.m_CWID</c>
+    /// tri-state, <c>Main.cpp:7021-7025</c> -- CW wins if a caller somehow set both); enforced at both
+    /// of <c>AnalogFmSstvEncoder</c>'s consumption sites (<c>EncodeAsyncCore</c>,
+    /// <c>EstimateSampleCount</c>), not assumed from how a caller constructs this. Left `null` on the
+    /// read-only preview path (<c>SstvSessionService.GetStationIdTransmitOptionsAsync</c>) even when
+    /// configured -- see <see cref="SoundFileIdEnabled"/> for the cheap, I/O-free flag that path uses
+    /// instead. A <c>sealed record</c>'s default <c>==</c>/<c>GetHashCode</c> compares this field by
+    /// buffer reference + offset + length (shallow), not content -- fine today since nothing compares
+    /// two instances by value, but worth knowing before relying on record equality in a future
+    /// test.</summary>
+    public ReadOnlyMemory<float>? SoundFileSamples { get; init; }
+
+    /// <summary>Cheap, I/O-free "is sound-file ID configured" signal (<c>CwIdMode == SoundFile</c> AND
+    /// a non-empty path), independent of whether <see cref="SoundFileSamples"/> was actually resolved
+    /// -- computed on BOTH the transmit path and the read-only preview path, unlike
+    /// <see cref="SoundFileSamples"/> itself (which the preview path deliberately skips resolving, to
+    /// avoid a file read/resample/IIR pass on every Options-dialog close). Exists purely so
+    /// <c>TxControlsPaneViewModel</c>'s Identification summary can report sound-file ID as configured
+    /// without needing the real audio.</summary>
+    public bool SoundFileIdEnabled { get; init; }
 }
