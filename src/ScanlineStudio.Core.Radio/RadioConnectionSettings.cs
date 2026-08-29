@@ -5,7 +5,7 @@ namespace ScanlineStudio.Core.Radio;
 /// <summary>The persisted, flat settings-section counterpart to <see cref="RadioConnectionSpec"/> —
 /// see that type's own doc comment for why persistence needs a separate DTO (the polymorphic
 /// <c>RadioConnectionSpec</c> hierarchy isn't JSON-source-gen-friendly across optional backend
-/// assemblies). <c>"none"</c>/<c>"rigctld"</c>/<c>"hamlib"</c>/<c>"flrig"</c> are meaningful — the
+/// assemblies). <c>"none"</c>/<c>"rigctld"</c>/<c>"hamlib"</c>/<c>"flrig"</c>/<c>"omnirig"</c> are meaningful — the
 /// Hamlib fields mirror <see cref="HamlibConnectionSpec"/>'s own shape exactly. flrig gets its own
 /// <see cref="FlrigHost"/>/<see cref="FlrigPort"/> fields rather than reusing <see cref="Host"/>/
 /// <see cref="Port"/> — different service, different default port, and sharing would let editing one
@@ -68,6 +68,7 @@ public static class RadioConnectionSettingsExtensions
                 },
             "flrig" when settings.FlrigHost is { Length: > 0 } flrigHost && settings.FlrigPort is int flrigPort
                 => new FlrigConnectionSpec(flrigHost, flrigPort),
+            "omnirig" => new OmniRigConnectionSpec(),
             _ => new NoneConnectionSpec(),
         };
 

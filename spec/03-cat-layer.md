@@ -44,15 +44,18 @@ hand-writing protocols anyway. It wasn't — the real alternative was never writ
    instance. flrig has a real, still-actively-used user base distinct from plain Hamlib/rigctld
    users. Implemented — see "Definition of done" below.
 
-**Accepted 2026-08-29** (`ui_transition_plan.md` Tier 3 decision — was "maybe later, not committed";
-now a real committed goal, still not yet designed/scheduled):
-
-5. **OmniRig client** (`ScanlineStudio.Radio.OmniRig`, Windows-only optional module, COM) — talks to an
-   already-running OmniRig instance as a client, the same relationship as (2)/flrig above. This is
-   distinct from legacy's own OmniRig integration (bundling OmniRig's OCX/TLB into the app itself,
-   rejected — see [docs/removed-features.md](../docs/removed-features.md)): here Scanline Studio is just another
+5. **OmniRig client** (`ScanlineStudio.Core.Radio.OmniRig`, Windows-only optional module, COM) —
+   talks to an already-running OmniRig instance (or, matching legacy's VCL `ckRunningOrNew` default,
+   launches one if none is running — standard CLSID-based COM activation, not a choice this client
+   makes) as a client, the same relationship as (2)/flrig above. This is distinct from legacy's own
+   OmniRig integration (bundling OmniRig's OCX/TLB into the app itself, rejected — see
+   [docs/removed-features.md](../docs/removed-features.md)): here Scanline Studio is just another
    OmniRig client alongside a logger, which actually restores the rig-sharing arbitration that entry
-   flagged as not-fully-replaced. Wire/COM interop not yet designed.
+   flagged as not-fully-replaced. **Accepted 2026-08-29** (`ui_transition_plan.md` Tier 3 decision —
+   was "maybe later, not committed"), implemented via a hand-authored `[ComImport]` interop surface
+   (no `tlbimp`, no OmniRig install needed to build) — see the implementation plan referenced in
+   [[14-roadmap]]. Only `Rig1` (frequency/mode/PTT) is wired, matching legacy's own real call sites;
+   `Rig2`/Split/RIT/XIT/custom commands/port bits/events are out of scope, no legacy precedent.
 
 Each backend implements `IRadioProtocol` from [[02-radio-layer]] — from the rest of the app's point of
 view a linked-Hamlib session, a `rigctld` connection, an flrig connection, and an OmniRig connection are
@@ -246,4 +249,11 @@ the external backend's own responsibility, not this port's.
       `hamlib/` clone convention). Meter RPCs (`rig.get_smeter`/`rig.get_pwrmeter`/`rig.get_swrmeter`)
       out of scope — `RadioState` has no bandwidth field and this project's meter capabilities are
       already covered by Hamlib/rigctld for users who need them.
-- [ ] OmniRig client backend: design deferred, tracked in [[14-roadmap]].
+- [x] OmniRig client backend implemented (`ScanlineStudio.Core.Radio.OmniRig`) —
+      `OmniRigRadioProtocol`/`IOmniRigComClient`/`OmniRigComClient`/`OmniRigProtocolFactory`, 2 rounds
+      of `auditor` plan-review before any code (4 blockers found and resolved on paper before
+      implementation), fixture/fake-driven unit tests (`FakeOmniRigComClient`) only — **no
+      real-interop test exists**, unlike Hamlib's 4 real-interop tests against a system-installed
+      `libhamlib`: this dev environment has no Windows machine and no OmniRig install, so the real
+      COM path (activation, DISPID dispatch, `REGCLS_MULTIPLEUSE` attach-vs-launch behavior) is
+      unverified against a genuine OmniRig instance. Tracked as an open item, not silently accepted.

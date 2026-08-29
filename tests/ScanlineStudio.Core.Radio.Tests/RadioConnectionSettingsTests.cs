@@ -40,11 +40,21 @@ public sealed class RadioConnectionSettingsTests
     [Fact]
     public void ToConnectionSpec_UnknownBackendId_FallsBackToNone()
     {
-        var settings = new RadioConnectionSettings { BackendId = "omnirig" };
+        var settings = new RadioConnectionSettings { BackendId = "some-future-backend" };
 
         var spec = settings.ToConnectionSpec();
 
         Assert.IsType<NoneConnectionSpec>(spec);
+    }
+
+    [Fact]
+    public void ToConnectionSpec_OmniRig_ReturnsOmniRigConnectionSpec()
+    {
+        var settings = new RadioConnectionSettings { BackendId = "omnirig" };
+
+        var spec = settings.ToConnectionSpec();
+
+        Assert.IsType<OmniRigConnectionSpec>(spec);
     }
 
     [Fact]

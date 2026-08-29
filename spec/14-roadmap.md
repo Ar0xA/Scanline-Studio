@@ -218,9 +218,9 @@ dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itse
 2026-08-22 — a separate, CAT-sourced S-meter now exists, `RadioState.SignalStrengthDb` →
 `RadioStatusViewModel.RxLevelDb`, via rigctld's `l STRENGTH`/Hamlib; this item is specifically about
 a waterfall-native meter, not "no S-meter exists at all"); legacy debug "digital scope" tool); **flrig client backend** (since
-shipped, see [[03-cat-layer]]'s "Definition of done") and **OmniRig-as-client** (since accepted
-2026-08-29 as a real committed goal, still not designed — see this document's own OmniRig entry
-above and [[03-cat-layer]]'s matching update; both quotes here are historical, describing an earlier
+shipped, see [[03-cat-layer]]'s "Definition of done") and **OmniRig-as-client** (accepted
+2026-08-29, implemented same day — see this document's own OmniRig entry above and
+[[03-cat-layer]]'s matching update; both quotes here are historical, describing an earlier
 "not committed" state). **Added 2026-08-25**: Transmit tab
 Queue/TX-log/Recently-sent cards — user decision "maybe one day," moved out of Tier 2. No queueing,
 sent-frame-log, or send-history concept exists anywhere in `TxControlsPaneViewModel`; each needs a
@@ -1291,9 +1291,10 @@ UI and remaining dialogs before it needs a plugin system. Phase 5 is now just ex
 - flrig client backend — **done** (see [[03-cat-layer]]'s "Definition of done"), implemented ahead of
   the original "maybe later" plan below because the user asked for it directly, not because post-launch
   demand materialized.
-- **Accepted 2026-08-29** (`ui_transition_plan.md` Tier 3 decision, was "maybe later"): OmniRig-as-
-  client. Still no code/design — needs its own design/plan-review pass before implementation, same
-  as any other CAT backend, but is now a real committed goal rather than a revisit-if-asked item.
+- OmniRig-as-client backend — **done** (accepted 2026-08-29 as `ui_transition_plan.md` Tier 3
+  decision, implemented same day after 2 rounds of `auditor` plan-review — see [[03-cat-layer]]'s
+  "Definition of done"). No real-interop test exists (no Windows machine/OmniRig install in this
+  dev environment), unlike Hamlib's real-interop coverage — tracked as an open item there.
 - [[07-image-pipeline]]: full crop/resize/overlay, stock library, RX history — **done** (`ITransmitImagePreparer`, `TxImageEditorPaneViewModel`/`TxImageEditorPaneView`, `IStockImageLibrary`, `IReceiveHistoryStore`). **Filters shipped too, corrected**: this line used to say filter/preset support was deferred to [[11-plugin-system]] as a separate plugin surface — instead it shipped in-interface as `ITransmitImagePreparer.ApplyAdjustments` (brightness/contrast/saturation/gamma/sharpen/denoise), and template rendering shipped as `ApplyTemplate` ([[15-template-designer]]); [[11-plugin-system]] never gained an `IImageFilter` extension point.
 - [[08-logging]]: logbook, ADIF import/export, offline callsign lookup; QRZ.com opt-in lookup can trail slightly if needed. **Mostly done, corrected 2026-08-22** — this line used to say "Not started." The logbook store, ADIF import/export, ADIF-UDP forwarding, QRZ.com online lookup/upload, and the Logbook UI pane all shipped (2026-08-07 through 2026-08-15). Only the **offline** callsign/country lookup remains not started, blocked on a human emailing Clublog for a `cty.dat` API key (see [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note).
 - [[09-ui]]: remaining dialogs from the inventory table — `OptionsDialog` (tabbed general/TX/RX/audio settings), `RadioSettingsDialog`, `MacroKeyEditor`, `ColorSettingsDialog`, `LanguageSettingsDialog`. (Moved from Phase 5 — `PluginManagerDialog` stays in Phase 5, it has no purpose without the plugin host it's Phase 5's own primary deliverable.)
@@ -1649,8 +1650,9 @@ just above; demod-type selector and auto-start-on-sync-detect — cross-referenc
 "RX history retention limit" above; 7 waterfall/spectrum colors — cross-reference "Waterfall/
 color" above; CW ID text/frequency/speed + FSK encode/decode — cross-reference "TX macros /
 CW-ID" above, **shipped 2026-08-12** (corrected 2026-08-22 — this line used to say blocked on the
-separately-deferred FSK/CW-ID subsystem; that subsystem is done); OmniRig 4th CAT backend — already tracked in
-`spec/03-cat-layer.md` as speculative/undesigned) — no new notes for any of those. Genuinely new
+separately-deferred FSK/CW-ID subsystem; that subsystem is done); OmniRig 4th CAT backend — **shipped**
+2026-08-29, see `spec/03-cat-layer.md`'s "Definition of done" (historical note: this line used to say
+"speculative/undesigned")) — no new notes for any of those. Genuinely new
 gaps found while doing this pass, not previously tracked anywhere:
 - ~~Sound FIFO buffer size (RX/TX)~~, ~~sound-card thread (capture-drain) priority~~,
   ~~app process priority~~ — **done** (2026-08-07). Buffer size: new

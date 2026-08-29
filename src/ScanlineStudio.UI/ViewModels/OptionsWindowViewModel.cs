@@ -914,10 +914,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
     private bool _flrigPttTestSucceeded;
 
+    /// <summary>No separate PTT test, unlike flrig/Hamlib -- OmniRig's own <c>Rig1.Tx</c> is the
+    /// same property this test connection exercises reading from, and legacy never treated PTT as a
+    /// separately-verifiable OmniRig mechanism either (spec/03-cat-layer.md's OmniRig section).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanConnectRadio))]
+    [NotifyPropertyChangedFor(nameof(CanToggleRadioConnection))]
+    [NotifyPropertyChangedFor(nameof(ConnectRadioTooltip))]
+    private bool _omniRigTestSucceeded;
+
     public bool CanConnectRadio =>
         IsRigctldBackendSelected ? RigctldTestSucceeded :
         IsHamlibBackendSelected ? HamlibCatTestSucceeded && (HamlibPttTestSucceeded || IsPttMethodVoxSelected) :
         IsFlrigBackendSelected ? FlrigTestSucceeded && FlrigPttTestSucceeded :
+        IsOmniRigBackendSelected ? OmniRigTestSucceeded :
         false; // None (nothing to connect to) or no backend selected.
 
     /// <summary>Bound to the Connect/Disconnect button's own <c>IsEnabled</c> -- Connect is gated by
@@ -952,6 +962,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         false when IsHamlibBackendSelected && !HamlibPttTestSucceeded && !IsPttMethodVoxSelected => "Options.Radio.Connect.Help.NeedsTestPtt",
         false when IsFlrigBackendSelected && !FlrigTestSucceeded => "Options.Radio.Connect.Help.NeedsTestConnection",
         false when IsFlrigBackendSelected && !FlrigPttTestSucceeded => "Options.Radio.Connect.Help.NeedsTestPtt",
+        false when IsOmniRigBackendSelected && !OmniRigTestSucceeded => "Options.Radio.Connect.Help.NeedsTestConnection",
         false => "Options.Radio.Connect.Help",
     });
 
@@ -1100,6 +1111,34 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     }
 
     public bool IsFlrigSelected => RadioBackendId == "flrig";
+
+    public bool IsOmniRigBackendSelected
+    {
+        get => RadioBackendId == "omnirig";
+        set
+        {
+            if (value)
+            {
+                RadioBackendId = "omnirig";
+            }
+        }
+    }
+
+    public bool IsOmniRigSelected => RadioBackendId == "omnirig";
+
+    /// <summary>Gates the OmniRig RadioButton's own <c>IsEnabled</c> -- OmniRig is a Windows-only COM
+    /// automation server (<c>OmniRigProtocolFactory.Create</c> throws
+    /// <see cref="PlatformNotSupportedException"/> off Windows), so a non-Windows user should never be
+    /// able to pick it in the first place rather than discovering the failure only at Connect/Test
+    /// time. The OS a process runs on never changes mid-session, so this is a plain computed property
+    /// with no change notification needed.</summary>
+    public static bool IsOmniRigBackendAvailable => OperatingSystem.IsWindows();
+
+    /// <summary>Shown via <c>ToolTip.ShowOnDisabled</c> (same pattern as
+    /// <see cref="ConnectRadioTooltip"/>) so a disabled OmniRig option actually explains why, instead
+    /// of just sitting there greyed out.</summary>
+    public string OmniRigBackendTooltip => _localization.GetString(
+        IsOmniRigBackendAvailable ? "Options.Radio.Backend.OmniRig.Help" : "Options.Radio.Backend.OmniRig.Help.NotWindows");
 
     /// <summary>Backs the Radio/CAT tab's PTT-method 4-way radio group -- same computed-property
     /// idiom as <see cref="IsNoneBackendSelected"/>/etc., over the existing <see cref="HamlibPttType"/>
@@ -1327,11 +1366,77 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Radio/CAT tab's OmniRig "Test connection" button -- same throwaway-protocol
+    /// contract as <see cref="TestFlrigConnectionAsync"/> above, but no host/port to validate first
+    /// (<see cref="OmniRigConnectionSpec"/> is parameterless -- OmniRig's own config dialog owns rig
+    /// selection). No separate PTT test either, see <see cref="OmniRigTestSucceeded"/>'s own doc
+    /// comment.</summary>
+    private bool CanTestOmniRigConnection() => !IsTestingConnection;
+
+    [RelayCommand(CanExecute = nameof(CanTestOmniRigConnection))]
+    private async Task TestOmniRigConnectionAsync()
+    {
+        if (_radioSession.RigId != "none")
+        {
+            TestConnectionStatusMessage = _localization.GetString("Options.Radio.OmniRig.AlreadyConnected");
+            return;
+        }
+
+        Log.TestOmniRigConnectionInvoked(_logger);
+        IsTestingConnection = true;
+        OmniRigTestSucceeded = false;
+        TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
+        try
+        {
+            var result = await _radioSession.TestConnectionAsync(new OmniRigConnectionSpec()).ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                OmniRigTestSucceeded = result.Success;
+                try
+                {
+                    TestConnectionStatusMessage = result.Success
+                        ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
+                        : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
+                }
+                catch (Exception ex)
+                {
+                    Log.TestOmniRigConnectionStatusDisplayFailed(_logger, ex);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.TestOmniRigConnectionFailed(_logger, ex);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
+                }
+                catch (Exception formatEx)
+                {
+                    Log.TestOmniRigConnectionStatusDisplayFailed(_logger, formatEx);
+                    TestConnectionStatusMessage = null;
+                }
+                finally
+                {
+                    IsTestingConnection = false;
+                }
+            });
+        }
+    }
+
     partial void OnIsTestingConnectionChanged(bool value)
     {
         TestRigctldConnectionCommand.NotifyCanExecuteChanged();
         TestHamlibConnectionCommand.NotifyCanExecuteChanged();
         TestFlrigConnectionCommand.NotifyCanExecuteChanged();
+        TestOmniRigConnectionCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnRigctldHostChanged(string? value)
@@ -2670,7 +2775,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TxSampleRateOffsetHz = snapshot.TxSampleRateOffsetHz;
         CaptureChannelSource = Enum.IsDefined(snapshot.CaptureChannelSource) ? snapshot.CaptureChannelSource : AudioChannelSource.Mono;
         StereoTxEnabled = snapshot.StereoTxEnabled;
-        RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" or "flrig" ? snapshot.RadioBackendId : "none";
+        RadioBackendId = snapshot.RadioBackendId is "none" or "rigctld" or "hamlib" or "flrig" or "omnirig" ? snapshot.RadioBackendId : "none";
         RigctldHost = snapshot.RigctldHost;
         RigctldPort = snapshot.RigctldPort;
         HamlibModel = snapshot.HamlibModel;
@@ -3223,6 +3328,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         HamlibPttTestSucceeded = false;
         FlrigTestSucceeded = false;
         FlrigPttTestSucceeded = false;
+        OmniRigTestSucceeded = false;
         // Not part of OptionsSettingsService.Defaults -- RadioSafety is its own settings section, not
         // in OptionsSnapshot (see SaveAsync's own comment for why). RadioSafetySpec.DefaultSwrCutoffThreshold
         // is the single source of truth for this default, shared with RadioSafetySettings' own
@@ -3393,10 +3499,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsRigctldSelected));
         OnPropertyChanged(nameof(IsHamlibSelected));
         OnPropertyChanged(nameof(IsFlrigSelected));
+        OnPropertyChanged(nameof(IsOmniRigSelected));
         OnPropertyChanged(nameof(IsNoneBackendSelected));
         OnPropertyChanged(nameof(IsRigctldBackendSelected));
         OnPropertyChanged(nameof(IsHamlibBackendSelected));
         OnPropertyChanged(nameof(IsFlrigBackendSelected));
+        OnPropertyChanged(nameof(IsOmniRigBackendSelected));
 
         // Plan-review finding: without this, a stale rigctld test result stays visible after
         // switching to the Hamlib panel (they share TestConnectionStatusMessage), and vice versa --
@@ -3580,6 +3688,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "TestFlrigPtt invoked: {Host}:{Port} for up to {MaxSeconds}s")]
         public static partial void TestFlrigPttInvoked(ILogger logger, string host, int port, double maxSeconds);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TestOmniRigConnection invoked")]
+        public static partial void TestOmniRigConnectionInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestOmniRigConnection threw unexpectedly")]
+        public static partial void TestOmniRigConnectionFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the OmniRig connection-test result status message failed; status left blank")]
+        public static partial void TestOmniRigConnectionStatusDisplayFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestFlrigPtt({Host}:{Port}) threw unexpectedly")]
         public static partial void TestFlrigPttFailed(ILogger logger, string host, int port, Exception ex);
