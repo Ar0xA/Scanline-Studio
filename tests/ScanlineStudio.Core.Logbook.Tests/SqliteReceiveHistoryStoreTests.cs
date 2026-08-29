@@ -844,6 +844,53 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task ClearLinkedQsoIdAsync_EntryLinkedToTheDeletedQso_ClearsItAndReturnsOne()
+    {
+        // ui_transition_plan.md step 15 -- the fix for the round-1 plan-review blocker: a QSO
+        // delete must not leave ReceiveHistory.LinkedQsoId dangling, or the Gallery reports that
+        // frame as permanently "Logged" against a QSO that no longer exists.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.SetLinkedQsoIdAsync("1", "qso-42");
+
+            var cleared = await store.ClearLinkedQsoIdAsync("qso-42");
+
+            Assert.Equal(1, cleared);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Null(loaded.LinkedQsoId);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task ClearLinkedQsoIdAsync_NoEntryLinkedToThatQso_ReturnsZero_LeavesOtherLinksUntouched()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+            await store.SetLinkedQsoIdAsync("1", "qso-other");
+
+            var cleared = await store.ClearLinkedQsoIdAsync("qso-does-not-exist");
+
+            Assert.Equal(0, cleared);
+            var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.Equal("qso-other", loaded.LinkedQsoId);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task SetNoteAsync_SetFlaggedAsync_SetLinkedQsoIdAsync_NonexistentEntryId_ReturnFalse_NotThrow()
     {
         var dbPath = TempDbPath();

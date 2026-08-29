@@ -405,6 +405,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormCountry = null;
         FormNotes = null;
         UpdateCommand.NotifyCanExecuteChanged();
+        DeleteSelectedCommand.NotifyCanExecuteChanged();
     }
 
     private void LoadIntoForm(QsoRecord record)
@@ -427,6 +428,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormNotes = record.Notes;
         StatusMessage = null;
         UpdateCommand.NotifyCanExecuteChanged();
+        DeleteSelectedCommand.NotifyCanExecuteChanged();
     }
 
     private bool CanLog() => !string.IsNullOrWhiteSpace(FormCallsign);
@@ -520,6 +522,109 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         {
             StatusMessage = _localization.GetString("Panes.Logbook.Status.Updated");
         }
+    }
+
+    /// <summary>ui_transition_plan.md step 15 -- same delegate-property shape as
+    /// <see cref="RxHistoryPaneViewModel.ConfirmRequested"/>'s own doc comment (a genuine
+    /// request/response the Delete command awaits before continuing), set exactly once by
+    /// <c>MainWindow.axaml.cs</c>. Returns <see langword="false"/> (decline) when unwired -- the
+    /// safe default for a destructive action.</summary>
+    public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
+
+    // Code-review finding: keyed off _editingId (the FORM's identity), not SelectedEntry -- a
+    // RefreshAsync/RefreshInternalAsync in between (e.g. the operator clicks Refresh while a row is
+    // loaded) clears Entries and, via the ListBox's own TwoWay SelectedItem binding, nulls
+    // SelectedEntry right back through this VM -- but OnSelectedEntryChanged early-returns on null
+    // (see its own doc comment), so IsEditing/_editingId stay set. Keying CanDeleteSelected on
+    // SelectedEntry instead left the Delete button (bound to IsEditing, matching Update) visible,
+    // rendered full-strength danger-red (IndustryBtnDanger has no disabled styling), and dead --
+    // clicking it did nothing. Same failure class RxHistoryPaneViewModel already hit once.
+    private bool CanDeleteSelected() => _editingId is not null;
+
+    /// <summary>ui_transition_plan.md step 15 -- per-QSO manual delete, mirroring
+    /// <see cref="RxHistoryPaneViewModel.DeleteSelectedEntryAsync"/>'s own shape: resolves the
+    /// target QSO from <see cref="_editingId"/> (the form's own identity, matching
+    /// <see cref="CanDeleteSelected"/>'s own gate) BEFORE the confirm dialog's own await, and never
+    /// reads <see cref="SelectedEntry"/> at all -- a concurrent <see cref="RefreshAsync"/> (e.g. the
+    /// user clicks Refresh while the dialog is open) can null <see cref="SelectedEntry"/> and even
+    /// drop the row out of <see cref="Entries"/>, but <see cref="_editingId"/> and the still-live
+    /// form fields survive that, so this method still knows exactly which QSO the operator meant
+    /// and can still show its callsign in the dialog. One command, not a 3-command arm/confirm
+    /// (unlike <c>OptionsWindowViewModel.RequestResetAll</c>'s own pattern) -- that inline shape fits
+    /// a modal settings window with no live-refreshing list underneath it; this pane already has the
+    /// real modal-confirm-dialog infrastructure <see cref="RxHistoryPaneViewModel"/> established for
+    /// exactly this "destructive action against a row in a live list" shape.</summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteSelected))]
+    private async Task DeleteSelectedAsync()
+    {
+        if (_editingId is not { } id)
+        {
+            return;
+        }
+
+        // Best-effort display name for the confirm dialog only -- Entries may no longer contain this
+        // row (see this method's own doc comment), in which case the still-live form field is the
+        // next best source; the delete itself always targets `id`, never a re-derived value.
+        var callsign = Entries.FirstOrDefault(e => e.Id == id)?.Callsign ?? FormCallsign ?? string.Empty;
+
+        var confirmed = await RequestConfirmDeleteAsync(callsign);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        Log.DeleteInvoked(_logger, id);
+        bool deleted;
+        try
+        {
+            deleted = await _logbook.DeleteQsoAsync(id);
+        }
+        catch (Exception ex)
+        {
+            Log.DeleteFailed(_logger, id, ex);
+            StatusMessage = _localization.GetString("Panes.Logbook.Error.DeleteFailed");
+            return;
+        }
+
+        // The record no longer exists either way (deleted just now, or already gone) -- reset the
+        // form so Update doesn't stay live against a nonexistent row (code-review finding: the
+        // `!deleted` branch used to skip this, unlike the real-delete path below, leaving Update
+        // "succeed" with SqliteLogbookRepository.UpdateAsync silently affecting zero rows).
+        if (_editingId == id)
+        {
+            ResetForm();
+        }
+
+        // RefreshInternalAsync (not RefreshAsync): RefreshAsync clears StatusMessage on success,
+        // which would wipe the status line this method is about to set -- same reasoning
+        // LogAsync/UpdateAsync's own trailing refresh already documents. Also fixed (code-review
+        // finding): StatusMessage now set AFTER the refresh on the not-deleted path too, so a
+        // refresh failure's own SearchFailed message can't clobber it -- matches every other path
+        // in this file.
+        await RefreshInternalAsync();
+        StatusMessage = _localization.GetString(deleted ? "Panes.Logbook.Status.Deleted" : "Panes.Logbook.Error.EntryNoLongerExists");
+        if (deleted)
+        {
+            _ = LoadTotalLoggedCountAsync();
+        }
+    }
+
+    private async Task<bool> RequestConfirmDeleteAsync(string callsign)
+    {
+        if (ConfirmRequested is null)
+        {
+            return false;
+        }
+
+        // The dialog message names the callsign being deleted AND states the external-push
+        // limitation up front (auditor plan-review finding, round 2): DeleteQsoAsync does not
+        // retract an already-made GridTracker/ADIF-UDP broadcast or QRZ upload, and the confirm
+        // dialog is the only moment the operator can actually act on that information -- a
+        // doc-comment-only note would be invisible to the person making the decision.
+        var confirmVm = new ConfirmActionDialogViewModel(
+            _localization.GetString("Panes.Logbook.ConfirmDeleteTitle"),
+            _localization.GetString("Panes.Logbook.ConfirmDeleteMessage", callsign));
+        return await ConfirmRequested(confirmVm).ConfigureAwait(true);
     }
 
     /// <summary><paramref name="receivedImageId"/> defaults to <see langword="null"/> for a brand
@@ -679,6 +784,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ExportAdifFileAsync failed")]
         public static partial void ExportFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "DeleteQsoAsync invoked: {Id}")]
+        public static partial void DeleteInvoked(ILogger logger, string id);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "DeleteQsoAsync failed: {Id}")]
+        public static partial void DeleteFailed(ILogger logger, string id, Exception ex);
     }
 }
 

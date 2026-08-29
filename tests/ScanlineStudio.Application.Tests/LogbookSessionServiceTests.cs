@@ -15,7 +15,8 @@ public sealed class LogbookSessionServiceTests
         FakeAdifUdpStreamer? adifUdpStreamer = null,
         FakeQrzLogbookUploader? qrzUploader = null,
         FakeQrzCallsignLookup? qrzLookup = null,
-        FakeSettingsStore? settingsStore = null)
+        FakeSettingsStore? settingsStore = null,
+        FakeReceiveHistoryStoreForLogbook? receiveHistoryStore = null)
     {
         return new LogbookSessionService(
             repository ?? new FakeLogbookRepository(),
@@ -25,6 +26,7 @@ public sealed class LogbookSessionServiceTests
             qrzUploader ?? new FakeQrzLogbookUploader(),
             qrzLookup ?? new FakeQrzCallsignLookup(),
             settingsStore ?? new FakeSettingsStore(),
+            receiveHistoryStore ?? new FakeReceiveHistoryStoreForLogbook(),
             NullLogger<LogbookSessionService>.Instance);
     }
 
@@ -453,5 +455,74 @@ public sealed class LogbookSessionServiceTests
         Assert.Equal(1, qrzLookup.TestCallCount);
         Assert.Equal("user", qrzLookup.LastUsername);
         Assert.Equal("pass", qrzLookup.LastPassword);
+    }
+
+    // ui_transition_plan.md step 15 (QSO delete) ------------------------------------------------
+
+    [Fact]
+    public async Task DeleteQsoAsync_ClearsTheReceiveHistoryLinkBeforeDeletingTheRow()
+    {
+        // Round-1 plan-review blocker: clear-then-delete, not delete-then-clear -- if the process
+        // dies between the two calls, the worst case must be a recoverable unlinked-but-existing
+        // QSO, never a permanently dangling ReceiveHistory.LinkedQsoId.
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(SampleRecord("qso-1"));
+        var receiveHistoryStore = new FakeReceiveHistoryStoreForLogbook { ClearLinkedQsoIdResultToReturn = 1 };
+        // Code-review finding: asserting both calls happened afterward doesn't prove ORDER (a
+        // delete-then-clear implementation would pass identically) -- this hook inspects the
+        // repository's state from INSIDE the clear call, before DeleteQsoAsync can have reached its
+        // own repository.DeleteAsync yet.
+        var repositoryDeletedIdsAtClearTime = new List<string>();
+        receiveHistoryStore.OnClearLinkedQsoId = () => repositoryDeletedIdsAtClearTime.AddRange(repository.DeletedIds);
+        var service = CreateService(repository, receiveHistoryStore: receiveHistoryStore);
+
+        var deleted = await service.DeleteQsoAsync("qso-1");
+
+        Assert.True(deleted);
+        Assert.Contains("qso-1", receiveHistoryStore.ClearedQsoIds);
+        Assert.Contains("qso-1", repository.DeletedIds);
+        Assert.Empty(repositoryDeletedIdsAtClearTime);
+    }
+
+    [Fact]
+    public async Task DeleteQsoAsync_UnknownId_ReturnsFalse_StillAttemptsTheLinkClear()
+    {
+        var repository = new FakeLogbookRepository();
+        var receiveHistoryStore = new FakeReceiveHistoryStoreForLogbook();
+        var service = CreateService(repository, receiveHistoryStore: receiveHistoryStore);
+
+        var deleted = await service.DeleteQsoAsync("does-not-exist");
+
+        Assert.False(deleted);
+        Assert.Contains("does-not-exist", receiveHistoryStore.ClearedQsoIds);
+    }
+
+    [Fact]
+    public async Task DeleteQsoAsync_ClearLinkedQsoIdThrows_LogsAndStillDeletesTheQso()
+    {
+        // Fail-open: a ReceiveHistory-store hiccup must never block the operator's actual request
+        // (deleting the QSO).
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(SampleRecord("qso-1"));
+        var receiveHistoryStore = new FakeReceiveHistoryStoreForLogbook
+        {
+            ThrowOnClearLinkedQsoId = new InvalidOperationException("simulated DB hiccup"),
+        };
+        var service = CreateService(repository, receiveHistoryStore: receiveHistoryStore);
+
+        var deleted = await service.DeleteQsoAsync("qso-1");
+
+        Assert.True(deleted);
+        Assert.Contains("qso-1", repository.DeletedIds);
+    }
+
+    [Fact]
+    public async Task DeleteQsoAsync_RepositoryThrows_Propagates()
+    {
+        var repository = new FakeLogbookRepository { ThrowOnDelete = new InvalidOperationException("disk full") };
+        await repository.AddAsync(SampleRecord("qso-1"));
+        var service = CreateService(repository);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteQsoAsync("qso-1"));
     }
 }
