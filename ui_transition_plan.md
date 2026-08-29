@@ -24,8 +24,9 @@ ui_findings.md tiers. Audit corrections that change the plan are folded in where
     and code-reviewed. `~/.claude/plans/logbook-deltas.md`'s original design was re-validated
     against current code first and needed real updates (a `_formGeneration` staleness guard and a
     `MainWindow.axaml`-is-inline drift the 2-week-old plan predated) before any code was written.
-16. Copy / open-externally for received images (Tier 3, accepted 2026-08-29) — bundle into the
-    step-3 full-size viewer, which already has the file on disk (not started).
+16. Copy / open-externally for received images (Tier 3, accepted 2026-08-29) — **done 2026-08-29**.
+    Copy already existed from step 3's own build; only "open externally" (open the file itself, not
+    its containing folder) was new.
 
 OmniRig client backend (Tier 3, accepted 2026-08-29) is NOT added here — it's CAT-layer/backend
 work, not UI-findings-driven work this doc's own scope covers, and needs its own design/plan-review
@@ -467,10 +468,8 @@ compare the rendered TX canvas against a legacy screenshot of the same template.
 - QSO delete + duplicate detection + QSL flags: **accepted 2026-08-29, done 2026-08-29** — see
   step 15 in the Sequencing section above.
 - Camera/webcam TX source: **rejected 2026-08-29** — see docs/removed-features.md.
-- Copy / open-externally for received images: **accepted 2026-08-29** — not a legacy MMSSTV/YONIQ
-  feature (no `TPrinter`/print-dialog usage found in `yoniq-old/`, and no clipboard-copy/open-
-  externally precedent either), a plain new-feature request from `ui_findings.md`. Bundle into the
-  step-3 full-size viewer, which already has the file on disk.
+- Copy / open-externally for received images: **accepted 2026-08-29, done 2026-08-29** — see
+  step 16 in the Sequencing section above.
 - Print for received images: **rejected 2026-08-29** — user can print from whatever app they open
   the image in externally (see the accepted item above). Not a legacy capability either, so no
   docs/removed-features.md entry needed.
