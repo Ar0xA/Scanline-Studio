@@ -249,6 +249,22 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET LinkedQsoId = $linkedQsoId WHERE Id = $id", entryId, "$linkedQsoId", qsoId, ct);
 
+    /// <summary>See <see cref="IReceiveHistoryStore.ClearLinkedQsoIdAsync"/>. A sibling of
+    /// <see cref="ExecuteUpdateAsync"/> in shape, not a reuse of it -- that helper always keys its
+    /// `WHERE` clause on `Id`, while this one keys on the `LinkedQsoId` FK column itself and can
+    /// legitimately affect more than one row.</summary>
+    public async Task<int> ClearLinkedQsoIdAsync(string qsoId, CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        command.CommandText = "UPDATE ReceiveHistory SET LinkedQsoId = NULL WHERE LinkedQsoId = $qsoId";
+        command.Parameters.AddWithValue("$qsoId", qsoId);
+
+        return await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     /// <summary>See <see cref="IReceiveHistoryStore.DeleteAsync"/>. File removal happens FIRST,
     /// before the DB row -- if the row were deleted first and the file delete then failed, a
     /// later <see cref="ReconcileWithDiskAsync"/> pass would re-adopt that orphaned file as a

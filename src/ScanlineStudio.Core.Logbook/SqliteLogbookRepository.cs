@@ -154,6 +154,34 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         return results;
     }
 
+    public async Task<bool> DeleteAsync(string id, CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM Qso WHERE Id = $id";
+        command.Parameters.AddWithValue("$id", id);
+
+        int rowsAffected;
+        try
+        {
+            rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+        catch (SqliteException ex)
+        {
+            Log.QsoDeleteFailed(_logger, id, ex);
+            throw;
+        }
+
+        if (rowsAffected > 0)
+        {
+            Log.QsoDeleted(_logger, id);
+        }
+
+        return rowsAffected > 0;
+    }
+
     /// <summary>Falls back to <see cref="RadioMode.Unknown"/> rather than throwing (that value's own
     /// doc comment requires this) -- a plain <c>Enum.Parse</c> would take down the entire logbook
     /// list over one row a future/older app version or a hand-edited DB wrote a value this build
@@ -221,5 +249,11 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to write QSO {Id} to the logbook database")]
         public static partial void QsoWriteFailed(ILogger logger, string id, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "QSO deleted: {Id}")]
+        public static partial void QsoDeleted(ILogger logger, string id);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to delete QSO {Id} from the logbook database")]
+        public static partial void QsoDeleteFailed(ILogger logger, string id, Exception ex);
     }
 }
