@@ -49,6 +49,32 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// same class of race).</summary>
     private int _formGeneration;
 
+    /// <summary>ui_transition_plan.md step 15, piece (c) -- consume-on-use armed state for the
+    /// duplicate-QSO warning (round-1/round-2 plan-review fix for the original bare-bool design's
+    /// undefined lifetime): records exactly which (callsign, frequency, Log-vs-Update) combination
+    /// was last warned about, so clicking the SAME command a second time re-checks this tuple
+    /// instead of a bare flag -- editing the callsign or frequency after a warning re-runs the
+    /// duplicate check against the NEW values rather than silently confirm-logging a different QSO
+    /// than the one flagged. <c>ForUpdate</c> keeps <see cref="LogAsync"/>'s and
+    /// <see cref="UpdateAsync"/>'s own arms from satisfying each other's guard (an arm from one
+    /// command must never let the other skip its own check). Deliberately compares the RAW
+    /// <see cref="QsoRecord.FrequencyHz"/>, not a derived band label -- computing a band here would
+    /// need <c>ScanlineStudio.Core.Logbook.AmateurBandLookup</c>, a layer this UI project must not
+    /// reference directly (band-matching stays entirely inside
+    /// <see cref="ILogbookSessionService.FindLikelyDuplicateAsync"/>); comparing the raw frequency is
+    /// sufficient for "is this the same submission the operator already saw a warning for" and only
+    /// costs one extra (cheap, fail-open) re-check if the operator nudges the frequency within the
+    /// same band before re-clicking. Cleared in <see cref="ResetForm"/> and
+    /// <see cref="OnSelectedEntryChanged"/> so the armed state can never survive a navigation.</summary>
+    private (string Callsign, long? FrequencyHz, bool ForUpdate)? _armedDuplicateConfirm;
+
+    /// <summary>Backs the Log/Update button's "anyway" wording -- see
+    /// <see cref="_armedDuplicateConfirm"/>'s own doc comment. Notified explicitly via
+    /// <see cref="ObservableObject.OnPropertyChanged(string?)"/> at every mutation site (code-review
+    /// finding: a plain derived property with no notification never updates the binding once
+    /// computed).</summary>
+    public bool IsConfirmingDuplicate => _armedDuplicateConfirm is not null;
+
     [ObservableProperty]
     private string? _callsignFilter;
 
@@ -330,7 +356,19 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         }
 
         _formGeneration++;
+        ClearArmedDuplicateConfirm();
         LoadIntoForm(value);
+    }
+
+    private void ClearArmedDuplicateConfirm()
+    {
+        if (_armedDuplicateConfirm is null)
+        {
+            return;
+        }
+
+        _armedDuplicateConfirm = null;
+        OnPropertyChanged(nameof(IsConfirmingDuplicate));
     }
 
     /// <summary>Bound to the "New" button -- resets the form AND clears any leftover
@@ -412,6 +450,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormNotes = null;
         FormQslSent = false;
         FormQslReceived = false;
+        ClearArmedDuplicateConfirm();
         UpdateCommand.NotifyCanExecuteChanged();
         DeleteSelectedCommand.NotifyCanExecuteChanged();
     }
@@ -453,6 +492,11 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // of silently wiping whatever they've since navigated to.
         var formGeneration = _formGeneration;
         var record = BuildRecordFromForm(Guid.NewGuid().ToString());
+
+        if (await ShouldWarnInsteadOfProceedAsync(record, excludeId: null, forUpdate: false, formGeneration))
+        {
+            return;
+        }
 
         LogQsoResult result;
         try
@@ -502,6 +546,11 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         var formGeneration = _formGeneration;
         var record = BuildRecordFromForm(_editingId, _editingReceivedImageId);
 
+        if (await ShouldWarnInsteadOfProceedAsync(record, excludeId: _editingId, forUpdate: true, formGeneration))
+        {
+            return;
+        }
+
         try
         {
             await _logbook.UpdateQsoAsync(record);
@@ -532,6 +581,60 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         {
             StatusMessage = _localization.GetString("Panes.Logbook.Status.Updated");
         }
+    }
+
+    /// <summary>ui_transition_plan.md step 15, piece (c) -- shared by <see cref="LogAsync"/>/
+    /// <see cref="UpdateAsync"/>. Returns <see langword="true"/> if the caller should STOP without
+    /// logging/updating (a duplicate warning is now showing instead); <see langword="false"/> means
+    /// proceed (either no duplicate found, or the operator already saw the warning for this exact
+    /// callsign+frequency+command and clicked the same button again). <paramref name="excludeId"/>
+    /// is <see langword="null"/> for <see cref="LogAsync"/> (a brand-new QSO can't match itself) and
+    /// <see cref="_editingId"/> for <see cref="UpdateAsync"/> (so editing a QSO never flags itself).
+    /// </summary>
+    private async Task<bool> ShouldWarnInsteadOfProceedAsync(QsoRecord record, string? excludeId, bool forUpdate, int formGeneration)
+    {
+        if (_armedDuplicateConfirm is { } armed && armed.ForUpdate == forUpdate && armed.Callsign == record.Callsign && armed.FrequencyHz == record.FrequencyHz)
+        {
+            // Operator already saw the warning for exactly this submission and clicked the same
+            // button again -- proceed, and clear the arm so a LATER, genuinely different duplicate
+            // gets its own fresh warning instead of silently reusing a stale confirmation.
+            ClearArmedDuplicateConfirm();
+            return false;
+        }
+
+        QsoRecord? duplicate;
+        try
+        {
+            duplicate = await _logbook.FindLikelyDuplicateAsync(record.Callsign, record.StartUtc, record.FrequencyHz, excludeId);
+        }
+        catch (Exception ex)
+        {
+            // Defense-in-depth, not redundant with the interface's own "never throws, fails open"
+            // contract (see ILogbookSessionService.FindLikelyDuplicateAsync's doc comment) -- this VM
+            // must never let its OWN bug (or a future implementation that forgets that contract)
+            // block a real log/update over a duplicate check that couldn't run.
+            Log.DuplicateCheckFailed(_logger, ex);
+            duplicate = null;
+        }
+
+        if (duplicate is null)
+        {
+            return false;
+        }
+
+        if (formGeneration != _formGeneration)
+        {
+            // Stale -- the operator navigated away during the check. Don't arm/warn against a form
+            // they're no longer looking at (this generation's own StatusMessage/ResetForm writes
+            // would already be getting skipped below anyway, same guard as everywhere else in this
+            // file -- returning true here just also skips the actual log/update on this stale call).
+            return true;
+        }
+
+        _armedDuplicateConfirm = (record.Callsign, record.FrequencyHz, forUpdate);
+        OnPropertyChanged(nameof(IsConfirmingDuplicate));
+        StatusMessage = _localization.GetString("Panes.Logbook.Warning.PossibleDuplicate", record.Callsign);
+        return true;
     }
 
     /// <summary>ui_transition_plan.md step 15 -- same delegate-property shape as
@@ -802,6 +905,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "DeleteQsoAsync failed: {Id}")]
         public static partial void DeleteFailed(ILogger logger, string id, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "FindLikelyDuplicateAsync failed; proceeding as if no duplicate was found")]
+        public static partial void DuplicateCheckFailed(ILogger logger, Exception ex);
     }
 }
 

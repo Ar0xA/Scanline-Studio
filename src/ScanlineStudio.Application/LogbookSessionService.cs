@@ -226,6 +226,35 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         return await _repository.DeleteAsync(id, ct).ConfigureAwait(false);
     }
 
+    public async Task<QsoRecord?> FindLikelyDuplicateAsync(string callsign, DateTimeOffset startUtc, long? frequencyHz, string? excludeId, CancellationToken ct = default)
+    {
+        try
+        {
+            // Same-UTC-day window (round-1 plan-review blocker fix): unbounded callsign+band
+            // matching flagged a regular sked partner worked six months ago as a "duplicate" on
+            // every single contact -- the operator would learn to click through the warning, and it
+            // stops being a warning. From/To reuse LogbookQuery's existing support (already honored
+            // by SqliteLogbookRepository.SearchAsync), so this pushes the date filter into the query
+            // instead of pulling the whole callsign history client-side.
+            var dayStart = new DateTimeOffset(startUtc.UtcDateTime.Date, TimeSpan.Zero);
+            var dayEnd = dayStart.AddDays(1).AddTicks(-1);
+            var candidates = await _repository.SearchAsync(new LogbookQuery(callsign, dayStart, dayEnd), ct).ConfigureAwait(false);
+
+            // Band must also match -- "no band" (null) only matches another "no band" record, never
+            // treated as a wildcard (two QSOs with genuinely unknown frequencies aren't thereby "the
+            // same band" just because neither has one).
+            var band = AmateurBandLookup.BandFor(frequencyHz);
+            return candidates.FirstOrDefault(c => c.Id != excludeId && AmateurBandLookup.BandFor(c.FrequencyHz) == band);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Fail OPEN (see this method's own interface doc comment): a transient DB hiccup must
+            // never block logging or saving a real QSO over a duplicate check that couldn't run.
+            Log.FindLikelyDuplicateFailed(_logger, callsign, ex);
+            return null;
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (ADIF-UDP sent={AdifUdpSentCount}/{AdifUdpEnabledCount}, QRZ uploaded={QrzUploaded})")]
@@ -248,5 +277,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to clear LinkedQsoId for QSO {Id} before delete; proceeding with the delete anyway")]
         public static partial void ClearLinkedQsoIdFailed(ILogger logger, string id, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "FindLikelyDuplicateAsync({Callsign}) failed; treating as no duplicate found")]
+        public static partial void FindLikelyDuplicateFailed(ILogger logger, string callsign, Exception exception);
     }
 }

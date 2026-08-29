@@ -5961,6 +5961,183 @@ public sealed class PaneViewModelTests
         Assert.True(logbook.Records[0].QslReceived);
     }
 
+    // ui_transition_plan.md step 15, piece (c) (duplicate-QSO detection) -----------------------
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_DuplicateFound_WarnsAndDoesNotLog_SecondClickProceeds()
+    {
+        var logbook = new FakeLogbookSessionService { DuplicateResultToReturn = SampleQsoRecord("existing") };
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.FormCallsign = "N0CALL";
+
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(logbook.Records);
+        Assert.True(vm.IsConfirmingDuplicate);
+        Assert.NotNull(vm.StatusMessage);
+
+        // Second click on the SAME button, same form contents -- proceeds without re-warning.
+        logbook.DuplicateResultToReturn = null; // irrelevant on this path -- the arm short-circuits the check
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.False(vm.IsConfirmingDuplicate);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_NoDuplicateFound_LogsImmediately_NeverArms()
+    {
+        var logbook = new FakeLogbookSessionService(); // DuplicateResultToReturn defaults to null
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.FormCallsign = "N0CALL";
+
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.False(vm.IsConfirmingDuplicate);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_WarnedThenCallsignEdited_ReChecksInsteadOfSilentlyConfirming()
+    {
+        // Code-review concern (round 1): editing the callsign after a warning must not silently
+        // confirm-log a DIFFERENT callsign than the one actually flagged as a duplicate.
+        var logbook = new FakeLogbookSessionService { DuplicateResultToReturn = SampleQsoRecord("existing") };
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsConfirmingDuplicate);
+
+        vm.FormCallsign = "K1ABC";
+        logbook.DuplicateResultToReturn = null; // K1ABC has no duplicate
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        // Code-review finding: asserting only the final logged callsign doesn't prove a re-check
+        // happened -- a silently-confirming implementation (bug: the armed state satisfies ANY
+        // subsequent click regardless of what changed) would log this exact same callsign too. The
+        // real proof is that FindLikelyDuplicateAsync was actually called a SECOND time.
+        Assert.Equal(2, logbook.FindLikelyDuplicateCalls.Count);
+        Assert.Equal("K1ABC", logbook.FindLikelyDuplicateCalls[1].Callsign);
+        var logged = Assert.Single(logbook.Records);
+        Assert.Equal("K1ABC", logged.Callsign);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_DuplicateCheckThrows_FailsOpen_StillLogs()
+    {
+        var logbook = new FakeLogbookSessionService { ThrowOnFindLikelyDuplicate = new InvalidOperationException("DB locked") };
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.FormCallsign = "N0CALL";
+
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.False(vm.IsConfirmingDuplicate);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_UpdateAsync_DuplicateFound_WarnsAndDoesNotUpdate_SecondClickProceeds()
+    {
+        var logbook = new FakeLogbookSessionService { DuplicateResultToReturn = SampleQsoRecord("existing") };
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        vm.FormNotes = "edited";
+
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(logbook.Records[0].Notes);
+        Assert.True(vm.IsConfirmingDuplicate);
+
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("edited", logbook.Records[0].Notes);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_UpdateAsync_PassesItsOwnIdAsExcludeId_NeverFlagsItself()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var call = Assert.Single(logbook.FindLikelyDuplicateCalls);
+        Assert.Equal("1", call.ExcludeId);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogArmedWhileEditing_DoesNotSatisfyUpdatesOwnGuard()
+    {
+        // Code-review nit (round 2), and code-review finding (this test itself, round after
+        // implementation): the ORIGINAL version of this test selected a different row between the
+        // Log click and the Update click, which clears ANY arm via OnSelectedEntryChanged -- so it
+        // passed even with the ForUpdate discriminator deleted entirely (Update always re-checked
+        // for the unrelated reason that selection itself resets the arm, not because ForUpdate did
+        // its job). The real reachable sequence needing ForUpdate: select a row (LogCommand has no
+        // IsEditing-based CanExecute gate at the VM layer -- only the View hides its button), click
+        // Log (arms with ForUpdate:false for THIS row's own callsign/frequency), then click Update
+        // WITHOUT changing selection. If ForUpdate were removed, Update's guard would see the
+        // matching (Callsign, FrequencyHz) arm and incorrectly treat itself as already-confirmed.
+        var logbook = new FakeLogbookSessionService { DuplicateResultToReturn = SampleQsoRecord("existing") };
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsConfirmingDuplicate);
+        Assert.Single(logbook.FindLikelyDuplicateCalls);
+
+        // An observable change Update would persist IF (bug) it incorrectly treated itself as
+        // already-confirmed by Log's arm -- without this, Records[0].Notes would stay null either
+        // way and the final assertion would pass vacuously.
+        vm.FormNotes = "edited";
+        await vm.UpdateCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        // Update ran its OWN check (2 total calls now) instead of being satisfied by Log's arm, and
+        // therefore did NOT persist the edit on this first Update click.
+        Assert.Equal(2, logbook.FindLikelyDuplicateCalls.Count);
+        Assert.True(vm.IsConfirmingDuplicate);
+        Assert.Null(logbook.Records[0].Notes);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_SelectingADifferentRowWhileWarningIsShowing_ClearsTheArm()
+    {
+        var logbook = new FakeLogbookSessionService { DuplicateResultToReturn = SampleQsoRecord("existing") };
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsConfirmingDuplicate);
+
+        vm.SelectedEntry = vm.Entries[0];
+
+        Assert.False(vm.IsConfirmingDuplicate);
+    }
+
     [AvaloniaFact]
     public async Task LogbookPaneViewModel_LogAsync_TrailingRefreshFails_StillShowsTheLogOutcome()
     {

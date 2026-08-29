@@ -525,4 +525,126 @@ public sealed class LogbookSessionServiceTests
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.DeleteQsoAsync("qso-1"));
     }
+
+    // ui_transition_plan.md step 15, piece (c) (duplicate-QSO detection) ------------------------
+
+    private static QsoRecord DuplicateCandidate(string id, string callsign, DateTimeOffset startUtc, long? frequencyHz) =>
+        new(id, callsign, startUtc, null, frequencyHz, null, null, null, null, null, null, null, null, null, null, false, false);
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_SameCallsignAndBandSameDay_ReturnsTheMatch()
+    {
+        // Code-review finding: DateTimeOffset.UtcNow + AddHours(-1) is flaky within an hour of UTC
+        // midnight (the candidate falls into the PREVIOUS calendar day) -- fixed mid-day timestamp
+        // instead, same as the day-window boundary test further below.
+        var repository = new FakeLogbookRepository();
+        var today = new DateTimeOffset(2026, 8, 7, 14, 0, 0, TimeSpan.Zero);
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", today.AddHours(-1), 14_230_000));
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", today, 14_070_000, excludeId: null);
+
+        Assert.NotNull(duplicate);
+        Assert.Equal("1", duplicate.Id);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_SameCallsignSixMonthsAgo_DoesNotFlagAsDuplicate()
+    {
+        // Round-1 plan-review blocker: unbounded callsign+band matching would flag a regular sked
+        // partner worked six months ago on every single new contact.
+        var repository = new FakeLogbookRepository();
+        var today = DateTimeOffset.UtcNow;
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", today.AddMonths(-6), 14_230_000));
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", today, 14_230_000, excludeId: null);
+
+        Assert.Null(duplicate);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_SameCallsignSameDayDifferentBand_DoesNotFlagAsDuplicate()
+    {
+        var repository = new FakeLogbookRepository();
+        var today = DateTimeOffset.UtcNow;
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", today.AddHours(-1), 14_230_000)); // 20m
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", today, 7_070_000, excludeId: null); // 40m
+
+        Assert.Null(duplicate);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_BothFrequenciesUnknown_StillFlagsAsDuplicate_NullIsNotAWildcardMismatch()
+    {
+        // "No band" only matches another "no band" -- this is the one case where two null bands
+        // are legitimately the SAME classification (both "unknown"), not a mismatch. Fixed mid-day
+        // timestamp, not UtcNow (same flaky-near-midnight reasoning as the test above).
+        var repository = new FakeLogbookRepository();
+        var today = new DateTimeOffset(2026, 8, 7, 14, 0, 0, TimeSpan.Zero);
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", today.AddHours(-1), null));
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", today, null, excludeId: null);
+
+        Assert.NotNull(duplicate);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_ExcludeId_NeverFlagsItself()
+    {
+        var repository = new FakeLogbookRepository();
+        var today = DateTimeOffset.UtcNow;
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", today, 14_230_000));
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", today, 14_230_000, excludeId: "1");
+
+        Assert.Null(duplicate);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_RepositoryThrows_FailsOpen_ReturnsNullNotException()
+    {
+        var repository = new FakeLogbookRepository { ThrowOnSearch = new InvalidOperationException("DB locked") };
+        var service = CreateService(repository);
+
+        var duplicate = await service.FindLikelyDuplicateAsync("N0CALL", DateTimeOffset.UtcNow, 14_230_000, excludeId: null);
+
+        Assert.Null(duplicate);
+    }
+
+    [Fact]
+    public async Task FindLikelyDuplicateAsync_QueriesOnlyTheCallsignAndSameUtcCalendarDay()
+    {
+        // Confirms the query is pushed down (LogbookQuery.From/To), not pulled client-side -- a
+        // regression here would silently widen or narrow the window without any test noticing via
+        // the match/no-match assertions above alone.
+        var repository = new FakeLogbookRepository();
+        var startUtc = new DateTimeOffset(2026, 8, 7, 14, 0, 0, TimeSpan.Zero);
+        var service = CreateService(repository);
+
+        await service.FindLikelyDuplicateAsync("N0CALL", startUtc, 14_230_000, excludeId: null);
+
+        // No direct query-capture hook on FakeLogbookRepository; assert indirectly via boundary
+        // records instead -- a record exactly at day-start and one exactly at day-end (23:59:59...)
+        // both match, one just before day-start and one just after day-end do not.
+        var dayStart = new DateTimeOffset(2026, 8, 7, 0, 0, 0, TimeSpan.Zero);
+        var dayEnd = new DateTimeOffset(2026, 8, 7, 23, 59, 59, 999, TimeSpan.Zero);
+        await repository.AddAsync(DuplicateCandidate("start", "N0CALL", dayStart, 14_230_000));
+        await repository.AddAsync(DuplicateCandidate("end", "N0CALL", dayEnd, 14_230_000));
+        await repository.AddAsync(DuplicateCandidate("before", "N0CALL", dayStart.AddTicks(-1), 14_230_000));
+        await repository.AddAsync(DuplicateCandidate("after", "N0CALL", dayEnd.AddSeconds(1), 14_230_000));
+
+        var matchStart = await service.FindLikelyDuplicateAsync("N0CALL", startUtc, 14_230_000, excludeId: "end");
+        Assert.Equal("start", matchStart?.Id);
+
+        var matchNotBefore = await service.FindLikelyDuplicateAsync("N0CALL", startUtc, 14_230_000, excludeId: "start");
+        // "end" also matches and sorts first (SearchAsync orders most-recent-first) -- "before" and
+        // "after" must never be the one returned.
+        Assert.NotEqual("before", matchNotBefore?.Id);
+        Assert.NotEqual("after", matchNotBefore?.Id);
+    }
 }
