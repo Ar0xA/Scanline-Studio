@@ -50,4 +50,16 @@ public interface ILogbookSessionService
     /// <c>QrzLookupSettings.Enabled</c> check): this IS the settings-configuration flow itself.
     /// A thin passthrough to <see cref="IQrzCallsignLookup.TestCredentialsAsync"/>.</summary>
     Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default);
+
+    /// <summary>ui_transition_plan.md step 15 -- deletes a logged QSO. Does NOT attempt to retract
+    /// an already-made GridTracker/ADIF-UDP broadcast or QRZ upload -- both are fire-and-forget/
+    /// INSERT-only external APIs with no retraction call, same stated limitation
+    /// <see cref="UpdateQsoAsync"/>'s own doc comment already accepts for edits. Before deleting the
+    /// row, best-effort clears <see cref="Abstractions.Imaging.ReceiveHistoryEntry.LinkedQsoId"/> on
+    /// any RX-history entry still linked to this QSO (via <see cref="Abstractions.Imaging.IReceiveHistoryStore.ClearLinkedQsoIdAsync"/>)
+    /// -- otherwise the Gallery would report that frame as permanently "Logged" against a QSO that
+    /// no longer exists, with no way for the operator to find and re-log it. Returns whether the QSO
+    /// row itself was actually deleted (<see langword="false"/> means it no longer existed, e.g.
+    /// deleted from another window/process) -- never throws for that case.</summary>
+    Task<bool> DeleteQsoAsync(string id, CancellationToken ct = default);
 }

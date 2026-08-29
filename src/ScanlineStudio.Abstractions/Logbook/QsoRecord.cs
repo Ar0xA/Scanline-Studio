@@ -37,4 +37,9 @@ public interface ILogbookRepository
     Task UpdateAsync(QsoRecord record, CancellationToken ct = default);
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
+
+    /// <summary>ui_transition_plan.md step 15 -- returns whether a row was actually deleted
+    /// (<c>sqlite3_changes()</c>), same "false means no-longer-exists, not an exception" contract
+    /// as <see cref="Abstractions.Imaging.IReceiveHistoryStore.SetNoteAsync"/> and friends.</summary>
+    Task<bool> DeleteAsync(string id, CancellationToken ct = default);
 }

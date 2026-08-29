@@ -5646,12 +5646,13 @@ public sealed class PaneViewModelTests
 
     private static LogbookPaneViewModel CreateLogbookPaneViewModel(
         FakeLogbookSessionService? logbook = null,
-        FakeFilePickerService? filePicker = null) =>
+        FakeFilePickerService? filePicker = null,
+        FakeLocalizationService? localization = null) =>
         new(
             logbook ?? new FakeLogbookSessionService(),
             filePicker ?? new FakeFilePickerService(),
             new FakeSstvSessionService { AvailableModes = [TestMode] },
-            new FakeLocalizationService(),
+            localization ?? new FakeLocalizationService(),
             NullLogger<LogbookPaneViewModel>.Instance);
 
     // Disk/DB reconciliation (user-reported gap, 2026-08-26): ReconcileDiskThenRefreshAsync is the
@@ -6019,6 +6020,187 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("rx-entry-42", logbook.Records[0].ReceivedImageId);
+    }
+
+    // ui_transition_plan.md step 15 (QSO delete) -------------------------------------------------
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_DeleteSelectedCommand_DisabledWithNoSelection()
+    {
+        var vm = CreateLogbookPaneViewModel();
+
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_DeleteSelectedCommand_EnabledAfterSelectingARow_DisabledAfterNew()
+    {
+        // Code-review finding (RxHistory already hit this exact regression once): CanExecute alone
+        // is not exercised by any of the other Delete tests below (AsyncRelayCommand.ExecuteAsync
+        // bypasses CanExecute entirely), so a broken/missing [RelayCommand] CanExecute wiring or a
+        // missing NotifyCanExecuteChanged call would stay green everywhere else.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+
+        vm.NewCommand.Execute(null);
+        Assert.False(vm.DeleteSelectedCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_SelectedEntryClearedByRefresh_StaysEnabledAndUsesFormIdentity()
+    {
+        // Code-review finding (the real bug this round fixed): RefreshInternalAsync's Entries.Clear()
+        // nulls SelectedEntry back through the ListBox's own TwoWay binding, but OnSelectedEntryChanged
+        // early-returns on null so IsEditing/_editingId (and therefore the visible Delete button) stay
+        // live. Keying CanDeleteSelected on SelectedEntry left the button visible but permanently dead
+        // after any Refresh/Search while a row was loaded -- this proves the fix (keying on _editingId
+        // instead) actually resolves the delete target from form identity, not the live selection.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        // Simulate what a real ListBox's TwoWay SelectedItem binding does when the bound collection
+        // is cleared out from under it.
+        vm.SelectedEntry = null;
+        Assert.True(vm.DeleteSelectedCommand.CanExecute(null));
+
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("1", logbook.DeletedIds);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_UnwiredConfirmRequested_DeclinesByDefault()
+    {
+        // Same "safe default is always nothing happened" contract as
+        // RxHistoryPaneViewModel_DeleteSelectedEntryCommand_UnwiredConfirmRequested_DeclinesByDefault.
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+
+        Assert.Empty(logbook.DeletedIds);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_UserDeclines_DoesNotDelete()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        vm.ConfirmRequested = _ => Task.FromResult(false);
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+
+        Assert.Empty(logbook.DeletedIds);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_Confirmed_DeletesRefreshesAndSetsStatus()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var localization = new FakeLocalizationService();
+        var vm = CreateLogbookPaneViewModel(logbook, localization: localization);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        string? confirmMessageKey = null;
+        object[]? confirmMessageArgs = null;
+        vm.ConfirmRequested = _ =>
+        {
+            // Captured HERE, not after ExecuteAsync completes -- the success-path StatusMessage's
+            // own GetString call afterward would otherwise overwrite LastKey/LastArgs before this
+            // test ever reads them.
+            confirmMessageKey = localization.LastKey;
+            confirmMessageArgs = localization.LastArgs;
+            return Task.FromResult(true);
+        };
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        // The dialog message names the callsign being deleted (auditor plan-review round 2
+        // finding) -- verified via LastKey/LastArgs, since FakeLocalizationService.GetString
+        // returns the raw key, not a formatted string.
+        Assert.Equal("Panes.Logbook.ConfirmDeleteMessage", confirmMessageKey);
+        Assert.Equal(["N0CALL"], confirmMessageArgs);
+        Assert.Contains("1", logbook.DeletedIds);
+        Assert.Empty(vm.Entries);
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_DeletedRecordWasLoadedInForm_ResetsTheForm()
+    {
+        var logbook = new FakeLogbookSessionService();
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Assert.True(vm.IsEditing);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsEditing);
+        Assert.Null(vm.FormCallsign);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_ServiceThrows_SetsErrorMessage_LeavesEntryInList()
+    {
+        var logbook = new FakeLogbookSessionService { ThrowOnDelete = new InvalidOperationException("disk full") };
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.StatusMessage);
+        Assert.Single(vm.Entries);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_DeleteSelectedCommand_AlreadyDeletedElsewhere_ShowsNotFoundMessage_RefreshesList_ResetsForm()
+    {
+        var logbook = new FakeLogbookSessionService { DeleteResultToReturn = false };
+        logbook.Records.Add(SampleQsoRecord("1"));
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        // Simulates another window/process having already deleted it by the time this confirms.
+        logbook.Records.Clear();
+
+        await vm.DeleteSelectedCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(vm.StatusMessage);
+        Assert.Empty(vm.Entries);
+        // Code-review finding: this branch used to skip ResetForm entirely, unlike the real-delete
+        // path -- Update would then "succeed" against a row SqliteLogbookRepository.UpdateAsync
+        // silently affects zero rows for.
+        Assert.False(vm.IsEditing);
+        Assert.Null(vm.FormCallsign);
     }
 
     [AvaloniaFact]

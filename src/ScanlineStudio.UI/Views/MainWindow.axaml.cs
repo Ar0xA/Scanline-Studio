@@ -447,6 +447,13 @@ public partial class MainWindow : Window
                     return await confirmView.ShowDialog<bool>(this);
                 };
 
+                // ui_transition_plan.md step 15 -- same shape as vm.RxHistory.ConfirmRequested above.
+                vm.Logbook.ConfirmRequested = async confirmVm =>
+                {
+                    var confirmView = new ConfirmActionDialogView { DataContext = confirmVm };
+                    return await confirmView.ShowDialog<bool>(this);
+                };
+
                 // ui_transition_plan.md step 5 (T1-6): same two values LogQsoRequested's own handler
                 // above already trusts as "the received station's callsign/grid" -- see
                 // TxControlsPaneViewModel.CurrentContactRequested's own doc comment.

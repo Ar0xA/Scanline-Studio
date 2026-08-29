@@ -157,6 +157,67 @@ public sealed class SqliteLogbookRepositoryTests
     }
 
     [Fact]
+    public async Task DeleteAsync_ExistingRow_RemovesItAndReturnsTrue()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var record = new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null);
+            await repository.AddAsync(record);
+
+            var deleted = await repository.DeleteAsync("1");
+
+            Assert.True(deleted);
+            Assert.Empty(await repository.SearchAsync(new LogbookQuery()));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_UnknownId_ReturnsFalse_DoesNotThrow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+
+            var deleted = await repository.DeleteAsync("does-not-exist");
+
+            Assert.False(deleted);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task DeleteAsync_OneOfSeveralRows_OnlyRemovesTheTargetedRow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+            await repository.AddAsync(new QsoRecord("2", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null));
+
+            await repository.DeleteAsync("1");
+
+            var remaining = await repository.SearchAsync(new LogbookQuery());
+            var surviving = Assert.Single(remaining);
+            Assert.Equal("2", surviving.Id);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task SearchAsync_UnrecognizedModeValue_FallsBackToUnknown_InsteadOfThrowing()
     {
         // Round-1 Tier B finding: a plain Enum.Parse<RadioMode> on the stored Mode column would

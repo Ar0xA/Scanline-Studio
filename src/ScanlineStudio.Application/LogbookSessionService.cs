@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Settings;
@@ -24,6 +25,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
     private readonly IQrzLogbookUploader _qrzUploader;
     private readonly IQrzCallsignLookup _qrzLookup;
     private readonly ISettingsStore _settingsStore;
+    private readonly IReceiveHistoryStore _receiveHistoryStore;
     private readonly ILogger<LogbookSessionService> _logger;
 
     public LogbookSessionService(
@@ -34,6 +36,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         IQrzLogbookUploader qrzUploader,
         IQrzCallsignLookup qrzLookup,
         ISettingsStore settingsStore,
+        IReceiveHistoryStore receiveHistoryStore,
         ILogger<LogbookSessionService> logger)
     {
         _repository = repository;
@@ -43,6 +46,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         _qrzUploader = qrzUploader;
         _qrzLookup = qrzLookup;
         _settingsStore = settingsStore;
+        _receiveHistoryStore = receiveHistoryStore;
         _logger = logger;
     }
 
@@ -197,6 +201,31 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
     public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default) =>
         _qrzLookup.TestCredentialsAsync(username, password, ct);
 
+    public async Task<bool> DeleteQsoAsync(string id, CancellationToken ct = default)
+    {
+        // Best-effort, clear-then-delete (not delete-then-clear): if the process dies between these
+        // two calls, the worst case is an unlinked-but-still-existing QSO (recoverable via "Open in
+        // log"), not a permanently dangling ReceiveHistory.LinkedQsoId pointing at a QSO that no
+        // longer exists (which the Gallery would then report as "Logged" forever, with no way for
+        // the operator to find and re-log that frame). A failure here is logged, not thrown -- it
+        // must never block the QSO delete itself, which is the operator's actual request.
+        try
+        {
+            await _receiveHistoryStore.ClearLinkedQsoIdAsync(id, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.ClearLinkedQsoIdFailed(_logger, id, ex);
+        }
+
+        // SqliteLogbookRepository.DeleteAsync already logs the raw DB fact -- no second log line
+        // needed here, same "repository logs the DB op, this service only logs its OWN composed
+        // outcome" split LogQsoAsync's own QsoAdded/QsoLogged pair already establishes (that pair
+        // differs in content -- ADIF-UDP/QRZ results -- which this one-step delete has nothing
+        // equivalent to add).
+        return await _repository.DeleteAsync(id, ct).ConfigureAwait(false);
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (ADIF-UDP sent={AdifUdpSentCount}/{AdifUdpEnabledCount}, QRZ uploaded={QrzUploaded})")]
@@ -216,5 +245,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "IsQrzLookupConfiguredAsync failed reading QRZ lookup settings")]
         public static partial void IsQrzLookupConfiguredReadFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to clear LinkedQsoId for QSO {Id} before delete; proceeding with the delete anyway")]
+        public static partial void ClearLinkedQsoIdFailed(ILogger logger, string id, Exception exception);
     }
 }

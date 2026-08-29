@@ -1558,6 +1558,11 @@
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Update}" Command="{Binding UpdateCommand}" IsVisible="{Binding IsEditing}" />
                                     </Grid>
 
+                                    <!-- ui_transition_plan.md step 15 — confirm dialog (not an
+                                         inline arm/confirm bar) handles the "are you sure",
+                                         mirroring Panes.RxHistory.DeleteFrame's own shape below. -->
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary IndustryBtnDanger" Padding="7,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.Logbook.Delete}" Command="{Binding DeleteSelectedCommand}" IsVisible="{Binding IsEditing}" />
+
                                     <TextBlock Text="{Binding StatusMessage}"
                                                TextWrapping="Wrap"
                                                Classes="IndustryRowLabel"

@@ -196,6 +196,19 @@ public interface IReceiveHistoryStore
     /// <paramref name="entryId"/> contract as <see cref="SetNoteAsync"/>.</summary>
     Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default);
 
+    /// <summary>ui_transition_plan.md step 15 (QSO delete) — the inverse of
+    /// <see cref="SetLinkedQsoIdAsync"/>, called by <c>LogbookSessionService.DeleteQsoAsync</c>
+    /// BEFORE the QSO row itself is deleted, so no <see cref="ReceiveHistoryEntry.LinkedQsoId"/>
+    /// is ever left pointing at a QSO that no longer exists (a dangling FK would otherwise make
+    /// the Gallery report that frame as permanently "Logged," excluding it from the "Unlogged"
+    /// filter with no way for the operator to re-log it). Clears every entry currently linked to
+    /// <paramref name="qsoId"/> (in practice at most one, but not schema-enforced) — returns the
+    /// number of rows actually cleared, purely informational; callers do not need to branch on it
+    /// the way <see cref="SetLinkedQsoIdAsync"/>'s single-row <c>bool</c> return is branched on,
+    /// since "zero entries were linked to this QSO" is a perfectly normal, non-error outcome
+    /// here.</summary>
+    Task<int> ClearLinkedQsoIdAsync(string qsoId, CancellationToken ct = default);
+
     /// <summary>ui_transition_plan.md step 4 (T1-4, reframed): per-item manual delete -- the
     /// retention-cap AUTO-delete was removed outright by deliberate user decision
     /// (`docs/removed-features.md` "RX history retention limit") and this does not reintroduce one;

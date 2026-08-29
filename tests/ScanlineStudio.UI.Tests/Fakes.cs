@@ -1793,6 +1793,21 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
         Task.FromResult(TryUpdateEntry(entryId, e => e with { LinkedQsoId = qsoId }));
 
+    public Task<int> ClearLinkedQsoIdAsync(string qsoId, CancellationToken ct = default)
+    {
+        var cleared = 0;
+        for (var i = 0; i < EntriesToReturn.Count; i++)
+        {
+            if (EntriesToReturn[i].LinkedQsoId == qsoId)
+            {
+                EntriesToReturn[i] = EntriesToReturn[i] with { LinkedQsoId = null };
+                cleared++;
+            }
+        }
+
+        return Task.FromResult(cleared);
+    }
+
     public int ReconcileCallCount { get; private set; }
 
     public int ReconcileResultCount { get; set; }
@@ -1920,6 +1935,31 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
 
         Records.AddRange(ImportResultToReturn);
         return Task.FromResult(ImportResultToReturn);
+    }
+
+    public List<string> DeletedIds { get; } = [];
+
+    public Exception? ThrowOnDelete { get; set; }
+
+    /// <summary>Defaults to <see langword="true"/> (deleted) -- a test overrides this to
+    /// <see langword="false"/> only when specifically exercising the "already gone" path.</summary>
+    public bool DeleteResultToReturn { get; set; } = true;
+
+    public Task<bool> DeleteQsoAsync(string id, CancellationToken ct = default)
+    {
+        if (ThrowOnDelete is not null)
+        {
+            throw ThrowOnDelete;
+        }
+
+        if (!DeleteResultToReturn)
+        {
+            return Task.FromResult(false);
+        }
+
+        Records.RemoveAll(r => r.Id == id);
+        DeletedIds.Add(id);
+        return Task.FromResult(true);
     }
 
     public QrzCallsignLookupResult LookupResultToReturn { get; set; } = new(true, "Test Name", "Test QTH", "AA00", null);
