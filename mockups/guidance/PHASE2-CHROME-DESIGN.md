@@ -1,5 +1,10 @@
 # Phase 2 — Chrome markup-port design (menu bar, radio header, tab strip, status bar)
 
+**Historical — already implemented.** The Industry redesign (all 8 phases) shipped; `Cards.axaml`
+(the "OLD" markup mapped from below) has since been deleted outright, and the chrome now draws from
+`Atoms.axaml`/`AtomsTokens.axaml` — see `spec/09-ui.md`'s "Visual design direction". Kept for the
+mapping rationale, not as a pending task.
+
 Maps OLD (`Cards.axaml`-styled, currently shipped) markup to NEW (`Atoms.axaml`-styled) markup,
 band by band, preserving every real binding. Every atom cited already exists in
 `Styles/Atoms.axaml`/`AtomsTokens.axaml` (Phase 0/1, shipped) unless flagged "**NEW**".

@@ -1,5 +1,12 @@
 # Phase 1 — Atom design (review draft, round 2 — no code yet)
 
+**Historical — already implemented.** `Styles/Atoms.axaml`/`AtomsTokens.axaml` shipped; the whole
+8-phase Industry redesign (fonts/tokens → atoms → chrome → tab views → Options → cleanup) is done —
+see `spec/09-ui.md`'s "Visual design direction". `Cards.axaml`/`Tokens.axaml`/`ChromeOverrides.axaml`,
+referenced below as the "OLD"/currently-shipped styling this phase supersedes, have since been
+deleted outright. Kept for the design rationale, not as a pending task — don't treat "no code yet"
+below as current.
+
 Design for `src/ScanlineStudio.UI/Styles/Atoms.axaml` (new, additive, loaded after
 `ChromeOverrides.axaml`), the reusable primitive layer every later phase composes. Sources:
 `mockups/guidance/LAYOUT-SPEC.md` §3-4, `mockups/guidance/PADDING-NORMALIZATION.md` (exact

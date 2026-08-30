@@ -366,13 +366,15 @@ right now).
 These are real, legacy-documented features, but their only purpose is matching what MMSSTV/YONIQ
 offered — not needed for a working 1.0 SSTV application:
 
-- Advanced tab PLL/Zero-crossing tuning-parameter UI (the *defaults* are already verified correct
-  against legacy — DSP core audit, item 1 above — this is only about exposing them as
-  user-overridable, an advanced-user knob legacy had).
+- ~~Advanced tab PLL/Zero-crossing tuning-parameter UI~~ — **unparked and shipped, commit `9051699`**
+  (`docs/plans/options-stub-item1-pll-tuning-plan.md`/`options-stub-item2-zerocrossing-tuning-plan.md`).
 - VOX (TX tone-burst preamble to trigger a rig's own VOX circuit — the preamble itself is niche.
   **This is NOT the same thing as the no-CAT/VOX-operating case** — that's Critical item 1 above,
-  which is a core-loop bug, not parked. Only the preamble-generation feature is parked here.).
-- Sound-file ID (`.mmv` playback as an alternative to CW station ID).
+  which is a core-loop bug, not parked. Only the preamble-generation feature is parked here.). Still
+  not built as of 2026-08-30 (`docs/plans/options-advanced-stub-backlog-plan.md`: "Not built — needs
+  an audio-level-triggered PTT path `IRadioSessionService` doesn't have. Revisit only if raised again.").
+- ~~Sound-file ID~~ — **unparked and shipped, commit `9051699`** (`docs/plans/sound-file-id-plan.md`),
+  `.mmv` playback as an alternative to CW station ID, `CwIdMode.SoundFile`.
 - Auto-start (arm/disarm-the-decoder workflow convenience).
 - `.ini` legacy settings importer (already parked earlier this session, see `spec/14-roadmap.md`
   Tier 3).

@@ -40,8 +40,12 @@ A single, always-interactive templating layer on top of the existing TX image ed
 adjustments/undo-redo/basic overlay-text, all already shipped and unchanged) — drag/drop, resizable
 elements with auto-fit text, color/font control, layer priority, and a fast mid-QSO fill/reuse
 workflow. End-result capability matches what legacy YONIQ's template designer could produce; the
-implementation is a fresh, modern design, not a port. Legacy `.mtm` file import is a confirmed real
-goal, explicitly sequenced after this ships, not part of the initial build.
+implementation is a fresh, modern design, not a port. **Stale as of 2026-08-29**: legacy `.mtm`/`.mti`
+file import was originally sequenced after this shipped as a confirmed real goal (as this paragraph
+still says below); it was later scoped as `ui_transition_plan.md` step 14 and **rejected outright**
+(user decision, 2026-08-29 — a final "we don't want it" call, not a deferral) — see
+[[15-template-designer]]'s "Rejected" section and `docs/removed-features.md`'s "Legacy `.mtm`/`.mti`
+template import" entry.
 
 *(No other 1.1 targets are confirmed yet — this is currently a single-item milestone. Add further
 targets here as they're scoped, following the same pattern: a one-paragraph summary + status here,

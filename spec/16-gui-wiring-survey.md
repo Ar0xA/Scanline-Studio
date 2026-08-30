@@ -8,6 +8,15 @@ longer exists, an 8-tab Options window that now has 9, and ~13 controls it class
 that have since shipped as real. Its narrative "Refresh (…)" sections and rolled-forward summary
 counts are not reproduced here — they documented a codebase that no longer matches.
 
+**Known-stale since commit `62b9281` (2026-08-30)**: that commit fixed 8 defects found by a live
+operator-perspective review, at least one of which this survey documented as a real finding (the
+override-callsign watermark nit below, now fixed) rather than a stub/placeholder — this survey predates
+that pass and was not re-verified against it. The other 7 fixes (mislabeled RX-frame timestamp, a
+Gallery action-row overflow/visibility bug, a stale logbook entry count, a leaked button style, raw
+internal mode ids in the Logbook grid, a one-directional QSO-to-frame link, and template auto-fill only
+firing from one editor entry point) were not necessarily documented as gaps here and are not reflected
+either way — treat any row touching those areas as unverified against current source until re-derived.
+
 **Scope:** every screen/card/control in `ScanlineStudio.UI`:
 
 | Surface | File |
@@ -83,7 +92,10 @@ control, with the verification that justifies the grouping stated inline.
 ## Receive tab
 
 `MainWindow.axaml:153-761`. Three columns (`:156`, `ColumnDefinitions="236,*,312"`) — Mode/Sync/
-Input/Signal cards (left), Waterfall + Incoming-frame + Decode-activity (centre), Frame-metadata
+Input/Signal cards (left), Waterfall + Incoming-frame + Decoder Trace oscilloscope (centre —
+**corrected 2026-08-30, was stale**: the "Decode-activity" card previously named here was removed
+outright 2026-08-25/26, its real half rebuilt as its own full-width Decoder Trace card, see the
+"Decode activity" card section below), Frame-metadata
 (right — Unattended-RX/Session-frames cards removed 2026-08-25, see below). Left, centre-top and
 right columns bind `DataContext="{Binding
 RxImage}"` per card; the Incoming-frame card's own action row deliberately stays on `MainViewModel`
@@ -111,7 +123,7 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | Slant ppm | REAL | `:249` | `SlantPpmDisplay` (`RxImagePaneViewModel.cs:392`) — read-only formatted readout, not an editable stepper. |
 | Sync offset | REAL | `:250` | `SyncOffsetSamplesDisplay` (`.cs:405`). |
 | Auto-correct | REAL | `:251` | `AutoCorrectDisplay` (`.cs:443`), 4-way AVT/Off/Locked/on-not-locked readout gated by `SstvDecoderSettings.AutoSlantEnabled`. |
-| VIS threshold | REAL — **wired 2026-08-25** | `:266` | `VisThresholdDisplay` (`RxImagePaneViewModel.cs`), restart-only construction-time read of `ISstvDecoder.SenseLevel` (previously only test-only exposed as `SenseLevelForTests`, now a real public member). New plain row, not behind the removed Advanced Timing disclosure. Preset NAME only (Very low/Low/High/Very high) — the underlying threshold is a raw AGC-domain amplitude, not dB; the old stub's "−26 dB" placeholder was a fake literal. |
+| VIS threshold | REAL — **wired 2026-08-25, renamed "Squelch level" + made live-editable 2026-08-27** | `:266` | `SenseLevel`/`SenseLevelOptions` (`RxImagePaneViewModel.cs`) — **no longer the restart-only construction-time readout** this row originally described: renamed to match the Options window's own "Squelch level" label (same `[?]` help text), and turned into a real `ComboBox` that applies the change live (`RequestSenseLevel`) and persists it on every selection (`PersistSenseLevelAsync`/`OnSenseLevelChanged`), through a full decode-path plan-review per CLAUDE.md §7. New plain row, not behind the removed Advanced Timing disclosure. Preset NAME only (Very low/Low/High/Very high) — the underlying threshold is a raw AGC-domain amplitude, not dB; the old stub's "−26 dB" placeholder was a fake literal. |
 | Re-sync button | REAL | `:275` | `RequestReSyncCommand` (`.cs:535-536`) → `ISstvSessionService.RequestReSync`. |
 | Correct slant button | REAL | `:276` | `RequestCorrectSlantCommand` (`.cs:538-539`) — port of legacy's `KRCS` popup item, sibling to Re-sync. |
 | ~~Reset button~~ | **REMOVED 2026-08-25** | — | Legacy does have a real Slant-Reset (`Main.cpp:13186-13193`), but this port rebuilds its slant tracker per lock and tears it down at end-of-image, making a reset structurally inert against this port's own architecture — not a missing port, a structural mismatch. |
@@ -175,12 +187,22 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | — thumbnail timestamp | REAL | `:567` | `Entry.ReceivedAt`. |
 | — thumbnail mode badge | REAL | `:574` | `Entry.ModeId`. |
 
-**Decode activity card** (`MainWindow.axaml:597-640`)
-
-| Control | Class | File:line | Note |
-|---|---|---|---|
-| Decode-events table (UTC/Freq/Mode/Callsign/Grid/SNR/Slant/Lines/State) | STUB (header-only) | `:615-625` | Nine header cells, no `ItemsSource` anywhere. No structured decode-event log exists, distinct from `ReceiveHistoryStore`. Plain `Grid`/`IndustryTableHeaderRule` atoms — the `Avalonia.Controls.DataGrid` package is gone. |
-| Trace panel `ItemsControl` | STUB (empty) | `:635` | Literally `<ItemsControl />`, no `ItemsSource`. |
+**"Decode activity" card — REMOVED entirely, 2026-08-25/26; this whole section is historical, not
+current.** **Corrected 2026-08-30, was stale**: the card this section originally described no longer
+exists in this form.
+- The decode-events table (UTC/Freq/Mode/Callsign/Grid/SNR/Slant/Lines/State), a permanent
+  header-only stub with no `ItemsSource` and no structured decode-event log behind it, was **removed
+  outright** (`ui_transition_plan.md` step 9/T2-10 — see `MainWindow.axaml`'s own removal comment,
+  its freed 150px row absorbed by the Incoming-frame row) rather than left as a dead table — moved to
+  `spec/14-roadmap.md`'s backlog instead.
+- The trace panel — previously a bare `<ItemsControl />` stub squeezed into a 250px sub-column of
+  this same card — is **not** stub anymore either, and did not simply get removed with the rest of the
+  card: it was built out as a real, working oscilloscope (`DecoderTracePaneViewModel`/
+  `DecoderTraceControl`, a port of legacy's `TTScope`/`Scope.cpp`, real Capture/pan/zoom/gain
+  controls) and **relocated to its own full-width card** in the same 2026-08-25 pass, once the
+  Unattended-RX/Session-Frames cards that used to share its column were also removed (see below) and
+  freed the space. See the current `MainWindow.axaml` around the "Un-stub-RX-tab Piece B2" comment for
+  its real location, not the old `:597-640` line range cited above.
 
 ### Right column
 
@@ -200,7 +222,7 @@ and qualifies each binding (`MainWindow.axaml:486-490`).
 | ~~Dropped lines~~ | **REMOVED 2026-08-25** | — | `spec/17-rx-telemetry-feasibility.md` classifies this as likely not a clean concept given the port's per-pixel decode approach; no counter exists anywhere in the decoder. Row and locale keys deleted, not just unwired. |
 | File size | REAL | `:694` | `FileSizeDisplay` (`.cs:385`); only populates once the frame's own save completes, otherwise `"—"`. |
 | Note `TextBox` | REAL | `:709` | `Text="{Binding Note}"` (`.cs:102`), `IsEnabled="{Binding CanEditFrameMetadata}"` (`.cs:95` — true once `_currentEntryId` is correlated via `OnHistoryRecorded`, `.cs:921`); debounce-persists through the real `IReceiveHistoryStore.SetNoteAsync` (`PersistNoteDebouncedAsync`, `.cs:963`). **This closes the previous revision's only remaining PARTIAL finding.** |
-| Override callsign `TextBox` | REAL | `:711` | `Text="{Binding OverrideCallsign}"` (`.cs:270`). **Nit:** its `Watermark` is `Panes.RxFrameMeta.CallsignValue` = `"EA7KDT"` (`en.json:220`) — a real-looking callsign as watermark text; low severity (watermarks are visually distinct) but it is the last surviving instance of that literal. |
+| Override callsign `TextBox` | REAL | `:711` | `Text="{Binding OverrideCallsign}"` (`.cs:270`). **Fixed in commit `62b9281`**: its `Watermark` was `Panes.RxFrameMeta.CallsignValue` = `"EA7KDT"` (`en.json:220`), a real-looking callsign as watermark text — no longer the case. |
 | Lookup QRZ button | REAL | `:713` | `LookupQrzCommand` (`.cs:1101`) → `ILogbookSessionService.LookupCallsignAsync` → real `IQrzCallsignLookup` HTTP round-trip. |
 | Flag `ToggleButton` | REAL | `:720` | `IsChecked="{Binding IsFlagged}"` (`.cs:107`), same `CanEditFrameMetadata` gate; persists through `IReceiveHistoryStore.SetFlaggedAsync` (`PersistFlaggedAsync`, `.cs:1018`). |
 | Frame-metadata error banner | REAL | `:722-725` | `FrameMetadataErrorMessage` (`.cs:116`). |
@@ -353,7 +375,7 @@ filter row.**
 | Header + entry count | REAL | `:967-968` | `EntryCountText` via `UpdateEntryCountText` (`RxHistoryPaneViewModel.cs:253`), localized through `_localization.GetString`. |
 | Search `TextBox` | REAL, **fixed 2026-08-22** | `:977` | `SearchText` (`RxHistoryPaneViewModel.cs`), client-side case-insensitive substring match against `Entry.Note`/`Entry.ModeId`. Watermark narrowed from `"callsign, grid, mode, note…"` to `"mode, note…"` (`en.json:260`) to match what it actually searches — `ReceiveHistoryEntry` still has no callsign/grid field. |
 | All / Today segment | REAL | `:978-979` | `ShowTodayOnly` (`.cs:168`) → a real `IReceiveHistoryStore.QueryAsync` filter (`.cs:351`). |
-| 14MHz `ToggleButton` | STUB (disabled), **fixed 2026-08-22** | `:980` | Was dead-interactive; now `IsEnabled="False"` + `Options.NotImplemented.Help` tooltip, matching the rest of the app's honesty convention. `ReceiveHistoryEntry` still has no frequency field — wiring this for real needs a schema change (new persisted field + capturing frequency at RX-save time), out of scope for the dead-control fix. |
+| 14MHz `ToggleButton` | **REMOVED 2026-08-26**, superseding the 2026-08-22 disabled-stub fix below | — | User decision "maybe one day," same session as the Sort/Size chips below. `ReceiveHistoryEntry` still has no frequency field to filter by — wiring this for real needs a schema change, not just a UI fix. `Panes.RxHistory.Filter14Mhz` locale key deleted; see `spec/14-roadmap.md`'s backlog. (Was `STUB (disabled)`, fixed 2026-08-22 from dead-interactive to an honest disabled stub with `Options.NotImplemented.Help` — that intermediate state is now superseded, not the current one.) |
 | Unlogged / Flagged `ToggleButton`s | REAL, **fixed 2026-08-22** | `:981-982` | `FilterUnloggedOnly`/`FilterFlaggedOnly` (`.cs`), client-side over `Entries` (`Entry.LinkedQsoId is null` / `Entry.IsFlagged`) into a new `FilteredEntries` collection — the Gallery grid's real `ItemsSource` now, separate from `Entries` itself (which stays unfiltered, still backing the Receive tab's Previous-frames strip). |
 | Sort chip | **REMOVED 2026-08-26** | — | User decision "maybe one day." Was a static `Border` asserting an active sort order that never existed anywhere in `RxHistoryPaneViewModel`. `Panes.RxHistory.SortChip` locale key deleted; see `spec/14-roadmap.md`'s backlog. |
 | Size chip | **REMOVED 2026-08-26** | — | Same decision, same session as Sort chip above. Was a static `Border` asserting an active thumbnail-size setting that never existed. `Panes.RxHistory.SizeChip` locale key deleted; see `spec/14-roadmap.md`'s backlog. |
@@ -553,7 +575,7 @@ guarantee every one.
 | Control | Class | File:line | Note |
 |---|---|---|---|
 | Capture / Playback device `ComboBox`es | REAL | `:96-115` | `CaptureDevices`/`PlaybackDevices` via `IAudioDeviceEnumerator`. |
-| Sample rate | REAL | `:120` | `SampleRate`, persisted. |
+| Sample rate | REAL, **live since 2026-08-27/28** | `:120` | `SampleRate`, persisted, and applied to the running capture device on Save without a restart (`restart-required-settings` backlog item 4) — see the Decode tab's own corrected intro note below for the full backlog closure. |
 | RX FIFO / TX FIFO steppers | STUB (disabled) | `:144`, `:150` | Hardcoded `Value="16"`, `IsEnabled="False"` + tooltip. Legacy's `m_SoundFifoRX/TX` configure Win32 `waveIn/waveOut` queued-buffer counts — no analog in the MiniAudio engine. **Superseded, not a gap** (`:128-131`). |
 | Sound-card thread priority | STUB (disabled) | `:154-160` | `IsEnabled="False"` + tooltip; `IsChecked="True"` on Normal is inert. Legacy's `m_SoundPriority` is read/persisted but never applied anywhere in legacy either. This port's real `AudioDeviceSettings.CaptureThreadPriority` has different enum semantics and needs its own control (`:131-136`). |
 | Application priority (Normal / High) | REAL | `:164-165` | `IsAppPriorityNormalSelected`/`IsAppPriorityHighSelected` (`.cs:692,704`) → `AppPerformanceSettings.ProcessPriority`, applied once at startup. Only 2 of .NET's 6 values, matching legacy's own UI scope. |
@@ -569,7 +591,7 @@ guarantee every one.
 | OmniRig radio | STUB (disabled) | `:211-215` | `IsEnabled="False"`; its own dedicated help tooltip (not the generic one) documents it as a speculative 5th backend. Correctly stays stub. |
 | rigctld Host / Port | REAL | `:221`, `:225` | `RigctldHost` / `RigctldPort`, persisted; shown only while `IsRigctldSelected`. |
 | Test connection button + status | REAL | `:234-240` | `TestRigctldConnectionCommand` (`.cs:413`) — tests the *currently typed* (not-yet-saved) host/port via a disposable connection, never disturbing the live session. |
-| Hamlib library path + Browse/Auto-detect/Test path buttons + rig-model `ComboBox` | REAL | `:246-297` | **New since the previous survey revision; was fully undocumented.** `HamlibLibraryPath`/`BrowseHamlibLibraryCommand`/`AutoDetectHamlibCommand`/`ProbeHamlibCommand`/`HamlibRigModels`/`SelectedHamlibRigModel`, backed by the new `IHamlibDiscoveryService`/`HamlibDiscoveryService` (probes a candidate library path off-thread via `Task.Run`, lists real Hamlib rig models via `rig_list_foreach`). `HamlibDiscoveryStatusMessage` reports probe results inline. |
+| Hamlib library path + Browse/Auto-detect/Test path buttons + rig-model `ComboBox` | REAL, **library path applies live since 2026-08-27/28** | `:246-297` | **New since the previous survey revision; was fully undocumented.** `HamlibLibraryPath`/`BrowseHamlibLibraryCommand`/`AutoDetectHamlibCommand`/`ProbeHamlibCommand`/`HamlibRigModels`/`SelectedHamlibRigModel`, backed by the new `IHamlibDiscoveryService`/`HamlibDiscoveryService` (probes a candidate library path off-thread via `Task.Run`, lists real Hamlib rig models via `rig_list_foreach`). `HamlibDiscoveryStatusMessage` reports probe results inline. The library path itself no longer needs a restart to take effect (commit `d6fd7cb`). |
 | Hamlib Model / Serial port / Baud / PTT type | REAL | `:299-320` | All persisted; shown only while `IsHamlibSelected` (`.cs:395`). |
 | RTS-on-RX / PTT-lock checkboxes | STUB (disabled) | `:329-334` | Both gate legacy's raw-serial RTS-pin PTT keying, a family explicitly excluded from this port; the real PTT path goes through Hamlib/rigctld/flrig. Correctly stays stub. |
 | **Pwr slider + value, Tune button** | REAL | `:346-368` | **New 2026-08-24, direct user request** ("TUNE button that works like WSJTX ... so that we can set our Pwr slider to the TX power output we want"). `TxVolumePercent`/`TxVolumeDisplay` (`.cs:621,626`) are a SEPARATE live-loaded copy of the same `AudioDeviceSettings.TxVolumePercent` setting the header's own Pwr slider edits — not instantly two-way-bound to it while both happen to be open, only synced on each one's own load/save. Deliberately **not** gated behind this dialog's usual Save button (unlike every other field on this tab): it debounce-persists immediately, same shape as the header slider, because the whole point is dragging it while `TuneCommand` (`.cs:714`) is actively playing a tone and watching the radio's own power meter. Tune is a real start/stop TOGGLE (`IsTuning`/`TuneButtonLabel`, `.cs:695,700`) — WSJT-X-style, not fire-and-forget — capped at a 30 s safety duration (`MaxTuneDuration`) either way, closes cleanly if the dialog itself closes mid-tone (`StopTuneIfActive`, called from `OptionsWindowView.axaml.cs`'s own `Closed` handler). Needed a real backend change to work at all: `SstvSessionService`'s Pwr gain used to be captured once when PTT keyed and frozen for the whole call, so dragging Pwr mid-tone had no effect until the next call — now re-read from a live volatile field once per playback chunk, reviewed by the project's own auditor subagent (a genuine concurrency change, not a port) and shipped after fixing one blocker that review found (the Options dialog's own Save button was silently reverting a live Pwr change made while the dialog stayed open — see the intro note above this section). |
@@ -590,7 +612,7 @@ superseded by the real QRZ.com tab.
 
 | Control | Class | File:line | Note |
 |---|---|---|---|
-| Sense level (Very low / Low / High / Very high) | REAL | `:436-439` | `IsSenseLevel*Selected` (`.cs:434-482`) → `SstvDecoderSettings.SenseLevel` → `AnalogFmSstvDecoder.SenseLevelPresets`, a port of legacy `CSSTVDEM::SetSenseLvl`. Out-of-range persisted values fall back to preset 0 (matching legacy's `default:`), absent falls back to preset 1 (legacy's ctor default). |
+| Sense level (Very low / Low / High / Very high) | REAL, **renamed "Squelch level" and made genuinely LIVE, 2026-08-27** | `:436-439` | `IsSenseLevel*Selected` (`.cs:434-482`) → `SstvDecoderSettings.SenseLevel` → `AnalogFmSstvDecoder.SenseLevelPresets`, a port of legacy `CSSTVDEM::SetSenseLvl`. Out-of-range persisted values fall back to preset 0 (matching legacy's `default:`), absent falls back to preset 1 (legacy's ctor default). **No longer restart-required** — Options' own Save now applies it live (not just on next construction), matching legacy's own live-apply-on-OK behavior, and the Receive tab's Sync & Slant card has its own real, live-editable "Squelch level" `ComboBox` bound to the same underlying setting (`RxImagePaneViewModel.SenseLevel`/`SenseLevelOptions`) — this is no longer the restart-only exception the note below the table used to describe it as. |
 | RX BPF sharpness (Normal / Wide / Sharp / Very sharp) | REAL | `:447-450` | `IsRxBpf{Off,Wide,Narrow,VeryNarrow}Selected` (`.cs:529-577`) → real `if(m_bpf)` bypass dispatch against a preset-parameterized `SearchBandpassFilter`; absent and out-of-range both clamp to Wide. |
 | Demodulator type (PLL / Zero crossing / Hilbert) | REAL | `:458-460` | `IsDemodType*Selected` (`.cs:486-522`) → real runtime dispatch in `AnalogFmSstvDecoder`; absent and out-of-range both clamp to Hilbert. |
 | **RX buffer (Off / On / Extended)** | REAL | `:468-470` | `IsRxBufferOffSelected`/`IsRxBufferOnSelected`/`IsRxBufferExtendedSelected` (`.cs:581,593,605`). **Reclassified from STUB** — the whole 9-phase RX-buffer subsystem, including this Options UI (Phase 9), has landed. The previous revision's separate "hardcoded-wrong-default (shows Off, real default On)" bug is also gone: the checked state is now bound, not literal. |
@@ -601,9 +623,14 @@ superseded by the real QRZ.com tab.
 | Auto-correct slant during decode | REAL | `:505-506` | `AutoSlantEnabled`, plus `IsEnabled="{Binding IsAutoSlantRowEnabled}"` (`.cs:623` = `RxBufferMode != Off`) — a faithful port of legacy's `CBASlant->Enabled = RGRBuf->ItemIndex ? TRUE : FALSE` (`Option.cpp:222`). |
 | Reset section | REAL | `:508` | `ResetDecodeToDefaultCommand`. |
 
-All decoder settings on this tab are **restart-required** — no live-reconfiguration path exists for
-any DI-singleton-baked setting. Squelch/sense level is the most user-visible instance of that limit
-(legacy applies it live).
+**Corrected 2026-08-30, was stale**: this used to say all decoder settings on this tab are
+restart-required with no live-reconfiguration path, citing Squelch/sense level as the most
+user-visible instance of that limit. Squelch/sense level is no longer that exception — it went live
+2026-08-27 (see its own row above), matching legacy's own live-apply-on-OK behavior. The remaining
+decoder toggles on this tab (BPF sharpness, demod type, RX buffer mode, auto-stop/sync-restart/
+auto-sync/auto-slant, etc.) are still genuinely restart-required, baked into the same DI singleton —
+not re-verified item-by-item in this pass, only the specific claim naming Squelch/sense level as the
+example was checked and found wrong.
 
 ### Identification tab (`:524-601`)
 
@@ -706,8 +733,8 @@ figure below as ±10, not exact.
 |---|---|---|
 | **REAL** | ~275 | TX image editor (~130, 100 %), Logbook tab (~25, 100 %), Options General/Audio/Radio/Tx/Decode/Identification/QRZ/Forwarding cores (~50), Receive tab telemetry (~30), Radio header (~12), status bar + tab strip (~13), Gallery (~20), About/QSO-link dialogs (~12). |
 | **PLACEHOLDER** (honest) | ~40, **updated 2026-08-25, not re-audited beyond the items below** | Receive Input-chain/Signal-quality/Frame-metadata/Unattended-RX unbacked rows, Gallery per-entry SNR/freq/grid + Sidecar/Disk, status-bar Memory/SNR/Disk. TX mode/output scaffolding rows (8) fixed 2026-08-25 (un-stub-TX-tab pieces 1-9, see the Left column table above), not counted here anymore. The "TX Outgoing-metadata card (9)" this row used to count was already stale before this pass — that card doesn't exist in `src/` (removed commit `010b60d`, 2026-08-24). TX Queue/Recently-sent/Session-frames empty states are gone too (removed outright, not placeholders, 2026-08-25). |
-| **STUB** (disabled + tooltip) | ~44, **updated 2026-08-25, not re-audited beyond the items below** | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode (2, Reset/Advanced-timing removed 2026-08-25, see the Sync & Slant card table above), Gallery Re-decode + 14MHz filter (2), Decode-activity header-only table (1). Options Decode Auto-start removed entirely (its real behavior ported as a real control instead — see the Receive tab's Mode card table above). TX Recently-sent buttons and the TX-log header-only table removed entirely 2026-08-25 (see the Transmit tab's right-column table above), not counted here anymore. The 4 empty hatch plots this row used to count are also gone — 0 remain in `src/` (the TX POWER/ALC one became real meters 2026-08-25 in an earlier pass; no other hatch-panel usage exists). |
-| **STUB (dead-interactive)** | **0**, **closed 2026-08-22** | Was 4 (Gallery Search `TextBox`, 14MHz/Unlogged/Flagged `ToggleButton`s). Search and Unlogged/Flagged are now real (client-side `FilteredEntries`, `RxHistoryPaneViewModel`); 14MHz is now an honest disabled stub instead (see the STUB row above) — no frequency field exists on `ReceiveHistoryEntry` to filter by, and adding one is a schema change out of scope for a dead-control fix. No dead-interactive controls remain anywhere in the app. |
+| **STUB** (disabled + tooltip) | ~42, **updated 2026-08-25, not re-audited beyond the items below** | Options Advanced tab (~17, whole tab), menu bar (12), Options Audio FIFO/priority (3), Options Radio OmniRig/RTS/PTT-lock (3), Options Identification Sound-file/VOX/Tune-sat (5), Options General colour buttons (7), Radio header sideband/BW/Split/Step/RIT/Edit-Import-Scan (~10), RX Abort/Re-decode (2, Reset/Advanced-timing removed 2026-08-25, see the Sync & Slant card table above), Gallery Re-decode + 14MHz filter (2, **corrected 2026-08-30**: 14MHz was itself removed outright 2026-08-26, see that row above — only Re-decode is still a real disabled stub here). Options Decode Auto-start removed entirely (its real behavior ported as a real control instead — see the Receive tab's Mode card table above). TX Recently-sent buttons and the TX-log header-only table removed entirely 2026-08-25 (see the Transmit tab's right-column table above), and the Decode-activity header-only table removed entirely 2026-08-25/26 (**corrected 2026-08-30**, was double-counted here as a still-existing stub — see the "Decode activity" card section above), not counted here anymore. The 4 empty hatch plots this row used to count are also gone — 0 remain in `src/` (the TX POWER/ALC one became real meters 2026-08-25 in an earlier pass; no other hatch-panel usage exists). |
+| **STUB (dead-interactive)** | **0**, **closed 2026-08-22** | Was 4 (Gallery Search `TextBox`, 14MHz/Unlogged/Flagged `ToggleButton`s). Search and Unlogged/Flagged are now real (client-side `FilteredEntries`, `RxHistoryPaneViewModel`); 14MHz was an honest disabled stub for a time (see the row above) before being **removed from the UI outright 2026-08-26** (superseding that intermediate fix, not layered on top of it) — no frequency field exists on `ReceiveHistoryEntry` to filter by, and adding one is a schema change out of scope for a dead-control fix. No dead-interactive controls remain anywhere in the app. |
 | **FAKE-LIVE** | **1**, **down from 4** | Only the VFO caption `"VFO A · RX · M1"` (`RadioHeaderView.axaml:48`) remains. Gallery Sort/Size chips **removed 2026-08-26** (see their own rows above), not just mitigated. AUTOSAVE-ON chip's wording was **resolved 2026-08-26** (stub survey Tier 1) — confirmed the claim is simply true (RX images are unconditionally auto-saved, no setting gates it), needs no backing property. Gallery Storage Naming (`:1168`) is fixed as of 2026-08-22 — see its own PLACEHOLDER row above. The previously-flagged "4 latent" Advanced-timing values are moot — that whole disclosure (Sample clock/Sync window/Drop-line) was removed 2026-08-25, not left reachable, so that risk closed rather than materialized. |
 | ~~**PARTIAL**~~ | **0**, **closed 2026-08-25** | Was 1 (Receive Frame-metadata "Grid / dist") — now REAL, see that card's own table above. |
 
@@ -724,10 +751,11 @@ error text line was removed 2026-08-25, the must-acknowledge
 popup is the only surface for that signal now). Receive tab Sync&Slant / Input-chain / Signal-quality
 cards. Options General/Audio/Radio/Tx/Decode/Identification tabs.
 
-**Mostly/fully stub:** Options Advanced tab (100 %). Receive tab Decode-activity, Unattended-RX and
-Session-frames cards. Menu bar outside File > Open/Exit, Help > About, and Options. (Transmit tab's
-right column — formerly Queue/TX-log/Recently-sent — no longer exists at all, removed 2026-08-25,
-so it's dropped from this list rather than counted as stub.)
+**Mostly/fully stub:** Options Advanced tab (100 %). Menu bar outside File > Open/Exit, Help > About,
+and Options. (Receive tab's Decode-activity, Unattended-RX, and Session-frames cards, and Transmit
+tab's right column — formerly Queue/TX-log/Recently-sent — no longer exist at all, all removed
+outright 2026-08-25/26 rather than left stub, **corrected 2026-08-30, was stale here**: so all four
+are dropped from this list rather than counted as stub.)
 
 ### Most important findings, current
 
@@ -737,16 +765,22 @@ so it's dropped from this list rather than counted as stub.)
    does not exist anywhere in the decode pipeline — but the UI no longer claims it does.
 2. **The Gallery filter row's dead-interactive controls are fixed, 2026-08-22.** Search, Unlogged, and
    Flagged are now real client-side filters (`RxHistoryPaneViewModel.FilteredEntries`, distinct from
-   the unfiltered `Entries` the Previous-frames strip still binds to); 14MHz is now an honest disabled
-   stub instead of a dead one, since `ReceiveHistoryEntry` still has no frequency field. Sort and Size
-   remain the app's only two FAKE-LIVE chips tied to genuinely unbuilt features.
+   the unfiltered `Entries` the Previous-frames strip still binds to). **Corrected 2026-08-30, stale**:
+   this item previously said 14MHz was "an honest disabled stub" and Sort/Size were "the app's only two
+   FAKE-LIVE chips tied to genuinely unbuilt features" — all three were instead **removed from the UI
+   outright, 2026-08-26** (user decision, "maybe one day" — see `MainWindow.axaml`'s own removal
+   comment and `spec/14-roadmap.md`'s backlog entries), not left in either of those states. There is no
+   longer a 14MHz toggle, Sort chip, or Size chip anywhere on the Gallery filter row.
 3. **The Storage "Naming" row is fixed, 2026-08-22** — corrected to
    `yyyyMMdd-HHmmssfff_MODE_ID8.png`, matching `ReceiveHistoryRecorder.cs:328` exactly.
 4. **`RxImagePaneViewModel.DecodedNrRst` — closed 2026-08-26.** Was real and populated with no control
    bound to it anywhere; now bound to a real "NR / RST" row on the RxFrameMeta card.
-5. **Options → Decode settings are restart-only.** Every decoder toggle on that tab is baked into a DI
-   singleton with no live-reconfiguration path. Sense level is the most user-visible case, since it's
-   the control most likely to be adjusted while actively chasing a signal (legacy applies it live).
+5. **Options → Decode settings are mostly restart-only, with one exception. Corrected 2026-08-30,
+   was stale**: this used to cite Sense level (now "Squelch level") as the most user-visible example
+   of the restart-only limit — it isn't anymore. It went genuinely live 2026-08-27 (Options' own Save
+   applies it without a restart, and the Receive tab has its own live-editable ComboBox for the same
+   setting), matching legacy's own live-apply-on-OK behavior. The rest of that tab's decoder toggles
+   remain baked into the same DI singleton with no live-reconfiguration path.
 6. **Fixed 2026-08-25.** The Identification card in the TX pane used to be a construction-time
    snapshot (`TxControlsPaneView.axaml:145-148`) — it showed the Options values as they were when
    the pane was built, not as they are now. Now re-loaded whenever the Options dialog closes.

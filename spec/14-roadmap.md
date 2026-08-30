@@ -40,7 +40,7 @@ regrouping.
 
 ### Tier 0 — must fix before calling anything "0.9 beta" — **DONE, 2026-08-14**
 
-All Tier-0 blockers closed: 7 fake-live/dead controls fixed (TX editor tool strip, dead Transmit/Tune/Preview/Halt row, unbound adjustment sliders, decorative overlay, Receive's dead Incoming-frame buttons, Mode-card "Locked" toggle), Auto-start and RX-buffer hardcoded-default lies in Options fixed. The suspected "Robot 36/72 replay chroma-bleed" DSP bug was investigated (2 rounds of auditor plan-review plus a direct empirical measurement) and closed as NOT a bug — an artifact of the test image itself. 2 rounds of real auditor code-review, 242/242 `ScanlineStudio.UI.Tests` green. Not yet pushed to `origin/master` as of this writing.
+All Tier-0 blockers closed: 7 fake-live/dead controls fixed (TX editor tool strip, dead Transmit/Tune/Preview/Halt row, unbound adjustment sliders, decorative overlay, Receive's dead Incoming-frame buttons, Mode-card "Locked" toggle), Auto-start and RX-buffer hardcoded-default lies in Options fixed. The suspected "Robot 36/72 replay chroma-bleed" DSP bug was investigated (2 rounds of auditor plan-review plus a direct empirical measurement) and closed as NOT a bug — an artifact of the test image itself. 2 rounds of real auditor code-review, 242/242 `ScanlineStudio.UI.Tests` green. Pushed to `origin/master` since (stale "not yet pushed" note removed).
 
 Full detail: `spec/14-roadmap-archive.md`.
 
@@ -204,14 +204,14 @@ Full detail: `spec/14-roadmap-archive.md`.
 ### Tier 3 — parked, no near-term plan (existing "Explicitly deferred beyond v1" list + additions)
 
 Perspective correction/webcam capture, full Hamlib extended command-set coverage, plugin sandboxing
-beyond same-process isolation, legacy `.MDT` log import, legacy `.mtm` template **import**
-(**narrowed 2026-08-22**: this used to read "the full QSL/template designer (`.mtm` import)" — the
-modern template designer itself shipped 2026-08-18, [[15-template-designer]]; only importing
-legacy's own `.mtm` files remains parked), SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
+beyond same-process isolation, legacy `.MDT` log import, SSTV repeater/beacon mode, contest logging (fully out of scope, not just deferred), OCR
 (no legacy precedent — verified zero OCR anywhere in `yoniq-old/`), stereo L/R input-chain level
 meters (blocked on a mono-vs-stereo architecture decision, not just wiring), Unattended RX
 (scan/watch/dwell/alert — no design exists for what "watching" or "scanning" means here), Session
-Frames (no per-session frame-log concept has ever been designed). Adding, same tier: **Phase 5
+Frames (no per-session frame-log concept has ever been designed). **Not Tier 3, permanently out of
+scope instead**: legacy `.mtm`/`.mti` template import — `ui_transition_plan.md` step 14, **rejected
+outright 2026-08-29** (a final "we don't want it" product call, not a parked-for-later item; see
+`docs/removed-features.md`'s "Legacy `.mtm`/`.mti` template import" entry). Adding, same tier: **Phase 5
 plugin system** entire (`IPlugin`/`PluginHost`/`IImageFilter` — none exist in `src/` yet); waterfall's
 3 deferred sub-items (interactive notch-filter marker — no notch DSP block exists to back it; a
 dedicated **audio/DSP-derived** signal-strength meter in the waterfall pane itself (narrowed
@@ -277,8 +277,6 @@ someone actually asks for one of these, not before.
 - Chilkat/FastReport license status — needs confirming whether either actually backs a real legacy
   feature by running the legacy binary directly (not verifiable from source alone); currently
   assumed unused/orphaned from a source-only search.
-- `.mtm`/`PARALIST.BIN` binary format reverse-engineering pass (prerequisite for the Tier-3
-  template designer, not itself gating anything sooner).
 - `Terms.txt` freeware-clause interpretation confirmation with upstream author (JE3HHT) — only
   relevant if the project ever moves toward commercial distribution, not a development blocker.
 
@@ -2017,8 +2015,9 @@ these first" as a whole) — biggest-leverage/lowest-risk first:
   through Hamlib/rigctld/flrig, which own their connection lifecycle entirely — there is no
   raw-serial-port concept left for this setting to gate. Not a conflict-to-investigate, an obsolete
   concept already fully superseded; see that doc's "Raw-serial RTS-pin PTT keying" entry.
-- [ ] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW). **No
-  longer blocked** (corrected 2026-08-22 — CW-ID's own subsystem shipped 2026-08-12); simply unbuilt.
+- [x] **Sound-file ID** — second TX station-ID method (play a recorded clip instead of CW). **Shipped**
+  (commit `9051699`, `docs/plans/sound-file-id-plan.md`) — `CwIdMode.SoundFile`, `MmvSoundFile`, and
+  Options-dialog wiring (validation, browse, inline status) are all real.
 - [x] **JPEG save quality setting** — **DONE 2026-08-15**. Re-scoped 2026-08-12: not blocked on
   "images are PNG-only" in the sense originally written — legacy's real `m_JPEGQuality` applies to
   the manual "Save Image As..." dialog (`SaveBitmapMenu`/`SaveImage`, `Main.cpp:10059-10084`), not
@@ -2065,7 +2064,7 @@ verb for it.
 - Full Hamlib extended command-set coverage beyond frequency/mode/PTT ([[04-rigctld]]).
 - Plugin sandboxing beyond same-process isolation ([[11-plugin-system]]).
 - Legacy proprietary `.MDT` log format import (ADIF is the supported migration path instead, [[08-logging]]).
-- **Stale as of 2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer deferred — it was the active 1.1 target (redesigned, not a legacy `.mtm` port; see [[19-path-to-1.1]]) and is now **implemented** (2026-08-18). Legacy `.mtm` *import* specifically remains deferred, until after 1.1's modern core ships (it has — this is the remaining open item, see [[15-template-designer]]'s own Status section).
+- **Stale as of 2026-08-16, updated 2026-08-18**: the QSL/template designer ([[15-template-designer]]) is no longer deferred — it was the active 1.1 target (redesigned, not a legacy `.mtm` port; see [[19-path-to-1.1]]) and is now **implemented** (2026-08-18). Legacy `.mtm` **import** was later scoped as `ui_transition_plan.md` step 14 and **rejected outright, 2026-08-29** (a final "we don't want it" call, not a deferral) — see `docs/removed-features.md`'s "Legacy `.mtm`/`.mti` template import" entry and [[15-template-designer]]'s own Status section.
 - SSTV repeater/beacon mode ([[06-sstv-dsp]], legacy `RepSet.cpp`).
 - Contest logging (JASTA application, `MMCG.DEF` JARL area database) — out of scope entirely, not just deferred; see [docs/removed-features.md](../docs/removed-features.md).
 - OCR (callsign-from-image recognition) — user decision 2026-08-11: "eh, maybe one day." No legacy precedent (verified against `yoniq-old/YONIQ-main` directly, zero OCR anywhere — the only "OCR" hits in the whole tree are `#ifndef OCRH`/`#define OCRH` include guards in a few unrelated `About.h` files, coincidental naming), so this is wholly new work with no port to lean on; QRZ.com lookup was split out of the same former backlog line and stays active (see above) since that part *is* a real legacy feature. The Frame-metadata card's former "Callsign · OCR" label and "OCR confidence" row were removed 2026-08-25 — no code or data stub for either remains anywhere in the UI.
@@ -2127,13 +2126,14 @@ Before any tagged release: full [[13-testing]] manual hardware checklist (real r
 
 ## Open items requiring a decision before the relevant phase starts
 
-> The 4 human-only actions below (Clublog key, Chilkat/FastReport license, `.mtm` reverse-
-> engineering, `Terms.txt` confirmation) are also listed on the "separate axis" of "Path to 0.9
-> beta / road to 1.0" above, alongside the 3-platform release-gate decision — same items, kept here
-> too for their fuller context.
+> The 3 human-only actions below (Clublog key, Chilkat/FastReport license, `Terms.txt`
+> confirmation) are also listed on the "separate axis" of "Path to 0.9 beta / road to 1.0" above,
+> alongside the 3-platform release-gate decision — same items, kept here too for their fuller
+> context. A 4th item used to be listed here, a `.mtm`/`PARALIST.BIN` reverse-engineering pass —
+> moot as of 2026-08-29, see the [[15-template-designer]] bullet below.
 
 - ~~Project license~~ — **decided**: LGPL-3.0-or-later, matching upstream. See [LICENSES.md](../LICENSES.md). The remaining open sub-item is confirming the `Terms.txt` freeware-clause interpretation with the upstream author (JE3HHT) if the project ever moves toward commercial distribution — not a blocker for development.
 - [[08-logging]]: source and license-audit the callsign-prefix/country dataset before bundling (Phase 4) — `ARRL.DX` is already ruled out, see [LICENSES.md](../LICENSES.md). **Pre-audited 2026-08-02**: Clublog's `cty.dat` has no fee, but redistribution requires a human to email Clublog's helpdesk describing the proposed use and obtain an individual API key before the data can be downloaded/bundled — not a simple open-license drop-in. See [LICENSES.md](../LICENSES.md)'s "Candidate future asset" note. Phase 4's other deliverables have since shipped (logbook, ADIF import/export, QRZ.com online lookup — see [[08-logging]]); this is the one item remaining before **offline** callsign/country lookup specifically can ship: someone actually emails Clublog and gets the key (not agent-doable), then the real bundled-asset row gets added to LICENSES.md.
 - ~~[[05-audio-engine]]: confirm PortAudio latency is acceptable on Windows before committing to it as the sole backend, vs. adding a native WASAPI backend later~~ — **resolved, PortAudio rejected outright.** Two independent Opus consultations plus direct verification in this repo's own dev sandbox found PortAudio fails this spec's own requirements, not just a latency concern: no real device-change API in any released version, no PulseAudio/PipeWire host API on Linux (confirmed by creating a real virtual sink and showing a live PortAudio device probe couldn't see it at all — the exact virtual-cable workflow this spec requires, failing in practice), and no sample-rate conversion. Switched to `miniaudio`, whose WASAPI backend (`IAudioClient3` low-latency mode) *is* the native-WASAPI escape hatch this item used to hold open, without needing COM interop in `ScanlineStudio.Core.*`. See [[05-audio-engine]]'s Backend choice section for the full reasoning.
-- [[15-template-designer]]: **narrowed 2026-08-22** — this used to read as a prerequisite for the whole subsystem; the modern template designer shipped 2026-08-18 without needing it. The `.mtm`/`PARALIST.BIN` binary format still needs a proper reverse-engineering pass (cross-checked against `Draw.cpp`'s own `Load`/`Save` methods) before the legacy `.mtm` **import** path specifically can be built — flagged as a prerequisite for that one deferred piece, not yet done.
+- [[15-template-designer]]: **resolved 2026-08-29, not open anymore.** The modern template designer shipped 2026-08-18 needing no `.mtm` work at all. A later re-check (`ui_transition_plan.md` step 14 scoping) found the earlier "needs a reverse-engineering pass" premise here was **false** — `yoniq-old/YONIQ-main/Draw.cpp`'s `SaveToStream`/`LoadFromStream` already fully specify the format — but legacy `.mtm`/`.mti` import was then **rejected outright** as a product decision (2026-08-29, see `docs/removed-features.md`), so there is no remaining prerequisite to track.
 - [LICENSES.md](../LICENSES.md): confirm whether Chilkat or FastReport actually back a real feature by building and running the legacy binary directly (not verifiable from source alone) — currently assumed unused/orphaned based on a source-only search.

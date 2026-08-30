@@ -1,5 +1,14 @@
 # Padding/spacing normalization — mockup CSS → Avalonia Thickness
 
+**Status (2026-08-30): implemented.** This table was Phase 1's cited source for exact Avalonia
+`Padding`/`Thickness` values (`PHASE1-ATOM-DESIGN.md` §1/item 1 cites it directly), and the
+Industry redesign it feeds has since shipped — the named composite `Thickness` resources in
+§1/§1b (`IndustryGbPadding`, `IndustryGbPaddingWide`, `IndustryGbPaddingWideDeep`,
+`IndustryGbPaddingFav`, `IndustryGbPaddingNested`, `IndustryMiniPadding`,
+`IndustryTableCellPadding`/`…Narrow`) all exist verbatim in
+`src/ScanlineStudio.UI/Styles/AtomsTokens.axaml` with the exact values cited below. Kept as the
+CSS→Avalonia conversion reference, not an open task.
+
 Re-derived directly from `SSTV Console.dc.html`'s local `&lt;style&gt;` block (lines 14-72) and the
 `&lt;div class="dv-opt" id="2a"&gt;` markup (lines 78-618) — **not** from `LAYOUT-SPEC.md`'s prose,
 which mixes CSS-order and Avalonia-order transcriptions inconsistently within the same tables

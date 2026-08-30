@@ -10,10 +10,10 @@ undifferentiated effort — the spec docs remain the design reference as impleme
 ## Status
 
 **Core loop working end-to-end**: receive an SSTV picture over a real audio device, send one (with
-crop/rotate/overlay-text editing before transmit), and control a radio via Hamlib or rigctld for
-frequency and PTT. Also built: RX history + logbook (SQLite, ADIF export, ADIF UDP forwarding to
-GridTracker2/N1MM/Log4OM), QRZ lookup, a waterfall/spectrum display, and an Options dialog covering
-audio devices, CAT backends, and station identification (CW-ID/FSK, NR/RST).
+crop/rotate/overlay-text editing before transmit), and control a radio via Hamlib, rigctld, flrig, or
+OmniRig (Windows-only) for frequency and PTT. Also built: RX history + logbook (SQLite, ADIF export,
+ADIF UDP forwarding to GridTracker2/N1MM/Log4OM), QRZ lookup, a waterfall/spectrum display, and an
+Options dialog covering audio devices, CAT backends, and station identification (CW-ID/FSK, NR/RST).
 
 Only English ships as a locale today — the runtime language-switching infrastructure is in place
 (see [spec/10-localization.md](spec/10-localization.md)) but no second translation has been written

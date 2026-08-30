@@ -62,6 +62,8 @@ Rule: `ScanlineStudio.UI` never references rig-specific protocol types or audio 
                                              # only; NOT per-rig protocols (currently empty)
   ScanlineStudio.Core.Radio.Rigctld/        # 04
   ScanlineStudio.Core.Radio.Hamlib/         # 03, in-process Hamlib CAT backend
+  ScanlineStudio.Core.Radio.Flrig/          # 03, flrig XML-RPC client
+  ScanlineStudio.Core.Radio.OmniRig/        # 03, Windows-only OmniRig COM client
   ScanlineStudio.Core.Audio/                # 05
   ScanlineStudio.Core.Audio.MiniAudio/      # 05, miniaudio native backend
   ScanlineStudio.Core.Sstv/                 # 06

@@ -99,7 +99,7 @@ build this one without further digging.
 |---|---|---|
 | "Source" — detection method (Sync&Slant) | TIER-B-STYLE, cheap once decided | No legacy display concept found (`m_SyncMode` is a lock-state toggle driving a UI button, `Main.cpp:5988-6081`, not a "how was this detected" readout). This port DOES internally know which of 3 paths matched a header (`VisLockStateMachine`, sync-bypass interval detection, `AvtTrainingLockStateMachine`), but `ModeDetected` (`AnalogFmSstvDecoder.cs:905`) carries no tag distinguishing them. The state already exists internally — this is cheap to add ONCE there's a decision on what to call/show ("VIS lock" vs "sync bypass" vs "AVT training" as user-facing labels), since it's inventing a new non-legacy readout, not porting one. |
 | True SNR / SNR histogram / noise floor / Min-Max (Signal-quality) | TIER-B-STYLE (established, `steady-humming-osprey.md`) | Legacy's `CNoise` is a noise *generator* for test/sim, not a *measurement* — confirmed via `grep -a`. Needs a product decision on what "SNR" even means for an FM-demodulated SSTV signal with no clean reference, not a legacy-verification pass. |
-| Squelch (Input-chain) | TIER-B-STYLE, **corrected verdict** — a real, narrower legacy feature exists, decide whether to generalize it | **Auditor correction, real error in the original pass**: this doc originally claimed "zero legacy grounding at all," based on a `grep -a` for "Sql"/"Squelch"/"Sense" — legacy spells it `SQ`, and that wrong search term produced a false negative. A real squelch exists: `m_RepSQ` (`sstv.h:726`, default 6000, `sstv.cpp:1502`), measured via `m_repsig = m_lmsrep.Sig(m_ad)` (`sstv.cpp:1866`, `CLMS::Sig`, an LMS-predictor-based signal-level measurement, `fir.cpp:217-236` — read as "signal level," not proven to be an SNR-equivalent), thresholded at `sstv.cpp:2688/2734` + `Main.cpp:13553`, with a real user-editable level + live readout (`RepSet.cpp:73/103/155`) persisted as `Repeater/SQLVL` (`Main.cpp:2159/2623`). **Caveat that keeps this TIER-B-ish, not a straight port**: it's repeater-scoped, gated `m_Repeater && !m_Sync` (`sstv.cpp:1860`) — it's not a general RX-chain squelch, so building the general concept mock2 implies still needs a product decision on whether/how to generalize a narrow repeater-only legacy feature, not "invent from nothing." Worth a closer look before ruling it out: `m_repsig`/`CLMS::Sig` may be a cheaper legacy-grounded path toward the broader "Signal quality" card than the TIER-B SNR framing above, since it's a real measured legacy quantity, just not literally named SNR. |
+| Squelch (Input-chain) | TIER-B-STYLE, **corrected verdict** — a real, narrower legacy feature exists, decide whether to generalize it | **Auditor correction, real error in the original pass**: this doc originally claimed "zero legacy grounding at all," based on a `grep -a` for "Sql"/"Squelch"/"Sense" — legacy spells it `SQ`, and that wrong search term produced a false negative. A real squelch exists: `m_RepSQ` (`sstv.h:726`, default 6000, `sstv.cpp:1502`), measured via `m_repsig = m_lmsrep.Sig(m_ad)` (`sstv.cpp:1866`, `CLMS::Sig`, an LMS-predictor-based signal-level measurement, `fir.cpp:217-236` — read as "signal level," not proven to be an SNR-equivalent), thresholded at `sstv.cpp:2688/2734` + `Main.cpp:13553`, with a real user-editable level + live readout (`RepSet.cpp:73/103/155`) persisted as `Repeater/SQLVL` (`Main.cpp:2159/2623`). **Caveat that keeps this TIER-B-ish, not a straight port**: it's repeater-scoped, gated `m_Repeater && !m_Sync` (`sstv.cpp:1860`) — it's not a general RX-chain squelch, so building the general concept mock2 implies still needs a product decision on whether/how to generalize a narrow repeater-only legacy feature, not "invent from nothing." Worth a closer look before ruling it out: `m_repsig`/`CLMS::Sig` may be a cheaper legacy-grounded path toward the broader "Signal quality" card than the TIER-B SNR framing above, since it's a real measured legacy quantity, just not literally named SNR. **Naming collision, added 2026-08-30, not a resolution**: the Sync&Slant card's own "Squelch level" row (`Panes.RxSync.SquelchLevel`, live-editable since 2026-08-27, `RxImagePaneViewModel.SenseLevel`) is a *different* legacy setting — `SetSenseLvl`/the VIS-decode sensitivity threshold — not this `m_RepSQ` repeater-squelch concept; it was renamed from "VIS threshold" to "Squelch level" to match the Options window's own label, which now reads as if this TIER-B item shipped. It didn't — this row remains real and unbuilt. |
 
 ---
 
@@ -265,11 +265,20 @@ pinned 11025Hz rate — none of `SlantTests.cs`'s own commit scenarios exercise 
 untested `OnPropertyChanged` re-raise call; and an AVT-vs-toggle test that never actually exercised the
 states its name claimed to cover.
 
-Remaining, only with explicit product decisions made first: "Source" (detection-method labels), Advanced
-timing (relabel as static reference vs. drop the card section), "Reset" button semantics, and
-squelch (a real, narrow, repeater-scoped legacy feature exists — decide whether/how to generalize
-it before building, per the corrected verdict above; note `CLMS::Sig`/`m_repsig` may also be a
-cheaper legacy-grounded path toward the broader Signal-quality card than the TIER-B SNR framing).
+**Update 2026-08-30 — the rest of the "Remaining" list below is resolved, not open anymore**:
+"Source" shipped 2026-08-25 (`SyncSourceDisplay`, a 3-value Idle/Locked/AvtTraining readout — the
+originally-hoped-for 4-way Search/VisLock/Forced/AvtTraining split turned out not honestly
+derivable from existing decoder state, see `SstvSyncSource`'s own doc comment). Advanced timing and
+the "Reset" button were both removed from the UI outright the same date (2026-08-25), each for a
+reason recorded directly on `MainWindow.axaml`'s Sync&Slant card: Reset is structurally inert
+against this port's per-lock slant-tracker teardown (not a missing port); Sample clock/Sync
+window/Drop-line were either static, mismatched, or ungrounded exactly as flagged below. Only
+squelch (the real, narrow, repeater-scoped `m_RepSQ` legacy feature — decide whether/how to
+generalize it before building, per the corrected verdict above; note `CLMS::Sig`/`m_repsig` may
+also be a cheaper legacy-grounded path toward the broader Signal-quality card than the TIER-B SNR
+framing) remains genuinely open — see the naming-collision note on that row above, since the
+Sync&Slant card's own unrelated "Squelch level" row shipping live 2026-08-27 could otherwise read
+as this having shipped too.
 
 Everything else on this page (true SNR/noise-floor, notch state, true stereo, dropped lines,
 black/white tone, RX gain) is either a real new DSP/feature build or not possible as described — do

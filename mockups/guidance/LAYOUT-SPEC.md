@@ -1,16 +1,28 @@
 # SSTV Console — Avalonia layout spec
 
+**This copy is the canonical one** — the file `PHASE1-ATOM-DESIGN.md`/`PHASE2-CHROME-DESIGN.md`
+actually cite as their source, and the one `spec/09-ui.md`/`LICENSES.md` point at. See
+`avalonia/LAYOUT-SPEC.md`'s own note for why a near-duplicate of this file exists there too.
+
 Authoritative measurements for porting mockup **2a** (`SSTV Console.dc.html`, `<div class="dv-opt" id="2a">`, lines 78–627) to Avalonia 11. Every number here is read out of that mockup's CSS or its inline styles — where the two disagree, the inline style wins, because it is what renders.
 
 Rule for the porter: **do not invent a value.** If a number is not in this file, go read the corresponding line of the mockup. If it is in this file, use it verbatim — no rounding to a "nice" 4px grid. The mockup is deliberately off-grid (9px, 11px, 9.5px, 12.5px) because that is what the reference apps do.
 
 ---
 
-## 0. What is currently wrong
+## 0. Historical — resolved
 
-`Styles/Tokens.axaml` still carries a **different, earlier design** (`ScanlineStudio*`, dark #131316 panels, #3FA7D6 accent, 2/4/6px spacing scale). That palette is not the mockup. It must be replaced by §2's tokens before any pixel-matching is possible — right now every panel colour, border colour, accent and spacing step is wrong at the source, and no amount of per-view tweaking will close the gap.
+This section originally flagged that `Styles/Tokens.axaml` still carried an earlier, non-matching
+design (`ScanlineStudio*`, dark #131316 panels, #3FA7D6 accent, 2/4/6px spacing scale) and had to be
+replaced by §2's tokens before pixel-matching was possible. That's done: `Tokens.axaml`/
+`Cards.axaml`/`ChromeOverrides.axaml` have been deleted; every view now draws from
+`Styles/AtomsTokens.axaml`/`Styles/Atoms.axaml` (see `spec/09-ui.md`'s "Visual design direction").
+Kept here only as historical context for why those token files look the way they do, not as an open
+task.
 
-Second global error to check first: the app must render at **1920×1080 with no window chrome scaling**, base font size 12, and DPI scaling 1.0 while you compare. A 1.25 scale factor makes every measurement below off by 25% and will send you chasing ghosts.
+When comparing against the mockup, the app must still render at **1920×1080 with no window chrome
+scaling**, base font size 12, and DPI scaling 1.0. A 1.25 scale factor makes every measurement below
+off by 25% and will send you chasing ghosts.
 
 ---
 
