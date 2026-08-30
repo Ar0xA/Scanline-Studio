@@ -93,6 +93,104 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SavePresetAsync_RedactsQrzLookupPassword_ButKeepsEnabledAndUsername()
+    {
+        // T0-8: presets are user-shareable files -- Password must never round-trip through one,
+        // but Enabled/Username should (user decision: field-level, not whole-section, redaction).
+        var store = CreateStore();
+        var content = new AppSettings().WithSection(
+            QrzLookupTestSection.SectionKey,
+            new QrzLookupTestSection(Enabled: true, Username: "N0CALL", Password: "hunter2"),
+            QrzLookupTestSectionJsonContext.Default.QrzLookupTestSection);
+
+        await store.SavePresetAsync("Test", content);
+        var loaded = await store.LoadPresetAsync("Test");
+
+        Assert.NotNull(loaded);
+        var qrz = loaded!.GetSection(QrzLookupTestSection.SectionKey, QrzLookupTestSectionJsonContext.Default.QrzLookupTestSection);
+        Assert.NotNull(qrz);
+        Assert.True(qrz!.Enabled);
+        Assert.Equal("N0CALL", qrz.Username);
+        Assert.Null(qrz.Password);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_RedactsQrzUploadApiKey_ButKeepsEnabled()
+    {
+        var store = CreateStore();
+        var content = new AppSettings().WithSection(
+            QrzUploadTestSection.SectionKey,
+            new QrzUploadTestSection(Enabled: true, ApiKey: "secret-api-key"),
+            QrzUploadTestSectionJsonContext.Default.QrzUploadTestSection);
+
+        await store.SavePresetAsync("Test", content);
+        var loaded = await store.LoadPresetAsync("Test");
+
+        Assert.NotNull(loaded);
+        var qrz = loaded!.GetSection(QrzUploadTestSection.SectionKey, QrzUploadTestSectionJsonContext.Default.QrzUploadTestSection);
+        Assert.NotNull(qrz);
+        Assert.True(qrz!.Enabled);
+        Assert.Null(qrz.ApiKey);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_RedactedSecretNeverAppearsInTheRawSavedFile()
+    {
+        // Catches a redaction bug that nulls the C# property on deserialize but still writes
+        // "Password": null to disk -- a round-trip-only assertion above wouldn't catch that.
+        var store = CreateStore();
+        var content = new AppSettings().WithSection(
+            QrzLookupTestSection.SectionKey,
+            new QrzLookupTestSection(Enabled: true, Username: "N0CALL", Password: "hunter2"),
+            QrzLookupTestSectionJsonContext.Default.QrzLookupTestSection);
+
+        await store.SavePresetAsync("Test", content);
+
+        var rawText = await File.ReadAllTextAsync(Path.Combine(_presetsDirectory, "Test.json"));
+        Assert.DoesNotContain("Password", rawText, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", rawText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_RedactingASecret_DoesNotLogAWarning()
+    {
+        // A save redacting a secret is the normal, silent, expected outcome -- only a LOAD finding
+        // one already baked into an on-disk file is worth a warning (the next test).
+        var logger = new RecordingLogger<ConfigurationPresetStore>();
+        var store = new ConfigurationPresetStore(logger, _presetsDirectory);
+        var content = new AppSettings().WithSection(
+            QrzLookupTestSection.SectionKey,
+            new QrzLookupTestSection(Enabled: true, Username: "N0CALL", Password: "hunter2"),
+            QrzLookupTestSectionJsonContext.Default.QrzLookupTestSection);
+
+        await store.SavePresetAsync("Test", content);
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task LoadPresetAsync_HandEditedFileStillHasTheSecret_RedactsItAndLogsAWarning()
+    {
+        var logger = new RecordingLogger<ConfigurationPresetStore>();
+        var store = new ConfigurationPresetStore(logger, _presetsDirectory);
+        // Bypass SavePresetAsync (which would already redact) -- write a preset file directly,
+        // simulating one saved by an unpatched older build, or hand-edited to add a password back.
+        Directory.CreateDirectory(_presetsDirectory);
+        var handEditedJson =
+            "{\"SchemaVersion\":" + AppSettings.CurrentSchemaVersion +
+            ",\"Sections\":{\"QrzLookup\":{\"Enabled\":true,\"Username\":\"N0CALL\",\"Password\":\"hunter2\"}}}";
+        await File.WriteAllTextAsync(Path.Combine(_presetsDirectory, "Test.json"), handEditedJson);
+
+        var loaded = await store.LoadPresetAsync("Test");
+
+        Assert.NotNull(loaded);
+        var qrz = loaded!.GetSection(QrzLookupTestSection.SectionKey, QrzLookupTestSectionJsonContext.Default.QrzLookupTestSection);
+        Assert.NotNull(qrz);
+        Assert.Null(qrz!.Password);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning && e.Message.Contains("QrzLookup", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task SavePresetAsync_StampsCurrentSchemaVersion_RegardlessOfWhatWasPassed()
     {
         var store = CreateStore();
@@ -451,4 +549,26 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
 
     [JsonSerializable(typeof(PresetSampleSection))]
     private sealed partial class PresetSampleSectionJsonContext : JsonSerializerContext;
+
+    /// <summary>T0-8: mirrors <c>ScanlineStudio.Core.Logbook.QrzLookupSettings</c>'s real shape
+    /// (property names, section key) exactly -- this test project has no reference to
+    /// <c>Core.Logbook</c> (same layering constraint the production code itself has), so a
+    /// test-local record is used instead of adding a project reference solely for this.</summary>
+    private sealed record QrzLookupTestSection(bool? Enabled, string? Username, string? Password)
+    {
+        public const string SectionKey = "QrzLookup";
+    }
+
+    [JsonSerializable(typeof(QrzLookupTestSection))]
+    private sealed partial class QrzLookupTestSectionJsonContext : JsonSerializerContext;
+
+    /// <summary>Mirrors <c>ScanlineStudio.Core.Logbook.QrzUploadSettings</c> -- see
+    /// <see cref="QrzLookupTestSection"/>'s own doc comment.</summary>
+    private sealed record QrzUploadTestSection(bool? Enabled, string? ApiKey)
+    {
+        public const string SectionKey = "QrzUpload";
+    }
+
+    [JsonSerializable(typeof(QrzUploadTestSection))]
+    private sealed partial class QrzUploadTestSectionJsonContext : JsonSerializerContext;
 }
