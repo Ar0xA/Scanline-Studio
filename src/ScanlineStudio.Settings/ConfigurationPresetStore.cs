@@ -124,7 +124,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
             // ambiguity for its own source-preset read -- see its own comment.
             try
             {
-                return await ReadPresetFileAsync(path, ct).ConfigureAwait(false);
+                return await ReadPresetFileAsync(path, logRedactions: true, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -184,7 +184,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
             AppSettings content;
             try
             {
-                content = await ReadPresetFileAsync(sourcePath, ct).ConfigureAwait(false);
+                content = await ReadPresetFileAsync(sourcePath, logRedactions: true, ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
             {
@@ -287,7 +287,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
 
     private string GetPresetFilePath(string name) => Path.Combine(_presetsDirectory, name + ".json");
 
-    private async Task<AppSettings> ReadPresetFileAsync(string path, CancellationToken ct)
+    private async Task<AppSettings> ReadPresetFileAsync(string path, bool logRedactions, CancellationToken ct)
     {
         var stream = File.OpenRead(path);
         await using (stream.ConfigureAwait(false))
@@ -304,7 +304,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
                 Log.PresetSchemaVersionMismatch(_logger, path, settings.SchemaVersion, AppSettings.CurrentSchemaVersion);
             }
 
-            return Sanitize(settings);
+            return Sanitize(settings, logRedactions);
         }
     }
 
@@ -318,19 +318,104 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
         var stream = File.Create(tempPath);
         await using (stream.ConfigureAwait(false))
         {
-            await JsonSerializer.SerializeAsync(stream, Sanitize(content), AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+            // T0-8: logRedactions false -- a save redacting a secret is the normal, silent,
+            // expected case (that's the whole point of this fix), unlike a LOAD finding one
+            // already baked into an on-disk file (see Sanitize's own doc comment).
+            await JsonSerializer.SerializeAsync(stream, Sanitize(content, logRedactions: false), AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
         }
 
         File.Move(tempPath, path, overwrite: true);
         Log.PresetSaved(_logger, path);
     }
 
-    private static AppSettings Sanitize(AppSettings settings)
+    /// <summary>T0-8: <paramref name="logRedactions"/> distinguishes the two callers -- a SAVE
+    /// (<see cref="WritePresetFileAsync"/>) redacting a live secret is the normal, silent, expected
+    /// outcome; a LOAD (<see cref="ReadPresetFileAsync"/>) finding one to redact means an
+    /// already-on-disk preset file (saved by an unpatched older build, or hand-edited) still has a
+    /// secret baked in -- worth a warning, not silence.</summary>
+    private AppSettings Sanitize(AppSettings settings, bool logRedactions)
     {
         var sections = settings.Sections
             .Where(kvp => !ExcludedSectionKeys.Contains(kvp.Key, StringComparer.Ordinal))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
+
+        RedactSensitiveFields(sections, logRedactions);
+
         return new AppSettings { SchemaVersion = AppSettings.CurrentSchemaVersion, Sections = sections };
+    }
+
+    // T0-8: presets are user-shareable files -- QrzLookup.Password and QrzUpload.ApiKey must never
+    // round-trip through one. Field-level (not whole-section, unlike ExcludedSectionKeys above):
+    // Enabled/Username stay, so applying a preset doesn't force re-entering them, only the secret
+    // needs re-entering (user decision; the live secret itself is carried forward on preset APPLY
+    // by ConfigurationPresetService in the Application layer, not duplicated here). Field names
+    // are string literals, not the strongly-typed QrzLookupSettings/QrzUploadSettings records --
+    // this project sits below ScanlineStudio.Core.Logbook in the layering and cannot reference
+    // those types (same constraint already documented on ActivePresetSectionKey above); confirmed
+    // via reading both JsonSerializerContext files that no naming policy changes them from the
+    // literal C# property names.
+    private static readonly (string SectionKey, string FieldName)[] RedactedFields =
+    [
+        ("QrzLookup", "Password"),
+        ("QrzUpload", "ApiKey"),
+    ];
+
+    private void RedactSensitiveFields(Dictionary<string, JsonElement> sections, bool logIfRedacted)
+    {
+        foreach (var (sectionKey, fieldName) in RedactedFields)
+        {
+            if (!sections.TryGetValue(sectionKey, out var element) || element.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (!TryRemoveProperty(element, fieldName, out var redacted))
+            {
+                continue;
+            }
+
+            sections[sectionKey] = redacted;
+            if (logIfRedacted)
+            {
+                Log.PresetSecretRedactedOnLoad(_logger, sectionKey, fieldName);
+            }
+        }
+    }
+
+    // Rebuilds the object via Utf8JsonWriter rather than JsonNode.Parse/SerializeToElement(node) --
+    // that overload has no JsonTypeInfo and is the reflection-based path, which would silently
+    // break this codebase's stated source-gen/AOT-friendly convention (see
+    // AppSettingsSectionExtensions' own doc comment).
+    private static bool TryRemoveProperty(JsonElement element, string propertyName, out JsonElement result)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            var removed = false;
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.NameEquals(propertyName))
+                {
+                    removed = true;
+                    continue;
+                }
+
+                property.WriteTo(writer);
+            }
+
+            writer.WriteEndObject();
+
+            if (!removed)
+            {
+                result = element;
+                return false;
+            }
+        }
+
+        using var doc = JsonDocument.Parse(buffer.ToArray());
+        result = doc.RootElement.Clone(); // must Clone -- doc is disposed at the end of this method
+        return true;
     }
 
     private static void ValidateName(string name)
@@ -389,5 +474,8 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset {Path} could not be read (corrupt/unreadable) -- falling back")]
         public static partial void PresetLoadFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset section {SectionKey} still had field {FieldName} baked in -- redacted on load")]
+        public static partial void PresetSecretRedactedOnLoad(ILogger logger, string sectionKey, string fieldName);
     }
 }

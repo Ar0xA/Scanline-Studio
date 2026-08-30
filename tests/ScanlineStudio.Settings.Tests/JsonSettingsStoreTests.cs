@@ -207,6 +207,32 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         }
     }
 
+    [SkipOnWindowsFact]
+    public async Task SaveAsync_RestrictsSettingsFileToOwnerOnlyPermissions()
+    {
+        // T0-8: settings.json can carry a real QRZ.com account password/API key in plaintext --
+        // File.Create's own default (typically 0644, umask-dependent) is world-readable.
+        // [SkipOnWindowsFact] already prevents this method from RUNNING on Windows -- this
+        // redundant guard is only here so CA1416's static analyzer (which doesn't understand that
+        // attribute) recognizes File.GetUnixFileMode's call sites below as platform-guarded.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+
+        await store.SaveAsync(new AppSettings());
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(_settingsFilePath));
+
+        // A second save over an EXISTING file -- proves this isn't a first-write-only fluke, and
+        // survives File.Move's own overwrite: true.
+        await store.SaveAsync(new AppSettings { SchemaVersion = AppSettings.CurrentSchemaVersion + 1 });
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(_settingsFilePath));
+    }
+
     [Fact]
     public async Task RelocateAsync_MovesTheFileToTheNewDirectory_SubsequentLoadReadsFromThere()
     {
@@ -230,6 +256,27 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
 
         var loaded = await store.LoadAsync();
         Assert.Equal(saved.SchemaVersion, loaded.SchemaVersion);
+    }
+
+    [SkipOnWindowsFact]
+    public async Task RelocateAsync_RestrictsTheMovedFileToOwnerOnlyPermissions()
+    {
+        // See SaveAsync_RestrictsSettingsFileToOwnerOnlyPermissions's own comment on why this
+        // guard is redundant with [SkipOnWindowsFact] but still needed (CA1416).
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        await store.SaveAsync(new AppSettings());
+        var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
+        var newDirectory = Path.Combine(originalDirectory, "relocated");
+
+        await store.RelocateAsync(newDirectory);
+
+        var newPath = Path.Combine(newDirectory, "settings.json");
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(newPath));
     }
 
     [Fact]
