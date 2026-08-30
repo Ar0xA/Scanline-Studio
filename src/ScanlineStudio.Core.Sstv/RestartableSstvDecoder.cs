@@ -1082,6 +1082,23 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>T0-6: forwards to whichever inner instance is current, matching
+    /// <see cref="SyncSource"/>'s exact shape above. A restart swap resets this to
+    /// <see langword="false"/> for the fresh inner (a new <c>RxDiskLineStagingBuffer</c>'s own
+    /// write-failure latch starts unset). No separate logging here -- <c>RxDiskLineStagingBuffer</c>
+    /// already logs the transition exactly once, at the real moment it happens; this wrapper only
+    /// needs to forward the current value.</summary>
+    public bool RxBufferDegraded
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.RxBufferDegraded;
+            }
+        }
+    }
+
     /// <summary>See <see cref="ISstvDecoder.AutoSlantEnabled"/> -- genuinely live now (2026-08-27,
     /// restart-required-settings backlog item 1), same shape as <see cref="StationIdDecodeEnabled"/>
     /// below: a set value is applied to the CURRENT inner instance immediately, under

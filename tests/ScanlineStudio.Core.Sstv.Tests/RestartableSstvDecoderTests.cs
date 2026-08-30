@@ -632,6 +632,35 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public async Task RxBufferDegraded_ForwardsFromInnerStagingBuffer_OnceAWriteFailureLatches()
+    {
+        // T0-6: proves RestartableSstvDecoder.RxBufferDegraded genuinely forwards the underlying
+        // disk staging buffer's write-failure latch, not just a stale default. The latch is async
+        // (the background consumer task observes the corrupted stream on its own next write), so
+        // this polls with a bounded wait rather than asserting synchronously. Drives the inner
+        // RxDiskLineStagingBuffer directly (same pattern as Dispose_DisposesTheCurrentInnerDecoder_
+        // AndIsIdempotent above) rather than through PushSamples, since the property under test only
+        // depends on the staging buffer's own latch, not on a real decoded line.
+        using var decoder = new RestartableSstvDecoder(rxBufferMode: RxBufferMode.Extended);
+        var inner = (RxDiskLineStagingBuffer)decoder.InnerRxLineStagingBufferForTests!;
+
+        Assert.False(decoder.RxBufferDegraded);
+
+        Assert.True(inner.TryAppendLine([1.0], [2.0]));
+        _ = inner.DemodulatedAt(0); // forces a drain -- line 1 is now guaranteed flushed
+        inner.CorruptWriteStreamForTests();
+        inner.TryAppendLine([3.0], [4.0]); // the background consumer's next write now throws
+
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (!decoder.RxBufferDegraded && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.True(decoder.RxBufferDegraded, "RestartableSstvDecoder.RxBufferDegraded should forward the inner staging buffer's latched write failure.");
+    }
+
+    [Fact]
     public void PushSamples_ThrowsObjectDisposedException_AfterDispose()
     {
         // D2 round 3 correction: the round-2 version of this test used the PUBLIC ctor (12h/13h-sample

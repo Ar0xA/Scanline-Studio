@@ -50,17 +50,14 @@ internal interface IRxLineStagingBuffer : IDisposable
     /// <see cref="RxDiskLineStagingBuffer"/> logs only bounded teardown-stage failures, where logging
     /// cannot add per-line audio-thread I/O.
     ///
-    /// <b>Not currently observable outside this class</b> (functional-audit correction, D3+D8+D9
-    /// coupled round 2: an earlier version of this comment claimed "a caller with a path to the
-    /// Application layer can observe this flag and log it there if desired" -- that path does not
-    /// exist today. <see cref="IRxLineStagingBuffer"/> itself is `internal`, and nothing on
-    /// <c>ISstvDecoder</c>/<c>RestartableSstvDecoder</c>'s own public surface exposes it). Once set,
-    /// replay and Correct Slant silently become permanent no-ops for the rest of this decoder
-    /// instance's lifetime (see both methods' own capacity-guard call sites) with no way for any
-    /// caller to find out why. A real fix needs new public surface (e.g. an
-    /// <c>ISstvDecoder</c>-level diagnostic property, mirroring how <c>CaptureOverrunCount</c> was
-    /// promoted onto <c>IAudioEngine</c>) -- not done here, flagged so this comment stops claiming
-    /// coverage that doesn't exist.</summary>
+    /// <b>Observable outside this class as of T0-6</b>: promoted onto <c>ISstvDecoder</c> as
+    /// <c>RxBufferDegraded</c> (mirroring how <c>CaptureOverrunCount</c> was promoted onto
+    /// <c>IAudioEngine</c>), forwarded through <c>AnalogFmSstvDecoder</c> and
+    /// <c>RestartableSstvDecoder</c>. <see cref="RxDiskLineStagingBuffer"/> also now logs every
+    /// transition into this state exactly once (<c>LatchWriteFailure</c>). Once set, replay and
+    /// Correct Slant still silently become permanent no-ops for the rest of this decoder instance's
+    /// lifetime (see both methods' own capacity-guard call sites) -- <c>RxBufferDegraded</c> and the
+    /// log line are what now let a caller find out why.</summary>
     bool HasWriteFailed { get; }
 
     /// <summary>Attempts to append one line's worth of samples to both streams atomically. See
