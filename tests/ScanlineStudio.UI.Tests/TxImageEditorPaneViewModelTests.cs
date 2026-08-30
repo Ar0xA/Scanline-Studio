@@ -5688,6 +5688,47 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal("K1ABC", reloadedRow.Value);
     }
 
+    [AvaloniaFact]
+    public void Undo_AfterAddLastRxImage_DisposesTheRemovedImageElementsBitmap_DeferredViaDispatcherPost()
+    {
+        // T0-11 (production_audit.md): ApplyState's own whole-collection discard (Undo/Redo)
+        // disposes every removed ImageElementViewModel's CanvasBitmap, not just OnSourceChanged's
+        // in-place reassignment. AddLastRxImage pushes an undo snapshot before inserting, so Undo
+        // here exercises ApplyState's own clear/rebuild loop end to end.
+        var receivedImage = new FakeReceivedImageBuffer { Current = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), receivedImage, new FakeReceiveHistoryStore());
+
+        vm.AddLastRxImageCommand.Execute(null);
+        var inserted = Assert.IsType<ImageElementViewModel>(Assert.Single(vm.OverlayElements));
+        var bitmap = inserted.CanvasBitmap;
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(IsWriteableBitmapDisposed(bitmap), "must not be disposed before the deferred post runs");
+        Assert.Empty(vm.OverlayElements);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(IsWriteableBitmapDisposed(bitmap));
+    }
+
+    // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
+    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // any real operation, here .Lock().
+    private static bool IsWriteableBitmapDisposed(Avalonia.Media.Imaging.WriteableBitmap bitmap)
+    {
+        try
+        {
+            using (bitmap.Lock())
+            {
+            }
+
+            return false;
+        }
+        catch (NullReferenceException)
+        {
+            return true;
+        }
+    }
+
     private static ArrayImageSource CreateSource(int width, int height)
         => new(width, height, new Rgb24[width * height]);
 

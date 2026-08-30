@@ -1,4 +1,5 @@
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
@@ -54,6 +55,27 @@ public sealed partial class ImageViewerWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(DisplayWidth))]
     [NotifyPropertyChangedFor(nameof(DisplayHeight))]
     private Bitmap? _fullImage;
+
+    // T0-11 (production_audit.md): guards CopyAsync's own await window below -- a Next/Previous
+    // navigation reassigning FullImage while a clipboard copy of the PREVIOUS bitmap is still in
+    // flight must not dispose the bitmap CopyAsync is actively reading. A simple bool, not tied to
+    // which specific bitmap is mid-copy -- over-protective during a rare in-flight-copy window is
+    // fine (that one instance is just left for ordinary GC instead, no worse than never disposing
+    // anything, which is this class's own pre-fix baseline).
+    private bool _copyInFlight;
+
+    // Disposes the OLD bitmap on every reassignment (including the `= null` clear sites at
+    // LoadCurrentAsync's own error/not-current branches, not just the successful-load site) --
+    // same deferred-post pattern as RxHistoryPaneViewModel.PreviewImage's own OnPreviewImageChanged
+    // (see that property's comment for the full reasoning). Skips deferring a dispose while
+    // _copyInFlight is true.
+    partial void OnFullImageChanged(Bitmap? oldValue, Bitmap? newValue)
+    {
+        if (oldValue is WriteableBitmap old && !_copyInFlight)
+        {
+            Dispatcher.UIThread.Post(() => old.Dispose(), DispatcherPriority.Background);
+        }
+    }
 
     [ObservableProperty]
     private bool _isFitToWindow = true;
@@ -159,8 +181,18 @@ public sealed partial class ImageViewerWindowViewModel : ViewModelBase
             return;
         }
 
-        var copied = await _clipboardImageService.CopyImageAsync(bitmap);
-        ErrorMessage = copied ? null : _localization.GetString("ImageViewer.Error.CopyFailed");
+        // T0-11: _copyInFlight held for the whole await -- see its own field comment and
+        // OnFullImageChanged's guard on it.
+        _copyInFlight = true;
+        try
+        {
+            var copied = await _clipboardImageService.CopyImageAsync(bitmap);
+            ErrorMessage = copied ? null : _localization.GetString("ImageViewer.Error.CopyFailed");
+        }
+        finally
+        {
+            _copyInFlight = false;
+        }
     }
 
     [RelayCommand]

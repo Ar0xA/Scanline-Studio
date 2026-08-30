@@ -20,7 +20,26 @@ internal static class ImageSourceBitmapConverter
             PixelFormat.Bgra8888,
             AlphaFormat.Opaque);
 
-        using var frameBuffer = bitmap.Lock();
+        BlitInto(bitmap, source);
+        return bitmap;
+    }
+
+    // T0-10/T0-11 (production_audit.md): extracted so WriteableBitmapPool can blit into a
+    // caller-owned, reused WriteableBitmap instead of always allocating a fresh one -- ToBitmap
+    // above is unchanged for every cold-path caller, just reimplemented in terms of this. Caller
+    // is responsible for target already being sized to source.Width x source.Height.
+    public static void BlitInto(WriteableBitmap target, IImageSource source)
+    {
+        // Code-review finding: a target smaller than source would make the Marshal.Copy below write
+        // past the locked buffer (heap corruption, not a catchable exception) -- cheap to guard given
+        // the consequence, even though both current callers (ToBitmap above, WriteableBitmapPool) are
+        // correct by construction.
+        if (target.PixelSize.Width != source.Width || target.PixelSize.Height != source.Height)
+        {
+            throw new ArgumentException($"target size {target.PixelSize.Width}x{target.PixelSize.Height} does not match source size {source.Width}x{source.Height}.", nameof(target));
+        }
+
+        using var frameBuffer = target.Lock();
         var rowBuffer = new byte[source.Width * 4];
         for (var y = 0; y < source.Height; y++)
         {
@@ -37,7 +56,5 @@ internal static class ImageSourceBitmapConverter
 
             Marshal.Copy(rowBuffer, 0, frameBuffer.Address + (y * frameBuffer.RowBytes), rowBuffer.Length);
         }
-
-        return bitmap;
     }
 }

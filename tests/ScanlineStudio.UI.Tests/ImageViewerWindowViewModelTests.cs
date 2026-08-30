@@ -1,5 +1,6 @@
 using System.Linq;
 using Avalonia.Headless.XUnit;
+using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Core.Imaging;
@@ -278,5 +279,86 @@ public sealed class ImageViewerWindowViewModelTests
         vm.CloseCommand.Execute(null);
 
         Assert.True(raised);
+    }
+
+    [AvaloniaFact]
+    public async Task Next_DisposesThePreviousFullImage_DeferredViaDispatcherPost()
+    {
+        // T0-11 (production_audit.md): OnFullImageChanged disposes the OLD bitmap, but only once
+        // posted to the dispatcher at Background priority -- RunJobs() is required to observe it.
+        var historyStore = StoreWithThumbnail();
+        var entries = new[] { EntryVm("a"), EntryVm("b") };
+        var vm = Create(entries, startIndex: 0, historyStore);
+        await Task.Yield();
+        var first = vm.FullImage;
+        Assert.NotNull(first);
+
+        vm.NextCommand.Execute(null);
+        await Task.Yield();
+
+        Assert.False(IsDisposed(first!), "must not be disposed before the deferred post runs");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(IsDisposed(first!));
+    }
+
+    [AvaloniaFact]
+    public async Task CopyAsync_ThenNext_DoesNotDisposeTheBitmapStillBeingCopied()
+    {
+        // T0-11: the _copyInFlight guard -- a Next navigation while CopyAsync's own await is still
+        // pending must not dispose the bitmap CopyAsync is actively reading.
+        var historyStore = StoreWithThumbnail();
+        var clipboard = new FakeClipboardImageService();
+        var gate = new TaskCompletionSource();
+        clipboard.Gate = gate.Task;
+        var entries = new[] { EntryVm("a"), EntryVm("b") };
+        var vm = Create(entries, startIndex: 0, historyStore, clipboardImageService: clipboard);
+        await Task.Yield();
+        var beingCopied = vm.FullImage;
+        Assert.NotNull(beingCopied);
+
+        var copyTask = vm.CopyCommand.ExecuteAsync(null);
+
+        vm.NextCommand.Execute(null);
+        await Task.Yield();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(IsDisposed(beingCopied!), "must not dispose a bitmap CopyAsync is still awaiting on");
+
+        gate.SetResult();
+        await copyTask;
+        Dispatcher.UIThread.RunJobs();
+
+        // A LATER reassignment, with no copy in flight, must still dispose normally.
+        var beforePrevious = vm.FullImage;
+        Assert.NotNull(beforePrevious);
+        vm.PreviousCommand.Execute(null);
+        await Task.Yield();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(IsDisposed(beforePrevious!), "a later reassignment with no copy in flight must dispose the superseded bitmap");
+    }
+
+    // Avalonia's WriteableBitmap has no public IsDisposed -- same technique
+    // WriteableBitmapPoolTests uses: a disposed instance throws NullReferenceException (not
+    // ObjectDisposedException) from any real operation, here .Lock().
+    private static bool IsDisposed(Avalonia.Media.Imaging.Bitmap bitmap)
+    {
+        if (bitmap is not Avalonia.Media.Imaging.WriteableBitmap writeable)
+        {
+            return false;
+        }
+
+        try
+        {
+            using (writeable.Lock())
+            {
+            }
+
+            return false;
+        }
+        catch (NullReferenceException)
+        {
+            return true;
+        }
     }
 }

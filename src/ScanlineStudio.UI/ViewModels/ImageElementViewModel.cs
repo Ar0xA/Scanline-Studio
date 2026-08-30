@@ -1,4 +1,5 @@
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
@@ -13,7 +14,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// <see cref="ITemplateElementViewModel"/> and share one remove/undo/reorder path in
 /// <see cref="TxImageEditorPaneViewModel"/> -- see that class's own <c>CreateImageElement</c> for the
 /// construction-time wiring.</summary>
-public sealed partial class ImageElementViewModel : ObservableObject, ITemplateElementViewModel
+public sealed partial class ImageElementViewModel : ObservableObject, ITemplateElementViewModel, IDisposable
 {
     [ObservableProperty]
     private double _x = 0.5;
@@ -161,7 +162,34 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
 
     partial void OnSourceChanged(IImageSource value)
     {
+        // T0-11 (production_audit.md): dispose the OLD CanvasBitmap, deferred -- same
+        // Dispatcher.UIThread.Post-at-Background-priority pattern as the other bitmap-disposal
+        // sites this fix touches (see RxHistoryPaneViewModel.OnPreviewImageChanged's own comment
+        // for the full reasoning). Never fires at construction (the ctor assigns the backing
+        // field directly, not through this property's setter), so `old` here is always a real,
+        // previously-displayed bitmap, never the placeholder from before Source was ever set.
+        var old = CanvasBitmap;
         CanvasBitmap = ImageSourceBitmapConverter.ToBitmap(value);
         OnPropertyChanged(nameof(CanvasBitmap));
+        Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+    }
+
+    private bool _disposed;
+
+    // T0-11: disposes CanvasBitmap when this element is discarded wholesale (template reload,
+    // undo/redo ApplyState, single-element Remove -- see TxImageEditorPaneViewModel's call sites)
+    // rather than reassigned in place (OnSourceChanged above already handles that case). Deferred,
+    // same reasoning as OnSourceChanged -- the corresponding Image control's own detach from the
+    // visual tree is not guaranteed synchronous with this call. Code-review finding: guarded against
+    // a second call (IDisposable's own contract, even though nothing calls this twice today).
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        Dispatcher.UIThread.Post(CanvasBitmap.Dispose, DispatcherPriority.Background);
     }
 }

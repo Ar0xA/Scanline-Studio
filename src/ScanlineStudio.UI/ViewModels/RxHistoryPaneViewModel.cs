@@ -128,6 +128,27 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private Bitmap? _previewImage;
 
+    // T0-11 (production_audit.md): disposes the OLD bitmap on every reassignment (including the
+    // `= null` clear sites, not just the ToBitmap-call ones) -- CommunityToolkit's generated
+    // On<Prop>Changed hook fires on every writer of this property automatically. Deferred, not
+    // synchronous: the hook itself fires BEFORE PropertyChanged, so a synchronous dispose here
+    // would predate the binding seeing the new value; Background priority also gives Avalonia's
+    // compositor a chance to finish any render pass still referencing the old bitmap. Guarded on
+    // WriteableBitmap specifically -- only the bitmaps this codebase itself constructs via
+    // ImageSourceBitmapConverter are safe to assume disposable here. Deliberately does NOT apply
+    // to thumbnails (RxHistoryEntryViewModel.Thumbnail) -- those are shared with
+    // ImageViewerWindowViewModel while a viewer window is open, and UpdateEntryInPlace
+    // deliberately carries an old thumbnail forward into a replacement record; see this class's
+    // own doc comment / production_audit.md's T0-11 entry for why thumbnail disposal is a
+    // separate, deliberately-deferred fix.
+    partial void OnPreviewImageChanged(Bitmap? oldValue, Bitmap? newValue)
+    {
+        if (oldValue is WriteableBitmap old)
+        {
+            Dispatcher.UIThread.Post(() => old.Dispose(), DispatcherPriority.Background);
+        }
+    }
+
     /// <summary>Gallery Selected-frame panel's editable Note field -- backs the real, already-built
     /// <see cref="IReceiveHistoryStore.SetNoteAsync"/> (its own doc comment explicitly names this
     /// exact UI as its intended consumer; nothing called it before this). New UI, no mock2 slot for
@@ -1124,6 +1145,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             // A newer selection has already started its own load since this one began -- applying
             // this result now would show a preview for an entry the user is no longer looking at.
+            // T0-11 code-review finding: image was never assigned to PreviewImage, so it never reaches
+            // OnPreviewImageChanged's disposal hook -- dispose it directly here, it was never bound to
+            // anything.
+            image?.Dispose();
             return;
         }
 
