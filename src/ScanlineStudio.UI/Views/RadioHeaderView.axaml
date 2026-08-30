@@ -352,7 +352,7 @@
                                       Opacity="{Binding IsCapturePausedForTx, Converter={x:Static conv:BoolToOpacityConverter.Instance}}"
                                       ToolTip.Tip="{loc:Translate RadioStatus.ReceivingPausedForTx.Help}"
                                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger"
+                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger IndustryBtnDangerAlwaysOn"
                                 Content="{loc:Translate RadioStatus.Halt}" Command="{Binding HaltReceivingCommand}"
                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                     </Grid>

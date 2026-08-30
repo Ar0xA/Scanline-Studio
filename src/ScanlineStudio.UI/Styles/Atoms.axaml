@@ -1107,13 +1107,31 @@
     <Style Selector="Button.IndustryBtnDanger:pressed /template/ ContentPresenter">
         <Setter Property="Background" Value="{StaticResource IndustryDangerSolidBorder}" />
     </Style>
-    <!-- 2026-08-14: intentionally NO disabled styling here (was Opacity 0.45) — spec §7 fixed
-         exception 1: "HALT TX is solid red in every state, including idle, hover and disabled.
-         It is the only action allowed to be red while nothing is wrong." This class's one real
-         consumer (TxControlsPaneView's StopTransmit) IS that action — it must stay full-strength
-         solid red even when IsEnabled=False, not fade, so an operator can always find the button
-         that kills an active transmission at a glance. Primary/Secondary above get the opposite
-         "loses its fill" treatment; Danger deliberately does not. -->
+    <!-- Fable UX-review finding, 2026-08-30: this class no longer has one real consumer — it now
+         also backs Gallery/Logbook Delete and the TX editor's armed-Cancel/pending-delete states,
+         none of which are the spec §7 fixed exception below. A disabled Delete (nothing selected)
+         previously stayed full-strength solid red, reading as clickable when it wasn't. Danger now
+         gets the SAME "loses its fill" disabled treatment as Primary/Secondary; the genuine
+         always-red exception moves to the .IndustryBtnDangerAlwaysOn rule below (round-1
+         code-review correction: Avalonia resolves competing setters by DECLARATION ORDER, not
+         selector specificity, so that rule winning depends on staying declared AFTER this one —
+         not on carrying two classes in its selector). -->
+    <Style Selector="Button.IndustryBtnDanger:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+    </Style>
+    <!-- spec §7 fixed exception 1: "HALT TX is solid red in every state, including idle, hover and
+         disabled. It is the only action allowed to be red while nothing is wrong." Applied ONLY to
+         TxControlsPaneView's StopTransmit and RadioHeaderView's matching button (the two genuine
+         "kill an active transmission" actions) via this additional class, declared AFTER the plain
+         :disabled rule above so it wins on the two buttons that carry it — every other
+         IndustryBtnDanger consumer gets the normal fade above. -->
+    <Style Selector="Button.IndustryBtnDanger.IndustryBtnDangerAlwaysOn:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerSolidBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
+    </Style>
 
 
     <!-- Phase 2 addendum: ToggleButton is a separate type from Button in Avalonia (not a subtype —

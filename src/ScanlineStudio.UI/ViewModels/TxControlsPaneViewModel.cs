@@ -1047,11 +1047,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="IReceivedImageBuffer.Updated"/> from this VM).
     ///
     /// ui_transition_plan.md step 5 (T1-6): also seeds the new editor's HIS CALL/HIS GRID template
-    /// variables via <see cref="CurrentContactRequested"/> -- this is the one entry point that gets
-    /// this seed (Browse/Stock/blank-mode-open don't -- an arbitrary photo or a blank canvas isn't
-    /// "replying to a station"). This is what makes a template referencing {his_call}/{his_grid}
-    /// come up already filled with the received station's own identity, instead of the operator
-    /// retyping what the RX pane (or Logbook's own "Log QSO" prefill) already knows.</summary>
+    /// variables via <see cref="BuildCurrentContactVariables"/> (Fable UX-review finding, 2026-08-30:
+    /// every "open the editor" entry point now gets this seed, not just this one -- see that
+    /// method's own doc comment for why). This is what makes a template referencing
+    /// {his_call}/{his_grid} come up already filled with the received station's own identity,
+    /// instead of the operator retyping what the RX pane (or Logbook's own "Log QSO" prefill)
+    /// already knows.</summary>
     [RelayCommand]
     private async Task CopyReceivedImageToTxAsync()
     {
@@ -1073,11 +1074,30 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
 
         var fileName = _localization.GetString("Panes.TxControls.CopyToTx.FileName");
+        await OpenEditorWithLoadedSourceAsync(current, fileName, BuildCurrentContactVariables());
+    }
+
+    /// <summary>Shared by every "open the editor" entry point (Copy-to-TX, Browse, Stock, Blank) --
+    /// builds the seed dictionary for {his_call}/{his_grid} template variables from the current RX
+    /// contact, if any. A blank/whitespace-only value stays UNSEEDED, not seeded as "" -- code-review
+    /// finding preserved from this method's original Copy-to-TX-only form: MacroTextResolver
+    /// resolves a present-but-empty variable to "" (token vanishes), while an absent one resolves
+    /// verbatim to "{his_call}" (an obvious unfilled placeholder). Seeding "" would silently blank
+    /// the token on the transmitted card.
+    ///
+    /// Fable UX-review finding, 2026-08-30: originally only <see cref="CopyReceivedImageToTxAsync"/>
+    /// called this (this method's own doc comment used to argue "an arbitrary photo or a blank
+    /// canvas isn't 'replying to a station'"). Live testing found that reasoning doesn't match actual
+    /// use: this pane's own <see cref="OpenBlankEditorAsync"/> doc comment documents "Load a Ready
+    /// Rack/Template Library entry" as the intended way to reach a template after opening blank --
+    /// picking a reply template from the Ready Rack is at least as common a "replying to a station"
+    /// path as Copy-to-TX, and QSO FILL fields stay freely editable regardless of how they were
+    /// seeded. Extended to every entry point; when nothing has been received,
+    /// <see cref="CurrentContactRequested"/> returns null/empty and this still correctly returns
+    /// null, so Browse/Stock/Blank behavior is unchanged in the common cold-start case.</summary>
+    private Dictionary<string, string>? BuildCurrentContactVariables()
+    {
         var (callsign, grid) = CurrentContactRequested?.Invoke() ?? (null, null);
-        // Code-review finding: a blank/whitespace-only value must stay UNSEEDED, not seeded as "" --
-        // MacroTextResolver resolves a present-but-empty variable to "" (token vanishes), while an
-        // absent one resolves verbatim to "{his_call}" (an obvious unfilled placeholder). Seeding ""
-        // would silently blank the token on the transmitted card.
         Dictionary<string, string>? contactVariables = null;
         if (!string.IsNullOrWhiteSpace(callsign))
         {
@@ -1089,7 +1109,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_grid"] = grid.Trim();
         }
 
-        await OpenEditorWithLoadedSourceAsync(current, fileName, contactVariables);
+        return contactVariables;
     }
 
     /// <summary>Shared gate for every "load a fresh source into the editor" entry point (Browse,
@@ -1163,7 +1183,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        await OpenEditorWithLoadedSourceAsync(original, fileName);
+        await OpenEditorWithLoadedSourceAsync(original, fileName, BuildCurrentContactVariables());
     }
 
     /// <summary>Backlog fix (user request, 2026-08-17): "don't leave the TX window completely empty
@@ -1202,7 +1222,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         IsEditorOpen = true;
         _currentEditorIsBlank = true;
         var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankPlaceholderColor);
-        await OpenEditorWithLoadedSourceAsync(placeholder, _localization.GetString("Panes.TxControls.BlankImageName"));
+        await OpenEditorWithLoadedSourceAsync(
+            placeholder, _localization.GetString("Panes.TxControls.BlankImageName"), BuildCurrentContactVariables());
     }
 
     /// <summary>Light neutral gray (matches this app's own Industry design system's neutral-surface

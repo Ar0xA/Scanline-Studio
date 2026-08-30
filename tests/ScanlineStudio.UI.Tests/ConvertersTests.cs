@@ -4,6 +4,7 @@ using Avalonia.Data;
 using Avalonia.Data.Converters;
 using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.UI.Converters;
 
 namespace ScanlineStudio.UI.Tests;
@@ -122,4 +123,54 @@ public sealed class ConvertersTests
 
         Assert.Equal(BindingOperations.DoNothing, result);
     }
+
+    // Fable UX-review finding, 2026-08-30: the Logbook results grid bound raw SstvModeId directly
+    // (e.g. "martin-m1"), which reads as an internal identifier, not a mode name an operator
+    // recognizes -- and could truncate to something like "martin-" in a narrow column.
+    // IMultiValueConverter, not a plain converter -- see the converter's own doc comment for why
+    // (ScanlineStudio.UI may never reference Core.Sstv's mode catalog directly).
+    [Fact]
+    public void SstvModeIdDisplayNameConverter_UnsetValue_DoesNotThrow()
+    {
+        var exception = Record.Exception(() =>
+            SstvModeIdDisplayNameConverter.Instance.Convert([AvaloniaProperty.UnsetValue, AvaloniaProperty.UnsetValue], typeof(string), null, CultureInfo.InvariantCulture));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void SstvModeIdDisplayNameConverter_KnownId_ReturnsDisplayName()
+    {
+        var modes = new[] { CreateModeDefinition("martin-m1", "Martin M1") };
+
+        var result = SstvModeIdDisplayNameConverter.Instance.Convert(["martin-m1", modes], typeof(string), null, CultureInfo.InvariantCulture);
+
+        Assert.Equal("Martin M1", result);
+    }
+
+    [Fact]
+    public void SstvModeIdDisplayNameConverter_UnknownId_FallsBackToTheRawId()
+    {
+        // A QSO logged before a mode existed in this registry, or hand-edited data -- the value is
+        // still meaningful, just not prettified; must not throw or return blank.
+        var modes = new[] { CreateModeDefinition("martin-m1", "Martin M1") };
+
+        var result = SstvModeIdDisplayNameConverter.Instance.Convert(["not-a-real-mode", modes], typeof(string), null, CultureInfo.InvariantCulture);
+
+        Assert.Equal("not-a-real-mode", result);
+    }
+
+    [Fact]
+    public void SstvModeIdDisplayNameConverter_ModeListNotYetResolved_FallsBackToTheRawId()
+    {
+        var result = SstvModeIdDisplayNameConverter.Instance.Convert(["martin-m1", AvaloniaProperty.UnsetValue], typeof(string), null, CultureInfo.InvariantCulture);
+
+        Assert.Equal("martin-m1", result);
+    }
+
+    /// <summary>Minimal, valid <see cref="SstvModeDefinition"/> for tests that only care about
+    /// Id/DisplayName -- the DSP-facing fields (VisCode/dimensions/segments) are irrelevant here but
+    /// still required by the record's own constructor.</summary>
+    private static SstvModeDefinition CreateModeDefinition(string id, string displayName) =>
+        new(id, displayName, VisCode: 0, ImageWidth: 320, ImageHeight: 256, ColorEncoding.RgbSequential, LineSegments: []);
 }
