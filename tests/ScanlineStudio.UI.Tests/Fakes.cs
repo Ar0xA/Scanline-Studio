@@ -1434,10 +1434,21 @@ internal sealed class FakeClipboardImageService : IClipboardImageService
 
     public bool ResultToReturn { get; set; } = true;
 
-    public Task<bool> CopyImageAsync(Bitmap bitmap)
+    /// <summary>T0-11: when set, <see cref="CopyImageAsync"/> parks on this until it completes --
+    /// lets a test deterministically hold a copy "in flight" (same Gate convention as
+    /// FakeSettingsStore.Gate elsewhere in this project) to exercise
+    /// ImageViewerWindowViewModel's own in-flight-copy dispose guard.</summary>
+    public Task? Gate { get; set; }
+
+    public async Task<bool> CopyImageAsync(Bitmap bitmap)
     {
         CopiedImages.Add(bitmap);
-        return Task.FromResult(ResultToReturn);
+        if (Gate is not null)
+        {
+            await Gate.ConfigureAwait(false);
+        }
+
+        return ResultToReturn;
     }
 }
 

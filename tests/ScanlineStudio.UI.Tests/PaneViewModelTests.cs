@@ -1,6 +1,9 @@
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Data;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -5822,6 +5825,43 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("Panes.RxHistory.Error.ReconcileFailed", vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void PreviewImage_Reassigned_DisposesTheOldBitmap_DeferredViaDispatcherPost()
+    {
+        // T0-11 (production_audit.md): OnPreviewImageChanged fires on every writer of this
+        // property (including the null-clear sites, per the generated hook -- this test exercises
+        // the mechanism directly rather than driving the whole async preview-load pipeline).
+        var vm = CreateRxHistoryPaneViewModel(new FakeReceiveHistoryStore());
+        Dispatcher.UIThread.RunJobs();
+        var first = new WriteableBitmap(new PixelSize(2, 2), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+        vm.PreviewImage = first;
+
+        vm.PreviewImage = null;
+
+        Assert.False(IsWriteableBitmapDisposed(first), "must not be disposed before the deferred post runs");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(IsWriteableBitmapDisposed(first));
+    }
+
+    // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
+    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // any real operation, here .Lock().
+    private static bool IsWriteableBitmapDisposed(WriteableBitmap bitmap)
+    {
+        try
+        {
+            using (bitmap.Lock())
+            {
+            }
+
+            return false;
+        }
+        catch (NullReferenceException)
+        {
+            return true;
+        }
     }
 
     private static RxHistoryPaneViewModel CreateRxHistoryPaneViewModel(

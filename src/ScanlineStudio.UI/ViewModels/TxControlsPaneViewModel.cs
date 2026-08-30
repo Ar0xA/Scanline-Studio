@@ -223,6 +223,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private Bitmap? _previewImage;
 
+    // T0-11 (production_audit.md): same dispose-old-on-change pattern as RxHistoryPaneViewModel's
+    // own PreviewImage -- see that property's own comment for the full reasoning (deferred via
+    // Dispatcher.UIThread.Post at Background priority, guarded on WriteableBitmap specifically).
+    partial void OnPreviewImageChanged(Bitmap? oldValue, Bitmap? newValue)
+    {
+        if (oldValue is WriteableBitmap old)
+        {
+            Dispatcher.UIThread.Post(() => old.Dispose(), DispatcherPriority.Background);
+        }
+    }
+
     [ObservableProperty]
     private string? _selectedFileName;
 
