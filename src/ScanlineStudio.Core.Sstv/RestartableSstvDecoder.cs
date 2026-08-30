@@ -35,13 +35,19 @@ namespace ScanlineStudio.Core.Sstv;
 /// <see cref="RestartOverdue"/>/<see cref="RestartCriticallyOverdue"/>
 /// can't let the counter actually overflow.
 ///
-/// <b>Locking</b>: the swap happens under <c>lock (_gate)</c>. All three maintenance events are raised
-/// strictly AFTER releasing the lock, so a critical-path consumer can call back into
+/// <b>Locking</b>: the swap's own bookkeeping (constructing the replacement, committing `_inner`)
+/// happens under <c>lock (_gate)</c>. All three maintenance events are raised strictly AFTER
+/// releasing the lock, so a critical-path consumer can call back into
 /// <see cref="ResetAgc"/> without contending with the swap. A round-3 plan review found
 /// a rare shutdown-timing path where raising inside the lock could let a handler's continuation resume
 /// on a different thread and then contend for `_gate` against the (still-lock-holding) original
 /// thread -- a genuine deadlock. Raising outside the lock removes the whole class, since the swap has
-/// already fully happened by the time any handler runs.</summary>
+/// already fully happened by the time any handler runs.
+///
+/// <b>T0-7 (production_audit.md) fix:</b> disposing the swapped-out (outgoing) inner decoder ALSO
+/// happens strictly AFTER releasing <c>_gate</c>, for the same deadlock-avoidance reasoning above --
+/// see <see cref="Swap"/>'s own doc comment for why disposal specifically needed this (it's the one
+/// step in the whole swap that can genuinely block for seconds).</summary>
 public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, ISstvDecoderReconfiguration, IDisposable
 {
     internal const int ProductionSampleRate = SstvSampleRate.Default;
@@ -131,6 +137,14 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private long _criticalThresholdSamples;
     private int _maximumSafeSampleIndex;
     private readonly Func<int, AnalogFmSstvDecoder>? _decoderFactoryForTests;
+    // T0-7 test-only hook: invoked synchronously immediately before outgoingToDispose?.Dispose() at
+    // both call sites (PushSamplesCore, ApplyPendingReconfigurationNow), AFTER _gate has already been
+    // released -- lets a test prove a UI-facing property read from another thread is genuinely
+    // unblocked at that point, by holding this hook open (e.g. a ManualResetEventSlim.Wait()) while
+    // asserting the read completes. Ctor-injected, not a settable property, matching this class's own
+    // established test-seam convention (_decoderFactoryForTests) -- set once at construction, never
+    // mutated concurrently.
+    private readonly Action? _outgoingDisposeStartingForTests;
     private readonly ILoggerFactory? _loggerFactory;
     private readonly object _gate = new();
     private int _pushActive;
@@ -579,7 +593,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// the rate-aware production values --
     /// see this class' own doc comment for why a clock-injection seam is unnecessary now that the
     /// trigger is sample-count-based, not wall-clock-based.</summary>
-    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null, ILoggerFactory? loggerFactory = null)
+    internal RestartableSstvDecoder(bool afcEnabled, long warningThresholdSamples, long criticalThresholdSamples, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, bool stationIdDecodeEnabled = false, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, int sampleRate = SstvSampleRate.Default, int maximumSafeSampleIndex = int.MaxValue, Func<int, AnalogFmSstvDecoder>? decoderFactoryForTests = null, ILoggerFactory? loggerFactory = null, Action? outgoingDisposeStartingForTests = null)
     {
         if (!SstvSampleRate.IsSupported(sampleRate))
         {
@@ -617,6 +631,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         _criticalThresholdSamples = criticalThresholdSamples;
         _maximumSafeSampleIndex = maximumSafeSampleIndex;
         _decoderFactoryForTests = decoderFactoryForTests;
+        _outgoingDisposeStartingForTests = outgoingDisposeStartingForTests;
         _loggerFactory = loggerFactory;
         _stationIdDecodeEnabled = stationIdDecodeEnabled;
         _inner = CreateInner();
@@ -647,6 +662,9 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     private void PushSamplesCore(ReadOnlyMemory<float> samples)
     {
         AnalogFmSstvDecoder current;
+        // T0-7: captured here (not disposed inside Swap/the lock below) so disposal can happen after
+        // _gate is released -- see Swap's own doc comment for why.
+        AnalogFmSstvDecoder? outgoingToDispose = null;
         var raiseWarning = false;
         var raiseCritical = false;
         var raiseRestarted = false;
@@ -681,12 +699,12 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                 // be physically streaming at the OLD hardware rate here -- only the direct,
                 // orchestrator-called ApplyPendingReconfigurationNow (called after capture is stopped)
                 // ever drains it.
-                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected, out outgoingToDispose);
                 raiseCritical = true;
             }
             else if (n >= _criticalThresholdSamples)
             {
-                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected, out outgoingToDispose);
                 raiseCritical = true;
             }
             else if (_inner.IsIdle && n >= _warningThresholdSamples)
@@ -695,7 +713,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                 // maintenance swap, not the new reconfiguration-only trigger below -- it must not
                 // silently degrade into a no-op just because a pending reconfiguration happens to be
                 // queued and its CreateInner attempt fails.
-                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: true, drainSampleRate: false, out raiseReconfigurationRejected, out outgoingToDispose);
             }
             else if (_inner.IsIdle && _pendingReconfiguration is { HasSiblingChange: true })
             {
@@ -705,7 +723,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                 // doc comment). HasSiblingChange (not "is not null") -- backlog item 4, round-4
                 // finding B1: a rate-only remainder must NOT trigger this branch (see
                 // PendingReconfiguration.HasSiblingChange's own doc comment for why).
-                raiseRestarted = Swap(mandatory: false, drainSampleRate: false, out raiseReconfigurationRejected);
+                raiseRestarted = Swap(mandatory: false, drainSampleRate: false, out raiseReconfigurationRejected, out outgoingToDispose);
             }
             else if (!_inner.IsIdle && n >= _warningThresholdSamples && !_warningRaised)
             {
@@ -714,6 +732,35 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             }
 
             current = _inner;
+        }
+
+        // T0-7: disposed here, AFTER releasing _gate above -- not inside Swap/the lock. Every
+        // UI-facing property getter (SignalPeakLevel/SlantPpm/SyncSource/etc.) blocks on _gate, and
+        // this disposal can genuinely take ~10s worst case (RxDiskLineStagingBuffer's own bounded
+        // drain), so holding the lock across it froze every one of those getters for that whole
+        // window. Swallowed, not a bare call: every real Dispose() path today already swallows and
+        // logs internally (RAM mode's Dispose() is a no-op, Off is null, Extended wraps every
+        // teardown stage in its own catch-and-log via TryDisposeStage), so this can't throw today --
+        // but a future throwing Dispose() must not also cost the decode chunk below and every
+        // maintenance notification this method still owes its caller, a strictly bigger blast radius
+        // than the swap's own bookkeeping (already unaffected by a throwing Dispose(), since disposal
+        // now runs after that bookkeeping committed). Swallowed silently, not logged via
+        // _loggerFactory -- this class only ever uses that factory to construct a NEW inner
+        // decoder's own logger (CreateInner, below), never to log directly itself; wiring a one-off
+        // ILogger here for a path already proven unreachable would be new logging infrastructure for
+        // this class, not a reuse of existing plumbing.
+        try
+        {
+            if (outgoingToDispose is not null)
+            {
+                _outgoingDisposeStartingForTests?.Invoke();
+            }
+
+            outgoingToDispose?.Dispose();
+        }
+        catch
+        {
+            // Intentionally swallowed -- see comment above.
         }
 
         ExceptionDispatchInfo? innerFailure = null;
@@ -1312,7 +1359,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     /// C2) must treat that as a real, reachable outcome needing its own recovery, not a defensive
     /// nicety. Raises <see cref="Restarted"/>/<see cref="ReconfigurationRejected"/> strictly after
     /// releasing <see cref="_gate"/>, matching <see cref="PushSamplesCore"/>'s own established
-    /// deadlock-avoidance rule (this class's own doc comment).</summary>
+    /// deadlock-avoidance rule (this class's own doc comment). T0-7: disposing the swapped-out
+    /// instance ALSO happens after releasing `_gate` -- but still INSIDE this method's own
+    /// `_pushActive` hold (the `try`, before the `finally` releases it), not after -- disposal can
+    /// take ~10s worst case, and there is no benefit to narrowing the `_pushActive` hold around it;
+    /// the caller is blocked for the same duration either way, so keeping it held preserves this
+    /// method's own established "no concurrent PushSamples call can race a swap/disposal in flight"
+    /// invariant (round-4 finding B4) exactly as it already was before this fix.</summary>
     public SwapResult ApplyPendingReconfigurationNow()
     {
         if (Interlocked.CompareExchange(ref _pushActive, 1, 0) != 0)
@@ -1324,6 +1377,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         bool rejected;
         try
         {
+            AnalogFmSstvDecoder? outgoingToDispose;
             lock (_gate)
             {
                 ObjectDisposedException.ThrowIf(_disposed, this);
@@ -1333,7 +1387,23 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
                     return SwapResult.NothingPending;
                 }
 
-                committed = Swap(mandatory: false, drainSampleRate: true, out rejected);
+                committed = Swap(mandatory: false, drainSampleRate: true, out rejected, out outgoingToDispose);
+            }
+
+            // Swallowed -- see PushSamplesCore's own identical disposal site for why (every real
+            // Dispose() path today already swallows and logs internally; a future throw here must not
+            // also skip releasing _pushActive in the finally below).
+            try
+            {
+                if (outgoingToDispose is not null)
+                {
+                    _outgoingDisposeStartingForTests?.Invoke();
+                }
+
+                outgoingToDispose?.Dispose();
+            }
+            catch
+            {
             }
         }
         finally
@@ -1438,32 +1508,39 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     ///
     /// RX buffer subsystem Phase 7 (disposal-chain sub-piece): the outgoing instance's own
     /// RxBufferMode.Extended staging buffer (if any) owns scratch files and a background writer
-    /// task -- disposing it here, before the reference is dropped, is the only place that ever
-    /// happens for a decoder that gets swapped out mid-session (as opposed to torn down at
-    /// session end, see this class's own Dispose() below). Every restart creates a fresh inner
-    /// instance (CreateInner, below), so without this, Extended mode would leak two scratch files
-    /// + a live consumer task per restart cycle -- a real, unbounded production leak, not a
-    /// hypothetical one (this exact gap was flagged by round-2 plan-review before Phase 7 started).
-    /// This whole method runs under <see cref="_gate"/> (this class's own established convention, see
-    /// the class doc comment) -- the outgoing instance's own Dispose() does a bounded
-    /// channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout, waited twice =
-    /// ~10s worst case), so a genuinely stuck writer blocks whichever UI-thread property getter
+    /// task -- disposing it is the only place that ever happens for a decoder that gets swapped out
+    /// mid-session (as opposed to torn down at session end, see this class's own Dispose() below).
+    /// Every restart creates a fresh inner instance (CreateInner, below), so without this, Extended
+    /// mode would leak two scratch files + a live consumer task per restart cycle -- a real,
+    /// unbounded production leak, not a hypothetical one (this exact gap was flagged by round-2
+    /// plan-review before Phase 7 started).
+    ///
+    /// <b>T0-7 (production_audit.md) fix:</b> this method does NOT dispose the outgoing
+    /// instance itself anymore -- it returns it via <paramref name="outgoingToDispose"/> for the
+    /// CALLER to dispose AFTER releasing <see cref="_gate"/>. The outgoing instance's own Dispose()
+    /// does a bounded channel-drain-and-FileStream-dispose (RxDiskLineStagingBuffer.DrainTimeout,
+    /// waited twice = ~10s worst case), so disposing it while still holding `_gate` (the original,
+    /// now-fixed shape) blocked whichever UI-thread property getter
     /// (SignalPeakLevel/SlantPpm/SyncSource/SyncOffsetSamples/BufferedSampleCount/
-    /// IsLevelOverdriven/SyncFrequencyCorrectionHz) is waiting on this same lock for up to that
-    /// long. Code-review-accepted: only reachable under a pathological stuck-writer condition at
-    /// a many-hour maintenance swap interval originally -- restart-required-settings backlog item 2
-    /// (2026-08-27) made this user-triggerable (a Reconfiguration Save queues a swap on the very next
-    /// idle push), so the worst case is now bounded by human click rate, not a many-hour interval;
-    /// still code-review-accepted, the underlying stuck-writer precondition is unchanged.</summary>
+    /// IsLevelOverdriven/SyncFrequencyCorrectionHz) was waiting on this same lock for up to that
+    /// long. Originally accepted as reachable only under a pathological stuck-writer condition at a
+    /// many-hour maintenance swap interval -- restart-required-settings backlog item 2 (2026-08-27)
+    /// made swaps user-triggerable (a Reconfiguration Save queues one on the very next idle push),
+    /// so the worst case became bounded by human click rate, not a many-hour interval, which is what
+    /// made this worth fixing rather than continuing to accept it. Note this only removes `_gate`
+    /// contention -- the CALLER (`PushSamplesCore`/`ApplyPendingReconfigurationNow`) still blocks its
+    /// own caller for the same ~10s disposing the outgoing instance; that residual stall is
+    /// unchanged by this fix.</summary>
     /// <param name="drainSampleRate">Restart-required-settings backlog item 4, round-4 finding C1:
     /// <see langword="false"/> from every push-driven call in <see cref="PushSamplesCore"/> (mandatory
     /// or not) -- a pending <see cref="SampleRate"/> is left untouched, still queued, since capture
     /// could still be physically streaming at the OLD hardware rate at that moment.
     /// <see langword="true"/> ONLY from <see cref="ApplyPendingReconfigurationNow"/>, called after
     /// capture has been stopped.</param>
-    private bool Swap(bool mandatory, bool drainSampleRate, out bool reconfigurationRejected)
+    private bool Swap(bool mandatory, bool drainSampleRate, out bool reconfigurationRejected, out AnalogFmSstvDecoder? outgoingToDispose)
     {
         reconfigurationRejected = false;
+        outgoingToDispose = null;
         var pending = _pendingReconfiguration;
         var previousRxBpfPreset = _rxBpfPreset;
         var previousDemodType = _demodType;
@@ -1560,10 +1637,13 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         UnsubscribeFrom(outgoing);
         _inner = incoming;
 
-        // The disk-backed staging buffer performs each teardown step independently, logs failures,
-        // and never throws, so disposing the outgoing decoder cannot suppress the already-committed
-        // swap's bookkeeping or maintenance notifications.
-        outgoing.Dispose();
+        // T0-7: no longer disposed here -- returned to the caller, which disposes it AFTER releasing
+        // _gate (see this method's own doc comment). The disk-backed staging buffer performs each
+        // teardown step independently, logs failures, and never throws (RxDiskLineStagingBuffer's
+        // own TryDisposeStage contract), so deferring this cannot suppress the already-committed
+        // swap's bookkeeping or maintenance notifications -- the same reasoning that let it be called
+        // unconditionally before still holds, just at a later point in the caller.
+        outgoingToDispose = outgoing;
 
         // Cleared on the commit path too (round-3 plan-review finding), not just inside the catch
         // above -- otherwise a SUCCESSFUL drain of a pending reconfiguration would leave
