@@ -74,16 +74,17 @@ because of this and why.
   ~42.67 — this gradient is smooth enough that most structural corruptions land in a narrow band
   around that number. Load-bearing for interpreting the numbers below: a tolerance above ~42.67
   cannot reject a structural bug, only something worse than near-random.
-- **C# decoder vs source, decoding the real captures**: martin-m1 = 11.78 (close to legacy's own
-  baseline, comfortably below the ~42.67 corruption floor — genuinely discriminating). robot-36 =
-  68.06 — a real, substantial gap whose *existence* is pre-documented (`SstvModeRegistry.cs`'s own
-  doc comment already names Robot 36, and the rest of the low-samples-per-pixel family, as failing
-  the 10.0 tolerance at 11025Hz against a *synthetic* self-round-trip, suspecting incomplete AFC/PLL
-  settling) but whose *magnitude* is not: that same doc comment's own synthetic self-round-trip
-  number for Robot 36 post-fix is 13.4 (`spec/14-roadmap.md`), roughly **5x smaller** than this
-  real-capture number. And 68.06 is already worse than the ~42.67 corruption floor above — so the
-  robot-36 golden-vector tests currently function only as regression tripwires (no worse than what's
-  observed today), not as discriminating parity checks, until the underlying gap is fixed.
+- **C# decoder vs source, decoding the real captures**: superseded by a long chain of DSP fixes
+  since first measured — see `GoldenVectorTests.cs`'s own `Decoder_DecodesRealLegacyAudio_
+  WithinToleranceOfSource` comment history for the full progression (narrower PLL band, the
+  m_KSS/m_KS2S pixel-pitch trim fix, the Hilbert demodulator port, the per-line cursor
+  rounding fix, and others). Robot-36 in particular started far worse than every other mode here
+  (an initial real-capture delta of 68.06, worse than the ~42.67 corruption floor above — a real,
+  substantial gap flagged by `SstvModeRegistry.cs`'s doc comment and tracked in
+  `spec/14-roadmap.md`) and is now, as of the most recent re-measurement, comfortably inside its
+  tolerance and below the corruption floor like every other mode: martin-m1 = 1.44 (tolerance
+  3.0), robot-36 = 7.11 (tolerance 10.0). The golden-vector tests are genuinely discriminating
+  parity checks again, not regression tripwires only.
 
 ## Trimmed to remove incidental room/mic audio
 
@@ -150,7 +151,7 @@ Same method as the original two fixtures (amplitude envelope, ~15000/32768 thres
 
 ### Measured deltas
 
-| mode | legacy-own-decode baseline | this port's decoder vs. real audio | encoder self-consistency |
+| mode | legacy-own-decode baseline | this port's decoder vs. real audio (as first measured) | encoder self-consistency |
 |---|---|---|---|
 | scottie-s1 | 1.24 | 2.74 (restarts=0, correct mode) | 0.58 |
 | robot-72 | 7.03 | 13.46 (restarts=0, correct mode) | 4.53 |
@@ -159,11 +160,15 @@ Same method as the original two fixtures (amplitude envelope, ~15000/32768 thres
 | mn110 | 3.45 | 12.79 (restarts=0, correct mode) | 12.03 |
 | avt | 4.23 | 5.80 (restarts=0, correct mode) | 9.92 |
 
-All six modes land in the same healthy range as `martin-m1`/`robot-36`'s own numbers above — see
-`GoldenVectorTests.cs`'s own per-test comments for tolerance reasoning. `mn110`'s self-consistency
-delta (12.03) sitting close to its decode-vs-source delta (12.79), rather than well below it like the
-other four, is flagged but not investigated further here — possibly related to the same class of
-narrow-family gap already tracked as Band-3 S8/S9 (`spec/14-roadmap.md`).
+All six modes landed in the same healthy range as `martin-m1`/`robot-36`'s own first-measured
+numbers above. **The middle column is now stale** — the same DSP fix chain referenced above
+(narrower PLL band, pixel-pitch trim, Hilbert demodulator port, per-line cursor rounding fix, etc.)
+moved every one of these deltas since this table was first built; as of the most recent
+re-measurement in `GoldenVectorTests.cs`'s own comment history: scottie-s1 = 1.10, robot-72 = 6.83,
+pd90 = 3.74, rm8 = 5.12, mn110 = 3.57, avt = 6.74 — all improved or unchanged, all comfortably
+inside their current tolerances. mn110's self-consistency delta (12.03) sitting close to its
+*original* decode-vs-source delta (12.79) is no longer a live concern now that the decode-vs-source
+number has dropped to 3.57, well below self-consistency.
 
 ### Real finding: AVT's real capture never decoded -- fixed (S31)
 
