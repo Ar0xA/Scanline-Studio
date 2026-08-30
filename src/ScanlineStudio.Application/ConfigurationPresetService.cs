@@ -95,8 +95,8 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
             // re-load after saving).
             var previous = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
 
-            // Steps 4-5: merge, then the active-preset marker, as two separate writes -- see
-            // MergeIntoLiveSettingsAsync's own doc comment for why they're not combined into one.
+            // Steps 4-5: the bulk section merge and the active-preset marker write -- see
+            // MergeIntoLiveSettingsAsync's own doc comment for the T0-2 collapse to one atomic call.
             await MergeIntoLiveSettingsAsync(preset, name, ct).ConfigureAwait(false);
 
             // Step 6: push every Application-layer-reachable section live. Each push is independently
@@ -192,39 +192,41 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         }
     }
 
-    /// <summary>Steps 4-5. Two SEPARATE writes, not combined into one <c>AppSettings</c> build-then-
-    /// save: the active-preset marker (step 5) re-loads FRESH right before its own write (matching
-    /// this codebase's own "reload right before writing" precedent used everywhere else a targeted
-    /// single-field write follows a bulk one, e.g. <c>PersistResolvedDeviceAsync</c>) rather than
-    /// reusing step 4's own in-memory result, minimizing the window a concurrent writer's own change
-    /// could be clobbered.</summary>
+    /// <summary>Steps 4-5, T0-2: ONE atomic <see cref="ISettingsStore.UpdateAsync"/> call covering
+    /// both the bulk section merge and the active-preset marker write. Previously two SEPARATE
+    /// load/save round trips, with the marker write (step 5) deliberately re-loading FRESH right
+    /// before its own write specifically to MINIMIZE (not close) the window a concurrent writer's
+    /// own change could be clobbered in -- that reasoning predates <see cref="ISettingsStore.UpdateAsync"/>
+    /// existing; once it exists there's no remaining reason to accept any window at all, so this
+    /// collapses to one call.</summary>
     private async Task MergeIntoLiveSettingsAsync(AppSettings preset, string name, CancellationToken ct)
     {
-        // Step 4: MERGE every key PRESENT IN THE PRESET onto the current live settings -- NOT a
-        // wholesale AppSettings.SaveAsync(preset), which would delete every section Phase 2's store
-        // deliberately excludes (WindowGeometry/TxPaneUi/RxPaneUi) from the live settings.json on
-        // every single switch (round-2 plan-review blocker). Raw dictionary merge, not
-        // WithSection<T>-per-key -- this class never needs to know any individual section's own
-        // TYPE to merge it, only that it's a JsonElement blob (same "ScanlineStudio.Settings itself
-        // never needs to know any module-specific type" property AppSettings.cs's own doc comment
-        // describes, reused here one layer up). Keeps the CURRENT SchemaVersion, not the preset's
-        // (Phase 2 round-2 decision 4) -- `with { Sections = ... }` only replaces Sections.
-        var current = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var merged = new Dictionary<string, System.Text.Json.JsonElement>(current.Sections);
-        foreach (var (key, value) in preset.Sections)
+        await _settingsStore.UpdateAsync(current =>
         {
-            merged[key] = value;
-        }
+            // Step 4: MERGE every key PRESENT IN THE PRESET onto the current live settings -- NOT a
+            // wholesale AppSettings.SaveAsync(preset), which would delete every section Phase 2's
+            // store deliberately excludes (WindowGeometry/TxPaneUi/RxPaneUi) from the live
+            // settings.json on every single switch (round-2 plan-review blocker). Raw dictionary
+            // merge, not WithSection<T>-per-key -- this class never needs to know any individual
+            // section's own TYPE to merge it, only that it's a JsonElement blob (same
+            // "ScanlineStudio.Settings itself never needs to know any module-specific type" property
+            // AppSettings.cs's own doc comment describes, reused here one layer up). Keeps the
+            // CURRENT SchemaVersion, not the preset's (Phase 2 round-2 decision 4) -- `with { Sections
+            // = ... }` only replaces Sections.
+            var merged = new Dictionary<string, System.Text.Json.JsonElement>(current.Sections);
+            foreach (var (key, value) in preset.Sections)
+            {
+                merged[key] = value;
+            }
 
-        await _settingsStore.SaveAsync(current with { Sections = merged }, ct).ConfigureAwait(false);
-
-        // Step 5: re-set the active-preset marker against a FRESH read (see this method's own doc
-        // comment for why not the in-memory `merged` result above).
-        var afterMerge = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var withMarker = afterMerge.WithSection(
-            ConfigurationPresetSettings.SectionKey, new ConfigurationPresetSettings { ActivePresetName = name },
-            ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings);
-        await _settingsStore.SaveAsync(withMarker, ct).ConfigureAwait(false);
+            // Step 5: re-set the active-preset marker, against the SAME snapshot the merge above just
+            // built (current is a fresh AppSettings.UpdateAsync gave this lambda, not a stale outer
+            // read -- that's what makes the two-round-trip precedent above obsolete).
+            var withSections = current with { Sections = merged };
+            return withSections.WithSection(
+                ConfigurationPresetSettings.SectionKey, new ConfigurationPresetSettings { ActivePresetName = name },
+                ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>The rate and device fields of <c>AudioDeviceSettings</c>, pushed UNCONDITIONALLY --

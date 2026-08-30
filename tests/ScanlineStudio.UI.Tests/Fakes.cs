@@ -81,6 +81,19 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
         _changes.OnNext(settings);
     }
 
+    /// <summary>T0-2: naive forwarding is sufficient here -- this fake has no test that depends on
+    /// genuine cross-caller mutual exclusion (that's <c>Application.Tests.FakeSettingsStore</c>'s
+    /// job). Still funnels through this class's own <see cref="LoadAsync"/>/<see cref="SaveAsync"/>,
+    /// so <see cref="LoadAsyncException"/>/<see cref="SaveAsyncException"/>/<see cref="Gate"/>/
+    /// <see cref="SaveGate"/> all still apply.</summary>
+    public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+    {
+        var current = await LoadAsync(ct).ConfigureAwait(false);
+        var updated = mutate(current);
+        await SaveAsync(updated, ct).ConfigureAwait(false);
+        return updated;
+    }
+
     public void Dispose() => _changes.Dispose();
 }
 

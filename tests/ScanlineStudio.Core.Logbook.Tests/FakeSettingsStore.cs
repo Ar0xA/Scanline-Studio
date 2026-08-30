@@ -30,4 +30,12 @@ internal sealed class FakeSettingsStore : ISettingsStore
         Settings = settings;
         return Task.CompletedTask;
     }
+
+    public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+    {
+        var current = await LoadAsync(ct).ConfigureAwait(false);
+        var updated = mutate(current);
+        await SaveAsync(updated, ct).ConfigureAwait(false);
+        return updated;
+    }
 }

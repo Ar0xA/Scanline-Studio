@@ -1245,11 +1245,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     {
         try
         {
-            var settings = await _settingsStore.LoadAsync();
-            var current = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
-            var updated = current with { QuickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray() };
-
-            await _settingsStore.SaveAsync(settings.WithSection(RxPaneUiSettings.SectionKey, updated, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings));
+            // T0-2: QuickModeSlots is live VM state -- must be read here, before UpdateAsync, never
+            // inside its mutate lambda (which may run on any thread, including this one synchronously,
+            // but must not itself read UI-thread-affine state per ISettingsStore.UpdateAsync's own
+            // contract).
+            var quickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray();
+            await _settingsStore.UpdateAsync(settings =>
+            {
+                var current = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
+                var updated = current with { QuickModeGridIds = quickModeGridIds };
+                return settings.WithSection(RxPaneUiSettings.SectionKey, updated, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+            });
         }
         catch (Exception ex)
         {

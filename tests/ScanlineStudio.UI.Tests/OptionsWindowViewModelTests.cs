@@ -4081,5 +4081,12 @@ public sealed class OptionsWindowViewModelTests
 
         public Task SaveAsync(AppSettings settings, CancellationToken ct = default) =>
             throw new InvalidOperationException("simulated save failure");
+
+        // T0-2: OptionsSettingsService.SaveAsync is migrating to UpdateAsync (not a direct
+        // LoadAsync+SaveAsync pair) as part of this same effort -- this must throw the same way, or
+        // the save-failure path this fake exists to exercise would silently stop being reachable
+        // once that migration lands.
+        public Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default) =>
+            throw new InvalidOperationException("simulated save failure");
     }
 }

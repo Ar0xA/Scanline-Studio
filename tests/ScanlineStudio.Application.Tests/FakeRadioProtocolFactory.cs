@@ -59,7 +59,30 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
     /// succeed, or fail every time).</summary>
     public Queue<Exception?> SetPttExceptionsToThrow { get; } = new();
 
+    /// <summary>T0-1 test-only hook: 1-based call number of <see cref="SetPttAsync"/> that should
+    /// hang forever instead of completing -- ported from <c>FakeRadioSessionService</c>'s own
+    /// identical hook. Needed to express T0-1's actual failure mode (a wedged native call), which
+    /// <see cref="SetPttExceptionsToThrow"/> (a scripted THROW, not a hang) structurally cannot.
+    /// A hung call never reaches <see cref="CompleteSetPtt"/>, so it neither records into
+    /// <see cref="SetPttCalls"/> nor dequeues from <see cref="SetPttExceptionsToThrow"/> --
+    /// matching the real protocol, where an abandoned call never completes at all.</summary>
+    public int? HangOnCallNumber { get; set; }
+
+    private int _pttCallCount;
+    private readonly TaskCompletionSource _pttNeverCompletes = new();
+
     public Task SetPttAsync(bool tx, CancellationToken ct)
+    {
+        var callNumber = Interlocked.Increment(ref _pttCallCount);
+        if (HangOnCallNumber == callNumber)
+        {
+            return _pttNeverCompletes.Task;
+        }
+
+        return CompleteSetPtt(tx);
+    }
+
+    private Task CompleteSetPtt(bool tx)
     {
         SetPttCalls.Add(tx);
         if (SetPttExceptionsToThrow.Count > 0 && SetPttExceptionsToThrow.Dequeue() is { } ex)

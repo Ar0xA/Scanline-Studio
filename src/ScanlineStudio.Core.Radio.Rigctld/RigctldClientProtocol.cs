@@ -568,7 +568,16 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
     /// <see cref="DisposeAsync"/> runs would otherwise proceed into <see cref="EnsureConnectedAsync"/>
     /// against an already-disposed <see cref="_transport"/>, today caught only incidentally by
     /// <c>TcpTransport.OpenAsync</c>'s own <see cref="ObjectDisposedException"/> guard -- correctness
-    /// by accident, not by this class's own design.</summary>
+    /// by accident, not by this class's own design.
+    ///
+    /// <b>T0-1:</b> unlike <c>HamlibRadioProtocol</c>, this wait is deliberately left unbounded --
+    /// not an oversight. Every critical section under <see cref="_requestLock"/> is wrapped in
+    /// <c>WithRequestTimeoutAsync</c> (a bounded request timeout) inside <c>EnsureConnectedAsync</c>
+    /// (a bounded connect timeout), every acquire releases in a <c>finally</c>, and the underlying
+    /// <c>TcpTransport</c> genuinely honors cancellation (aborts the socket rather than parking) --
+    /// so whatever holds this lock is always bounded on its own, regardless of the token any given
+    /// waiter passes in. That's structurally different from Hamlib, where a native call, once
+    /// started, can never be cancelled or abandoned.</summary>
     private async Task AcquireAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

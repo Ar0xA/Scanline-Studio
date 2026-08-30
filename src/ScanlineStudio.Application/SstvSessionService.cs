@@ -1745,10 +1745,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// settings. Same read-modify-write shape as <see cref="PersistSenseLevelAsync"/> below.</summary>
     private async Task PersistCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var previous = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
-        var updated = previous with { CaptureDeviceId = deviceId, CaptureDeviceName = deviceName };
-        await _settingsStore.SaveAsync(appSettings.WithSection(AudioDeviceSettings.SectionKey, updated, AudioSettingsJsonContext.Default.AudioDeviceSettings), ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            var previous = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+            var updated = previous with { CaptureDeviceId = deviceId, CaptureDeviceName = deviceName };
+            return appSettings.WithSection(AudioDeviceSettings.SectionKey, updated, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>See <see cref="ISstvSessionService.PersistSenseLevelAsync"/>. Read-modify-write
@@ -1757,20 +1759,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// for a targeted single-field settings write (e.g. <c>RxImagePaneViewModel.PersistQuickModeGridAsync</c>).</summary>
     public async Task PersistSenseLevelAsync(int level, CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
-        var updated = current with { SenseLevel = level };
-        await _settingsStore.SaveAsync(appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings), ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+            var updated = current with { SenseLevel = level };
+            return appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>See <see cref="ISstvSessionService.PersistRxBpfPresetAsync"/>. Same targeted
     /// read-modify-write shape as <see cref="PersistSenseLevelAsync"/> above.</summary>
     public async Task PersistRxBpfPresetAsync(RxBpfPreset preset, CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
-        var updated = current with { RxBpfPreset = preset };
-        await _settingsStore.SaveAsync(appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings), ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+            var updated = current with { RxBpfPreset = preset };
+            return appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        }, ct).ConfigureAwait(false);
     }
 
     /// <summary>See <see cref="ISstvSessionService.TryGetScopeCaptureChannel0"/>. A plain read, no
@@ -3142,14 +3148,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // consistent with what every reader promises.
         percent = Math.Clamp(percent, 0, 100);
 
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
-            ?? new AudioDeviceSettings();
-        var updated = appSettings.WithSection(
-            AudioDeviceSettings.SectionKey,
-            current with { TxVolumePercent = percent },
-            AudioSettingsJsonContext.Default.AudioDeviceSettings);
-        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
+                ?? new AudioDeviceSettings();
+            return appSettings.WithSection(
+                AudioDeviceSettings.SectionKey,
+                current with { TxVolumePercent = percent },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings);
+        }, ct).ConfigureAwait(false);
 
         // Write-through to the live field _before_ Log/return -- so a caller awaiting this method's
         // completion (e.g. the Options window's debounced Pwr-slider persist) is guaranteed
@@ -4245,88 +4252,34 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// re-read here.</summary>
     private async Task<bool> TryUnkeyPttAsync(bool pttKeyedOnRealRig, CancellationToken ct)
     {
-        // Round-17 finding (the single most safety-critical await in this file): passing `ct`
-        // (UnkeyForCleanupAsync's own fresh unkeyCts.Token) as this call's OWN parameter never
-        // actually bounded it -- the identical mistake round 16 found and fixed at every RX-resume
-        // site, one call away from the file's whole reason for existing.
-        //
-        // Round-18 correction: round 17's own fix bounded the WAIT but not the COMMAND -- `ct` was
-        // *also* passed to SetPttAsync itself, so once the budget expired the un-key was CANCELLED AT
-        // THE BACKEND'S REQUEST GATE and never actually reached the rig, rather than staying queued
-        // behind a wedged key command and reaching it once that clears -- verbatim the scenario
-        // PlayWithPttAsync's own blocker-1 doc comment already names as the one that matters most
-        // ("PTT-off was never even attempted on the exact hardware failure where it matters most").
-        // Decoupled here: the command itself now gets CancellationToken.None (never cancelled, so it
-        // stays queued and eventually reaches the rig once the gate frees), while the WAIT is still
-        // bounded by `ct` so this method still returns on time either way.
-        Task unkeyTask;
-        try
-        {
-            unkeyTask = _radioSession.SetPttAsync(false, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            // A synchronous throw (e.g. the null-object NoneRadioProtocol) never produces a Task at
-            // all.
-            // Round-20 finding: this method's own doc/callers assumed it "never throws" -- it did,
-            // via these very log calls, when the logging provider itself failed. SafeLog closes that
-            // specific hole (see its own doc comment).
-            if (pttKeyedOnRealRig)
-            {
-                SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off", ex));
-            }
-            else
-            {
-                SafeLog(() => Log.PttUnkeySkippedNoRadio(_logger));
-            }
+        // Round-17/18/20/26 history (why the command runs on CancellationToken.None while only the
+        // WAIT is bounded by `ct`; why a failed logging call itself must not throw; why a late
+        // failure on the abandoned command still needs a fault-observer continuation) now lives on
+        // PttUnkeyHelper.TryUnkeyBoundedAsync's own doc comment -- T0-1 extracted it there so
+        // RadioSessionService's own un-key retry loop can reuse the identical shape. This method's
+        // own observable behavior (exceptions, logging, fault-observer semantics) is unchanged by
+        // that extraction.
+        var result = await PttUnkeyHelper.TryUnkeyBoundedAsync(
+            _radioSession.SetPttAsync,
+            ct,
+            onLateFailure: ex => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (finished after watchdog)", ex))).ConfigureAwait(false);
 
-            return false;
-        }
-
-        try
-        {
-            await unkeyTask.WaitAsync(ct).ConfigureAwait(false);
-            return true;
-        }
-        catch (Exception ex)
+        if (!result.Success)
         {
             // Round-20 finding: this method's own doc/callers assumed it "never throws" -- it did,
             // via these very log calls, when the logging provider itself failed. SafeLog closes that
             // specific hole (see its own doc comment).
             if (pttKeyedOnRealRig)
             {
-                SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off", ex));
+                SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off", result.Exception!));
             }
             else
             {
                 SafeLog(() => Log.PttUnkeySkippedNoRadio(_logger));
             }
-
-            // Round-26 finding (risk): every OTHER abandoned task in this class attaches a
-            // fault-observer continuation to its own abandoned task (StopReceivingAsync,
-            // StopPlaybackWithWatchdogAsync, ResumeReceivingBoundedAsync) -- this one, the single most
-            // safety-critical await in the file (see this method's own doc comment), did not. Round
-            // 18's own design deliberately gives the command CancellationToken.None so it "stays
-            // queued and eventually reaches the rig once the gate frees" once WaitAsync gives up above
-            // -- but with no observer, that eventual FAILURE surfaced only as an unobserved task
-            // exception, unrecoverable information on the exact path this whole chunk exists to keep
-            // observable. Gated on the task genuinely still being abandoned (not yet completed) the
-            // same way those three sites gate it -- if unkeyTask is already complete by the time this
-            // catch runs, its own fault already propagated through this same WaitAsync call as `ex`
-            // above, so there is nothing left to observe later. Matches those sites' own accepted
-            // trade-off of only observing a LATE FAILURE, not a late success -- a late success remains
-            // unlogged, same as everywhere else in this class.
-            if (!unkeyTask.IsCompleted)
-            {
-                _ = unkeyTask.ContinueWith(
-                    t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (finished after watchdog)", t.Exception!)),
-                    CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                    TaskScheduler.Default);
-            }
-
-            return false;
         }
+
+        return result.Success;
     }
 
     /// <summary>Round-20 finding: this class's own cleanup/dispose paths, across rounds 17-19, all
@@ -4890,25 +4843,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     /// <summary>Writes the just-resolved device's id+name back into <see cref="AudioDeviceSettings"/>
     /// -- see <see cref="TryResolveDeviceAsync"/>'s own <c>persistIfResolvedIndirectly</c> doc
-    /// comment for when/why this runs. Read-modify-write against a freshly reloaded
-    /// <see cref="AppSettings"/> (not the possibly-stale one <see cref="TryResolveDeviceAsync"/>
-    /// already loaded a moment earlier), same "reload right before writing" precedent every OTHER
-    /// settings-writing method in this class already follows (see e.g. <see cref="SavePresetsInternalAsync"/>
-    /// in <c>RadioStatusViewModel</c> for the identical shape) -- minimizes, though does not fully
-    /// close, the window for clobbering a concurrent Options Save. Swallow-and-log on failure,
-    /// never propagate: a failed opportunistic persist must not turn an otherwise-successful device
-    /// resolution into a failed <see cref="StartReceivingAsync"/>/<see cref="TransmitAsync"/> call.</summary>
+    /// comment for when/why this runs. T0-2: read-modify-write via <see cref="ISettingsStore.UpdateAsync"/>,
+    /// atomic against a concurrent Options Save writing a different section -- no longer just
+    /// "reload right before writing" to minimize the window, the window is closed. Swallow-and-log
+    /// on failure, never propagate: a failed opportunistic persist must not turn an
+    /// otherwise-successful device resolution into a failed <see cref="StartReceivingAsync"/>/
+    /// <see cref="TransmitAsync"/> call.</summary>
     private async Task PersistResolvedDeviceAsync(bool forCapture, AudioDeviceInfo device, CancellationToken ct)
     {
         try
         {
-            var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-            var previousAudio = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
-            var updatedAudio = forCapture
-                ? previousAudio with { CaptureDeviceId = device.Id, CaptureDeviceName = device.Name }
-                : previousAudio with { PlaybackDeviceId = device.Id, PlaybackDeviceName = device.Name };
-            var updatedSettings = appSettings.WithSection(AudioDeviceSettings.SectionKey, updatedAudio, AudioSettingsJsonContext.Default.AudioDeviceSettings);
-            await _settingsStore.SaveAsync(updatedSettings, ct).ConfigureAwait(false);
+            await _settingsStore.UpdateAsync(appSettings =>
+            {
+                var previousAudio = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+                var updatedAudio = forCapture
+                    ? previousAudio with { CaptureDeviceId = device.Id, CaptureDeviceName = device.Name }
+                    : previousAudio with { PlaybackDeviceId = device.Id, PlaybackDeviceName = device.Name };
+                return appSettings.WithSection(AudioDeviceSettings.SectionKey, updatedAudio, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+            }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

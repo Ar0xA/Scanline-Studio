@@ -11,15 +11,35 @@ public sealed partial class RadioSessionService : IRadioSessionService
     private readonly ISettingsStore _settingsStore;
     private readonly IReadOnlyList<IRadioProtocolFactory> _protocolFactories;
     private readonly ILogger<RadioSessionService> _logger;
+    private readonly TimeSpan _unkeyAttemptWaitTimeout;
+
+    // T0-1: deliberately larger than the backends' own SemaphoreAcquireTimeout (10s), so a
+    // genuinely wedged backend's own more actionable Critical log wins the race instead of a
+    // coin-flip between two simultaneous timeouts.
+    private static readonly TimeSpan UnkeyAttemptWaitTimeout = TimeSpan.FromSeconds(15);
+
+    // T0-1: matches Core.Radio/RadioController's own identical constant/pattern for bounding a
+    // protocol's DisposeAsync call.
+    private static readonly TimeSpan ProtocolDisposeTimeout = TimeSpan.FromSeconds(10);
 
     public RadioSessionService(
         IRadioController controller, ISettingsStore settingsStore, IEnumerable<IRadioProtocolFactory> protocolFactories,
         ILogger<RadioSessionService> logger)
+        : this(controller, settingsStore, protocolFactories, logger, unkeyAttemptWaitTimeoutForTests: null)
+    {
+    }
+
+    /// <summary>Test-only: lets a test shrink the un-key retry's own per-attempt wait bound so a
+    /// hung-attempt regression test doesn't need to wait out the real production timeout.</summary>
+    internal RadioSessionService(
+        IRadioController controller, ISettingsStore settingsStore, IEnumerable<IRadioProtocolFactory> protocolFactories,
+        ILogger<RadioSessionService> logger, TimeSpan? unkeyAttemptWaitTimeoutForTests)
     {
         _controller = controller;
         _settingsStore = settingsStore;
         _protocolFactories = protocolFactories.ToList();
         _logger = logger;
+        _unkeyAttemptWaitTimeout = unkeyAttemptWaitTimeoutForTests ?? UnkeyAttemptWaitTimeout;
     }
 
     public RadioState? LastKnownState => _controller.LastKnownState;
@@ -111,7 +131,15 @@ public sealed partial class RadioSessionService : IRadioSessionService
     /// contract. Structured as a linear "compute a result, then always un-key/dispose" sequence
     /// rather than nested try/finally, specifically so the un-key-retry-exhausted case can override
     /// an already-computed success result before it's returned -- a `finally` block can't cleanly
-    /// replace a value a `return` inside its `try` already committed to.</summary>
+    /// replace a value a `return` inside its `try` already committed to.
+    ///
+    /// <b>T0-1 known limit:</b> the initial <c>PollAsync</c>/<c>SetPttAsync(true)</c> calls below
+    /// (this call's OWN key attempt) are still genuinely unbounded if THIS call's own native/COM
+    /// operation wedges -- a backend's own semaphore timeout (e.g. Hamlib's) only protects a LATER
+    /// caller queued behind an already-wedged call, not the call that is currently doing the
+    /// wedging. Only the un-key retry (<see cref="TryUnkeyWithRetryAsync"/>) and the final dispose
+    /// are bounded. <see cref="SstvSessionService"/> watchdogs its own key command; this method does
+    /// not, unlike that class.</summary>
     public async Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default)
     {
         if (Interlocked.CompareExchange(ref _testPttInFlight, 1, 0) != 0)
@@ -194,7 +222,18 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
                 try
                 {
-                    await protocol.DisposeAsync().ConfigureAwait(false);
+                    // T0-1: bounded the same way Core.Radio/RadioController.DisconnectAsync already
+                    // bounds its own protocol dispose -- without this, a wedged Hamlib _lock (still
+                    // held after the un-key retry above gives up) would hang this call forever,
+                    // leaving _testPttInFlight's finally-reset never reached.
+                    // CancellationToken.None, not `ct`: dispose must always be attempted regardless
+                    // of caller cancellation (same reasoning as the un-key retry above), bounded only
+                    // by ProtocolDisposeTimeout itself.
+                    await protocol.DisposeAsync().AsTask().WaitAsync(ProtocolDisposeTimeout, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (TimeoutException)
+                {
+                    Log.TestPttDisposeTimedOut(_logger, spec.GetType().Name, ProtocolDisposeTimeout);
                 }
                 catch (Exception ex)
                 {
@@ -218,27 +257,36 @@ public sealed partial class RadioSessionService : IRadioSessionService
     /// <summary>Retries the un-key call up to 3 times, always on <see cref="CancellationToken.None"/>
     /// so neither the caller's own cancellation nor a Stop click can abort it -- see
     /// <see cref="TestPttAsync"/>'s own doc comment for why CAT ("RIG") PTT specifically has no
-    /// dispose-time rescue path.</summary>
+    /// dispose-time rescue path.
+    ///
+    /// <b>T0-1:</b> each attempt's WAIT is bounded independently of whatever timeout the specific
+    /// backend happens to enforce internally (<see cref="PttUnkeyHelper"/>), so this loop's own
+    /// correctness doesn't depend transitively on every current/future <see cref="IRadioProtocol"/>
+    /// backend bounding itself. The command itself still runs on <see cref="CancellationToken.None"/>
+    /// (never cancelled) either way.</summary>
     private async Task<bool> TryUnkeyWithRetryAsync(IRadioProtocol protocol)
     {
         const int maxAttempts = 3;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            try
+            using var waitCts = new CancellationTokenSource(_unkeyAttemptWaitTimeout);
+            var result = await PttUnkeyHelper.TryUnkeyBoundedAsync(
+                protocol.SetPttAsync,
+                waitCts.Token,
+                onLateFailure: ex => Log.TestPttLateUnkeyAttemptFailed(_logger, protocol.RigId, ex)).ConfigureAwait(false);
+
+            if (result.Success)
             {
-                await protocol.SetPttAsync(false, CancellationToken.None).ConfigureAwait(false);
                 return true;
             }
-            catch (Exception ex)
+
+            if (attempt == maxAttempts)
             {
-                if (attempt == maxAttempts)
-                {
-                    Log.TestPttUnkeyFailed(_logger, protocol.RigId, ex);
-                }
-                else
-                {
-                    await Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None).ConfigureAwait(false);
-                }
+                Log.TestPttUnkeyFailed(_logger, protocol.RigId, result.Exception!);
+            }
+            else
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(250), CancellationToken.None).ConfigureAwait(false);
             }
         }
 
@@ -265,12 +313,12 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public async Task SaveFrequencyPresetsAsync(IReadOnlyList<FrequencyPreset> presets, CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var updated = appSettings.WithSection(
-            FrequencyPresetsSettings.SectionKey,
-            new FrequencyPresetsSettings { Presets = presets },
-            FrequencyPresetsSettingsJsonContext.Default.FrequencyPresetsSettings);
-        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(
+            appSettings => appSettings.WithSection(
+                FrequencyPresetsSettings.SectionKey,
+                new FrequencyPresetsSettings { Presets = presets },
+                FrequencyPresetsSettingsJsonContext.Default.FrequencyPresetsSettings),
+            ct).ConfigureAwait(false);
     }
 
     public async Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default)
@@ -283,12 +331,12 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     public async Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default)
     {
-        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var updated = appSettings.WithSection(
-            RadioSafetySettings.SectionKey,
-            new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
-            RadioSafetySettingsJsonContext.Default.RadioSafetySettings);
-        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(
+            appSettings => appSettings.WithSection(
+                RadioSafetySettings.SectionKey,
+                new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
+                RadioSafetySettingsJsonContext.Default.RadioSafetySettings),
+            ct).ConfigureAwait(false);
         SafetySettingsChanged?.Invoke(spec);
     }
 
@@ -359,7 +407,18 @@ public sealed partial class RadioSessionService : IRadioSessionService
         [LoggerMessage(Level = LogLevel.Critical, Message = "TestPttAsync: un-keying rig {RigId} failed after every retry -- it may still be physically transmitting")]
         public static partial void TestPttUnkeyFailed(ILogger logger, string rigId, Exception exception);
 
+        // T0-1: deliberately Warning, not Critical -- this fires for an EARLIER, already-abandoned
+        // un-key attempt's own late failure, which can happen even after a LATER attempt already
+        // succeeded (e.g. a stale ObjectDisposedException once the protocol is disposed). Reusing
+        // TestPttUnkeyFailed's Critical "may still be physically transmitting" wording here would be
+        // a false safety alarm on a rig that is demonstrably already un-keyed.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestPttAsync: un-key attempt for rig {RigId} finished late and failed (a later attempt already succeeded or the retry loop already gave up)")]
+        public static partial void TestPttLateUnkeyAttemptFailed(ILogger logger, string rigId, Exception exception);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPttAsync: disposing the throwaway test protocol for {SpecType} failed; the test result above still stands")]
         public static partial void TestPttDisposeFailed(ILogger logger, string specType, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "TestPttAsync: disposing the throwaway test protocol for {SpecType} timed out after {Timeout}; the test result above still stands")]
+        public static partial void TestPttDisposeTimedOut(ILogger logger, string specType, TimeSpan timeout);
     }
 }
