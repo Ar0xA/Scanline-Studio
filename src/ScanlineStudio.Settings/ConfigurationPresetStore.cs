@@ -112,7 +112,25 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
                 return null;
             }
 
-            return await ReadPresetFileAsync(path, ct).ConfigureAwait(false);
+            // Test-suite fixes phase 1, item 3: a corrupt/hand-edited preset file used to throw
+            // JsonException/IOException/UnauthorizedAccessException straight out of an interactive
+            // menu click, unlike JsonSettingsStore.LoadAsync's own already-hardened equivalent (same
+            // catch shape, mirrored here deliberately). Returns null -- the same value already used
+            // for "no preset named this exists" (see this method's own null-not-found path above).
+            // That collision is a deliberate choice, not an oversight: this store has no way to
+            // distinguish "never existed" from "exists but is unreadable" without changing this
+            // method's return contract, and both are equally "nothing usable is here" from the
+            // caller's perspective. ClonePresetAsync below explicitly does NOT accept this same
+            // ambiguity for its own source-preset read -- see its own comment.
+            try
+            {
+                return await ReadPresetFileAsync(path, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                Log.PresetLoadFailed(_logger, path, ex);
+                return null;
+            }
         }
         finally
         {
@@ -158,7 +176,22 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
                 throw new InvalidOperationException($"A preset named '{newName}' already exists.");
             }
 
-            var content = await ReadPresetFileAsync(sourcePath, ct).ConfigureAwait(false);
+            // Test-suite fixes phase 1, item 3: unlike LoadPresetAsync above, this method does NOT
+            // treat a corrupt source file as "nothing usable here" -- writing an empty-but-valid
+            // clone from a source that failed to parse would be a silent, worse outcome than today's
+            // uncaught throw. Fails loudly instead, matching this method's own existing
+            // "already exists"/"source doesn't exist" failure shape.
+            AppSettings content;
+            try
+            {
+                content = await ReadPresetFileAsync(sourcePath, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+            {
+                Log.PresetLoadFailed(_logger, sourcePath, ex);
+                throw new InvalidOperationException($"Preset '{sourceName}' could not be read; it may be corrupt.", ex);
+            }
+
             await WritePresetFileAsync(GetPresetFilePath(newName), content, ct).ConfigureAwait(false);
         }
         finally
@@ -353,5 +386,8 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset {Path} has schema version {PresetVersion}, current is {CurrentVersion} -- no migration applied")]
         public static partial void PresetSchemaVersionMismatch(ILogger logger, string path, int presetVersion, int currentVersion);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset {Path} could not be read (corrupt/unreadable) -- falling back")]
+        public static partial void PresetLoadFailed(ILogger logger, string path, Exception ex);
     }
 }

@@ -392,6 +392,44 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
         Assert.Equal(AppSettings.CurrentSchemaVersion, loaded!.SchemaVersion);
     }
 
+    [Fact]
+    public async Task LoadPresetAsync_CorruptFile_ReturnsNullAndLogs()
+    {
+        // Test-suite fixes phase 1, item 3: a hand-edited/corrupt preset file (the kind users are
+        // most likely to share) used to throw straight out of an interactive menu click. Returns
+        // null -- the same value already used for "no preset named this exists" (see
+        // ConfigurationPresetStore.LoadPresetAsync's own doc comment for why that collision is a
+        // deliberate choice here, unlike ClonePresetAsync below).
+        var logger = new RecordingLogger<ConfigurationPresetStore>();
+        var store = new ConfigurationPresetStore(logger, _presetsDirectory);
+        Directory.CreateDirectory(_presetsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(_presetsDirectory, "Corrupt.json"), "{ not valid json");
+
+        var loaded = await store.LoadPresetAsync("Corrupt");
+
+        Assert.Null(loaded);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task ClonePresetAsync_SourceIsCorrupt_ThrowsInvalidOperationException()
+    {
+        // Test-suite fixes phase 1, item 3: unlike LoadPresetAsync's "return null" contract above,
+        // cloning a corrupt source must fail loudly -- silently writing an empty-but-valid clone
+        // from unreadable content would be a worse outcome than today's uncaught throw.
+        var logger = new RecordingLogger<ConfigurationPresetStore>();
+        var store = new ConfigurationPresetStore(logger, _presetsDirectory);
+        Directory.CreateDirectory(_presetsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(_presetsDirectory, "Corrupt.json"), "{ not valid json");
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => store.ClonePresetAsync("Corrupt", "Clone"));
+
+        Assert.Contains("Corrupt", exception.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Clone", await store.ListPresetsAsync()); // no partial/empty clone was ever written
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
     /// <summary>Same shape as this codebase's own established RecordingLogger&lt;T&gt; idiom
     /// (e.g. Core.Sstv.Tests, Application.Tests) -- reused rather than reinvented.</summary>
     private sealed class RecordingLogger<T> : ILogger<T>

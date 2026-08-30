@@ -28,17 +28,13 @@ public sealed class OmniRigProtocolFactoryTests
     public void Create_WrongConnectionSpec_ThrowsArgumentException() =>
         Assert.Throws<ArgumentException>(() => CreateSut().Create(new NoneConnectionSpec()));
 
-    // This suite runs on Linux CI/dev boxes -- OmniRig is Windows-only, so Create() on the correct
-    // spec type is expected to always hit the OperatingSystem.IsWindows() guard here, not the real
-    // COM path (which cannot be exercised in this environment at all, see the implementation plan).
-    [Fact]
+    // OmniRig is Windows-only, so Create() on the correct spec type is expected to hit the
+    // OperatingSystem.IsWindows() guard here, not the real COM path (which cannot be exercised on
+    // Linux CI/dev boxes at all, see the implementation plan) -- meaningless on Windows itself, where
+    // this guard doesn't fire, so [SkipOnWindowsFact] skips there instead of asserting nothing.
+    [SkipOnWindowsFact]
     public void Create_OmniRigConnectionSpec_OnNonWindows_ThrowsPlatformNotSupportedException()
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         Assert.Throws<PlatformNotSupportedException>(() => CreateSut().Create(new OmniRigConnectionSpec()));
     }
 }

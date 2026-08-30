@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
@@ -48,6 +49,13 @@ public sealed class SstvCompositionRootTests
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        // Substituted (plan-review, test-suite fixes phase 1, item 4) -- CreateSstvSessionService's
+        // real factory (Program.cs:880) eagerly calls IReceiveHistoryStore.GetAudioSettingsAsync at
+        // DI resolve time; without this, resolving MainViewModel/ISstvSessionService in any test here
+        // constructs the REAL SqliteReceiveHistoryStore against this developer/CI machine's actual
+        // history.db, same shadowing hazard the ISettingsStore substitution above already guards
+        // against for settings.json.
+        services.AddSingleton<IReceiveHistoryStore>(new NullReceiveHistoryStore());
         // Not `using` -- ISstvSessionService's real implementation is IAsyncDisposable-only, same
         // reason Program.cs's own teardown handler goes through DisposeAsync explicitly rather than
         // a synchronous Dispose()/`using` (see that handler's own doc comment).
@@ -60,6 +68,73 @@ public sealed class SstvCompositionRootTests
 
         Assert.NotNull(mainViewModel);
         Assert.NotNull(optionsViewModel);
+    }
+
+    [Fact]
+    public async Task RegisterServices_AllDescriptors_ResolveWithoutThrowing()
+    {
+        // Test-suite fixes phase 1, item 4: RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup
+        // above only resolves 4 specific roots -- a registration nothing transitively reaches from
+        // those 4 (e.g. MacrosReferenceWindowViewModel/ConfigurationsManagerWindowViewModel/
+        // IApplicationRestarter, each only resolved lazily via App.Services at menu-click time)
+        // surfaces as an unguarded crash in the real app, not a test failure. ValidateOnBuild here
+        // catches a TYPE-registered descriptor missing a dependency; it cannot see into a
+        // factory-lambda registration (JsonSettingsStore/ConfigurationPresetStore/ILocalizationService/
+        // the Hamlib factory/ISstvSessionService/etc. -- see the sibling test below for those).
+        var services = BuildServicesWithFakes();
+
+        await using var provider = services.BuildServiceProvider(
+            new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
+    }
+
+    [Fact]
+    public async Task RegisterServices_EveryRegisteredService_CanBeResolved()
+    {
+        // The complement to the ValidateOnBuild test above: enumerates every descriptor
+        // RegisterServices actually adds and resolves each by its service type, so a broken
+        // factory-lambda registration (which ValidateOnBuild cannot see into at all) fails here
+        // instead of at first real use in the shipped app.
+        var services = BuildServicesWithFakes();
+        var descriptors = services.ToList();
+
+        await using var provider = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true });
+        using var scope = provider.CreateScope();
+
+        foreach (var descriptor in descriptors)
+        {
+            // Open generic type definitions (e.g. ILogger<>/IOptions<>, added by services.AddLogging())
+            // cannot be resolved directly -- GetService(typeof(ILogger<>)) throws by design; only a
+            // closed generic constructed at a real call site (ILogger<MainViewModel>, etc.) is
+            // resolvable, and those closed forms aren't in this descriptor list at all.
+            if (descriptor.ServiceType.IsGenericTypeDefinition)
+            {
+                continue;
+            }
+
+            var resolved = scope.ServiceProvider.GetService(descriptor.ServiceType);
+
+            Assert.True(resolved is not null, $"{descriptor.ServiceType} failed to resolve.");
+        }
+    }
+
+    /// <summary>Same fake-substitution setup every full-graph test in this file uses (native audio
+    /// context, settings.json, and history.db all substituted so resolving the graph never touches
+    /// real hardware/disk state on this developer/CI machine) -- extracted here since the two tests
+    /// above need it identically and don't otherwise care about a specific settings VALUE the way
+    /// e.g. <see cref="MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange"/> does.</summary>
+    private static ServiceCollection BuildServicesWithFakes()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        Program.RegisterServices(services);
+        var staticSettingsStore = new StaticSettingsStore(new AppSettings());
+        services.AddSingleton<ISettingsStore>(staticSettingsStore);
+        services.AddSingleton<ISettingsFileRelocator>(staticSettingsStore);
+        services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
+        services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
+        services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        services.AddSingleton<IReceiveHistoryStore>(new NullReceiveHistoryStore());
+        return services;
     }
 
     [Fact]
@@ -82,6 +157,13 @@ public sealed class SstvCompositionRootTests
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        // Substituted (plan-review, test-suite fixes phase 1, item 4) -- CreateSstvSessionService's
+        // real factory (Program.cs:880) eagerly calls IReceiveHistoryStore.GetAudioSettingsAsync at
+        // DI resolve time; without this, resolving MainViewModel/ISstvSessionService in any test here
+        // constructs the REAL SqliteReceiveHistoryStore against this developer/CI machine's actual
+        // history.db, same shadowing hazard the ISettingsStore substitution above already guards
+        // against for settings.json.
+        services.AddSingleton<IReceiveHistoryStore>(new NullReceiveHistoryStore());
         await using var provider = services.BuildServiceProvider();
         var mainViewModel = provider.GetRequiredService<MainViewModel>();
 
@@ -115,6 +197,13 @@ public sealed class SstvCompositionRootTests
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        // Substituted (plan-review, test-suite fixes phase 1, item 4) -- CreateSstvSessionService's
+        // real factory (Program.cs:880) eagerly calls IReceiveHistoryStore.GetAudioSettingsAsync at
+        // DI resolve time; without this, resolving MainViewModel/ISstvSessionService in any test here
+        // constructs the REAL SqliteReceiveHistoryStore against this developer/CI machine's actual
+        // history.db, same shadowing hazard the ISettingsStore substitution above already guards
+        // against for settings.json.
+        services.AddSingleton<IReceiveHistoryStore>(new NullReceiveHistoryStore());
         services.AddSingleton<ScanlineStudio.UI.Services.IUrlLauncher>(urlLauncher);
         await using var provider = services.BuildServiceProvider();
         var mainViewModel = provider.GetRequiredService<MainViewModel>();
@@ -140,6 +229,13 @@ public sealed class SstvCompositionRootTests
         services.AddSingleton<IAudioEngine>(new FakeAudioEngine());
         services.AddSingleton<IAudioDeviceEnumerator>(new NullAudioDeviceEnumerator());
         services.AddSingleton<IAudioDeviceMuteQuery>(new FakeAudioDeviceMuteQuery());
+        // Substituted (plan-review, test-suite fixes phase 1, item 4) -- CreateSstvSessionService's
+        // real factory (Program.cs:880) eagerly calls IReceiveHistoryStore.GetAudioSettingsAsync at
+        // DI resolve time; without this, resolving MainViewModel/ISstvSessionService in any test here
+        // constructs the REAL SqliteReceiveHistoryStore against this developer/CI machine's actual
+        // history.db, same shadowing hazard the ISettingsStore substitution above already guards
+        // against for settings.json.
+        services.AddSingleton<IReceiveHistoryStore>(new NullReceiveHistoryStore());
         services.AddSingleton<ScanlineStudio.UI.Services.IUrlLauncher>(urlLauncher);
         await using var provider = services.BuildServiceProvider();
         var mainViewModel = provider.GetRequiredService<MainViewModel>();
@@ -196,6 +292,59 @@ public sealed class SstvCompositionRootTests
         public IReadOnlyList<AudioDeviceInfo> OutputDevices { get; } = [];
 
         public Task RefreshAsync(CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    /// <summary>Substituted so resolving the full composition root never touches this developer/CI
+    /// machine's real <c>history.db</c> (see the substitution's own call-site comment). Every member
+    /// no-ops or returns an empty/default result -- no test in this file drives RX history behavior,
+    /// only construction.</summary>
+    private sealed class NullReceiveHistoryStore : IReceiveHistoryStore
+    {
+        public event Action<ReceiveHistoryEntry>? Recorded;
+
+        public event Action<ReceiveHistoryEntry>? Deleted;
+
+        // Satisfies the interface without leaving either event entirely dead (CS0067) -- neither is
+        // ever raised here, same established convention as this codebase's other minimal fakes
+        // (e.g. FakeReceiveHistoryStoreForLogbook).
+        public void RaiseRecorded(ReceiveHistoryEntry entry) => Recorded?.Invoke(entry);
+
+        public void RaiseDeleted(ReceiveHistoryEntry entry) => Deleted?.Invoke(entry);
+
+        public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ReceiveHistoryEntry>>([]);
+
+        public Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+
+        public Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(string.Empty);
+
+        public Task SetImagesDirectoryAsync(string? directory, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<AudioAutoSaveSettings> GetAudioSettingsAsync(CancellationToken ct = default) =>
+            Task.FromResult(new AudioAutoSaveSettings(false, string.Empty));
+
+        public Task SetAudioSettingsAsync(bool enabled, string? directory, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default) =>
+            Task.FromResult(false);
+
+        public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>
+            Task.FromResult(false);
+
+        public Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default) =>
+            Task.FromResult(false);
+
+        public Task<bool> SetLinkedQsoIdAsync(string entryId, string qsoId, CancellationToken ct = default) =>
+            Task.FromResult(false);
+
+        public Task<int> ClearLinkedQsoIdAsync(string qsoId, CancellationToken ct = default) => Task.FromResult(0);
+
+        public Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default) => Task.FromResult(false);
+
+        public Task<int> ReconcileWithDiskAsync(CancellationToken ct = default) => Task.FromResult(0);
     }
 
     private sealed class FakeUrlLauncher : ScanlineStudio.UI.Services.IUrlLauncher
