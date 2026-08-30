@@ -3296,6 +3296,74 @@ public sealed class PaneViewModelTests
         Assert.True(vm.RunLoopbackSelfTestCommand.CanExecute(null));
     }
 
+    // Fable UX-review finding, 2026-08-30: previously only Copy-to-TX seeded {his_call}/{his_grid}
+    // -- this pane's own OpenBlankEditorAsync doc comment documents "Load a Ready Rack/Template
+    // Library entry" as the intended way to reach a reply-card template after opening blank, which
+    // is at least as common a "replying to a station" path as Copy-to-TX. Same seed source
+    // (CurrentContactRequested), now shared via BuildCurrentContactVariables.
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_AlsoSeedsHisCallAndHisGridFromCurrentContactRequested()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call} {his_grid}";
+
+        Assert.Equal("W1AW", editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal("FN31pr", editor.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
+    // Nothing received yet is the common cold-start case -- CurrentContactRequested unwired/null
+    // must not throw, and the row must resolve genuinely empty, matching the existing Copy-to-TX
+    // "unwired" test's own contract.
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_CurrentContactRequestedUnwired_OpensWithEmptyRows()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call}";
+
+        Assert.Equal(string.Empty, editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+    }
+
+    // Round-1 code-review finding (test-gap nit): the Blank-editor seeding tests above cover
+    // OpenBlankEditorAsync, but OpenEditorForSourceAsync (Browse/Stock's shared call site) is the
+    // OTHER newly-seeded path and had no dedicated coverage. Stock, not Browse, since Browse needs a
+    // file-picker round trip -- both funnel through the same OpenEditorForSourceAsync call.
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectStockImage_AlsoSeedsHisCallAndHisGridFromCurrentContactRequested()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var stockEntry = new StockImageEntry("s1", "stock.png", "/stock/stock.png");
+        var stockLibrary = new FakeStockImageLibrary
+        {
+            EntriesToReturn = [stockEntry],
+            FullImageToReturn = new ArrayImageSource(1, 1, [new Rgb24(4, 5, 6)]),
+        };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectStockImageCommand.ExecuteAsync(stockEntry));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call} {his_grid}";
+
+        Assert.Equal("W1AW", editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal("FN31pr", editor.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_OpensTheEditorWithAModeSizedNeutralPlaceholder()
     {
@@ -5647,12 +5715,14 @@ public sealed class PaneViewModelTests
     private static LogbookPaneViewModel CreateLogbookPaneViewModel(
         FakeLogbookSessionService? logbook = null,
         FakeFilePickerService? filePicker = null,
-        FakeLocalizationService? localization = null) =>
+        FakeLocalizationService? localization = null,
+        FakeReceiveHistoryStore? historyStore = null) =>
         new(
             logbook ?? new FakeLogbookSessionService(),
             filePicker ?? new FakeFilePickerService(),
             new FakeSstvSessionService { AvailableModes = [TestMode] },
             localization ?? new FakeLocalizationService(),
+            historyStore ?? new FakeReceiveHistoryStore(),
             NullLogger<LogbookPaneViewModel>.Instance);
 
     // Disk/DB reconciliation (user-reported gap, 2026-08-26): ReconcileDiskThenRefreshAsync is the
@@ -5904,6 +5974,85 @@ public sealed class PaneViewModelTests
         // Regression: ResetForm() (not New()) must run here, or the status line set from
         // BuildLogStatusMessage would be immediately nulled back out before the UI ever shows it.
         Assert.NotNull(vm.StatusMessage);
+    }
+
+    // Fable UX-review finding, 2026-08-30: a QSO logged via "Log QSO" from a decoded RX frame
+    // (PrefillForNewEntry's new receivedImageId param) previously carried no link back to that
+    // frame's own history entry at all -- unlike Gallery's separate "Open in log" path, which does
+    // link. LogAsync's BuildRecordFromForm call must thread _editingReceivedImageId through.
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_AfterPrefillWithReceivedImageId_LinksTheNewRecordToTheFrame()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("N0CALL", "martin1", DateTimeOffset.UtcNow, null, null, null, receivedImageId: "history-entry-1");
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.Equal("history-entry-1", logbook.Records[0].ReceivedImageId);
+    }
+
+    // Round-1 code-review finding: QsoRecord.ReceivedImageId above is only the reverse FK --
+    // ReceiveHistoryEntry.LinkedQsoId is what Gallery's own "Logged / Not logged" row, its Unlogged
+    // filter, and the stronger delete-confirm all actually read (QsoLinkWindowViewModel's own doc
+    // comment). Without this, a QSO logged from a decoded frame set the reverse FK but Gallery still
+    // showed the frame as unlogged.
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_AfterPrefillWithReceivedImageId_AlsoSetsTheEntrysLinkedQsoId()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("history-entry-1", DateTimeOffset.UtcNow, "martin1", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateLogbookPaneViewModel(logbook, historyStore: historyStore);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("N0CALL", "martin1", DateTimeOffset.UtcNow, null, null, null, receivedImageId: "history-entry-1");
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var loggedQsoId = logbook.Records[0].Id;
+        Assert.Equal(loggedQsoId, historyStore.EntriesToReturn[0].LinkedQsoId);
+    }
+
+    // Plain "type a callsign and click Log" (no prior PrefillForNewEntry call) must still log with
+    // no link -- New()/the constructor's own ResetForm() already clears _editingReceivedImageId to
+    // null, this just confirms LogAsync doesn't fabricate one.
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_WithoutPrefill_LogsWithNoReceivedImageId()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.Null(logbook.Records[0].ReceivedImageId);
+    }
+
+    // Fable UX-review finding, 2026-08-30: LoadTotalLoggedCountAsync was only ever called at
+    // construction and after a delete -- logging a new QSO left the status bar's "log N entries"
+    // stale until the next delete.
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_RefreshesTotalLoggedCount()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(0, vm.TotalLoggedCount);
+
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, vm.TotalLoggedCount);
     }
 
     [AvaloniaFact]

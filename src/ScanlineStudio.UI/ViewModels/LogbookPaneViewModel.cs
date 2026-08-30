@@ -3,6 +3,7 @@ using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
@@ -22,6 +23,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     private readonly ILogbookSessionService _logbook;
     private readonly IFilePickerService _filePicker;
     private readonly ILocalizationService _localization;
+    private readonly IReceiveHistoryStore _historyStore;
     private readonly ILogger<LogbookPaneViewModel> _logger;
 
     private string? _editingId;
@@ -103,15 +105,17 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// (<c>new LogbookQuery()</c>, every field null), independent of whatever <see cref="Entries"/>'
     /// own current search filter currently shows (which defaults to the last 30 days, per this
     /// pane's own construction-time default below) -- "log size" means the whole logbook, not
-    /// today's/this-month's search results. Loaded once at construction, same "best-effort, not
-    /// re-fetched live" convention as this pane's sibling telemetry properties elsewhere in this
-    /// session's work; a newly-logged QSO doesn't bump this count until the pane is reconstructed.</summary>
+    /// today's/this-month's search results. Loaded at construction and re-loaded after
+    /// <see cref="LogAsync"/>/a successful delete (Fable UX-review finding, 2026-08-30 -- this used
+    /// to only refresh at construction/delete, leaving a newly-logged QSO uncounted until the pane
+    /// was reconstructed).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LogSizeDisplay))]
     private int _totalLoggedCount;
 
     // Add/Edit form fields -- every QsoRecord field except Id (generated) and ReceivedImageId (no
-    // UI source for it yet -- see the plan's Gallery-linking exclusion).
+    // FORM field for it -- it's carried through _editingReceivedImageId instead, set via
+    // PrefillForNewEntry/LoadIntoForm, not directly editable in the form).
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LogCommand))]
     [NotifyCanExecuteChangedFor(nameof(UpdateCommand))]
@@ -223,11 +227,13 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         IFilePickerService filePicker,
         ISstvSessionService sstvSession,
         ILocalizationService localization,
+        IReceiveHistoryStore historyStore,
         ILogger<LogbookPaneViewModel> logger)
     {
         _logbook = logbook;
         _filePicker = filePicker;
         _localization = localization;
+        _historyStore = historyStore;
         _logger = logger;
 
         // Leading RadioModeOption.None gives the ComboBox an explicit "(none)" option -- a real,
@@ -403,7 +409,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>); dropping them
     /// would silently discard a lookup the user already did and make them repeat it on this tab.
     /// </summary>
-    public void PrefillForNewEntry(string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare, long? frequencyHz = null, RadioMode? radioMode = null)
+    public void PrefillForNewEntry(
+        string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare,
+        long? frequencyHz = null, RadioMode? radioMode = null, string? receivedImageId = null)
     {
         Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
         _formGeneration++;
@@ -417,6 +425,11 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare = gridSquare;
         FormFrequencyHz = frequencyHz;
         FormMode = radioMode;
+        // Fable UX-review finding, 2026-08-30: set AFTER ResetForm() above (which clears this to
+        // null) -- LogAsync's BuildRecordFromForm call reads it, so a QSO logged from this prefill
+        // now links back to the frame it came from, the same way an edited existing entry already
+        // does via _editingReceivedImageId.
+        _editingReceivedImageId = receivedImageId;
     }
 
     /// <summary>Also clears <see cref="SelectedEntry"/> -- without this, selecting row A, clicking
@@ -491,7 +504,11 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // write below that would otherwise clobber their now-current form/status is skipped instead
         // of silently wiping whatever they've since navigated to.
         var formGeneration = _formGeneration;
-        var record = BuildRecordFromForm(Guid.NewGuid().ToString());
+        // Fable UX-review finding, 2026-08-30: _editingReceivedImageId now carries through from
+        // PrefillForNewEntry when this form was seeded from a decoded RX frame -- ResetForm() (called
+        // by New()/prior PrefillForNewEntry) is the only thing that clears it back to null, so a
+        // plain "type a callsign and click Log" still correctly logs with no link.
+        var record = BuildRecordFromForm(Guid.NewGuid().ToString(), _editingReceivedImageId);
 
         if (await ShouldWarnInsteadOfProceedAsync(record, excludeId: null, forUpdate: false, formGeneration))
         {
@@ -514,6 +531,28 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             return;
         }
 
+        // Round-1 code-review finding: the FK above (QsoRecord.ReceivedImageId) is only the reverse
+        // side -- SqliteReceiveHistoryStore.ReceiveHistoryEntry.LinkedQsoId is what Gallery's own
+        // "Logged / Not logged" row, its Unlogged filter, and the stronger delete-confirm all
+        // actually read (QsoLinkWindowViewModel's own doc comment). Without this, a QSO logged
+        // straight from a decoded frame set the reverse FK but Gallery still showed the frame as
+        // unlogged. Best-effort, same "primary action already succeeded, don't block on this"
+        // reasoning QsoLinkWindowViewModel.LinkSelectedAsync uses for its own reverse-FK write, just
+        // mirrored: here the QSO record (not the entry link) is the primary action, already
+        // persisted above, so a failure here is logged and swallowed rather than surfaced as a log
+        // failure.
+        if (record.ReceivedImageId is { } linkedEntryId)
+        {
+            try
+            {
+                await _historyStore.SetLinkedQsoIdAsync(linkedEntryId, record.Id);
+            }
+            catch (Exception ex)
+            {
+                Log.LinkReceivedImageFailed(_logger, linkedEntryId, record.Id, ex);
+            }
+        }
+
         // ResetForm() (not New()) -- New() would null the status line this just set.
         var statusMessage = BuildLogStatusMessage(result);
         if (formGeneration == _formGeneration)
@@ -531,6 +570,13 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         {
             StatusMessage = statusMessage;
         }
+
+        // Fable UX-review finding, 2026-08-30: this count was only ever refreshed at construction
+        // and after a delete -- logging a new QSO left the status bar's "log N entries" stale until
+        // the next delete, observed live as "log 0 entries" with 1 QSO already in the book.
+        // Global count, not form state -- unlike the guarded writes above, doesn't need the
+        // formGeneration check.
+        _ = LoadTotalLoggedCountAsync();
     }
 
     private bool CanUpdate() => _editingId is not null && !string.IsNullOrWhiteSpace(FormCallsign);
@@ -890,6 +936,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "LogQsoAsync failed")]
         public static partial void LogFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SetLinkedQsoIdAsync failed for entry {EntryId} -> qso {QsoId}")]
+        public static partial void LinkReceivedImageFailed(ILogger logger, string entryId, string qsoId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "UpdateQsoAsync failed")]
         public static partial void UpdateFailed(ILogger logger, Exception ex);

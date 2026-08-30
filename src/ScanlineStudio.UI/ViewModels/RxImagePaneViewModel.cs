@@ -180,6 +180,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
     /// yet, or this is mid-decode with nothing saved at all).</summary>
     public bool CanEditFrameMetadata => _currentEntryId is not null;
 
+    /// <summary>Fable UX-review finding, 2026-08-30: exposes <see cref="_currentEntryId"/> so
+    /// <c>MainWindow.axaml.cs</c>'s <c>LogQsoRequested</c> handler can pass it through to
+    /// <c>LogbookPaneViewModel.PrefillForNewEntry</c> -- previously a QSO logged straight from a
+    /// decoded frame carried no <c>ReceivedImageId</c> at all, so it never linked back to this
+    /// frame's own history entry (unlike Gallery's separate "Open in log" path, which does link).
+    /// <see langword="null"/> for the same reasons <see cref="CanEditFrameMetadata"/> can be
+    /// false.</summary>
+    public string? CurrentEntryId => _currentEntryId;
+
     /// <summary>RxFrameMeta card's editable Note field -- the SAME underlying
     /// <see cref="IReceiveHistoryStore.SetNoteAsync"/> write <c>RxHistoryPaneViewModel.SelectedEntryNote</c>
     /// already uses, just reachable from the Receive tab's live frame directly instead of requiring a

@@ -943,7 +943,10 @@
                                      CanEditFrameMetadata is false until that correlation lands. -->
                                 <TextBox Classes="Industry IndustryInput" Text="{Binding Note}" Watermark="{loc:Translate Panes.RxFrameMeta.NoteWatermark}" IsEnabled="{Binding CanEditFrameMetadata}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
-                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.CallsignValue}" Text="{Binding OverrideCallsign}" />
+                                <!-- Fable UX-review finding, 2026-08-30: was bound to
+                                     Panes.RxFrameMeta.CallsignValue (localized value "EA7KDT"),
+                                     which read as a prefilled real contact, not a placeholder. -->
+                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.OverrideCallsignWatermark}" Text="{Binding OverrideCallsign}" />
                                 <!-- Flag toggle removed 2026-08-27 (direct user request) — Gallery's
                                      own flag toggle (SelectedEntryIsFlagged, a separate
                                      RxHistoryPaneViewModel property/control) remains the real,
@@ -1314,23 +1317,36 @@
                                      (ui_transition_plan.md step 12, Auto-save RX audio), so
                                      RedecodeSelectedEntryCommand below re-adds it, hidden (not
                                      disabled) for any entry that still has no linked audio file. -->
-                                <StackPanel Orientation="Horizontal" Spacing="4" Margin="0,2,0,0">
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.ExportFrame}" Command="{Binding ExportFrameCommand}" />
+                                <!-- Fable UX-review finding, 2026-08-30: was a non-wrapping StackPanel
+                                     — with no selection, SelectedEntry.Entry.AudioFilePath's binding
+                                     path fails entirely (SelectedEntry is null), which left the two
+                                     audio-gated buttons' IsVisible at its unset DEFAULT (true, not the
+                                     converter's false), so they rendered anyway and pushed Delete
+                                     toward/off the row's edge; with a real selection carrying audio,
+                                     all five buttons together could still overflow the fixed-width
+                                     panel. WrapPanel + explicit per-button margin (matching
+                                     OptionsWindowView's own WrapPanel convention, since this Avalonia
+                                     version's WrapPanel has no Spacing property) lets a second line
+                                     form instead of clipping; FallbackValue=False on both audio-gated
+                                     bindings makes a broken path resolve to hidden, matching what the
+                                     converter would have produced for a genuinely-null AudioFilePath. -->
+                                <WrapPanel Margin="0,2,0,0">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.OpenInLog}" Command="{Binding OpenInLogCommand}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.ExportFrame}" Command="{Binding ExportFrameCommand}" />
                                     <!-- ui_transition_plan.md step 12 (Auto-save RX audio), Step 4:
                                          both hidden (not just disabled) when this entry has no linked
                                          audio file — unlike Export/Delete above, which always apply
                                          to every entry, these two only ever apply to a subset. -->
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.OpenAudioFileLocation}"
-                                            Command="{Binding OpenAudioFileLocationCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Panes.RxHistory.RedecodeFrame}"
-                                            Command="{Binding RedecodeSelectedEntryCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.OpenAudioFileLocation}"
+                                            Command="{Binding OpenAudioFileLocationCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.RedecodeFrame}"
+                                            Command="{Binding RedecodeSelectedEntryCommand}" IsVisible="{Binding SelectedEntry.Entry.AudioFilePath, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}" />
                                     <!-- ui_transition_plan.md step 4 (T1-4, reframed): per-item manual
                                          delete — confirms first (ConfirmRequested, wired in
                                          MainWindow.axaml.cs), with a stronger message for an entry
                                          carrying a note/flag/QSO-link. -->
-                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary IndustryBtnDanger" Padding="7,0" Content="{loc:Translate Panes.RxHistory.DeleteFrame}" Command="{Binding DeleteSelectedEntryCommand}" />
-                                </StackPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary IndustryBtnDanger" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.DeleteFrame}" Command="{Binding DeleteSelectedEntryCommand}" />
+                                </WrapPanel>
                                 <TextBlock Text="{Binding ErrorMessage}"
                                            Foreground="{StaticResource IndustryDanger}"
                                            TextWrapping="Wrap"
@@ -1424,7 +1440,12 @@
                             <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
                                        Text="{loc:Translate Panes.Logbook.NoEntriesYet}"
                                        IsVisible="{Binding !Entries.Count}" />
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="120,85,55,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,3,0,0">
+                            <!-- Round-1 code-review finding: column 2 (Mode) must match the row
+                                 template's own 70 (widened to fit "Martin M1"/"Scottie DX" when
+                                 that column stopped showing the raw SstvModeId) — was still 55
+                                 here, pushing every header caption right of MODE 15px out of
+                                 alignment with its data cells. -->
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="120,85,70,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,3,0,0">
                                 <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColUtc}" /></Border>
                                 <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColCallsign}" /></Border>
                                 <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColMode}" /></Border>
@@ -1449,10 +1470,29 @@
                                          BorderThickness="0" Padding="0">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="logbook:QsoRecord">
-                                            <Grid ColumnDefinitions="120,85,55,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                                            <Grid ColumnDefinitions="120,85,70,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                                 <Border Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding StartUtc, StringFormat={}{0:yyyy-MM-dd HH:mm}}" /></Border>
                                                 <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Callsign}" /></Border>
-                                                <Border Grid.Column="2" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding SstvModeId}" /></Border>
+                                                <!-- Fable UX-review finding, 2026-08-30: was the raw
+                                                     SstvModeId ("martin-m1" instead of "Martin M1").
+                                                     MultiBinding, not a plain converter — the mode
+                                                     catalog lives in Core.Sstv, which UI may never
+                                                     reference directly (UiLayeringArchitectureTests);
+                                                     $parent[Window].DataContext.Logbook.AvailableSstvModes
+                                                     reaches the SAME Application-layer-sourced list
+                                                     this pane already exposes, matching the
+                                                     $parent[Window] pattern already proven elsewhere
+                                                     in this file (RadioStatus.Waterfall.Notch* rows). -->
+                                                <Border Grid.Column="2" Classes="IndustryTableRowRule">
+                                                    <TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis">
+                                                        <TextBlock.Text>
+                                                            <MultiBinding Converter="{x:Static conv:SstvModeIdDisplayNameConverter.Instance}">
+                                                                <Binding Path="SstvModeId" />
+                                                                <Binding Path="$parent[Window].DataContext.Logbook.AvailableSstvModes" />
+                                                            </MultiBinding>
+                                                        </TextBlock.Text>
+                                                    </TextBlock>
+                                                </Border>
                                                 <Border Grid.Column="3" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding RstSent}" /></Border>
                                                 <Border Grid.Column="4" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding RstReceived}" /></Border>
                                                 <Border Grid.Column="5" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding GridSquare}" /></Border>
