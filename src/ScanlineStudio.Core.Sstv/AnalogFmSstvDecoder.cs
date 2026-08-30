@@ -6053,6 +6053,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// members, so this kept compiling unchanged through that extraction.</summary>
     internal IRxLineStagingBuffer? RxLineStagingBufferForTests => _rxLineStagingBuffer;
 
+    /// <summary>See <see cref="ISstvDecoder.RxBufferDegraded"/>. Extended mode only -- always
+    /// <see langword="false"/> for On/Off, since neither has a staging buffer that can fail this
+    /// way.</summary>
+    public bool RxBufferDegraded => _rxLineStagingBuffer?.HasWriteFailed ?? false;
+
     /// <summary>Test-only visibility into the output-row cursor (<see cref="_nextLine"/>, in BITMAP
     /// ROWS -- 2x transmission-line count for paired-channel modes, see <see cref="PerformReplay"/>'s
     /// own reconciliation doc comment). RX buffer subsystem Phase 6c: lets a test verify

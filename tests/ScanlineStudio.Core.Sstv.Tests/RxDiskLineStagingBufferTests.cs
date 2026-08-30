@@ -341,6 +341,38 @@ public class RxDiskLineStagingBufferTests
     }
 
     [Fact]
+    public void WriteFailure_DetectedByConsumer_LogsExactlyOnce_NotOncePerSubsequentOperation()
+    {
+        // T0-6 regression: LatchWriteFailure's Interlocked.Exchange transition guard must produce
+        // exactly one Error log for the whole instance's lifetime, not one per swallowed catch that
+        // happens to run afterward against an already-latched instance.
+        var logger = new RecordingLogger<RxDiskLineStagingBuffer>();
+        using var buffer = new RxDiskLineStagingBuffer(logger);
+        Assert.True(buffer.TryAppendLine([1.0], [2.0]));
+        _ = buffer.DemodulatedAt(0); // forces a drain -- line 1 is now guaranteed flushed
+
+        buffer.CorruptWriteStreamForTests();
+        buffer.TryAppendLine([3.0], [4.0]);
+        buffer.Clear(); // drains and observes the failure
+
+        Assert.True(buffer.HasWriteFailed);
+        var errorEntries = logger.Entries.Where(entry => entry.Level == LogLevel.Error).ToList();
+        Assert.Single(errorEntries);
+        Assert.Contains("background write", errorEntries[0].Message, StringComparison.Ordinal);
+
+        // Further operations against an already-failed instance must not log again.
+        // TryAppendLine early-returns at the HasWriteFailed guard without reaching any latch site;
+        // Clear() DOES reach a different LatchWriteFailure call site (DrainToCurrentPoint's own
+        // flush catch, since the write stream is still corrupted) and must still stay silent once
+        // latched. DemodulatedAt exercises the same drain/read path once more for good measure.
+        buffer.TryAppendLine([5.0], [6.0]);
+        buffer.Clear();
+        _ = Record.Exception(() => buffer.DemodulatedAt(0));
+
+        Assert.Single(logger.Entries.Where(entry => entry.Level == LogLevel.Error));
+    }
+
+    [Fact]
     public void Dispose_DeletesBothScratchFiles()
     {
         var buffer = new RxDiskLineStagingBuffer();
@@ -489,6 +521,23 @@ public class RxDiskLineStagingBufferTests
         Assert.True(SpinWait.SpinUntil(() => buffer.ConsumersCompletedForTests, TimeSpan.FromSeconds(2)),
             "Consumers must exit cleanly after the test releases the injected write barrier.");
         Assert.Equal(4, Volatile.Read(ref returnedConsumerBuffers));
+    }
+
+    [Fact]
+    public void Clear_NeverThrows_EvenWithAThrowingLoggerDuringLatchWriteFailure()
+    {
+        // Code-review nit: locks in LatchWriteFailure's own never-throw contract (it wraps its log
+        // call the same way TryLogDisposeStageFailure does) -- a throwing logger provider must not
+        // defeat Clear()'s documented never-throw contract.
+        using var buffer = new RxDiskLineStagingBuffer(new ThrowingLogger<RxDiskLineStagingBuffer>());
+        buffer.TryAppendLine([1.0], [2.0]);
+        buffer.CorruptWriteStreamForTests();
+        buffer.TryAppendLine([3.0], [4.0]);
+
+        var exception = Record.Exception(buffer.Clear); // drains, observes the failure, and logs it
+
+        Assert.Null(exception);
+        Assert.True(buffer.HasWriteFailed);
     }
 
     [Fact]

@@ -70,6 +70,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public bool IsLevelOverdriven => false;
 
+    public bool RxBufferDegraded => false;
+
     public double? SyncFrequencyCorrectionHz => null;
 
     public int BufferedSampleCount => 0;

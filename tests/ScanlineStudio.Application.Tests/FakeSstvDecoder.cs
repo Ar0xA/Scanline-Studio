@@ -158,6 +158,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public bool IsLevelOverdriven { get; set; }
 
+    public bool RxBufferDegraded { get; set; }
+
     public double? SyncFrequencyCorrectionHz { get; set; }
 
     public int BufferedSampleCount { get; set; }
