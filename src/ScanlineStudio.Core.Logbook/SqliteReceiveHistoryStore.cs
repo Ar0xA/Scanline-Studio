@@ -199,10 +199,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             Directory.CreateDirectory(normalized);
         }
 
-        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
-        var updated = settings.WithSection(ReceiveHistorySettings.SectionKey, current with { ImagesDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
-        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(settings =>
+        {
+            var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
+            return settings.WithSection(ReceiveHistorySettings.SectionKey, current with { ImagesDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        }, ct).ConfigureAwait(false);
         Log.ImagesDirectorySet(_logger, normalized);
     }
 
@@ -230,10 +231,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             Directory.CreateDirectory(normalized);
         }
 
-        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
-        var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
-        var updated = settings.WithSection(ReceiveHistorySettings.SectionKey, current with { AutoSaveAudioEnabled = enabled, AudioDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
-        await _settingsStore.SaveAsync(updated, ct).ConfigureAwait(false);
+        await _settingsStore.UpdateAsync(settings =>
+        {
+            var current = settings.GetSection(ReceiveHistorySettings.SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings) ?? new ReceiveHistorySettings();
+            return settings.WithSection(ReceiveHistorySettings.SectionKey, current with { AutoSaveAudioEnabled = enabled, AudioDirectory = normalized }, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        }, ct).ConfigureAwait(false);
         Log.AudioSettingsSet(_logger, enabled, normalized);
     }
 
@@ -641,6 +643,18 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         {
             ExecuteNonQuery(connection, transaction, "UPDATE ReceiveHistory SET DecodeState = 'Abandoned' WHERE FilePath GLOB '*_partial_????????.png'");
         }
+
+        // Every logbook/gallery view query sorts by ReceivedAt DESC, ReconcileWithDiskAsync probes
+        // FilePath per candidate file, and SetLinkedQsoIdAsync's sibling ClearLinkedQsoIdAsync keys
+        // on LinkedQsoId -- without these, each is a full table scan (T0-9). CREATE INDEX IF NOT
+        // EXISTS is idempotent, so this runs unconditionally on every startup. Names are
+        // table-qualified and explicit: this database file also holds the Qso table's indexes
+        // (SqliteLogbookRepository.EnsureSchema), and SQLite's index namespace is per-database, not
+        // per-table -- an accidental name collision would silently no-op under IF NOT EXISTS with no
+        // error and no test failure.
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_ReceivedAt ON ReceiveHistory(ReceivedAt)");
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_FilePath ON ReceiveHistory(FilePath)");
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_LinkedQsoId ON ReceiveHistory(LinkedQsoId)");
 
         transaction.Commit();
     }

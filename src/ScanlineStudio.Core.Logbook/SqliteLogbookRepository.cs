@@ -284,6 +284,16 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
             ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN QslReceived INTEGER NOT NULL DEFAULT 0");
         }
 
+        // Every logbook view query sorts/filters by StartUtc or Callsign; without these, each is a
+        // full table scan (T0-9). CREATE INDEX IF NOT EXISTS is idempotent, so this runs
+        // unconditionally on every startup rather than needing its own existingColumns-style probe.
+        // Names are table-qualified and explicit: this database file also holds the ReceiveHistory
+        // table's indexes (SqliteReceiveHistoryStore.EnsureSchema), and SQLite's index namespace is
+        // per-database, not per-table -- an accidental name collision would silently no-op under
+        // IF NOT EXISTS with no error and no test failure.
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_StartUtc ON Qso(StartUtc)");
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_Callsign_NoCase ON Qso(Callsign COLLATE NOCASE)");
+
         transaction.Commit();
     }
 

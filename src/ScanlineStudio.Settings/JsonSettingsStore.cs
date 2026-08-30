@@ -11,8 +11,10 @@ namespace ScanlineStudio.Settings;
 /// away mid-<see cref="SaveAsync"/> could strand a write at the old, now-abandoned directory, or a
 /// concurrent <see cref="LoadAsync"/> could observe a torn/missing file mid-move. It does NOT make a
 /// caller's own read-then-modify-then-save sequence atomic against a DIFFERENT concurrent caller
-/// doing the same -- that race (last-write-wins across ~30 call sites app-wide) predates this
-/// feature and is unchanged/out of scope here.
+/// doing the same -- that's what <see cref="UpdateAsync"/> (T0-2) is for: it does the whole
+/// load-mutate-save sequence under one <see cref="_fileLock"/> acquisition instead of two separate
+/// calls. Callers doing a read-modify-write should use <see cref="UpdateAsync"/>, not a manual
+/// <see cref="LoadAsync"/>+<see cref="SaveAsync"/> pair.
 ///
 /// Every await in this class uses <c>ConfigureAwait(false)</c> -- required, not a style preference.
 /// Several call sites BLOCK the UI thread synchronously on this store's own async methods
@@ -50,33 +52,7 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         await _fileLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (!File.Exists(_settingsFilePath))
-            {
-                Log.NoSettingsFile(_logger, _settingsFilePath);
-                return new AppSettings();
-            }
-
-            // A corrupt/truncated settings.json (partial write from an old build predating the atomic
-            // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
-            // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
-            // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
-            // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
-            // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
-            // NOT derive from IOException, so it slipped past this exact guard.
-            try
-            {
-                var stream = File.OpenRead(_settingsFilePath);
-                await using (stream.ConfigureAwait(false))
-                {
-                    var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
-                    return settings ?? new AppSettings();
-                }
-            }
-            catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
-            {
-                Log.LoadFailed(_logger, _settingsFilePath, ex);
-                return new AppSettings();
-            }
+            return await LoadCoreAsync(ct).ConfigureAwait(false);
         }
         finally
         {
@@ -90,23 +66,7 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         await _fileLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var directory = Path.GetDirectoryName(_settingsFilePath);
-            if (!string.IsNullOrEmpty(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
-            // truncated or corrupted — see spec/12-settings.md.
-            var tempFilePath = _settingsFilePath + ".tmp";
-            var stream = File.Create(tempFilePath);
-            await using (stream.ConfigureAwait(false))
-            {
-                await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
-            }
-
-            File.Move(tempFilePath, _settingsFilePath, overwrite: true);
-            savedPath = _settingsFilePath; // captured under the lock -- logged below, after Release
+            savedPath = await SaveCoreAsync(settings, ct).ConfigureAwait(false);
         }
         finally
         {
@@ -118,6 +78,95 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         // no subscribers in this codebase today, but it is a public interface member.
         _changes.OnNext(settings);
         Log.Saved(_logger, savedPath);
+    }
+
+    /// <summary>T0-2: see <see cref="ISettingsStore.UpdateAsync"/>'s own doc comment for the full
+    /// <c>mutate</c> contract. Calls the non-locking <see cref="LoadCoreAsync"/>/<see cref="SaveCoreAsync"/>
+    /// cores directly, inside ONE <see cref="_fileLock"/> acquisition -- not the public
+    /// <see cref="LoadAsync"/>/<see cref="SaveAsync"/>, which would each try to acquire the same
+    /// non-reentrant lock again and deadlock. No-op short-circuit: if <c>mutate</c> returns the SAME
+    /// reference it was given, nothing is written -- needed so a caller's own internal guard (e.g.
+    /// "only save if a setting is enabled") can return its input unchanged without this method
+    /// unconditionally rewriting the file/firing Changes/logging a save that didn't really happen.</summary>
+    public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+    {
+        AppSettings updated;
+        string? savedPath = null;
+        await _fileLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var current = await LoadCoreAsync(ct).ConfigureAwait(false);
+            updated = mutate(current);
+            if (!ReferenceEquals(updated, current))
+            {
+                savedPath = await SaveCoreAsync(updated, ct).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            _fileLock.Release();
+        }
+
+        // Same after-release ordering as SaveAsync, and same reasoning -- see that method.
+        if (savedPath is not null)
+        {
+            _changes.OnNext(updated);
+            Log.Saved(_logger, savedPath);
+        }
+
+        return updated;
+    }
+
+    private async Task<AppSettings> LoadCoreAsync(CancellationToken ct)
+    {
+        if (!File.Exists(_settingsFilePath))
+        {
+            Log.NoSettingsFile(_logger, _settingsFilePath);
+            return new AppSettings();
+        }
+
+        // A corrupt/truncated settings.json (partial write from an old build predating the atomic
+        // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
+        // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
+        // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
+        // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
+        // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
+        // NOT derive from IOException, so it slipped past this exact guard.
+        try
+        {
+            var stream = File.OpenRead(_settingsFilePath);
+            await using (stream.ConfigureAwait(false))
+            {
+                var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+                return settings ?? new AppSettings();
+            }
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            Log.LoadFailed(_logger, _settingsFilePath, ex);
+            return new AppSettings();
+        }
+    }
+
+    private async Task<string> SaveCoreAsync(AppSettings settings, CancellationToken ct)
+    {
+        var directory = Path.GetDirectoryName(_settingsFilePath);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
+        // truncated or corrupted — see spec/12-settings.md.
+        var tempFilePath = _settingsFilePath + ".tmp";
+        var stream = File.Create(tempFilePath);
+        await using (stream.ConfigureAwait(false))
+        {
+            await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+        }
+
+        File.Move(tempFilePath, _settingsFilePath, overwrite: true);
+        return _settingsFilePath; // captured under the lock -- logged by the caller, after Release
     }
 
     /// <summary>See <see cref="ISettingsFileRelocator.RelocateAsync"/> for the caller-facing

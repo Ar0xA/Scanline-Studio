@@ -128,6 +128,11 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _lock = new(1, 1);
 
+    // T0-1: matches FlrigClientProtocol/OmniRigRadioProtocol's own identical constant --
+    // see AcquireAsync's own doc comment for why the WAIT (not the native call itself) is what
+    // this bounds.
+    private static readonly TimeSpan SemaphoreAcquireTimeout = TimeSpan.FromSeconds(10);
+
     private nint _rig;
     private bool _connected;
     private bool _disposed;
@@ -568,11 +573,30 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
     /// reset to false and rig_init/rig_open'd a BRAND NEW rig on a disposed protocol -- for
     /// <see cref="SetPttAsync"/>(true) that meant a physically keyed transmitter on a handle nothing
     /// would ever close, while the caller saw only an <see cref="ObjectDisposedException"/> out of its
-    /// own <c>Release()</c> call and concluded the key had failed.</summary>
+    /// own <c>Release()</c> call and concluded the key had failed.
+    ///
+    /// <b>T0-1:</b> the wait is bounded by <see cref="SemaphoreAcquireTimeout"/>, matching
+    /// <c>FlrigClientProtocol</c>/<c>OmniRigRadioProtocol</c>'s own identical pattern -- see this
+    /// class's own top-of-file doc comment for why only the WAIT can ever be bounded here (once a
+    /// native <c>rig_*</c> call starts, it can't be cancelled or abandoned, so this never touches an
+    /// in-flight call -- it only stops a QUEUED caller from waiting forever behind one that's
+    /// wedged). That queued caller is frequently the safety-critical PTT-off retry
+    /// (<c>RadioSessionService.TryUnkeyWithRetryAsync</c>) -- a PTT-off queued behind a call that's
+    /// still wedged past this timeout is abandoned rather than staying queued forever, a deliberate
+    /// trade already accepted for Flrig/OmniRig: 3 retry attempts still give it multiple chances to
+    /// reach the rig once the wedge clears, and the alternative (the old unbounded wait) hung the
+    /// whole PTT test forever instead.</summary>
     private async Task AcquireAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        var acquired = await _lock.WaitAsync(SemaphoreAcquireTimeout, ct).ConfigureAwait(false);
+        if (!acquired)
+        {
+            Log.SemaphoreAcquireTimedOut(_logger, SemaphoreAcquireTimeout);
+            throw new TimeoutException(
+                $"Could not acquire the Hamlib lock within {SemaphoreAcquireTimeout} -- something else may be stuck holding it.");
+        }
+
         if (_disposed)
         {
             _lock.Release();
@@ -627,5 +651,8 @@ public sealed partial class HamlibRadioProtocol : IRadioProtocol
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Hamlib rig connected: model={Model}, capabilities={Capabilities}")]
         public static partial void Connected(ILogger logger, uint model, RadioCapabilities capabilities);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "Could not acquire the Hamlib lock within {Timeout} -- something else may be stuck holding it")]
+        public static partial void SemaphoreAcquireTimedOut(ILogger logger, TimeSpan timeout);
     }
 }

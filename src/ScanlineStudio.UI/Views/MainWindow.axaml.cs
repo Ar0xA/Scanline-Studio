@@ -122,18 +122,20 @@ public partial class MainWindow : Window
             // settings-write path in this app: log and let the window close anyway.
             try
             {
-                Task.Run(async () =>
+                Task.Run(() => _settingsStore.UpdateAsync(settings =>
                 {
-                    var settings = await _settingsStore.LoadAsync();
                     var current = settings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
                     if (current.RememberWindowPosition != true)
                     {
-                        return;
+                        // No-op: UpdateAsync skips the save/notify/log entirely when mutate returns
+                        // its own input unchanged -- preserves this guard's original "don't touch
+                        // disk at all" behavior, not just "don't touch this field."
+                        return settings;
                     }
 
                     var updated = current with { Left = left, Top = top, Width = width, Height = height };
-                    await _settingsStore.SaveAsync(settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings));
-                }).GetAwaiter().GetResult();
+                    return settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
+                })).GetAwaiter().GetResult();
             }
             catch (Exception ex)
             {

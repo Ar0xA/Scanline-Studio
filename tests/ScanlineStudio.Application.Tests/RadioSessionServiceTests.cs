@@ -318,6 +318,35 @@ public sealed class RadioSessionServiceTests
     }
 
     [Fact]
+    public async Task TestPttAsync_UnkeyAttempt1Hangs_Attempts2And3StillRunWithinABound()
+    {
+        // TT0-2/T0-1: the retry loop's actual pre-fix failure mode was a HANG (Hamlib's semaphore
+        // wait had no timeout), not a throw -- SetPttExceptionsToThrow can only script a throw, so
+        // this test needs HangOnCallNumber instead. Call 1 = the initial key. Call 2 = un-key
+        // attempt 1, which hangs forever. Call 3 = un-key attempt 2, scripted to fail (proving it
+        // genuinely ran, not just short-circuited past the hung call). Call 4 = un-key attempt 3,
+        // left to succeed on the now-empty queue.
+        var controller = new FakeRadioController();
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        protocol.SetPttExceptionsToThrow.Enqueue(null); // key succeeds
+        protocol.SetPttExceptionsToThrow.Enqueue(new IOException("unkey retry 2 failed"));
+        protocol.HangOnCallNumber = 2;
+        var factory = new FakeRadioProtocolFactory(protocol);
+        var service = new RadioSessionService(
+            controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance,
+            unkeyAttemptWaitTimeoutForTests: TimeSpan.FromMilliseconds(50));
+        var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
+
+        var result = await service.TestPttAsync(spec, TimeSpan.FromMilliseconds(10)).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(result.Success);
+        // The hung call (attempt 1) never reaches CompleteSetPtt, so it's never recorded -- only the
+        // key plus the two attempts that actually ran (one scripted failure, one success) are.
+        Assert.Equal([true, false, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
     public async Task TestPttAsync_KeyingThrowsAndEveryUnkeyRetryAlsoFails_ReturnsUnkeyMessageNotKeyMessage()
     {
         // The exact scenario code review flagged: SetPttAsync(true) throws (rig.c confirms this can
