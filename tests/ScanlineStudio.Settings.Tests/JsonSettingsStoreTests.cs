@@ -58,6 +58,58 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateAsync_ConcurrentCalls_SerializesAndPreservesBothSections()
+    {
+        // T0-2 regression test against the REAL store, not just the test double (auditor
+        // plan-review round 1 finding: a test proving the FAKE serializes proves nothing about
+        // JsonSettingsStore itself). Deliberately does NOT use a shared gate both calls park on --
+        // that shape (this project's own `feedback_deterministic_gates_not_shared_race`) would still
+        // pass even with zero locking, since both calls would just park on the same gate regardless
+        // of ordering. Instead: call A's own mutate lambda signals `entered` the instant it starts
+        // running (proof it's genuinely inside the lock), then synchronously blocks on `release` --
+        // legal here since ISettingsStore.UpdateAsync's own contract only forbids ASYNC work
+        // (awaiting) inside mutate, not a test-only synchronous block used to hold the critical
+        // section open. Call A is dispatched via Task.Run because UpdateAsync can complete
+        // synchronously up through the mutate call on this test's fresh-file path (no real file I/O
+        // ever awaits) -- without Task.Run, `store.UpdateAsync(...)` would block this test method's
+        // own thread on `release.Wait()` before ever returning a Task to await `entered` against.
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim(initialState: false);
+
+        var taskA = Task.Run(() => store.UpdateAsync(s =>
+        {
+            entered.TrySetResult();
+            // Bounded, not an unbounded Wait() -- auditor code-review finding: if the assertion below
+            // ever fails, an unbounded wait here would leave this pool thread permanently blocked
+            // inside `mutate`, `using release`'s Dispose() would tear down a ManualResetEventSlim a
+            // live waiter still references, and the class's own Dispose() (below) would delete the
+            // temp directory out from under a save that might still be in flight -- a hung test host,
+            // not a clean assertion failure.
+            Assert.True(release.Wait(TimeSpan.FromSeconds(5)), "release was never signaled -- see this test's own comment");
+            return s.WithSection(SampleSection.SectionKey, new SampleSection("A", 1), SampleSectionJsonContext.Default.SampleSection);
+        }));
+
+        await entered.Task; // genuine happens-before: A has entered its critical section
+        var taskB = store.UpdateAsync(s =>
+            s.WithSection(AnotherSampleSection.SectionKey, new AnotherSampleSection(true), SampleSectionJsonContext.Default.AnotherSampleSection));
+
+        await Task.Delay(50); // give B a chance to race past a broken (unlocked) implementation
+        Assert.False(taskB.IsCompleted); // secondary check only -- see the load-bearing assertion below
+
+        release.Set();
+        await taskA;
+        await taskB;
+
+        // The load-bearing assertion: BOTH sections survive. Without a real lock, B would read A's
+        // pre-write snapshot and its own save would silently clobber A's section -- this fails
+        // deterministically on a broken implementation, unlike the IsCompleted check above.
+        var loaded = await store.LoadAsync();
+        Assert.Equal(new SampleSection("A", 1), loaded.GetSection(SampleSection.SectionKey, SampleSectionJsonContext.Default.SampleSection));
+        Assert.Equal(new AnotherSampleSection(true), loaded.GetSection(AnotherSampleSection.SectionKey, SampleSectionJsonContext.Default.AnotherSampleSection));
+    }
+
+    [Fact]
     public async Task LoadAsync_WhenFileDoesNotExist_ReturnsDefaultSettings()
     {
         var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);

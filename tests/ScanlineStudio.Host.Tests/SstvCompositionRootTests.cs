@@ -522,6 +522,16 @@ public sealed class SstvCompositionRootTests
         public Task SaveAsync(AppSettings updatedSettings, CancellationToken ct = default) =>
             throw new NotSupportedException();
 
+        // T0-2: naive forwarding still funnels through this class's own SaveAsync, which always
+        // throws -- preserves the "this store never actually saves" contract automatically.
+        public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+        {
+            var current = await LoadAsync(ct).ConfigureAwait(false);
+            var updated = mutate(current);
+            await SaveAsync(updated, ct).ConfigureAwait(false);
+            return updated;
+        }
+
         public Task<(bool Moved, string PreviousDirectory)> RelocateAsync(string newDirectory, CancellationToken ct = default) =>
             throw new NotSupportedException();
 

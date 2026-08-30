@@ -227,12 +227,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         {
             var metadataList = await _templateStore.ListAsync();
             var metadataById = metadataList.ToDictionary(m => m.Id);
-            var pinnedIds = await LoadPinnedIdsAsync();
-            var validPinnedIds = pinnedIds.Where(metadataById.ContainsKey).ToList();
-            if (validPinnedIds.Count != pinnedIds.Count)
+            var (validPinnedIds, _) = await UpdatePinnedIdsAsync(current =>
             {
-                await SavePinnedIdsAsync(validPinnedIds);
-            }
+                var valid = current.Where(metadataById.ContainsKey).ToList();
+                return valid.Count == current.Count ? current : valid;
+            });
 
             AllTemplates.Clear();
             foreach (var metadata in metadataList)
@@ -315,22 +314,29 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             return;
         }
 
-        var pinnedIds = (await LoadPinnedIdsAsync()).ToList();
-        if (pinnedIds.Contains(row.Id))
+        var (_, changed) = await UpdatePinnedIdsAsync(current =>
         {
-            pinnedIds.Remove(row.Id);
-        }
-        else if (pinnedIds.Count < SlotCount)
-        {
-            pinnedIds.Add(row.Id);
-        }
-        else
-        {
-            return;
-        }
+            var pinnedIds = current.ToList();
+            if (pinnedIds.Contains(row.Id))
+            {
+                pinnedIds.Remove(row.Id);
+            }
+            else if (pinnedIds.Count < SlotCount)
+            {
+                pinnedIds.Add(row.Id);
+            }
+            else
+            {
+                return current; // full rack, no eviction policy -- no-op
+            }
 
-        await SavePinnedIdsAsync(pinnedIds);
-        await RefreshAsync();
+            return pinnedIds;
+        });
+
+        if (changed)
+        {
+            await RefreshAsync();
+        }
     }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
@@ -454,18 +460,42 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         await RefreshAsync();
     }
 
-    private async Task<IReadOnlyList<string>> LoadPinnedIdsAsync()
+    /// <summary>T0-2: atomic read-modify-write for the pinned-template-ids section. Both callers
+    /// (<see cref="RefreshAsync"/>'s prune, <see cref="TogglePinAsync"/>) used to be a separate
+    /// LoadAsync then a conditional SaveAsync -- a check-then-act with the lock released in between,
+    /// the exact race T0-2 closes. <paramref name="mutate"/> must return the SAME reference it was
+    /// given when nothing should change (matches <see cref="ISettingsStore.UpdateAsync"/>'s own
+    /// no-op-skip contract) -- that's how <see cref="Changed"/> below is computed, and callers use it
+    /// to skip a redundant <see cref="RefreshAsync"/>.</summary>
+    private async Task<(IReadOnlyList<string> PinnedIds, bool Changed)> UpdatePinnedIdsAsync(Func<IReadOnlyList<string>, IReadOnlyList<string>> mutate)
     {
-        var settings = await _settingsStore.LoadAsync();
-        return settings.GetSection(ReadyRackSettings.SectionKey, ReadyRackSettingsJsonContext.Default.ReadyRackSettings)?.PinnedTemplateIds ?? [];
-    }
+        var changed = false;
+        var updatedAppSettings = await _settingsStore.UpdateAsync(appSettings =>
+        {
+            // currentSection itself (not just PinnedTemplateIds) can be a genuine absent-section null;
+            // separately, a hand-edited settings.json can carry an EXPLICIT `"PinnedTemplateIds":
+            // null` -- an explicit JSON null overrides the `= []` initializer on an init property, so
+            // PinnedTemplateIds can be null even when currentSection itself is not. Both guarded
+            // separately -- ?? new ReadyRackSettings() alone would still let the second case NRE
+            // inside mutate (TogglePinAsync has no try/catch around this call, unlike RefreshAsync).
+            var currentSection = appSettings.GetSection(ReadyRackSettings.SectionKey, ReadyRackSettingsJsonContext.Default.ReadyRackSettings);
+            var current = currentSection?.PinnedTemplateIds ?? [];
+            var updated = mutate(current);
+            if (ReferenceEquals(updated, current))
+            {
+                return appSettings;
+            }
 
-    private async Task SavePinnedIdsAsync(IReadOnlyList<string> pinnedIds)
-    {
-        var settings = await _settingsStore.LoadAsync();
-        var updated = settings.WithSection(
-            ReadyRackSettings.SectionKey, new ReadyRackSettings { PinnedTemplateIds = pinnedIds }, ReadyRackSettingsJsonContext.Default.ReadyRackSettings);
-        await _settingsStore.SaveAsync(updated);
+            changed = true;
+            // `with`, not a fresh `new ReadyRackSettings { ... }` -- matches this codebase's own
+            // established convention for a targeted single-field write, and stays correct the day a
+            // second field is added to this record (single-field today, confirmed).
+            return appSettings.WithSection(
+                ReadyRackSettings.SectionKey, (currentSection ?? new ReadyRackSettings()) with { PinnedTemplateIds = updated }, ReadyRackSettingsJsonContext.Default.ReadyRackSettings);
+        }).ConfigureAwait(false);
+
+        var finalIds = updatedAppSettings.GetSection(ReadyRackSettings.SectionKey, ReadyRackSettingsJsonContext.Default.ReadyRackSettings)?.PinnedTemplateIds ?? [];
+        return (finalIds, changed);
     }
 
     private static partial class Log

@@ -202,6 +202,15 @@ public sealed partial class OptionsSettingsService
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
     {
+        // T0-2: the whole load-modify-save sequence below is now one atomic ISettingsStore.UpdateAsync
+        // call -- see this method's own history for WHY it must re-read fresh rather than reuse
+        // _loadedSettings (auditor blocker finding, preserved verbatim in the mutate lambda below).
+        // sampleRateToPersist escapes the lambda via this outer local (a lambda may legally write to
+        // a captured outer variable) so the Log.Saved call after the atomic update reflects what was
+        // actually persisted, not a stale re-derivation.
+        var sampleRateToPersist = 0;
+        var settings = await _settingsStore.UpdateAsync(currentSettings =>
+        {
         // Auditor blocker finding: this used to read every "previous*" value off _loadedSettings --
         // the snapshot captured once when LoadAsync ran at dialog-open time, not the current file.
         // Anything written to a section this dialog doesn't fully own (e.g. AudioDeviceSettings.
@@ -211,10 +220,10 @@ public sealed partial class OptionsSettingsService
         // silently reverted back to its dialog-open value the moment the user clicked Save in the
         // SAME session -- exactly the failure that feature exists to prevent (dial power on the
         // meter, hit Save, transmit at the wrong power with the UI still showing the right number).
-        // Re-reading fresh from disk right here closes the whole class, not just this one field --
-        // the same staleness risk applies to every section below, present or future, written by
-        // anything other than this dialog's own Save.
-        var currentSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        // Reading fresh from currentSettings (the exact snapshot UpdateAsync loaded under its own
+        // lock, immediately before calling this lambda) closes the whole class, not just this one
+        // field -- the same staleness risk applies to every section below, present or future,
+        // written by anything other than this dialog's own Save.
 
         // Tier B audit finding: these three (Localization/Operator/QrzLookup) used to build a fresh
         // `new X { ... }` instead of `previous with { ... }` like every OTHER section here --
@@ -228,7 +237,7 @@ public sealed partial class OptionsSettingsService
         var previousOperator = currentSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
         var previousQrzLookup = currentSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
         var previousAudio = currentSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
-        var sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
+        sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
             ? snapshot.SampleRate
             : SstvSampleRate.NormalizePersisted(previousAudio.SampleRate);
         // Same "reject, preserve the prior valid value" shape as SampleRate above -- legacy's own
@@ -256,10 +265,10 @@ public sealed partial class OptionsSettingsService
         // a user who opens the dialog and immediately hits Save, with only a legacy GridTracker
         // section on disk, must persist the MIGRATED ClientId/destination, not silently drop it back
         // to an empty AdifUdpStreamingSettings just because the new section was never explicitly
-        // read through this exact call before.
+        // read through this exact call before. Confirmed pure/synchronous -- safe inside mutate.
         var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(currentSettings);
 
-        var settings = currentSettings
+        return currentSettings
             .WithSection(LocalizationSettings.SectionKey, previousLocalization with { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
             .WithSection(
                 AudioDeviceSettings.SectionKey,
@@ -380,8 +389,8 @@ public sealed partial class OptionsSettingsService
                 // has no control for it (see OptionsSnapshot's own doc comment).
                 previousAdifUdp with { Destinations = snapshot.AdifUdpDestinations },
                 AdifUdpStreamingSettingsJsonContext.Default.AdifUdpStreamingSettings);
+        }, ct).ConfigureAwait(false);
 
-        await _settingsStore.SaveAsync(settings, ct).ConfigureAwait(false);
         _loadedSettings = settings;
         Log.Saved(_logger, snapshot.RadioBackendId, sampleRateToPersist, snapshot.CultureCode);
     }

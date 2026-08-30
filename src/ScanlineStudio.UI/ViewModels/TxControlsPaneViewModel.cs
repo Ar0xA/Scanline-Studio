@@ -612,15 +612,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var settings = await _settingsStore.LoadAsync();
-            var current = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
-            var updated = current with
+            // T0-2: both are live VM state -- must be read here, before UpdateAsync, never inside its
+            // mutate lambda (which may run on any thread, including this one synchronously, but must
+            // not itself read UI-thread-affine state per ISettingsStore.UpdateAsync's own contract).
+            var autoFollowRxMode = AutoFollowRxMode;
+            var quickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray();
+            await _settingsStore.UpdateAsync(settings =>
             {
-                AutoFollowRxMode = AutoFollowRxMode,
-                QuickModeGridIds = QuickModeSlots.Select(s => s.CurrentMode.Id).ToArray(),
-            };
-
-            await _settingsStore.SaveAsync(settings.WithSection(TxPaneUiSettings.SectionKey, updated, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings));
+                var current = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
+                var updated = current with
+                {
+                    AutoFollowRxMode = autoFollowRxMode,
+                    QuickModeGridIds = quickModeGridIds,
+                };
+                return settings.WithSection(TxPaneUiSettings.SectionKey, updated, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
+            });
         }
         catch (Exception ex)
         {

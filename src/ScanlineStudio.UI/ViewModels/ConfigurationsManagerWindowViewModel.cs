@@ -280,11 +280,8 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
         // renaming the currently-active preset is responsible for it.
         try
         {
-            var activeName = await GetActivePresetNameAsync();
-            if (activeName is not null && string.Equals(activeName, oldName, StringComparison.OrdinalIgnoreCase))
-            {
-                await UpdateActiveMarkerAsync(newName);
-            }
+            await UpdateActiveMarkerAsync(newName, activeName =>
+                activeName is not null && string.Equals(activeName, oldName, StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception ex)
         {
@@ -392,16 +389,13 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
         var live = await _settingsStore.LoadAsync();
         await _presetStore.SavePresetAsync(DefaultPresetName, live);
 
-        if (await GetActivePresetNameAsync() is null)
+        try
         {
-            try
-            {
-                await UpdateActiveMarkerAsync(DefaultPresetName);
-            }
-            catch (Exception ex)
-            {
-                Log.MarkerUpdateFailed(_logger, ex);
-            }
+            await UpdateActiveMarkerAsync(DefaultPresetName, activeName => activeName is null);
+        }
+        catch (Exception ex)
+        {
+            Log.MarkerUpdateFailed(_logger, ex);
         }
 
         Log.DefaultPresetSeeded(_logger);
@@ -414,14 +408,25 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
     }
 
     /// <summary>Same targeted read-modify-write marker shape <c>ConfigurationPresetService</c>'s own
-    /// <c>MergeIntoLiveSettingsAsync</c> uses.</summary>
-    private async Task UpdateActiveMarkerAsync(string newName)
+    /// <c>MergeIntoLiveSettingsAsync</c> uses. T0-2: <paramref name="shouldUpdate"/> is checked
+    /// INSIDE the mutate lambda, against the lambda's own snapshot -- not read-then-decided outside
+    /// -- so this method's two callers' opposite preconditions (seed: marker is null; rename: marker
+    /// equals the just-renamed old name) are each evaluated atomically with the write, not against a
+    /// stale outer read that could have gone stale between the check and the write.</summary>
+    private async Task UpdateActiveMarkerAsync(string newName, Func<string?, bool> shouldUpdate)
     {
-        var current = await _settingsStore.LoadAsync();
-        var updated = current.WithSection(
-            ConfigurationPresetSettings.SectionKey, new ConfigurationPresetSettings { ActivePresetName = newName },
-            ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings);
-        await _settingsStore.SaveAsync(updated);
+        await _settingsStore.UpdateAsync(current =>
+        {
+            var activeName = current.GetSection(ConfigurationPresetSettings.SectionKey, ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings)?.ActivePresetName;
+            if (!shouldUpdate(activeName))
+            {
+                return current;
+            }
+
+            return current.WithSection(
+                ConfigurationPresetSettings.SectionKey, new ConfigurationPresetSettings { ActivePresetName = newName },
+                ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings);
+        });
     }
 
     private static partial class Log

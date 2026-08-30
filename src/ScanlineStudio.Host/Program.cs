@@ -126,6 +126,20 @@ internal static partial class Program
             hostBuilder.Services.AddSingleton<ILogFileRelocator>(fileLoggerProvider);
         }
 
+        // ValidateOnBuild/ValidateScopes default to on only in the Development environment, which a
+        // GUI launch never is -- without this, a missing registration surfaces as an unguarded
+        // crash from SetupWithLifetime -> MainViewModel resolution instead of the Console.Error +
+        // rethrow immediately below. Zero AddScoped calls exist in this graph today, so
+        // ValidateScopes is a pure future guard, not a behavior change. Note: ValidateOnBuild only
+        // validates registered descriptors -- it can't see a missing registration reached solely
+        // via a factory lambda's own GetRequiredService call, and MS.DI doesn't cache that kind of
+        // failed construction, so it would still crash (and repeat) on first real resolve.
+        hostBuilder.ConfigureContainer(new DefaultServiceProviderFactory(new ServiceProviderOptions
+        {
+            ValidateOnBuild = true,
+            ValidateScopes = true,
+        }));
+
         // A DI-graph error (a missing registration, a bad factory lambda) here is otherwise an
         // unlogged crash before the window ever appears -- there is no logger to report through
         // yet at this exact point (the host that would provide one failed to build), so this one

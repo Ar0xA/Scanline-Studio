@@ -3208,11 +3208,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             }
 
             // SWR auto-cutoff (2026-08-26): NOT part of `snapshot`/OptionsSnapshot above -- RadioSafety
-            // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync
-            // (which does its own independent fresh load-modify-save round trip, verified safe against
-            // the geometry/ImageExport whole-document save below: sequential, not concurrent, and each
-            // call reloads fresh immediately before writing, so neither can clobber the other -- but
-            // ONLY because this call is sequenced here, between the two, not after the geometry save).
+            // is its own settings section, saved through IRadioSessionService.SaveSafetySettingsAsync.
+            // T0-2: both this call and the geometry/ImageExport write below now go through
+            // ISettingsStore.UpdateAsync, so they're safe against each other (and any other concurrent
+            // writer) regardless of sequencing -- no longer safe "only because this call happens to be
+            // sequenced between two whole-document saves," as it was before UpdateAsync existed.
             // Also raises IRadioSessionService.SafetySettingsChanged, which is how
             // TxControlsPaneViewModel's live enforcement picks up the new value without being
             // reconstructed.
@@ -3221,13 +3221,22 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // See RememberWindowPosition's own doc comment for why this bypasses
             // _optionsSettingsService entirely. Preserves Left/Top/Width/Height as-is -- those are
             // MainWindow's own domain (captured passively on Closing), not user-edited fields here.
-            var appSettings = await _settingsStore.LoadAsync();
-            var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
-            var updatedAppSettings = appSettings.WithSection(WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = RememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
-            // Chained onto the SAME loaded/updated instance above (one load, one save) -- a second
-            // independent LoadAsync/SaveAsync round-trip here would race the geometry write above.
-            updatedAppSettings = updatedAppSettings.WithSection(ImageExportSettings.SectionKey, new ImageExportSettings { JpegQuality = JpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
-            await _settingsStore.SaveAsync(updatedAppSettings);
+            // T0-2: both captured into locals here, before UpdateAsync -- both are [ObservableProperty]
+            // (UI-thread-affine), and UpdateAsync's own mutate lambda may run on any thread, so they
+            // must not be read from inside it. One atomic UpdateAsync call, not two independent
+            // LoadAsync/SaveAsync round trips (that's what let this whole-document save race a
+            // concurrent writer of e.g. AudioDeviceSettings.TxVolumePercent in the first place).
+            var rememberWindowPosition = RememberWindowPosition;
+            var jpegQuality = JpegQuality;
+            await _settingsStore.UpdateAsync(appSettings =>
+            {
+                var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
+                var updatedAppSettings = appSettings.WithSection(
+                    WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = rememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
+                var currentImageExport = appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings) ?? new ImageExportSettings();
+                return updatedAppSettings.WithSection(
+                    ImageExportSettings.SectionKey, currentImageExport with { JpegQuality = jpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
+            });
 
             if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
             {

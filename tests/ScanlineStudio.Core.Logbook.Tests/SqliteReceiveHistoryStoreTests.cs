@@ -1312,6 +1312,75 @@ public sealed class SqliteReceiveHistoryStoreTests
         }
     }
 
+    [Fact]
+    public async Task EnsureSchema_CreatesReceiveHistoryIndexes()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            var indexNames = await ReadIndexNamesAsync(dbPath);
+
+            Assert.Contains("IX_ReceiveHistory_ReceivedAt", indexNames);
+            Assert.Contains("IX_ReceiveHistory_FilePath", indexNames);
+            Assert.Contains("IX_ReceiveHistory_LinkedQsoId", indexNames);
+
+            // Name-only assertions above would still pass if an index silently pointed at the
+            // wrong column -- check each index actually indexes the column its name claims.
+            Assert.Equal("ReceivedAt", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_ReceivedAt")).ColumnName);
+            Assert.Equal("FilePath", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_FilePath")).ColumnName);
+            Assert.Equal("LinkedQsoId", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_LinkedQsoId")).ColumnName);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    private static async Task<List<string>> ReadIndexNamesAsync(string dbPath)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA index_list(ReceiveHistory)";
+
+        var indexNames = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            indexNames.Add(reader.GetString(reader.GetOrdinal("name")));
+        }
+
+        return indexNames;
+    }
+
+    /// <summary>Returns the indexed (non-rowid) columns of a single-column index, via
+    /// <c>PRAGMA index_xinfo</c>. SQLite appends the table's rowid as an extra key column to every
+    /// index for uniqueness resolution -- filtered out here via <c>key = 1</c> since it isn't part
+    /// of the column list this index was actually declared with.</summary>
+    private static async Task<List<(string ColumnName, string Collation)>> ReadIndexColumnsAsync(string dbPath, string indexName)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA index_xinfo({indexName})";
+
+        var columns = new List<(string, string)>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (reader.GetInt64(reader.GetOrdinal("key")) == 0)
+            {
+                continue;
+            }
+
+            columns.Add((reader.GetString(reader.GetOrdinal("name")), reader.GetString(reader.GetOrdinal("coll"))));
+        }
+
+        return columns;
+    }
+
     private static async Task<List<string>> ReadColumnNamesAsync(string dbPath)
     {
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());

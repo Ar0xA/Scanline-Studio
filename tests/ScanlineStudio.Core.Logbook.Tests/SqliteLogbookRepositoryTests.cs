@@ -357,6 +357,81 @@ public sealed class SqliteLogbookRepositoryTests
         }
     }
 
+    [Fact]
+    public async Task EnsureSchema_CreatesQsoIndexes()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            _ = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+
+            var indexNames = await ReadIndexNamesAsync(dbPath, "Qso");
+            Assert.Contains("IX_Qso_StartUtc", indexNames);
+            Assert.Contains("IX_Qso_Callsign_NoCase", indexNames);
+
+            // Name-only assertions above would still pass if the index silently pointed at the
+            // wrong column or dropped its collation -- the exact failure mode that would make this
+            // index a no-op against SearchAsync's `Callsign = $callsign COLLATE NOCASE` query.
+            var startUtcColumns = await ReadIndexColumnsAsync(dbPath, "IX_Qso_StartUtc");
+            var callsignColumns = await ReadIndexColumnsAsync(dbPath, "IX_Qso_Callsign_NoCase");
+
+            var startUtcColumn = Assert.Single(startUtcColumns);
+            Assert.Equal("StartUtc", startUtcColumn.ColumnName);
+
+            var callsignColumn = Assert.Single(callsignColumns);
+            Assert.Equal("Callsign", callsignColumn.ColumnName);
+            Assert.Equal("NOCASE", callsignColumn.Collation);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    private static async Task<List<string>> ReadIndexNamesAsync(string dbPath, string tableName)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA index_list({tableName})";
+
+        var indexNames = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            indexNames.Add(reader.GetString(reader.GetOrdinal("name")));
+        }
+
+        return indexNames;
+    }
+
+    /// <summary>Returns the indexed (non-rowid) columns of a single-column index, via
+    /// <c>PRAGMA index_xinfo</c> (unlike <c>index_info</c>, it also reports each column's
+    /// collation). SQLite appends the table's rowid as an extra key column to every index for
+    /// uniqueness resolution -- filtered out here via <c>key = 1</c> since it isn't part of the
+    /// column list this index was actually declared with.</summary>
+    private static async Task<List<(string ColumnName, string Collation)>> ReadIndexColumnsAsync(string dbPath, string indexName)
+    {
+        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA index_xinfo({indexName})";
+
+        var columns = new List<(string, string)>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (reader.GetInt64(reader.GetOrdinal("key")) == 0)
+            {
+                continue;
+            }
+
+            columns.Add((reader.GetString(reader.GetOrdinal("name")), reader.GetString(reader.GetOrdinal("coll"))));
+        }
+
+        return columns;
+    }
+
     private static async Task<List<string>> ReadColumnNamesAsync(string dbPath)
     {
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
