@@ -347,7 +347,7 @@
                           Command="{Binding TransmitCommand}"
                           IsChecked="{Binding IsTransmitting, Mode=OneWay}"
                           HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-            <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger" Padding="7,0" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
+            <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger IndustryBtnDangerAlwaysOn" Padding="7,0" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
         </StackPanel>
 
         <!-- spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."

@@ -184,7 +184,7 @@
   "Panes.RxFrameMeta.LookupQrz": "Lookup QRZ",
   "Panes.RxFrameMeta.LookupQrz.Help": "Needs a callsign above and QRZ.com lookup configured in Options > QRZ.com.",
   "Panes.RxFrameMeta.Flag": "Flag",
-  "Panes.RxFrameMeta.CallsignValue": "EA7KDT",
+  "Panes.RxFrameMeta.OverrideCallsignWatermark": "Callsign",
   "Panes.RxFrameMeta.StartedValueFormat": "{0:HH:mm:ss}Z",
   "Panes.RxFrameMeta.FileSizeValueFormat": "{0:0} kB",
   "Panes.RxFrameMeta.NoteWatermark": "No note yet",

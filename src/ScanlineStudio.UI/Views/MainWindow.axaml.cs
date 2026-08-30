@@ -381,6 +381,9 @@ public partial class MainWindow : Window
                     // only when the frame has none (see LogbookPaneViewModel.PrefillForNewEntry's own
                     // doc comment for why -- both stay null, never a fabricated value, if neither
                     // source has one).
+                    // Fable UX-review finding, 2026-08-30: vm.RxImage.CurrentEntryId links the
+                    // resulting QSO back to this frame's own ReceiveHistory entry -- previously
+                    // omitted, so this path never linked (unlike Gallery's "Open in log").
                     vm.Logbook.PrefillForNewEntry(
                         vm.RxImage.OverrideCallsign,
                         vm.RxImage.DetectedMode?.Id,
@@ -389,7 +392,8 @@ public partial class MainWindow : Window
                         vm.RxImage.LookupQth,
                         vm.RxImage.LookupGrid,
                         vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
-                        vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull);
+                        vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull,
+                        vm.RxImage.CurrentEntryId);
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 

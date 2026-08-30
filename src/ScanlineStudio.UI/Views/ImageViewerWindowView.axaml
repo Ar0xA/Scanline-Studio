@@ -88,7 +88,13 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource IndustrySpacingGroup}">
                     <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding PositionText}" />
                     <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding Current.Entry.ModeId}" />
-                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding Current.Entry.ReceivedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss} UTC}" />
+                    <!-- Fable UX-review finding, 2026-08-30: ReceivedAt is stamped DateTimeOffset.Now
+                         (local-kind, ReceiveHistoryRecorder.cs), NOT UTC — the literal
+                         " UTC" suffix here was a mislabel, disagreeing with this same frame's own
+                         real-UTC FRAME METADATA "Started" row and Logbook entry by the local offset.
+                         Gallery's own Date/Time rows already show this identical value correctly,
+                         unlabeled (matching local convention) — this now matches that. -->
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding Current.Entry.ReceivedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
                 </StackPanel>
                 <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Next}" Command="{Binding NextCommand}" />
             </Grid>
