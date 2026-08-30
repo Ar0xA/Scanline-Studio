@@ -53,6 +53,55 @@ public sealed class ReceivedImageBufferTests
     }
 
     [Fact]
+    public void Current_AfterManyLinesWithNoInterveningReads_ReflectsTheLastLinePushed()
+    {
+        // T0-10 (production_audit.md): correctness half of the lazy-materialize fix -- pushing
+        // many lines with NO intervening Current read must still, on the eventual read, reflect
+        // the LAST line's data, not something stale from an earlier line.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        var pixels = new Rgb24[4];
+        var image = new MutableTestImageSource(2, 2, pixels);
+
+        for (var i = 0; i < 50; i++)
+        {
+            pixels[0] = new Rgb24((byte)i, (byte)i, (byte)i);
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image));
+        }
+
+        Assert.Equal(new Rgb24(49, 49, 49), buffer.Current.GetScanline(0)[0]);
+    }
+
+    [Fact]
+    public void OnLineDecoded_ManyLinesWithNoInterveningReads_AllocatesFarLessThanOncePerLine()
+    {
+        // T0-10 (production_audit.md): the fix's own point, not just correctness -- before this
+        // fix, every LineDecoded allocated a fresh Rgb24[] regardless of whether Current was ever
+        // read. Threshold deliberately generous (2 frames' worth, not a tight bound) to avoid GC-
+        // noise flakiness while still failing hard against the old "one allocation per line"
+        // behavior, which would show ~50 frames' worth of allocation here.
+        var decoder = new FakeSstvDecoder();
+        var buffer = new ReceivedImageBuffer(decoder, NullLogger<ReceivedImageBuffer>.Instance);
+        const int width = 320;
+        const int height = 256;
+        var pixels = new Rgb24[width * height];
+        var image = new MutableTestImageSource(width, height, pixels);
+        const int lineCount = 50;
+
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image)); // warm up (JIT, one-time scratch alloc)
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var i = 1; i < lineCount; i++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(i, image));
+        }
+
+        var delta = GC.GetAllocatedBytesForCurrentThread() - before;
+        var oneFrameBytes = width * height * 3; // Rgb24 = 3 bytes
+        Assert.True(delta < oneFrameBytes * 2, $"Expected well under {oneFrameBytes * 2} bytes allocated across {lineCount - 1} unread lines, got {delta}.");
+    }
+
+    [Fact]
     public void OnDecodeRestarted_ResetsToAnEmptyImage()
     {
         var decoder = new FakeSstvDecoder();

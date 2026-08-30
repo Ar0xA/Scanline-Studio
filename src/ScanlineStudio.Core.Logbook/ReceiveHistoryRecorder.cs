@@ -27,7 +27,18 @@ namespace ScanlineStudio.Core.Logbook;
 /// (deferring the check costs nothing in practice) — an earlier version of this class instead
 /// defaulted the unlearned step to <c>ImageHeight</c> itself, which made the very first event of
 /// *every* image look complete; caught by <c>ReceiveHistoryRecorderTests</c>, not by
-/// review.</summary>
+/// review.
+///
+/// <b>T0-10 (production_audit.md): pixel snapshotting is now lazy.</b> This class used to
+/// allocate a fresh <c>Rgb24[width*height]</c> on EVERY <see cref="ISstvDecoder.LineDecoded"/>
+/// event (~256 Large-Object-Heap allocations per reception), even though a completed or abandoned
+/// image is only ever recorded ONCE per reception. <c>OnLineDecoded</c> now writes into a private,
+/// reused <c>_scratch</c> buffer instead (cheap, no allocation once sized); the one genuine
+/// allocation happens lazily, in <c>MaterializeCurrentImage()</c>, only when a completion or
+/// abandon actually needs to hand an owned snapshot to the fire-and-forget save task. Safe without
+/// a lock: every event this class subscribes to fires synchronously from within
+/// <c>RestartableSstvDecoder.PushSamples</c>' own CAS-guarded, single-caller-at-a-time section, so
+/// this class is never touched by two threads at once.</summary>
 public sealed partial class ReceiveHistoryRecorder
 {
     // Notify-only -- this class never calls SaveAsync or reads Current on it (see
@@ -46,7 +57,21 @@ public sealed partial class ReceiveHistoryRecorder
     private int? _previousLine;
     private int? _observedStep;
     private bool _recordedForCurrentImage;
-    private PixelSnapshot? _lastImage;
+
+    // T0-10 (production_audit.md): was `PixelSnapshot? _lastImage`, reallocated with a fresh
+    // Rgb24[width*height] on EVERY LineDecoded event (~256 LOH allocations/reception, almost all
+    // garbage -- a completed or abandoned image is recorded at most ONCE per reception, never per
+    // line). _scratch is a private, reused buffer OnLineDecoded writes into cheaply on every line;
+    // MaterializeCurrentImage() does the one actual allocation, lazily, only when a completion or
+    // abandon actually needs an owned snapshot to hand to the fire-and-forget Task.Run save. Safe
+    // without a lock: every ISstvDecoder event this class subscribes to fires synchronously inside
+    // RestartableSstvDecoder.PushSamples' own CAS-guarded, single-caller-at-a-time section -- this
+    // class is never touched by two threads at once.
+    private Rgb24[]? _scratch;
+    private int _scratchWidth;
+    private int _scratchHeight;
+    private bool _scratchMaterialized = true;
+    private PixelSnapshot? _materializedImage;
 
     // ui_transition_plan.md step 12 (Auto-save RX audio): the CURRENT reception's identity, set
     // every OnModeDetected from _decoder.ReceptionSequence (same callback, same value the audio
@@ -113,7 +138,14 @@ public sealed partial class ReceiveHistoryRecorder
         if (_currentMode is not null)
         {
             _pendingAbandonMode = _currentMode;
-            _pendingAbandonImage = _lastImage;
+            // T0-10: EAGER materialize here, not lazy -- _scratch is about to be reset/resized for
+            // the NEW mode by the next OnLineDecoded call, so deferring this would either stash a
+            // stale array from a DIFFERENT image (once the new mode overwrites _scratch) or lose
+            // the abandon candidate entirely. _previousLine is not null iff at least one line of
+            // the OLD image was ever decoded (same co-guard OnDecodeRestarted's own dominant-
+            // ordering branch below relies on) -- guards against materializing leftover scratch
+            // content from an even-earlier image when the old mode never decoded a single line.
+            _pendingAbandonImage = _previousLine is not null ? MaterializeCurrentImage() : null;
             _pendingAbandonLine = _previousLine;
             _pendingAbandonStep = _observedStep;
             _pendingAbandonRecorded = _recordedForCurrentImage;
@@ -128,7 +160,12 @@ public sealed partial class ReceiveHistoryRecorder
         _previousLine = null;
         _observedStep = null;
         _recordedForCurrentImage = false;
-        _lastImage = null;
+        // T0-10: _scratchMaterialized = true (not false) -- there is no image data yet for the new
+        // mode, so a premature materialize attempt (nothing should make one, but defensively) must
+        // return null (_materializedImage), never promote whatever's still sitting in _scratch from
+        // the old image.
+        _materializedImage = null;
+        _scratchMaterialized = true;
         // ui_transition_plan.md step 12: read from the SAME callback the audio side arms from --
         // ISstvDecoder.ReceptionSequence is already bumped by the decoder BEFORE this handler runs,
         // so both sides agree on this reception's identity with no coordination needed between them.
@@ -210,9 +247,14 @@ public sealed partial class ReceiveHistoryRecorder
             var alreadyHandled = _recordedForCurrentImage;
             _recordedForCurrentImage = true;
 
-            if (!alreadyHandled && _lastImage is not null && _previousLine is not null)
+            // T0-10: _previousLine is not null alone is sufficient (was also gated on
+            // `_lastImage is not null`, redundant given both were always set together, same
+            // order, in the same OnLineDecoded call, and this class is single-threaded) -- if a
+            // line was ever decoded for this image, MaterializeCurrentImage() is guaranteed to
+            // produce a real snapshot, not null.
+            if (!alreadyHandled && _previousLine is not null)
             {
-                candidateImage = _lastImage;
+                candidateImage = MaterializeCurrentImage();
                 candidateLine = _previousLine;
                 candidateStep = _observedStep;
             }
@@ -239,10 +281,11 @@ public sealed partial class ReceiveHistoryRecorder
             return;
         }
 
-        // Hoisted into locals BEFORE the closure -- the closure must never read _pendingAbandonImage/
-        // _lastImage directly, since both are already cleared (or reassigned to a different image)
-        // by the time the task actually runs. Sound only because `image` is already a snapshot copy
-        // (Snapshot(), below), not a live decoder-owned alias -- see that method's own doc comment.
+        // Hoisted into locals BEFORE the closure -- the closure must never read _pendingAbandonImage
+        // or re-materialize from _scratch directly, since both are already cleared/overwritten (or
+        // reassigned to a different image) by the time the task actually runs. Sound only because
+        // `image` is already a materialized, owned snapshot copy (MaterializeCurrentImage(), above),
+        // not a live decoder-owned alias.
         var modeId = abandonedMode.Id;
         var snapshot = image;
         // ui_transition_plan.md step 6 (T2-4): same synchronous-capture reasoning as OnLineDecoded's
@@ -281,12 +324,14 @@ public sealed partial class ReceiveHistoryRecorder
             return;
         }
 
-        // Snapshot copy, not the live update.Image reference -- AnalogFmSstvDecoder.cs's own
-        // LineDecoded doc comment explicitly warns that event hands out a LIVE ALIAS of the
-        // decoder's own mutable pixel buffer, torn/stale if held past the synchronous call (an
-        // earlier draft of this feature wrongly assumed the array was frozen once handed out; caught
-        // by auditor review). Same technique ReceivedImageBuffer.cs's own Snapshot() already uses.
-        _lastImage = Snapshot(update.Image);
+        // Copy into the reused scratch buffer, not the live update.Image reference --
+        // AnalogFmSstvDecoder.cs's own LineDecoded doc comment explicitly warns that event hands
+        // out a LIVE ALIAS of the decoder's own mutable pixel buffer, torn/stale if held past the
+        // synchronous call (an earlier draft of this feature wrongly assumed the array was frozen
+        // once handed out; caught by auditor review). Same technique ReceivedImageBuffer.cs's own
+        // WriteScratch uses -- T0-10, cheap (no allocation once _scratch is sized) instead of a
+        // fresh Rgb24[] on every single line.
+        WriteScratch(update.Image);
 
         if (_previousLine is int previousLine && _observedStep is null)
         {
@@ -311,15 +356,16 @@ public sealed partial class ReceiveHistoryRecorder
         var modeId = mode.Id;
 
         // Hoisted into a local BEFORE the closure, same reasoning as OnDecodeRestarted's own
-        // abandoned-image save: _lastImage may already be reassigned to a different image, or a
-        // DecodeRestarted firing microseconds after this final line may already have wiped
-        // IReceivedImageBuffer.Current to its empty placeholder, by the time the task actually
-        // runs (ReceiveHistoryRecorderTests' own DecodeRestarted-immediately-after-the-final-line
-        // test proves that ordering is real). Reading the live buffer asynchronously here used to
-        // save a 1x1 black PNG in exactly that sequence -- this snapshot, already captured
-        // synchronously in OnLineDecoded above, is the actual received image regardless of what
-        // happens to the live buffer afterward.
-        var snapshot = _lastImage!;
+        // abandoned-image save: the scratch buffer may already be overwritten by a different
+        // image's line, or a DecodeRestarted firing microseconds after this final line may already
+        // have wiped IReceivedImageBuffer.Current to its empty placeholder, by the time the task
+        // actually runs (ReceiveHistoryRecorderTests' own DecodeRestarted-immediately-after-the-
+        // final-line test proves that ordering is real). Reading the live buffer asynchronously
+        // here used to save a 1x1 black PNG in exactly that sequence -- MaterializeCurrentImage()
+        // here, synchronously, produces the actual received image regardless of what happens to
+        // the live buffer OR the scratch buffer afterward (the materialized array itself is never
+        // written to again once produced).
+        var snapshot = MaterializeCurrentImage()!;
 
         // Also hoisted synchronously, same reasoning as the snapshot above -- IReceivedImageBuffer's
         // own Generation only changes on ModeDetected/DecodeRestarted (never on LineDecoded), and
@@ -471,15 +517,42 @@ public sealed partial class ReceiveHistoryRecorder
         image.Save(filePath);
     });
 
-    private static PixelSnapshot Snapshot(IImageSource source)
+    // T0-10: copies ALL of source's rows into _scratch, every call -- not just the reported
+    // starting row -- matching ReceivedImageBuffer.WriteScratch's own reasoning (LineDecoded only
+    // reports the group's starting row; the untouched rest of the canvas still needs to be
+    // current). Resizes _scratch only when dimensions actually change.
+    private void WriteScratch(IImageSource source)
     {
-        var pixels = new Rgb24[source.Width * source.Height];
-        for (var y = 0; y < source.Height; y++)
+        if (_scratch is null || _scratchWidth != source.Width || _scratchHeight != source.Height)
         {
-            source.GetScanline(y).CopyTo(pixels.AsSpan(y * source.Width, source.Width));
+            _scratch = new Rgb24[source.Width * source.Height];
+            _scratchWidth = source.Width;
+            _scratchHeight = source.Height;
         }
 
-        return new PixelSnapshot(pixels, source.Width, source.Height);
+        for (var y = 0; y < source.Height; y++)
+        {
+            source.GetScanline(y).CopyTo(_scratch.AsSpan(y * source.Width, source.Width));
+        }
+
+        _scratchMaterialized = false;
+    }
+
+    // T0-10: the only place this class allocates a Rgb24[] -- lazily, the first time something
+    // needs an owned, independently-retainable snapshot since the last WriteScratch call (either
+    // OnLineDecoded's own completion path, or the abandon-stash/dominant-ordering reads in
+    // OnModeDetected/OnDecodeRestarted). Returns the cached materialized snapshot unchanged if
+    // nothing has changed since the last call.
+    private PixelSnapshot? MaterializeCurrentImage()
+    {
+        if (_scratchMaterialized || _scratch is null)
+        {
+            return _materializedImage;
+        }
+
+        _materializedImage = new PixelSnapshot((Rgb24[])_scratch.Clone(), _scratchWidth, _scratchHeight);
+        _scratchMaterialized = true;
+        return _materializedImage;
     }
 
     private void ClearPendingAbandon()

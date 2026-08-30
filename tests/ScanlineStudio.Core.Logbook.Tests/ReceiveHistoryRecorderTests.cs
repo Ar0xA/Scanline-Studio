@@ -66,6 +66,71 @@ public sealed class ReceiveHistoryRecorderTests
     }
 
     [Fact]
+    public async Task CompletedImage_AfterManyUnobservedLines_SavesTheLastLinesContent()
+    {
+        // T0-10 (production_audit.md): correctness half of the lazy-materialize fix -- many lines
+        // decode with nothing materializing in between (completion is the only trigger here); the
+        // eventual save must still reflect the LAST line's actual pixel content, not something
+        // stale from scratch-buffer reuse.
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        const int height = 50;
+        var mode = MakeMode(imageHeight: height);
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        var pixels = new Rgb24[16];
+        var image = new MutableTestImageSource(4, 4, pixels);
+        for (var line = 0; line < height - 1; line++)
+        {
+            Array.Fill(pixels, new Rgb24(1, 1, 1)); // decoy content -- must NOT be what ends up saved
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, image));
+        }
+
+        Array.Fill(pixels, KnownColor);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(height - 1, image)); // final line
+
+        var entry = await historyStore.WaitForRecordAsync();
+        AssertSavedFileMatchesColoredFakeImage(entry.FilePath);
+    }
+
+    [Fact]
+    public void OnLineDecoded_ManyLinesBeforeCompletion_AllocatesFarLessThanOncePerLine()
+    {
+        // T0-10 (production_audit.md): the fix's own point, not just correctness -- before this
+        // fix, every LineDecoded allocated a fresh Rgb24[] regardless of whether the image ever
+        // completed or got abandoned. Threshold deliberately generous (2 frames' worth) to avoid
+        // GC-noise flakiness while still failing hard against the old "one allocation per line"
+        // behavior. Uses MutableTestImageSource, not FixedSizeImageSource -- that fake's own
+        // GetScanline allocates per call (Enumerable.Repeat(...).ToArray()), which would swamp the
+        // measurement with noise unrelated to this class's own allocation behavior.
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        const int width = 320;
+        const int height = 256;
+        var mode = MakeMode(imageHeight: height) with { ImageWidth = width };
+        var receivedImage = new FakeReceivedImageBuffer();
+        _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        var pixels = new Rgb24[width * height];
+        var image = new MutableTestImageSource(width, height, pixels);
+
+        decoder.RaiseModeDetected(mode);
+        decoder.RaiseLineDecoded(new DecodedImageUpdate(0, image)); // warm up (JIT, one-time scratch alloc)
+        var before = GC.GetAllocatedBytesForCurrentThread();
+
+        for (var line = 1; line < height - 1; line++) // deliberately stops short of completion
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, image));
+        }
+
+        var delta = GC.GetAllocatedBytesForCurrentThread() - before;
+        var oneFrameBytes = width * height * 3; // Rgb24 = 3 bytes
+        Assert.True(delta < oneFrameBytes * 2, $"Expected well under {oneFrameBytes * 2} bytes allocated across {height - 2} lines with no completion, got {delta}.");
+        Assert.Empty(historyStore.RecordedEntries); // Test setup problem check: must not have completed early
+    }
+
+    [Fact]
     public async Task SingleScanSegmentMode_RecordsExactlyOnce_OnlyAfterTheLastLine()
     {
         var decoder = new FakeSstvDecoder();
@@ -177,7 +242,7 @@ public sealed class ReceiveHistoryRecorderTests
     public async Task DecodeRestarted_DominantOrdering_AboveThreshold_RecordsTheAbandonedImage()
     {
         // "Dominant ordering": DecodeRestarted fires BEFORE ModeDetected for the new mode -- live
-        // _currentMode/_lastImage state still describes the abandoned image directly.
+        // _currentMode/scratch state still describes the abandoned image directly.
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
         var mode = MakeMode(imageHeight: 100);
@@ -215,7 +280,7 @@ public sealed class ReceiveHistoryRecorderTests
         _ = new ReceiveHistoryRecorder(decoder, receivedImage, historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
 
         decoder.RaiseModeDetected(mode);
-        decoder.RaiseDecodeRestarted(mode); // no LineDecoded at all yet -- _lastImage/_previousLine still null
+        decoder.RaiseDecodeRestarted(mode); // no LineDecoded at all yet -- scratch/_previousLine still null
 
         await Task.Delay(50);
         Assert.Empty(historyStore.RecordedEntries);
@@ -226,7 +291,7 @@ public sealed class ReceiveHistoryRecorderTests
     {
         // "Minority ordering": ModeDetected for the new mode fires BEFORE DecodeRestarted for the
         // abandoned one (AVT resolving within the same call, or ForceMode into AVT) -- by the time
-        // OnDecodeRestarted runs, live _currentMode/_lastImage already describe the NEW mode, so the
+        // OnDecodeRestarted runs, live _currentMode/scratch already describe the NEW mode, so the
         // abandoned image's data must come from the OnModeDetected-side stash instead.
         var decoder = new FakeSstvDecoder();
         var historyStore = new FakeReceiveHistoryStore();
@@ -631,5 +696,17 @@ public sealed class ReceiveHistoryRecorderTests
         public int Height { get; } = height;
 
         public ReadOnlySpan<Rgb24> GetScanline(int y) => Enumerable.Repeat(fill, Width).ToArray();
+    }
+
+    // T0-10: unlike FixedSizeImageSource above, GetScanline here returns a span over an existing
+    // array (no per-call allocation) -- needed for the allocation-count regression test, where
+    // FixedSizeImageSource's own Enumerable.Repeat(...).ToArray() would swamp the measurement.
+    private sealed class MutableTestImageSource(int width, int height, Rgb24[] pixels) : IImageSource
+    {
+        public int Width { get; } = width;
+
+        public int Height { get; } = height;
+
+        public ReadOnlySpan<Rgb24> GetScanline(int y) => pixels.AsSpan(y * Width, Width);
     }
 }

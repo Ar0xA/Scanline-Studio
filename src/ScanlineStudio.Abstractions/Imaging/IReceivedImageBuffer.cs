@@ -6,6 +6,10 @@ namespace ScanlineStudio.Abstractions.Imaging;
 /// behavior).</summary>
 public interface IReceivedImageBuffer
 {
+    /// <summary>Every read returns an independent, safely-retainable snapshot -- never a view into
+    /// a live/mutable decoder buffer, and never an array a later implementation detail writes into
+    /// again after handing it out. Safe to hold indefinitely (a real consumer does: the TX image
+    /// editor inserts this into template state kept until the user removes/undoes it).</summary>
     IImageSource Current { get; }
 
     /// <summary>How far the current decode has progressed, as a `[0.0, 1.0]` fraction of the image's
