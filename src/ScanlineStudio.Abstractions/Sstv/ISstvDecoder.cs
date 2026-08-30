@@ -436,6 +436,22 @@ public interface ISstvDecoder
     /// thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
     bool IsLevelOverdriven { get; }
 
+    /// <summary>T0-6: whether RX Extended-mode disk buffering has hit a write failure (full disk,
+    /// read-only TMPDIR, ENOSPC, etc.) and permanently stopped staging capture data to disk for the
+    /// remainder of this decoder instance's lifetime (never resets -- the underlying latch is only
+    /// cleared by constructing a fresh instance, e.g. via <c>RestartableSstvDecoder</c>'s own
+    /// periodic swap). <b>Extended mode only -- always <see langword="false"/> for
+    /// <c>RxBufferMode.On</c>/<c>Off</c></b>, since RAM mode's own capacity latch is a distinct,
+    /// separate signal (never surfaced here) and Off mode has no staging buffer at all. Not a
+    /// general RX-buffer-health signal -- do not read a <see langword="false"/> value here as "RX
+    /// buffering is fine" for modes other than Extended.
+    ///
+    /// Once <see langword="true"/>, replay and Correct Slant have already silently become permanent
+    /// no-ops for the rest of this decoder instance's lifetime (a pre-existing, separate behavior --
+    /// this property exists so a caller can find out why, not to change that behavior). The
+    /// underlying failure is also logged exactly once, at the moment of transition.</summary>
+    bool RxBufferDegraded { get; }
+
     /// <summary>Whether legacy's <c>KRSA-&gt;Checked</c> ("Auto Slant") setting is enabled --
     /// genuinely live-settable (see the third paragraph below for the full contract), not
     /// restart-only. When <see langword="false"/>, slant-correction

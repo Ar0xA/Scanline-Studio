@@ -129,7 +129,10 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
     private double[]? _demodSnapshot;
     private double[]? _syncSnapshot;
 
-    private volatile bool _hasWriteFailed;
+    // T0-6: an int, not a volatile bool -- LatchWriteFailure's Interlocked.Exchange below needs a
+    // real atomic transition test (both the background consumer thread and the decode thread can
+    // reach a failure path), not a check-then-set race that could log twice.
+    private int _hasWriteFailedFlag;
     private bool _disposed;
     private readonly ILogger<RxDiskLineStagingBuffer> _logger;
     private readonly Action<DisposeStage>? _disposeStageFaultForTests;
@@ -188,12 +191,31 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             demodWriteStream = new FileStream(demodPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
             syncWriteStream = new FileStream(syncPath, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
         }
-        catch
+        catch (Exception ex)
         {
+            // T0-6: logged here, directly (not via LatchWriteFailure -- _hasWriteFailedFlag's
+            // latch semantics don't apply pre-construction; this is a distinct, always-fires-once-
+            // per-failed-construction-attempt case). Still rethrows -- the caller's own construction
+            // fails either way, but this stops the root cause from being silent even though it
+            // propagates.
+            try
+            {
+                Log.ScratchFileCreationFailed(_logger, "constructing RX staging scratch files", ex);
+            }
+            catch
+            {
+                // See TryLogDisposeStageFailure's own reasoning -- a logger provider must not
+                // defeat cleanup below or the rethrow.
+            }
+
             demodWriteStream?.Dispose();
             syncWriteStream?.Dispose();
             if (demodPath is not null)
             {
+                // Best-effort cleanup of an already-failed construction -- a second failure here
+                // would just be noise on top of the root cause already logged above (e.g. the
+                // same full-disk condition that caused the original failure). Left silent
+                // deliberately, not missed.
                 try
                 {
                     File.Delete(demodPath);
@@ -233,7 +255,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 
     public int Count => _count;
 
-    public bool HasWriteFailed => _hasWriteFailed;
+    public bool HasWriteFailed => Volatile.Read(ref _hasWriteFailedFlag) != 0;
 
     /// <summary>RX buffer subsystem Phase 8. No real capacity notion for a disk-backed buffer
     /// (Phase 7's own design -- unbounded during capture, bounded only by disk space) -- always
@@ -242,7 +264,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
     /// of `CorrectSlant`'s call sites, `Main.cpp:5268`/`:5416`). See
     /// <see cref="IRxLineStagingBuffer.HasHeadroomForSamples"/>'s own doc comment for the full
     /// contract.</summary>
-    public bool HasHeadroomForSamples(int additionalSamples) => !_hasWriteFailed;
+    public bool HasHeadroomForSamples(int additionalSamples) => !HasWriteFailed;
 
     /// <summary>Test-only visibility into the demodulated-stream scratch file's path -- lets a test
     /// assert the file is actually deleted after <see cref="Dispose"/>.</summary>
@@ -280,7 +302,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
                 nameof(syncEnvelope));
         }
 
-        if (_hasWriteFailed)
+        if (HasWriteFailed)
         {
             return false;
         }
@@ -294,7 +316,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         {
             // Writer can't keep up -- treated exactly like a write failure (round-1 fix): capture
             // stops, nothing throws.
-            _hasWriteFailed = true;
+            LatchWriteFailure("writer channel capacity exceeded (background writer can't keep up)");
             return false;
         }
 
@@ -309,7 +331,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             // handled defensively rather than assumed.
             _returnConsumerBuffer(demodRented);
             _returnConsumerBuffer(syncRented);
-            _hasWriteFailed = true;
+            LatchWriteFailure("demod channel rejected a write unexpectedly");
             return false;
         }
 
@@ -322,7 +344,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             // capacity pre-check above exists to prevent, so reaching here means that invariant
             // broke somewhere.
             _returnConsumerBuffer(syncRented);
-            _hasWriteFailed = true;
+            LatchWriteFailure("sync channel rejected a write unexpectedly (streams now out of lockstep)");
             return false;
         }
 
@@ -386,12 +408,12 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 
         if (!DrainToCurrentPoint())
         {
-            // Timeout: latch HasWriteFailed and skip the truncate -- truncating anyway risks a
-            // still-in-flight pre-Clear write landing at post-truncate offsets, the exact corruption
-            // this drain-before-truncate ordering exists to prevent. Capture is already stopping
+            // T0-6: DrainToCurrentPoint has already latched (and logged, if this is the first
+            // failure) internally -- skip the truncate. Truncating anyway risks a still-in-flight
+            // pre-Clear write landing at post-truncate offsets, the exact corruption this
+            // drain-before-truncate ordering exists to prevent. Capture is already stopping
             // (HasWriteFailed gates TryAppendLine), so bookkeeping is left as-is rather than reset
             // against a file that wasn't actually truncated.
-            _hasWriteFailed = true;
             return;
         }
 
@@ -402,9 +424,9 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             _syncWriteStream.SetLength(0);
             _syncWriteStream.Position = 0;
         }
-        catch
+        catch (Exception ex)
         {
-            _hasWriteFailed = true;
+            LatchWriteFailure("clearing RX staging streams", ex);
             return;
         }
 
@@ -498,6 +520,39 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "RX disk staging cleanup stage {Stage} failed")]
         public static partial void DisposeStageFailed(ILogger logger, DisposeStage stage, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "RX disk staging write failure ({Context}) -- RX buffering is now degraded for the remaining lifetime of this decoder instance")]
+        public static partial void WriteFailureLatched(ILogger logger, string context, Exception? exception);
+
+        // Code-review nit: a distinct message from WriteFailureLatched -- this path rethrows, so no
+        // instance is ever constructed and there is no "degraded instance" to describe. Reusing that
+        // message here would tell an operator to look for a running-but-degraded decoder that
+        // doesn't exist.
+        [LoggerMessage(Level = LogLevel.Error, Message = "RX disk staging scratch-file creation failed ({Context}) -- Extended RX buffering is unavailable")]
+        public static partial void ScratchFileCreationFailed(ILogger logger, string context, Exception exception);
+    }
+
+    /// <summary>T0-6: the single point every silent I/O-failure path in this class routes through.
+    /// Logs exactly once, on the real false-to-true transition (an <see cref="Interlocked.Exchange"/>
+    /// on <see cref="_hasWriteFailedFlag"/>, not a check-then-set race -- both the background
+    /// consumer thread and the decode thread can reach a failure path here). Never throws --
+    /// <see cref="ConsumeAsync"/>'s outer catch/finally and <see cref="Clear"/> both have
+    /// documented never-throw contracts a throwing logger provider would violate.</summary>
+    private void LatchWriteFailure(string context, Exception? exception = null)
+    {
+        if (Interlocked.Exchange(ref _hasWriteFailedFlag, 1) == 0)
+        {
+            try
+            {
+                Log.WriteFailureLatched(_logger, context, exception);
+            }
+            catch
+            {
+                // Matches TryLogDisposeStageFailure's own reasoning: a logger provider is external
+                // observability infrastructure and must not defeat this class's own never-throw
+                // contracts.
+            }
+        }
     }
 
     private async Task ConsumeAsync(ChannelReader<(double[] Buffer, int Length)> reader, FileStream stream, bool isDemod)
@@ -516,18 +571,18 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
                 try
                 {
                     _beforeConsumerWriteForTests?.Invoke(isDemod);
-                    if (!_hasWriteFailed)
+                    if (!HasWriteFailed)
                     {
                         stream.Write(MemoryMarshal.AsBytes(item.Buffer.AsSpan(0, item.Length)));
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
                     // Write failed -- latch HasWriteFailed (checked by the next TryAppendLine call)
-                    // and stop attempting further writes on this stream (the `if (!_hasWriteFailed)`
+                    // and stop attempting further writes on this stream (the `if (!HasWriteFailed)`
                     // guard above), matching legacy's own unchecked mmioWrite (no retry). Lines
                     // already enqueued before this point but not yet written are lost, not retried.
-                    _hasWriteFailed = true;
+                    LatchWriteFailure("background write to RX staging stream", ex);
                 }
                 finally
                 {
@@ -548,9 +603,9 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            _hasWriteFailed = true;
+            LatchWriteFailure("RX staging write consumer task faulted", ex);
         }
         finally
         {
@@ -563,9 +618,9 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
                 {
                     _returnConsumerBuffer(pending.Buffer);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    _hasWriteFailed = true;
+                    LatchWriteFailure("returning a rented buffer during shutdown drain", ex);
                 }
             }
         }
@@ -582,6 +637,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             var remaining = DrainTimeout - stopwatch.Elapsed;
             if (remaining <= TimeSpan.Zero || !_demodFlushSignal.Wait(remaining))
             {
+                LatchWriteFailure("timed out draining RX staging writes");
                 return false;
             }
         }
@@ -591,6 +647,7 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             var remaining = DrainTimeout - stopwatch.Elapsed;
             if (remaining <= TimeSpan.Zero || !_syncFlushSignal.Wait(remaining))
             {
+                LatchWriteFailure("timed out draining RX staging writes");
                 return false;
             }
         }
@@ -609,8 +666,9 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             _demodWriteStream.Flush();
             _syncWriteStream.Flush();
         }
-        catch
+        catch (Exception ex)
         {
+            LatchWriteFailure("flushing RX staging streams", ex);
             return false;
         }
 
@@ -624,12 +682,10 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             return;
         }
 
-        if (!DrainToCurrentPoint())
-        {
-            // Stuck writer -- best-effort read of whatever's actually on disk rather than hang or
-            // throw; HasWriteFailed is already latching capture to a stop regardless.
-            _hasWriteFailed = true;
-        }
+        // T0-6: no direct _hasWriteFailedFlag assignment needed here -- DrainToCurrentPoint has
+        // already latched (and logged, if first) internally on a stuck-writer timeout. Falls
+        // through to a best-effort read of whatever's actually on disk rather than hang or throw.
+        DrainToCurrentPoint();
 
         var count = _count;
 
@@ -653,20 +709,25 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
         // an index past the actually-available data gets deterministic zeros, not garbage/NaN/Inf
         // fed into replay's slant math.
         var failed = false;
-        ReadSnapshot(_demodPath, demodSnapshot, count, ref failed);
-        ReadSnapshot(_syncPath, syncSnapshot, count, ref failed);
+        // T0-6: two separate exception locals, not one shared ref -- ReadSnapshot is called twice
+        // back-to-back (demod, then sync); a shared out would let the sync call's null silently
+        // overwrite a real demod-read exception.
+        ReadSnapshot(_demodPath, demodSnapshot, count, ref failed, out var demodException);
+        ReadSnapshot(_syncPath, syncSnapshot, count, ref failed, out var syncException);
 
         if (failed)
         {
-            _hasWriteFailed = true;
+            LatchWriteFailure("reading RX staging snapshot from disk", demodException ?? syncException);
         }
 
         _demodSnapshot = demodSnapshot;
         _syncSnapshot = syncSnapshot;
     }
 
-    private static void ReadSnapshot(string path, double[] destination, int count, ref bool failed)
+    private static void ReadSnapshot(string path, double[] destination, int count, ref bool failed, out Exception? exception)
     {
+        exception = null;
+
         if (count == 0)
         {
             return;
@@ -677,13 +738,14 @@ internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
             using var readStream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             readStream.ReadExactly(MemoryMarshal.AsBytes(destination.AsSpan(0, count)));
         }
-        catch
+        catch (Exception ex)
         {
             // Deterministic zeros, not whatever stale data a previous rental of this pooled array
             // happened to leave behind -- see this method's own caller for why that distinction
             // matters (a code-review-caught blocker: silently serving garbage into replay's math).
             Array.Clear(destination, 0, count);
             failed = true;
+            exception = ex;
         }
     }
 
