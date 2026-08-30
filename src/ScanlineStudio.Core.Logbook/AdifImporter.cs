@@ -295,14 +295,41 @@ public sealed class AdifImporter : IAdifImporter
         return string.IsNullOrEmpty(comment) ? unmappedText : $"{comment}\n{unmappedText}";
     }
 
+    private static readonly string[] AdifTimeFormats = ["HHmmss", "HHmm"];
+
+    /// <summary>Test-suite fixes phase 1, item 6: the previous unguarded <c>AsSpan</c> slicing threw
+    /// <see cref="ArgumentOutOfRangeException"/> for a short/malformed date or time field --
+    /// inconsistent with every other malformed-ADIF-input path in this class, which throws
+    /// <see cref="FormatException"/> (e.g. a negative field length, a missing required field). Both
+    /// <see cref="DateTime.TryParseExact(string,string,IFormatProvider,DateTimeStyles,out DateTime)"/>
+    /// calls use <see cref="DateTimeStyles.None"/> deliberately -- the result's components are read
+    /// individually below and re-combined via the explicit <see cref="TimeSpan.Zero"/> constructor,
+    /// exactly reproducing this method's own prior zero-offset construction with no dependency on
+    /// the calling machine's local time zone (a plain <c>DateTimeOffset.TryParseExact</c> would
+    /// instead stamp the LOCAL offset, silently shifting every imported QSO instant by up to 14
+    /// hours on a non-UTC machine -- ADIF timestamps are UTC by spec).
+    ///
+    /// <c>AdifTimeFormats</c>'s 2-entry exact-format list is a deliberate narrowing from the
+    /// previous "any string >= 4 chars" acceptance (4 chars -> parsed as HHmm with 0 seconds, >= 6
+    /// chars -> silently truncated to HHmmss, ignoring anything after) to ADIF's own defined 4- and
+    /// 6-digit time formats specifically -- a 5-char or 7+-char time field now throws rather than
+    /// silently truncating. <c>HHmm</c> support is mandatory, not optional: real ADIF files
+    /// routinely omit seconds.</summary>
     private static DateTimeOffset ParseDateTime(string date, string time)
     {
-        var year = int.Parse(date.AsSpan(0, 4), CultureInfo.InvariantCulture);
-        var month = int.Parse(date.AsSpan(4, 2), CultureInfo.InvariantCulture);
-        var day = int.Parse(date.AsSpan(6, 2), CultureInfo.InvariantCulture);
-        var hour = int.Parse(time.AsSpan(0, 2), CultureInfo.InvariantCulture);
-        var minute = int.Parse(time.AsSpan(2, 2), CultureInfo.InvariantCulture);
-        var second = time.Length >= 6 ? int.Parse(time.AsSpan(4, 2), CultureInfo.InvariantCulture) : 0;
-        return new DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero);
+        if (!DateTime.TryParseExact(date, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+        {
+            throw new FormatException($"Invalid ADIF date '{date}'; expected an 8-digit yyyyMMdd value.");
+        }
+
+        if (!DateTime.TryParseExact(time, AdifTimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
+        {
+            throw new FormatException($"Invalid ADIF time '{time}'; expected a 4-digit HHmm or 6-digit HHmmss value.");
+        }
+
+        return new DateTimeOffset(
+            parsedDate.Year, parsedDate.Month, parsedDate.Day,
+            parsedTime.Hour, parsedTime.Minute, parsedTime.Second,
+            TimeSpan.Zero);
     }
 }

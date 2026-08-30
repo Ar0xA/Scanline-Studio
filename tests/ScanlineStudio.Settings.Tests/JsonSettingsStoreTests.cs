@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Settings;
 
@@ -92,6 +93,69 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_TruncatedJson_ReturnsDefaultsAndLogs()
+    {
+        // Test-suite fixes phase 1, item 3: JsonSettingsStore.LoadAsync's own corrupt-file hardening
+        // (fixing a documented prior "single bad byte bricked startup" bug) has had zero tests of
+        // its own -- a future edit narrowing that catch back down would have shipped silently green.
+        Directory.CreateDirectory(Path.GetDirectoryName(_settingsFilePath)!);
+        await File.WriteAllTextAsync(_settingsFilePath, "{ not valid json");
+        var logger = new RecordingLogger<JsonSettingsStore>();
+        var store = new JsonSettingsStore(logger, _settingsFilePath);
+
+        var loaded = await store.LoadAsync();
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Empty(loaded.Sections);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task LoadAsync_WrongTypedRoot_ReturnsDefaultsAndLogs()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_settingsFilePath)!);
+        await File.WriteAllTextAsync(_settingsFilePath, "42");
+        var logger = new RecordingLogger<JsonSettingsStore>();
+        var store = new JsonSettingsStore(logger, _settingsFilePath);
+
+        var loaded = await store.LoadAsync();
+
+        Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+        Assert.Empty(loaded.Sections);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error);
+    }
+
+    [Fact]
+    public async Task LoadAsync_UnreadableFile_ReturnsDefaultsRatherThanThrowing()
+    {
+        // Unix-only, same reasoning as AppLocationOverridesTests' identical test: UnauthorizedAccessException
+        // does not derive from IOException, so a catch scoped too narrowly would let this slip past.
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(_settingsFilePath)!);
+        await File.WriteAllTextAsync(_settingsFilePath, "{}");
+        File.SetUnixFileMode(_settingsFilePath, UnixFileMode.None);
+        var logger = new RecordingLogger<JsonSettingsStore>();
+        var store = new JsonSettingsStore(logger, _settingsFilePath);
+
+        try
+        {
+            var loaded = await store.LoadAsync();
+
+            Assert.Equal(AppSettings.CurrentSchemaVersion, loaded.SchemaVersion);
+            Assert.Empty(loaded.Sections);
+            Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error);
+        }
+        finally
+        {
+            File.SetUnixFileMode(_settingsFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+    }
+
+    [Fact]
     public async Task RelocateAsync_MovesTheFileToTheNewDirectory_SubsequentLoadReadsFromThere()
     {
         var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
@@ -99,7 +163,12 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         await store.SaveAsync(saved);
 
         var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
-        var newDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "relocated");
+        // Nested under the per-test directory (not its PARENT, which resolves to the shared system
+        // temp root -- test-suite fixes phase 1, item 10) so this test can never collide with, or be
+        // poisoned by, another run's leftover state at a fixed path. Dispose() below already deletes
+        // the whole per-test directory recursively, so no separate cleanup is needed here even on
+        // assertion failure.
+        var newDirectory = Path.Combine(originalDirectory, "relocated");
         var (moved, previousDirectory) = await store.RelocateAsync(newDirectory);
 
         Assert.True(moved);
@@ -109,8 +178,6 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
 
         var loaded = await store.LoadAsync();
         Assert.Equal(saved.SchemaVersion, loaded.SchemaVersion);
-
-        Directory.Delete(newDirectory, recursive: true);
     }
 
     [Fact]
@@ -118,7 +185,9 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     {
         var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, _settingsFilePath);
         var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
-        var newDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "fresh-install-target");
+        // Nested under the per-test directory, not its parent -- see the sibling relocate test's
+        // own comment (test-suite fixes phase 1, item 10).
+        var newDirectory = Path.Combine(originalDirectory, "fresh-install-target");
 
         var (moved, previousDirectory) = await store.RelocateAsync(newDirectory);
 
@@ -130,8 +199,6 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         // NEW directory, not the original one.
         await store.SaveAsync(new AppSettings());
         Assert.True(File.Exists(Path.Combine(newDirectory, "settings.json")));
-
-        Directory.Delete(newDirectory, recursive: true);
     }
 
     [Fact]
@@ -153,7 +220,9 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         await store.SaveAsync(new AppSettings { SchemaVersion = AppSettings.CurrentSchemaVersion + 1 });
 
         var originalDirectory = Path.GetDirectoryName(_settingsFilePath)!;
-        var conflictDirectory = Path.Combine(Directory.GetParent(originalDirectory)!.FullName, "conflict");
+        // Nested under the per-test directory, not its parent -- see the first relocate test's own
+        // comment (test-suite fixes phase 1, item 10).
+        var conflictDirectory = Path.Combine(originalDirectory, "conflict");
         Directory.CreateDirectory(conflictDirectory);
         await File.WriteAllTextAsync(Path.Combine(conflictDirectory, "settings.json"), "{}");
 
@@ -167,8 +236,21 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         // original, unmoved file, not the (unrelated) conflicting one at the destination.
         var loaded = await store.LoadAsync();
         Assert.Equal(AppSettings.CurrentSchemaVersion + 1, loaded.SchemaVersion);
+    }
 
-        Directory.Delete(conflictDirectory, recursive: true);
+    /// <summary>Same shape as this codebase's own established RecordingLogger&lt;T&gt; idiom
+    /// (e.g. Core.Sstv.Tests, Application.Tests, ConfigurationPresetStoreTests) -- reused rather
+    /// than reinvented.</summary>
+    private sealed class RecordingLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> Entries { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
+            Entries.Add((logLevel, formatter(state, exception)));
     }
 
     private sealed record SampleSection(string Name, int Value)

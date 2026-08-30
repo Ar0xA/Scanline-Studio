@@ -251,6 +251,71 @@ public sealed class AdifImporterTests
     }
 
     [Fact]
+    public void Import_NonAsciiFieldValue_SlicesByUtf8ByteCountNotCharCount()
+    {
+        // Test-suite fixes phase 1, item 6: this class's own byte-exact-slicing invariant
+        // (AdifImporter's own doc comment) previously had no test exercising a non-ASCII field
+        // value. "Jörg" is 4 chars but 5 UTF-8 bytes ('ö' is 2 bytes) -- <NAME:5> is therefore
+        // correct ADIF, not a malformed length. Characterization test: this already passes today.
+        // The CALLSIGN assertion is what actually detects a char-count-instead-of-byte-count bug --
+        // a wrong slice here would misalign every field parsed after NAME, corrupting CALL too.
+        const string adif = "<EOH><NAME:5>Jörg<CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:4>1200<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal("Jörg", record.Name);
+        Assert.Equal("N0CALL", record.Callsign);
+    }
+
+    [Theory]
+    [InlineData("2026", "143000")] // short date (4 chars, needs 8)
+    [InlineData("20260807", "1")] // short time (1 char, needs 4 or 6)
+    [InlineData("20269999", "143000")] // out-of-range month (99) -- previously threw ArgumentOutOfRangeException, not FormatException
+    [InlineData("abcdefgh", "143000")] // non-digit date
+    public void Import_MalformedDateOrTime_ThrowsFormatException(string date, string time)
+    {
+        // Test-suite fixes phase 1, item 6: ParseDateTime's previous unguarded AsSpan slicing threw
+        // ArgumentOutOfRangeException for the first 3 cases here (a length-only guard would not have
+        // caught the out-of-range-month case) -- every OTHER malformed-ADIF-input path in this class
+        // throws FormatException (see Import_MissingRequiredCallField_ThrowsFormatException above),
+        // so this was a real inconsistency, not a hypothetical one.
+        var adif = $"<EOH><CALL:6>N0CALL<QSO_DATE:{date.Length}>{date}<TIME_ON:{time.Length}>{time}<EOR>";
+
+        var importer = new AdifImporter();
+
+        Assert.Throws<FormatException>(() => importer.Import(new StringReader(adif)));
+    }
+
+    [Theory]
+    [InlineData("1200")] // 4-digit HHmm -- mandatory, real ADIF files routinely omit seconds
+    [InlineData("120045")] // 6-digit HHmmss
+    public void Import_MandatoryTimeFormats_StillParseCorrectly(string time)
+    {
+        var adif = $"<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:{time.Length}>{time}<EOR>";
+
+        var importer = new AdifImporter();
+        var record = Assert.Single(importer.Import(new StringReader(adif)));
+
+        Assert.Equal(12, record.StartUtc.Hour);
+        Assert.Equal(0, record.StartUtc.Minute);
+    }
+
+    [Fact]
+    public void Import_FiveCharTime_NarrowedFromSilentTruncation_ThrowsFormatException()
+    {
+        // Test-suite fixes phase 1, item 6: previously silently accepted (any string >= 4 chars) and
+        // treated as HHmm, ignoring the trailing digit -- a deliberate acceptance narrowing to
+        // ADIF's own defined 4- and 6-digit time formats specifically. Documented here as a
+        // conscious behavior change, not an incidental one.
+        const string adif = "<EOH><CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:5>14300<EOR>";
+
+        var importer = new AdifImporter();
+
+        Assert.Throws<FormatException>(() => importer.Import(new StringReader(adif)));
+    }
+
+    [Fact]
     public void Import_NoHeaderAtAll_StillParsesRecords()
     {
         const string adif = "<CALL:6>N0CALL<QSO_DATE:8>20260807<TIME_ON:4>1200<EOR>";

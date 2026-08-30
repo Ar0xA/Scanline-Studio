@@ -13,25 +13,19 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// exercises via a real <c>rigctld</c>). This is what retires <see cref="HamlibRadioProtocolTests"/>'
 /// fake-native-shim caveat -- real interop against real Hamlib code, not a hand-written fake.
 ///
-/// Best-effort: skipped (not failed) when no real <c>libhamlib</c> is discoverable on this machine --
-/// same pattern as <c>RigctldDummyRigIntegrationTests</c> (xUnit 2.x has no built-in runtime skip
-/// without an extra package; these show as "passed," not "skipped," when unavailable).
+/// Best-effort: skipped (via <see cref="RequiresHamlibFactAttribute"/>) when no real
+/// <c>libhamlib</c> is discoverable on this machine -- same pattern as
+/// <c>RigctldDummyRigIntegrationTests</c>.
 /// </summary>
 public class HamlibDummyRigIntegrationTests
 {
     private const uint DummyModel = 1; // RIG_MODEL_DUMMY
 
-    private static readonly Lazy<IHamlibRuntime> Runtime = new(
-        () => new HamlibRuntime(new NativeLibraryLoader(), overridePath: null));
+    private static readonly Lazy<IHamlibRuntime> Runtime = HamlibAvailabilityProbe.Runtime;
 
-    [Fact]
+    [RequiresHamlibFact]
     public async Task PollAsync_ReadsTheDummyRigsRealDefaultState()
     {
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
-
         var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel);
 
         var state = await sut.PollAsync(CancellationToken.None);
@@ -44,14 +38,9 @@ public class HamlibDummyRigIntegrationTests
         await sut.DisposeAsync();
     }
 
-    [Fact]
+    [RequiresHamlibFact]
     public async Task SetFrequencyAsync_ThenPollAsync_ReflectsTheRealChange()
     {
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
-
         var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel);
 
         await sut.SetFrequencyAsync(7_074_000, CancellationToken.None);
@@ -62,14 +51,9 @@ public class HamlibDummyRigIntegrationTests
         await sut.DisposeAsync();
     }
 
-    [Fact]
+    [RequiresHamlibFact]
     public async Task SetModeAsync_ThenPollAsync_ReflectsTheRealChange()
     {
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
-
         var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel);
 
         await sut.SetModeAsync(RadioMode.Usb, CancellationToken.None);
@@ -80,7 +64,7 @@ public class HamlibDummyRigIntegrationTests
         await sut.DisposeAsync();
     }
 
-    [Fact]
+    [RequiresHamlibFact]
     public async Task SerialPortConfigured_RealRigTokenLookupAndSetConf_UtfMarshalingRoundTripsAgainstRealHamlib()
     {
         // Closes a real coverage gap flagged by Tier A Batch 9 chunk 9d (docs/functional-audit-playbook.md):
@@ -90,11 +74,6 @@ public class HamlibDummyRigIntegrationTests
         // (ToUtf8NullTerminated) -- were never exercised against real Hamlib anywhere in this suite.
         // The Dummy backend accepts rig_pathname via rig_set_conf without actually opening a serial
         // port (confirmed: PollAsync below succeeds), so a bogus-but-plausible path is safe here.
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
-
         var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel, serialPort: "/dev/ttyDUMMY0");
 
         var state = await sut.PollAsync(CancellationToken.None);
@@ -105,14 +84,9 @@ public class HamlibDummyRigIntegrationTests
         await sut.DisposeAsync();
     }
 
-    [Fact]
+    [RequiresHamlibFact]
     public async Task Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly()
     {
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
-
         var sut = new HamlibRadioProtocol(Runtime.Value.Native, DummyModel);
 
         var state = await sut.PollAsync(CancellationToken.None);

@@ -15,17 +15,13 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// "unverified-grammar" caveat <see cref="RigctldClientProtocolTests"/>' hand-derived fixtures carry --
 /// real interop against real Hamlib code, not fixtures re-derived from reading source a second time.
 ///
-/// Best-effort: skipped (not failed) when `rigctld` isn't on PATH, matching spec/04-rigctld.md's own
-/// "optionally cross-checked... if Hamlib is available" precedent. xUnit 2.x has no built-in runtime
-/// skip without an extra package (`Assert.Skip` is an xUnit v3 feature) -- deliberately returning early
-/// rather than adding a dependency for one test file; these show as "passed," not "skipped," when
-/// `rigctld` is unavailable, which is a cosmetic gap, not a functional one (they never fail either way).
+/// Best-effort: skipped (via <see cref="RequiresRigctldFactAttribute"/>) when `rigctld` isn't on
+/// PATH, matching spec/04-rigctld.md's own "optionally cross-checked... if Hamlib is available"
+/// precedent.
 /// </summary>
 public class RigctldDummyRigIntegrationTests
 {
-    private static readonly Lazy<bool> RigctldIsAvailable = new(CheckRigctldAvailable);
-
-    [Fact]
+    [RequiresRigctldFact]
     public async Task PollAsync_ReadsTheDummyRigsRealDefaultState()
     {
         await RunAgainstDummyRigAsync(async sut =>
@@ -38,7 +34,7 @@ public class RigctldDummyRigIntegrationTests
         });
     }
 
-    [Fact]
+    [RequiresRigctldFact]
     public async Task SetFrequencyAsync_ThenPollAsync_ReflectsTheRealChange()
     {
         await RunAgainstDummyRigAsync(async sut =>
@@ -50,7 +46,7 @@ public class RigctldDummyRigIntegrationTests
         });
     }
 
-    [Fact]
+    [RequiresRigctldFact]
     public async Task SetModeAsync_ThenPollAsync_ReflectsTheRealChange()
     {
         await RunAgainstDummyRigAsync(async sut =>
@@ -62,7 +58,7 @@ public class RigctldDummyRigIntegrationTests
         });
     }
 
-    [Fact]
+    [RequiresRigctldFact]
     public async Task Capabilities_PttUnsupportedOnTheDummyRig_IsProbedCorrectly()
     {
         await RunAgainstDummyRigAsync(async sut =>
@@ -95,11 +91,8 @@ public class RigctldDummyRigIntegrationTests
     private static async Task RunAgainstDummyRigAsync(
         Func<RigctldClientProtocol, Task> body, int maxAttempts = 3)
     {
-        if (!RigctldIsAvailable.Value)
-        {
-            return;
-        }
-
+        // No availability check here -- every caller is [RequiresRigctldFact]-gated, so this is
+        // only ever reached when RigctldAvailabilityProbe.IsAvailable is already known true.
         for (var attempt = 1; ; attempt++)
         {
             await using var dummy = await DummyRigctldProcess.StartAsync();
@@ -118,25 +111,6 @@ public class RigctldDummyRigIntegrationTests
             {
                 await sut.DisposeAsync().ConfigureAwait(false);
             }
-        }
-    }
-
-    private static bool CheckRigctldAvailable()
-    {
-        try
-        {
-            using var process = Process.Start(new ProcessStartInfo("rigctld", "--version")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            });
-            process?.WaitForExit(2000);
-            return process is { ExitCode: 0 };
-        }
-        catch
-        {
-            return false;
         }
     }
 
