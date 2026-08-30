@@ -304,14 +304,21 @@ internal static partial class Program
     /// still reaches the console provider (unaffected by disposing just this one provider
     /// instance) but no longer the file, an accepted narrow gap for this last shutdown step
     /// alone.</summary>
-    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider)
+    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null)
     {
+        // disposeTimeout is a testability seam only (test-suite fixes phase 1, item 5) -- the real
+        // call site never passes it, so this is a no-op default-preserving parameter, not a behavior
+        // change. It exists because HandleLifetimeExitTests previously had no way to bound how long
+        // a test waits on this method's own 10s timeout, and no way to reproduce the UI-thread-
+        // capture condition that makes an unclean shutdown genuinely dangerous (the disposeTask's
+        // continuation posting back to a blocked SynchronizationContext) -- see that test file's own
+        // new test for the real reproduction.
         Log.ShuttingDown(logger);
         var disposedCleanly = true;
         try
         {
             var disposeTask = host.DisposeAsync().AsTask();
-            var completed = Task.WhenAny(disposeTask, Task.Delay(TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
+            var completed = Task.WhenAny(disposeTask, Task.Delay(disposeTimeout ?? TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
             if (completed == disposeTask)
             {
                 disposeTask.GetAwaiter().GetResult();

@@ -114,18 +114,34 @@ public sealed class PaneViewModelTests
         // handler, which would raise PropertyChanged (and hence update Avalonia bindings) off the UI
         // thread. Same Dispatcher.UIThread.Post-then-RunJobs pattern as OnFrame's own test above
         // proves the marshaling actually happens.
+        //
+        // Test-suite fixes phase 1, item 8 (round-2 correction): raising the event directly from
+        // this test method previously ran it ON [AvaloniaFact]'s own headless UI thread -- so
+        // Dispatcher.UIThread.Post and a direct assignment would have passed identically, proving
+        // nothing about marshaling. Task.Run(...).GetAwaiter().GetResult() genuinely raises it from
+        // a non-UI thread instead, and the captured CheckAccess() below makes the marshaling claim
+        // an explicit assertion rather than an inference from the property just happening to update.
         var sstvSession = new FakeSstvSessionService();
         var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
         Assert.Null(vm.CurrentMode);
+        var handlerRanOnUiThread = (bool?)null;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.CurrentMode))
+            {
+                handlerRanOnUiThread = Dispatcher.UIThread.CheckAccess();
+            }
+        };
 
         var mode = new SstvModeDefinition(
             Id: "sc1", DisplayName: "Scottie 1", VisCode: 60, ImageWidth: 320, ImageHeight: 256,
             ColorEncoding: ColorEncoding.RgbSequential,
             LineSegments: [new ScanSegment("R", 138.24)]);
-        sstvSession.RaiseModeDetected(mode);
+        Task.Run(() => sstvSession.RaiseModeDetected(mode)).GetAwaiter().GetResult();
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(mode, vm.CurrentMode);
+        Assert.True(handlerRanOnUiThread, "CurrentMode's PropertyChanged handler must run on the UI thread.");
     }
 
     [AvaloniaFact]
@@ -1688,18 +1704,34 @@ public sealed class PaneViewModelTests
         // redundant here. Fires synchronously on (what production treats as) the audio drain thread,
         // so the handler must marshal via Dispatcher.UIThread.Post -- this proves that marshaling
         // actually reaches the bound property, not just that the underlying field changed.
+        //
+        // Test-suite fixes phase 1, item 8 (round-2 correction): raising the event directly from
+        // this test method previously ran it ON [AvaloniaFact]'s own headless UI thread -- so
+        // Dispatcher.UIThread.Post and a direct assignment would have passed identically, proving
+        // nothing about marshaling. Task.Run(...).GetAwaiter().GetResult() genuinely raises it from
+        // a non-UI thread instead, and the captured CheckAccess() below makes the marshaling claim
+        // an explicit assertion rather than an inference from the property just happening to update.
         var sstvSession = new FakeSstvSessionService { RxBpfPreset = RxBpfPreset.Wide };
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         Assert.Equal(RxBpfPreset.Wide, vm.RxBpfPreset);
+        var handlerRanOnUiThread = (bool?)null;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.RxBpfPreset))
+            {
+                handlerRanOnUiThread = Dispatcher.UIThread.CheckAccess();
+            }
+        };
 
         // Simulates a queued RequestReconfiguration finally applying on the decoder's next idle swap.
         sstvSession.RxBpfPreset = RxBpfPreset.Narrow;
-        sstvSession.RaiseDecoderInstanceReplaced();
+        Task.Run(() => sstvSession.RaiseDecoderInstanceReplaced()).GetAwaiter().GetResult();
 
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(RxBpfPreset.Narrow, vm.RxBpfPreset);
         Assert.Equal("Options.Decode.RxBpf.Sharp", vm.RxBpfDisplay);
+        Assert.True(handlerRanOnUiThread, "RxBpfPreset's PropertyChanged handler must run on the UI thread.");
     }
 
     [AvaloniaTheory]

@@ -43,10 +43,21 @@ public class NoiseRobustnessTests
     // assumed correct.
     private const double UsableDecodeThreshold = 30.0;
 
+    // Test-suite fixes phase 1, item 7: these two bounds pin the noise floor measured (and printed
+    // via ITestOutputHelper below) on 2026-08-30, so a DSP regression that measurably worsens noise
+    // tolerance fails loudly instead of only ever being visible in test output nobody reads. Each
+    // bound is the measured floor PLUS one step of `snrLevelsDb` slack (not the bare measured value)
+    // -- the sweep is discrete and seeded, so flake risk from exact-value pinning is low, but the CI
+    // matrix includes Windows/macOS legs where float rounding could shift a borderline mode by one
+    // step. Re-measure and update deliberately (re-run this file, read the new floor from test
+    // output) if a real DSP change legitimately moves these -- never loosen without re-measuring.
+    private const double MartinM1MaxAcceptableNoiseFloorDb = 3.0; // measured 0.0dB, next sweep step is 3.0dB
+    private const double Robot36MaxAcceptableNoiseFloorDb = 6.0; // measured 3.0dB, next sweep step is 6.0dB
+
     [Fact]
     public async Task MartinM1_NoiseFloor_Baseline()
     {
-        await MeasureAndReportNoiseFloor(SstvModeRegistry.MartinM1);
+        await MeasureAndReportNoiseFloor(SstvModeRegistry.MartinM1, MartinM1MaxAcceptableNoiseFloorDb);
     }
 
     [Fact]
@@ -56,10 +67,10 @@ public class NoiseRobustnessTests
         // perturbations (RobotScanlineDecoder's tone-selector read sits directly against an ambiguity
         // boundary, spec/14-roadmap.md's piece 8 entry) -- a useful second data point alongside
         // Martin M1's more "typical" behavior, not assumed to generalize from one mode alone.
-        await MeasureAndReportNoiseFloor(SstvModeRegistry.Robot36);
+        await MeasureAndReportNoiseFloor(SstvModeRegistry.Robot36, Robot36MaxAcceptableNoiseFloorDb);
     }
 
-    private async Task MeasureAndReportNoiseFloor(SstvModeDefinition mode)
+    private async Task MeasureAndReportNoiseFloor(SstvModeDefinition mode, double maxAcceptableNoiseFloorDb)
     {
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
         var encoder = new AnalogFmSstvEncoder(44100);
@@ -104,6 +115,12 @@ public class NoiseRobustnessTests
 
         _output.WriteLine($"[{mode.Id}] noise floor (lowest SNR still meeting the usable-decode bar): " +
             (noiseFloorDb is null ? "NEVER (failed at every tested SNR down to 0dB)" : $"{noiseFloorDb:F1}dB"));
+
+        // Regression guard: a lifted `null <= x` is `false`, so this correctly fails if the mode
+        // stopped decoding usably at every tested SNR, not just if it merely got worse.
+        Assert.True(noiseFloorDb <= maxAcceptableNoiseFloorDb,
+            $"[{mode.Id}] noise floor regressed: {(noiseFloorDb is null ? "NEVER" : $"{noiseFloorDb:F1}dB")} " +
+            $"(must be <= {maxAcceptableNoiseFloorDb:F1}dB).");
 
         // Sanity/regression guard only -- the clean encoded signal (no noise added at all) must still
         // decode correctly. This is what would catch the harness itself being broken (e.g. a noise-

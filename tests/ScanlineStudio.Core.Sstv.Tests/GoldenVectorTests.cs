@@ -117,9 +117,16 @@ public class GoldenVectorTests
         { "r24", "r24.bmp", "r24_TX_RX.bmp", 120, true },
     };
 
-    [Theory]
+    // Test-suite fixes phase 1, item 11: renamed from LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage.
+    // That name claimed to validate the CURRENT TX encoder against a real legacy decode -- it does
+    // not. It reads two static BMPs and diffs them; it invokes zero production code. See
+    // StaleFixtureTheoryAttribute's own doc comment for the provenance-sentinel mechanism that now
+    // keeps this from being a permanently-green, permanently-lying test in the meantime: every mode
+    // is skipped (not silently passed) until a human re-capture replaces its *_TX.provenance
+    // sentinel with the real *_TX.mmv hash.
+    [StaleFixtureTheory]
     [MemberData(nameof(TxFixtures))]
-    public void LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage(
+    public void TxCaptureFixtureBmps_AreInternallyConsistent(
         string modeId, string sourceBmp, string txRxBmp, int pictureHeight, bool rowDoubled)
     {
         var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));

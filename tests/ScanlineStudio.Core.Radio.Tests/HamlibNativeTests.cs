@@ -8,19 +8,13 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// constructor, before any other Hamlib call.</summary>
 public class HamlibNativeTests
 {
-    private static readonly Lazy<IHamlibRuntime> Runtime = new(
-        () => new HamlibRuntime(new NativeLibraryLoader(), overridePath: null));
+    private static readonly Lazy<IHamlibRuntime> Runtime = HamlibAvailabilityProbe.Runtime;
 
-    [Fact]
+    [RequiresHamlibFact]
     public void Constructor_RealLibrary_ResolvesAndCallsRigSetDebugWithoutThrowing()
     {
-        // Best-effort, same "skip (not fail) when no real libhamlib is discoverable" convention as
-        // HamlibDummyRigIntegrationTests -- this sandbox's real libhamlib.so.4 DOES export
-        // rig_set_debug (confirmed via `nm -D`), so this exercises the real, non-tolerant path.
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
+        // This sandbox's real libhamlib.so.4 DOES export rig_set_debug (confirmed via `nm -D`), so
+        // this exercises the real, non-tolerant path.
 
         // Runtime.Value.Native is already a constructed HamlibNative -- if rig_set_debug resolution
         // or the constructor's own call to it threw, HamlibRuntime.IsAvailable would be false
@@ -29,7 +23,7 @@ public class HamlibNativeTests
         Assert.True(Runtime.Value.IsAvailable);
     }
 
-    [Fact]
+    [RequiresHamlibFact]
     public void Constructor_LibraryMissingRigSetDebugExport_StillConstructsAndRigSetDebugIsANoOp()
     {
         // User-reported gap's own explicit requirement: a Hamlib build lacking rig_set_debug must
@@ -39,10 +33,6 @@ public class HamlibNativeTests
         // this test used bogus nint(1) pointers for the 17 other mandatory exports and reliably
         // crashed the test host, since Marshal.GetDelegateForFunctionPointer's thunk generation
         // touches the target address even when the delegate itself is never invoked.
-        if (!Runtime.Value.IsAvailable)
-        {
-            return;
-        }
 
         // Re-locates the same real library Runtime already proved available, so this test has its
         // own handle to construct a SECOND HamlibNative against (deliberately not reusing

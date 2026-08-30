@@ -44,6 +44,72 @@ public sealed class HandleLifetimeExitTests
         Assert.True(restarter.StartNewInstanceCalled);
     }
 
+    [Fact]
+    public void WhenDisposeAsyncCapturesTheCallingSynchronizationContext_TimesOutInsteadOfHangingForever()
+    {
+        // Test-suite fixes phase 1, item 5: reproduces the T0-5 shutdown-deadlock condition on a
+        // bounded timeout instead of hanging the test process forever. HandleLifetimeExit's own
+        // blocking `.GetAwaiter().GetResult()` runs on the calling thread; FakeAsyncDisposableHost's
+        // DisposeAsync awaits its gate WITHOUT ConfigureAwait(false), so if this thread has an
+        // installed SynchronizationContext that nothing ever pumps (the exact shape Avalonia's own
+        // UI-thread context has), DisposeAsync's continuation is posted to that context and NEVER
+        // runs -- disposeTask stays pending forever, and only the injected short disposeTimeout
+        // (not the real 10s default) keeps this test itself from hanging. This is a
+        // CHARACTERIZATION test: it documents today's real stall-then-recover behavior, not a fix
+        // -- it becomes the actual regression gate once T0-5's separate Task.Run fix lands.
+        var previousContext = SynchronizationContext.Current;
+        var capturingContext = new NonPumpingSynchronizationContext();
+        SynchronizationContext.SetSynchronizationContext(capturingContext);
+        try
+        {
+            var disposeGate = new TaskCompletionSource();
+            var host = new FakeAsyncDisposableHost { DisposeGate = disposeGate.Task };
+            var restarter = new FakeApplicationRestarter { RestartRequested = false };
+
+            // Completes the gate from a background thread, after this thread has already reached
+            // HandleLifetimeExit's blocking wait below -- proves the deadlock is in the
+            // CONTINUATION never running (queued on capturingContext, never pumped), not in the
+            // gate itself never completing.
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(50);
+                disposeGate.SetResult();
+            });
+
+            var start = DateTime.UtcNow;
+            Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, fileLoggerProvider: null,
+                disposeTimeout: TimeSpan.FromMilliseconds(200));
+            var elapsed = DateTime.UtcNow - start;
+
+            Assert.True(elapsed < TimeSpan.FromSeconds(2),
+                $"HandleLifetimeExit should return once its bounded disposeTimeout elapses, took {elapsed}.");
+            Assert.False(host.DisposeAsyncCompleted,
+                "the dispose task's continuation should never have run -- it was posted to a " +
+                "SynchronizationContext nothing pumps, which IS the T0-5 deadlock condition.");
+            Assert.True(capturingContext.PostedCallbackCount > 0,
+                "a continuation should have been posted to the captured context (proving the await " +
+                "really captured it), even though nothing ever ran it.");
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
+    }
+
+    /// <summary>Reproduces a UI-thread-style <see cref="SynchronizationContext"/> that only runs
+    /// posted work when its owning thread pumps a message loop -- deliberately never invokes the
+    /// callback, since this test's calling thread (blocked synchronously inside
+    /// <see cref="Program.HandleLifetimeExit"/>) never does either. The base
+    /// <see cref="SynchronizationContext"/>'s own default <c>Post</c> implementation queues to the
+    /// thread pool instead, which would NOT reproduce the deadlock -- this override is the whole
+    /// point of the test above.</summary>
+    private sealed class NonPumpingSynchronizationContext : SynchronizationContext
+    {
+        public int PostedCallbackCount { get; private set; }
+
+        public override void Post(SendOrPostCallback d, object? state) => PostedCallbackCount++;
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
