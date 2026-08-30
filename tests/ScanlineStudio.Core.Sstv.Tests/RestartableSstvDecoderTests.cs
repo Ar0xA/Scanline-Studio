@@ -509,6 +509,111 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public async Task Swap_DisposesOutgoingInstanceAfterReleasingTheLock_PushDrivenPath()
+    {
+        // T0-7 regression test (production_audit.md): before this fix, Swap() disposed the outgoing
+        // instance INSIDE lock (_gate) -- every UI-facing property getter (SignalPeakLevel/SlantPpm/
+        // SyncSource/BufferedSampleCount/etc.) blocks on that same lock, so a slow disposal (up to
+        // ~10s worst case, RxDiskLineStagingBuffer's own bounded drain) froze every one of them.
+        //
+        // Critical design point: the property read below MUST happen from a DIFFERENT thread than
+        // the one driving the swap. lock (_gate) is Monitor, which is RE-ENTRANT on the same thread
+        // -- a same-thread read would succeed instantly even against the UNFIXED code (re-entering
+        // your own already-held lock always succeeds), proving nothing. This is exactly the
+        // "shared-gate test passes against unfixed code" failure class this project has already been
+        // burned by (feedback_deterministic_gates_not_shared_race).
+        //
+        // Auditor code-review correction: the hook's own bound and the property-read assertion's
+        // bound are DELIBERATELY ASYMMETRIC (30s vs 2s), not both 5s. A plausible future regression
+        // -- moving the whole `try { hook; dispose } catch {}` block back inside the lock -- would
+        // swallow the hook's own timeout assertion, collapsing detection to a coin flip between two
+        // near-simultaneous 5s deadlines (Task.Delay's own coarse timer resolution actively biases
+        // toward a FALSE PASS in that race). A 30s-vs-2s gap makes any mutation that holds _gate
+        // across the hook block the read past 2s deterministically, regardless of exception
+        // swallowing. try/finally around the body releases releaseDispose even on assertion failure,
+        // so a failing run doesn't also stall `using var decoder`'s own Dispose() (which takes _gate)
+        // for the full 30s.
+        var disposeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDispose = new ManualResetEventSlim(initialState: false);
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended,
+            outgoingDisposeStartingForTests: () =>
+            {
+                disposeStarted.TrySetResult();
+                Assert.True(releaseDispose.Wait(TimeSpan.FromSeconds(30)), "releaseDispose was never signaled -- see this test's own comment.");
+            });
+
+        var worker = Task.Run(() =>
+        {
+            for (var i = 0; i < 3; i++)
+            {
+                decoder.PushSamples(new float[50]); // idle silence -- crosses warningThresholdSamples=100 by the 3rd call
+            }
+        });
+
+        try
+        {
+            await disposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            // The load-bearing assertion: a property read from ANOTHER thread completes promptly
+            // while disposal is artificially held open -- proving _gate is already free at this
+            // point. Pre-fix (dispose still inside the lock), this read would block past the 2s
+            // bound below instead.
+            var propertyRead = Task.Run(() => _ = decoder.BufferedSampleCount);
+            var propertyReadCompleted = await Task.WhenAny(propertyRead, Task.Delay(TimeSpan.FromSeconds(2))) == propertyRead;
+            Assert.True(propertyReadCompleted, "a UI-facing property read should not block while the outgoing instance's disposal is in flight.");
+        }
+        finally
+        {
+            releaseDispose.Set();
+        }
+
+        await worker.WaitAsync(TimeSpan.FromSeconds(30));
+
+        Assert.Equal(1, decoder.RestartCountForTests); // sanity: the swap this test targets actually happened
+    }
+
+    [Fact]
+    public async Task Swap_DisposesOutgoingInstanceAfterReleasingTheLock_ApplyPendingReconfigurationNowPath()
+    {
+        // T0-7 regression test, second call site: same proof as the push-driven test above, but for
+        // ApplyPendingReconfigurationNow's own Swap() call -- the fix's caller-side dispose placement
+        // differs between the two call sites (this one stays inside ApplyPendingReconfigurationNow's
+        // own _pushActive hold, per this method's own doc comment), so both need independent coverage.
+        // Same asymmetric-bound reasoning as the push-driven test above (30s hook vs 2s assertion,
+        // try/finally around the body) -- see that test's own comment for why.
+        var disposeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDispose = new ManualResetEventSlim(initialState: false);
+        using var decoder = new RestartableSstvDecoder(
+            afcEnabled: true, warningThresholdSamples: 100, criticalThresholdSamples: 1000, rxBufferMode: RxBufferMode.Extended,
+            outgoingDisposeStartingForTests: () =>
+            {
+                disposeStarted.TrySetResult();
+                Assert.True(releaseDispose.Wait(TimeSpan.FromSeconds(30)), "releaseDispose was never signaled -- see this test's own comment.");
+            });
+        decoder.RequestReconfiguration(RxBpfPreset.Narrow, DemodType.Pll, RxBufferMode.Extended);
+
+        var worker = Task.Run(() => decoder.ApplyPendingReconfigurationNow());
+
+        SwapResult result;
+        try
+        {
+            await disposeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var propertyRead = Task.Run(() => _ = decoder.BufferedSampleCount);
+            var propertyReadCompleted = await Task.WhenAny(propertyRead, Task.Delay(TimeSpan.FromSeconds(2))) == propertyRead;
+            Assert.True(propertyReadCompleted, "a UI-facing property read should not block while the outgoing instance's disposal is in flight.");
+        }
+        finally
+        {
+            releaseDispose.Set();
+        }
+
+        result = await worker.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(SwapResult.Committed, result);
+    }
+
+    [Fact]
     public void Dispose_DisposesTheCurrentInnerDecoder_AndIsIdempotent()
     {
         var decoder = new RestartableSstvDecoder(rxBufferMode: RxBufferMode.Extended);
