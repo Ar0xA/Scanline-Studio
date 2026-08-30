@@ -33,7 +33,7 @@ public enum NudgeDirection
 /// Pure, UI-technology-agnostic API: drag operations take already-normalized (0..1) deltas (the
 /// View converts real pointer/canvas pixels before calling in), so this class is fully testable
 /// headlessly without simulating real pointer events.</summary>
-public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
+public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposable
 {
     /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of one canvas element -- the
     /// counterpart to <see cref="TemplateElement"/>, which <see cref="Document"/> exposes already
@@ -306,6 +306,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
     [ObservableProperty]
     private Bitmap? _previewImage;
 
+    // T0-11 (production_audit.md): 2 recycled buffers each instead of a fresh WriteableBitmap on
+    // every Recompute/rotate -- see WriteableBitmapPool's own doc comment. Kept SEPARATE (not one
+    // shared pool): WorkingCopyBitmap (canvas scale) and PreviewImage (preview-panel scale) can
+    // genuinely differ in size at the same time, and resizing one must not invalidate the other's
+    // buffers. No Dispose() call is wired anywhere new (plan-review decision) -- this VM is not a
+    // DI singleton and has 5 separate discard paths with no shared teardown hook today; both pools
+    // simply live for the editor session's natural lifetime, reclaimed once this VM itself becomes
+    // unreachable. IDisposable below exists only to satisfy CA1001 (owns disposable fields).
+    private readonly WriteableBitmapPool _workingCopyPool = new();
+    private readonly WriteableBitmapPool _previewPool = new();
+
     [ObservableProperty]
     private ITemplateElementViewModel? _selectedOverlayElement;
 
@@ -429,7 +440,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         ReadyRack.TemplateSelected += OnReadyRackTemplateSelected;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
-        WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
+        WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
 
         if (initialState is { } initial)
         {
@@ -500,6 +511,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         }
 
         RecomputePreview();
+    }
+
+    // T0-11: satisfies CA1001 (owns disposable fields, _workingCopyPool/_previewPool) -- see
+    // those fields' own comment for why nothing new is wired to actually call this. Safe either
+    // way: this VM is not a DI singleton, so a real caller COULD call this at any of its own 5
+    // existing discard paths in a later pass; today none of them do, matching the plan's own
+    // scope decision.
+    public void Dispose()
+    {
+        _workingCopyPool.Dispose();
+        _previewPool.Dispose();
     }
 
     /// <summary>Phase 5 (spec/15-template-designer.md) -- the Templates panel's saved-template list
@@ -1902,6 +1924,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             foreach (var element in OverlayElements)
             {
                 element.PropertyChanged -= OnOverlayElementPropertyChanged;
+                // T0-11 (production_audit.md): every discarded ImageElementViewModel owns a
+                // WriteableBitmap nothing else disposes -- this whole-collection discard is
+                // separate from ImageElementViewModel.OnSourceChanged's own dispose-on-reassign
+                // (that only covers a SURVIVING element's Source changing, not the element itself
+                // being dropped).
+                if (element is ImageElementViewModel imageElement)
+                {
+                    imageElement.Dispose();
+                }
             }
 
             OverlayElements.Clear();
@@ -2811,6 +2842,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         PushUndoSnapshot();
         element.PropertyChanged -= OnOverlayElementPropertyChanged;
         OverlayElements.Remove(element);
+        if (element is ImageElementViewModel imageElement)
+        {
+            imageElement.Dispose();
+        }
+
         if (ReferenceEquals(SelectedOverlayElement, element))
         {
             SelectedOverlayElement = null;
@@ -3145,7 +3181,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         _workingCopy = wasShared ? _originalSource : _preparer.Rotate(_workingCopy);
         _rotationCount = (_rotationCount + 1) % 4;
 
-        WorkingCopyBitmap = ImageSourceBitmapConverter.ToBitmap(_workingCopy);
+        WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
         OnPropertyChanged(nameof(WorkingCopyFooterText));
@@ -3558,7 +3594,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
         var composited = _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
-        PreviewImage = ImageSourceBitmapConverter.ToBitmap(composited);
+        PreviewImage = _previewPool.Blit(composited);
     }
 
     private TemplateDocument BuildTemplateDocument() => new(Name: null, OverlayElements.Select(BuildTemplateElement).ToList());
@@ -3770,6 +3806,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
             foreach (var element in OverlayElements)
             {
                 element.PropertyChanged -= OnOverlayElementPropertyChanged;
+                // T0-11 (production_audit.md): see LoadTemplateIntoLiveEditor's own identical
+                // comment -- every discarded ImageElementViewModel owns a WriteableBitmap nothing
+                // else disposes.
+                if (element is ImageElementViewModel imageElement)
+                {
+                    imageElement.Dispose();
+                }
             }
 
             OverlayElements.Clear();

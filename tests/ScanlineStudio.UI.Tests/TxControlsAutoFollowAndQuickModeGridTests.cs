@@ -1,4 +1,7 @@
+using Avalonia;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
@@ -338,5 +341,42 @@ public sealed class TxControlsAutoFollowAndQuickModeGridTests
         var rxPersisted = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
         Assert.Equal(newMode.Id, txPersisted!.QuickModeGridIds[0]);
         Assert.Null(rxPersisted); // no RX section was ever written by a TX-side reassignment
+    }
+
+    [AvaloniaFact]
+    public void PreviewImage_Reassigned_DisposesTheOldBitmap_DeferredViaDispatcherPost()
+    {
+        // T0-11 (production_audit.md): OnPreviewImageChanged fires on every writer of this
+        // property -- exercised directly rather than driving the whole Apply/mode-change pipeline
+        // that normally sets it.
+        var vm = CreateViewModel(new FakeSettingsStore());
+        Dispatcher.UIThread.RunJobs();
+        var first = new WriteableBitmap(new PixelSize(2, 2), new Vector(96, 96), PixelFormat.Bgra8888, AlphaFormat.Opaque);
+        vm.PreviewImage = first;
+
+        vm.PreviewImage = null;
+
+        Assert.False(IsWriteableBitmapDisposed(first), "must not be disposed before the deferred post runs");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(IsWriteableBitmapDisposed(first));
+    }
+
+    // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
+    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // any real operation, here .Lock().
+    private static bool IsWriteableBitmapDisposed(WriteableBitmap bitmap)
+    {
+        try
+        {
+            using (bitmap.Lock())
+            {
+            }
+
+            return false;
+        }
+        catch (NullReferenceException)
+        {
+            return true;
+        }
     }
 }

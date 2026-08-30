@@ -26,7 +26,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// <c>Dispatcher.UIThread.Post</c> is ever in flight; a burst of updates while one is pending just
 /// means the eventual post reads whatever <see cref="IReceivedImageBuffer.Current"/> is *then*
 /// (latest-wins), not a queued backlog of every intermediate scanline.</summary>
-public sealed partial class RxImagePaneViewModel : ViewModelBase
+public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
 {
     /// <summary>Poll interval for the decoder-telemetry properties below (Slant/SyncOffset/SyncTone/
     /// Buffer/Overdriven) -- no push/event mechanism exists for any of them, and their own doc
@@ -212,6 +212,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     [ObservableProperty]
     private Bitmap? _image;
+
+    // T0-11 (production_audit.md): 2 recycled buffers instead of a fresh WriteableBitmap on every
+    // coalesced decode update -- see WriteableBitmapPool's own doc comment. IDisposable is added
+    // below only because CA1001 requires it of any type owning a disposable field, not because
+    // anything new calls Dispose() -- this VM is a DI singleton with no existing teardown hook
+    // before this fix, and the only "teardown" that would ever run is final process-exit
+    // container disposal (plan-review decision: not worth wiring a NEW explicit teardown call for
+    // a 2-bitmap benefit).
+    private readonly WriteableBitmapPool _imagePool = new();
 
     /// <summary>Real, already-computed fraction of the current decode's total rows -- see
     /// <see cref="IReceivedImageBuffer.Progress"/>'s own doc comment for the exact-1.0-on-completion
@@ -587,6 +596,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
         _ = LoadCaptureDeviceNameAsync();
         _ = LoadOperatorGridAsync();
         _ = LoadQrzLookupConfiguredAsync();
+    }
+
+    // T0-11: satisfies CA1001 (owns a disposable field, _imagePool). This VM IS a DI singleton, so
+    // ServiceProvider disposal on app shutdown DOES call this, off the UI thread (Program.cs runs
+    // host.DisposeAsync() inside Task.Run) -- code-review finding: MS.DI's disposal loop aborts at
+    // the first thrown exception, which would skip every earlier-registered singleton's teardown
+    // (including the audio engine). Swallow rather than risk that on an exit-only path.
+    public void Dispose()
+    {
+        try
+        {
+            _imagePool.Dispose();
+        }
+        catch (Exception ex)
+        {
+            Log.ImagePoolDisposeFailed(_logger, ex);
+        }
     }
 
     public string DetectedModeText => DetectedMode?.DisplayName ?? "—";
@@ -1847,7 +1873,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
             }
 
             var current = _receivedImage.Current;
-            Image = ImageSourceBitmapConverter.ToBitmap(current);
+            Image = _imagePool.Blit(current);
             var progress = _receivedImage.Progress;
             Progress = progress;
 
@@ -2177,6 +2203,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Disposing the RX image pool during shutdown failed")]
+        public static partial void ImagePoolDisposeFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading configured RX capture device name failed")]
         public static partial void LoadCaptureDeviceNameFailed(ILogger logger, Exception ex);
 
