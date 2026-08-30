@@ -154,6 +154,80 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SwitchToPresetAsync_PresetCarriesQrzLookupSection_LivePasswordSurvivesTheSwitch()
+    {
+        // T0-8 blocker fix: ConfigurationPresetStore.Sanitize strips Password from every saved
+        // preset (presets are user-shareable files) -- without carrying the live secret forward,
+        // applying ANY preset with a QrzLookup section would silently wipe the stored password.
+        // The preset's own QrzLookup section has no Password below, matching what
+        // ConfigurationPresetStore actually produces post-T0-8 (already redacted on save).
+        var initial = DefaultSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N0CALL", Password = "hunter2" },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(initial);
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N9NEW" },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings));
+
+        var result = await service.SwitchToPresetAsync("Test");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        var qrz = settingsStore.Settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+        Assert.Equal("N9NEW", qrz?.Username); // the preset's own field wins
+        Assert.Equal("hunter2", qrz?.Password); // the live secret survives the switch
+    }
+
+    [Fact]
+    public async Task SwitchToPresetAsync_PresetCarriesQrzUploadSection_LiveApiKeySurvivesTheSwitch()
+    {
+        var initial = DefaultSettings().WithSection(
+            QrzUploadSettings.SectionKey,
+            new QrzUploadSettings { Enabled = true, ApiKey = "secret-api-key" },
+            QrzUploadSettingsJsonContext.Default.QrzUploadSettings);
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(initial);
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            QrzUploadSettings.SectionKey,
+            new QrzUploadSettings { Enabled = false },
+            QrzUploadSettingsJsonContext.Default.QrzUploadSettings));
+
+        var result = await service.SwitchToPresetAsync("Test");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        var qrz = settingsStore.Settings.GetSection(QrzUploadSettings.SectionKey, QrzUploadSettingsJsonContext.Default.QrzUploadSettings);
+        Assert.False(qrz?.Enabled); // the preset's own field wins
+        Assert.Equal("secret-api-key", qrz?.ApiKey); // the live secret survives the switch
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WithARealQrzLookupPassword_NeverWritesItToTheRawPresetFile()
+    {
+        // Code-review nit: ConfigurationPresetStore.Sanitize's own redaction is keyed by plain
+        // string literals ("QrzLookup"/"Password") duplicating QrzLookupSettings' real property
+        // names -- a rename of that property would silently stop redaction working, and neither
+        // this file's own carry-forward tests nor ConfigurationPresetStoreTests' test-local-record
+        // tests would catch that drift (both use presets with the secret already unset).
+        // ScanlineStudio.Settings.Tests (where ConfigurationPresetStore itself is tested) has no
+        // reference to Core.Logbook, so this test -- using the REAL QrzLookupSettings type end to
+        // end -- lives here instead, standalone (not via CreateService's full harness, which this
+        // doesn't need).
+        var presetsDirectory = Directory.CreateTempSubdirectory("yoniq-preset-qrz-literal-tests-").FullName;
+        _presetDirectories.Add(presetsDirectory);
+        var presetStore = new ConfigurationPresetStore(Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigurationPresetStore>.Instance, presetsDirectory);
+
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N0CALL", Password = "hunter2" },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings));
+
+        var rawText = await File.ReadAllTextAsync(Path.Combine(presetsDirectory, "Test.json"));
+        Assert.DoesNotContain("Password", rawText, StringComparison.Ordinal);
+        Assert.DoesNotContain("hunter2", rawText, StringComparison.Ordinal);
+        Assert.Contains("N0CALL", rawText, StringComparison.Ordinal); // Username itself must survive -- proves this isn't a whole-section drop
+    }
+
+    [Fact]
     public async Task SwitchToPresetAsync_SetsTheActivePresetMarker()
     {
         var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService();

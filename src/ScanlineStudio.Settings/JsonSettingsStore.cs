@@ -159,14 +159,53 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
         // truncated or corrupted — see spec/12-settings.md.
         var tempFilePath = _settingsFilePath + ".tmp";
-        var stream = File.Create(tempFilePath);
+        // T0-8: created with owner-only mode from the start on Unix, not File.Create's default
+        // 0644 followed by a later chmod -- settings.json can carry a real QRZ.com password/API
+        // key (see TrySetOwnerOnlyPermissions' own doc comment), and writing a secret into a
+        // briefly-world-readable file, or crashing mid-write and leaving a 0644 .tmp file
+        // containing one, is exactly the exposure this fix exists to close.
+        var stream = OperatingSystem.IsWindows()
+            ? File.Create(tempFilePath)
+            : File.Open(tempFilePath, new FileStreamOptions
+            {
+                Mode = FileMode.Create,
+                Access = FileAccess.Write,
+                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+            });
         await using (stream.ConfigureAwait(false))
         {
             await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
         }
 
         File.Move(tempFilePath, _settingsFilePath, overwrite: true);
+        TrySetOwnerOnlyPermissions(_settingsFilePath);
         return _settingsFilePath; // captured under the lock -- logged by the caller, after Release
+    }
+
+    // T0-8: settings.json can carry a real QRZ.com account password/API key in plaintext (no
+    // scoped-credential alternative exists -- see QrzLookupSettings' own doc comment). This call
+    // is the belt: File.Move's rename on the same filesystem preserves the creation mode SaveCoreAsync
+    // already sets above, but its documented cross-filesystem copy-fallback (RelocateAsync's own
+    // call site can hit this; SaveCoreAsync's own .tmp is always same-directory, so never can)
+    // doesn't guarantee that -- cheap either way. Windows' own per-user profile directory ACLs are
+    // already private by default, a separate existing protection this doesn't need to duplicate.
+    // Swallowed, not propagated: this throws on vfat/exfat/some network mounts, and a permission-
+    // hardening failure must not turn an otherwise-successful save/relocate into a thrown exception.
+    private void TrySetOwnerOnlyPermissions(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.PermissionRestrictionFailed(_logger, path, ex);
+        }
     }
 
     /// <summary>See <see cref="ISettingsFileRelocator.RelocateAsync"/> for the caller-facing
@@ -221,6 +260,13 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
                 {
                     return (false, previousDirectory);
                 }
+
+                // T0-8: deliberately OUTSIDE the try/catch above -- if this threw from inside that
+                // catch, the file would have ALREADY moved while this method reported "nothing
+                // moved," and _settingsFilePath below would never update, permanently orphaning
+                // the live settings file at a path this store no longer tracks.
+                // TrySetOwnerOnlyPermissions swallows its own failures, so it can't reach here.
+                TrySetOwnerOnlyPermissions(newPath);
             }
 
             // Only ever updated here, on a physically-confirmed move (or the no-op return above) --
@@ -257,6 +303,9 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Settings saved to {Path}")]
         public static partial void Saved(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not restrict permissions on {Path}")]
+        public static partial void PermissionRestrictionFailed(ILogger logger, string path, Exception ex);
     }
 }
 
