@@ -19,11 +19,30 @@ namespace ScanlineStudio.Core.Imaging;
 /// `IScanlineDecoder.RowsPerTransmissionLine` is 2 for those, not exposed on the public
 /// <see cref="SstvModeDefinition"/>). <see cref="DecodedImageUpdate.Image"/> is always the *whole*
 /// live canvas (`AnalogFmSstvDecoder`'s private `MutableImageSource` wraps the full
-/// mode-sized pixel array), so snapshotting the entire image on every event — not just the reported
-/// row — is both simplest and correct, and cheap (bounded by one video frame's own pixel count).
+/// mode-sized pixel array), so copying the entire image on every event — not just the reported
+/// row — is both simplest and correct.
 ///
-/// <b>Snapshot contract</b> (Phase-3 plan decision #5): <see cref="Current"/> always returns a
-/// defensive copy, never a view into the decoder's own live/mutable buffer.</summary>
+/// <b>Snapshot contract</b> (Phase-3 plan decision #5, unchanged by T0-10 below):
+/// <see cref="Current"/> always returns a defensive, independently-owned copy, never a view into
+/// the decoder's own live/mutable buffer, and never an array this class writes into again after
+/// handing it out — safe to retain indefinitely (confirmed real consumer:
+/// <c>TxImageEditorPaneViewModel.AddLastRxImage</c> inserts it into TX editor template state kept
+/// until the user removes/undoes it, no bound).
+///
+/// <b>T0-10 (production_audit.md): allocation is now bounded by READS, not writes.</b> The naive
+/// "allocate a fresh <c>Rgb24[]</c> on every <see cref="LineDecoded"/>" design this class shipped
+/// with cost ~256 Large-Object-Heap allocations per reception, most of them garbage before any
+/// reader ever observed them (a live UI pane only reads <see cref="Current"/> roughly once per
+/// coalesced paint, and in bulk/headless decode nothing reads it until the very end at all).
+/// <see cref="OnLineDecoded"/> now writes into a private, NEVER-exposed, reused <c>_scratch</c>
+/// buffer instead (cheap once sized, no LOH pressure) and marks it un-materialized; a genuinely
+/// independent, owned array is allocated only the first time something actually needs one since
+/// the last write (<see cref="Current"/>'s getter, or <see cref="SaveAsync"/>) — see
+/// <c>MaterializeCurrent</c>. Pooling/recycling the array actually EXPOSED via
+/// <see cref="Current"/> was considered and rejected: nothing in this codebase tracks when a
+/// long-lived consumer like the TX editor is done with a retained reference, so there is no safe
+/// return point for it. Only the private scratch buffer is ever reused; a materialized array is
+/// allocated once and never touched again.</summary>
 public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
 {
     private static readonly IImageSource EmptyImage = new ArrayImageSource(1, 1, [new Rgb24(0, 0, 0)]);
@@ -32,6 +51,18 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
     private readonly ILogger<ReceivedImageBuffer> _logger;
     private IImageSource _current = EmptyImage;
     private double? _progress;
+
+    // T0-10: private, never exposed outside this class -- OnLineDecoded writes the full canvas
+    // into this on every line (cheap once sized correctly, no allocation), instead of allocating a
+    // fresh Rgb24[] every time. _scratchMaterialized tracks whether _current already reflects
+    // _scratch's current contents; MaterializeCurrent() does the one actual allocation, lazily, the
+    // first time something needs an owned copy since the last write. Sized to exactly
+    // _scratchWidth * _scratchHeight -- never larger -- because ArrayImageSource's own constructor
+    // requires pixels.Length == width * height exactly.
+    private Rgb24[]? _scratch;
+    private int _scratchWidth;
+    private int _scratchHeight;
+    private bool _scratchMaterialized = true;
 
     // Auditor-caught, round 2: bumped on every OnModeDetected/OnDecodeRestarted -- both are the
     // events that change what Current's IDENTITY means (a fresh image starting, or the current one
@@ -71,7 +102,7 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
         {
             lock (_gate)
             {
-                return _current;
+                return MaterializeCurrent();
             }
         }
     }
@@ -108,7 +139,10 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
         int generation;
         lock (_gate)
         {
-            snapshot = _current;
+            // T0-10: must route through MaterializeCurrent(), not read _current directly -- a
+            // manual save after N un-materialized lines would otherwise write a stale prior frame
+            // (or the 1x1 EmptyImage) instead of what was actually just decoded.
+            snapshot = MaterializeCurrent();
             generation = _generation;
         }
 
@@ -176,14 +210,57 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
 
     private void OnLineDecoded(DecodedImageUpdate update)
     {
-        var snapshot = Snapshot(update.Image);
+        // T0-10: height read from update.Image directly, never from the cache slot -- ComputeProgress
+        // must reflect THIS line's own image, not whatever _current happens to hold (which could
+        // still be the 1x1 EmptyImage post-restart if nothing has read Current since).
+        var height = update.Image.Height;
         lock (_gate)
         {
-            _current = snapshot;
-            _progress = ComputeProgress(update, snapshot.Height);
+            WriteScratch(update.Image);
+            _progress = ComputeProgress(update, height);
         }
 
         Updated?.Invoke();
+    }
+
+    // T0-10: must be called under _gate. Copies ALL of source's rows into _scratch, every call --
+    // not just the reported starting row -- see this class's own "whole-image snapshot, not
+    // per-line" doc comment above for why a partial copy would leak stale/prior-image content.
+    // Resizes _scratch only when dimensions actually change (at most once per reception, on a new
+    // mode) -- OnModeDetected deliberately does NOT do this itself, so the previous image stays
+    // visible via Current until the new mode's first line actually decodes.
+    private void WriteScratch(IImageSource source)
+    {
+        if (_scratch is null || _scratchWidth != source.Width || _scratchHeight != source.Height)
+        {
+            _scratch = new Rgb24[source.Width * source.Height];
+            _scratchWidth = source.Width;
+            _scratchHeight = source.Height;
+        }
+
+        for (var y = 0; y < source.Height; y++)
+        {
+            source.GetScanline(y).CopyTo(_scratch.AsSpan(y * source.Width, source.Width));
+        }
+
+        _scratchMaterialized = false;
+    }
+
+    // T0-10: must be called under _gate. The only place this class allocates a Rgb24[] -- lazily,
+    // the first time something needs an owned, independently-retainable copy since the last
+    // WriteScratch call. Returns the cached materialized array unchanged if nothing has changed
+    // since the last call (handles repeat reads with no intervening LineDecoded, e.g. two UI paint
+    // cycles in a row).
+    private IImageSource MaterializeCurrent()
+    {
+        if (_scratchMaterialized || _scratch is null)
+        {
+            return _current;
+        }
+
+        _current = new ArrayImageSource(_scratchWidth, _scratchHeight, (Rgb24[])_scratch.Clone());
+        _scratchMaterialized = true;
+        return _current;
     }
 
     // Unlike ReceiveHistoryRecorder's own version of this same step-learning technique (which only
@@ -220,22 +297,15 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
         lock (_gate)
         {
             _current = EmptyImage;
+            // T0-10: EmptyImage IS the authoritative cache slot now -- without this, the next
+            // Current read would re-materialize whatever stale content is still sitting in
+            // _scratch instead of showing the abandoned/empty state.
+            _scratchMaterialized = true;
             _progress = null;
             _generation++;
         }
 
         Updated?.Invoke();
-    }
-
-    private static ArrayImageSource Snapshot(IImageSource source)
-    {
-        var pixels = new Rgb24[source.Width * source.Height];
-        for (var y = 0; y < source.Height; y++)
-        {
-            source.GetScanline(y).CopyTo(pixels.AsSpan(y * source.Width, source.Width));
-        }
-
-        return new ArrayImageSource(source.Width, source.Height, pixels);
     }
 
     private static partial class Log
