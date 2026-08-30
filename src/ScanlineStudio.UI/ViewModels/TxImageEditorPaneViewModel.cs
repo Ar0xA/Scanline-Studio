@@ -1213,17 +1213,26 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase
         // time, not reactively) -- same "no lifecycle hook to unsubscribe" reasoning as this
         // method's own class-level doc comment, just applied as a body-level no-op instead of a
         // CanExecute gate that would go stale anyway without a subscription.
-        if (_receivedImageBuffer.Current is { Width: <= 1, Height: <= 1 })
+        //
+        // Code-review finding (T0-10 pass): read exactly ONCE into a local, not twice -- a second,
+        // separate Current read here could race a concurrent decode-restart swapping in a fresh
+        // 1x1 placeholder BETWEEN the guard check and the insert below (same reasoning already
+        // applied to TxControlsPaneViewModel.CopyReceivedImageToTxAsync's own identical read).
+        var current = _receivedImageBuffer.Current;
+        if (current is { Width: <= 1, Height: <= 1 })
         {
             return;
         }
 
-        // _receivedImageBuffer.Current's getter returns the stored reference directly (not a
-        // fresh copy per read) -- the copy happens on WRITE, when a new scanline group decodes and
-        // a fresh ArrayImageSource is swapped in. Never mutated in place afterward, so capturing the
-        // reference here still freezes it for this element -- but a future perf change that mutated
-        // the buffer in place instead of reallocating per scanline group would silently break this.
-        InsertImageElement(_receivedImageBuffer.Current, new ImageSourceOrigin(ImageSourceKind.LastRx, null));
+        // T0-10 (production_audit.md): _receivedImageBuffer.Current's getter now lazily allocates
+        // a fresh, independently-owned array the first time it's read since the underlying decode
+        // last changed (was: a fresh array on every single scanline-group decode, regardless of
+        // whether anything ever read it -- real LOH pressure on the capture drain thread). Either
+        // way, whatever Current returns here is a genuinely independent snapshot this class is
+        // free to retain indefinitely -- IReceivedImageBuffer.Current's own doc comment states
+        // this contract explicitly now; capturing the reference here still freezes it for this
+        // element, unchanged.
+        InsertImageElement(current, new ImageSourceOrigin(ImageSourceKind.LastRx, null));
     }
 
     /// <summary>Auditor usability review follow-up (2026-08-18) -- the "+ IMAGE" flyout's 4th source
