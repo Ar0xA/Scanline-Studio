@@ -230,14 +230,28 @@ internal static partial class Program
         // prevent the UI itself from starting; IRadioController's own reconnect/backoff machinery
         // takes over from here via its ConnectionEvents/StateChanges streams. Logged, not silently
         // swallowed, now that a logger exists.
-        try
+        // T0-3: backgrounded, not blocking -- these used to run with .GetAwaiter().GetResult()
+        // before SetupWithLifetime/lifetime.Start(args) below, so a powered-off rigctld host or a
+        // stalled audio server hung the app with no window on screen at all. Task.Run here lets
+        // lifetime.Start(args) run immediately; both calls keep their existing try/catch/log
+        // semantics, just inside the background delegate.
+        _ = Task.Run(async () =>
         {
-            host.Services.GetRequiredService<IRadioSessionService>().ConnectUsingSettingsAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Log.RadioAutoConnectFailed(logger, ex);
-        }
+            try
+            {
+                // Code-review correction: same observability-only reasoning as StartReceivingAsync's
+                // own WaitAsync below -- HamlibRadioProtocol's own doc comment states ct is honored
+                // only at the semaphore boundary, and rig_open, once started, is never cancelled or
+                // abandoned. Without this, a wedged rig now hangs this backgrounded task silently
+                // forever with zero log trace, instead of eventually logging via
+                // Log.RadioAutoConnectFailed below.
+                await host.Services.GetRequiredService<IRadioSessionService>().ConnectUsingSettingsAsync().WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.RadioAutoConnectFailed(logger, ex);
+            }
+        });
 
         // Same reasoning as the radio auto-connect above: Phase 3 has no "Start Receiving" button
         // anywhere in the UI (the walking skeleton's own demo target is a session that's simply
@@ -245,14 +259,29 @@ internal static partial class Program
         // audio-device section throws InvalidOperationException from StartReceivingAsync -- caught
         // here the same way, so a machine with no configured capture device still gets a working UI
         // (waterfall/RX image just stay empty) instead of failing to start at all.
-        try
+        _ = Task.Run(async () =>
         {
-            host.Services.GetRequiredService<ISstvSessionService>().StartReceivingAsync().GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            Log.StartReceivingFailed(logger, ex);
-        }
+            try
+            {
+                // T0-3, auditor plan-review correction: StartReceivingAsync's own gate acquisition is
+                // bounded (_rxTransitionGate.WaitAsync(_cleanupTimeout, ct)), but the native
+                // capture-device open underneath it is NOT -- MiniAudioEngine's own doc comment states
+                // "once the native open below is actually running, there is no way to cancel it
+                // partway through." Backgrounding alone turns a visible pre-window hang into a SILENT
+                // forever-hang with zero log trace (the catch below is never reached). This WaitAsync
+                // is observability-only: it does NOT cancel the native open and does NOT release
+                // _rxTransitionGate (whatever holds the gate open stays held regardless) -- it only
+                // guarantees a log line fires so a wedged startup is diagnosable instead of invisible.
+                // A genuinely wedged native open still leaves the app unable to Start/Stop RX later
+                // (every such call times out against the still-held gate) until restart -- a real,
+                // separate, pre-existing gap this fix does not close.
+                await host.Services.GetRequiredService<ISstvSessionService>().StartReceivingAsync().WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.StartReceivingFailed(logger, ex);
+            }
+        });
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
         BuildAvaloniaApp().SetupWithLifetime(lifetime);
@@ -331,7 +360,14 @@ internal static partial class Program
         var disposedCleanly = true;
         try
         {
-            var disposeTask = host.DisposeAsync().AsTask();
+            // T0-5: Task.Run, not a direct host.DisposeAsync().AsTask() -- HandleLifetimeExit runs on
+            // the UI thread (Avalonia raises lifetime.Exit there), and Task.Run does not flow the
+            // ambient SynchronizationContext into its delegate, so every await inside the whole
+            // DisposeAsync chain resolves on a thread-pool thread instead of posting a continuation
+            // back to this (blocked) UI thread -- which is what turned "up to a 10s stall" into "a
+            // guaranteed 10s stall" whenever any await anywhere in that chain lacked
+            // ConfigureAwait(false).
+            var disposeTask = Task.Run(() => host.DisposeAsync().AsTask());
             var completed = Task.WhenAny(disposeTask, Task.Delay(disposeTimeout ?? TimeSpan.FromSeconds(10))).GetAwaiter().GetResult();
             if (completed == disposeTask)
             {

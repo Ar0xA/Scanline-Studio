@@ -45,18 +45,17 @@ public sealed class HandleLifetimeExitTests
     }
 
     [Fact]
-    public void WhenDisposeAsyncCapturesTheCallingSynchronizationContext_TimesOutInsteadOfHangingForever()
+    public void WhenDisposeAsyncCapturesTheCallingSynchronizationContext_StillCompletes_NotBlockedByIt()
     {
-        // Test-suite fixes phase 1, item 5: reproduces the T0-5 shutdown-deadlock condition on a
-        // bounded timeout instead of hanging the test process forever. HandleLifetimeExit's own
-        // blocking `.GetAwaiter().GetResult()` runs on the calling thread; FakeAsyncDisposableHost's
-        // DisposeAsync awaits its gate WITHOUT ConfigureAwait(false), so if this thread has an
-        // installed SynchronizationContext that nothing ever pumps (the exact shape Avalonia's own
-        // UI-thread context has), DisposeAsync's continuation is posted to that context and NEVER
-        // runs -- disposeTask stays pending forever, and only the injected short disposeTimeout
-        // (not the real 10s default) keeps this test itself from hanging. This is a
-        // CHARACTERIZATION test: it documents today's real stall-then-recover behavior, not a fix
-        // -- it becomes the actual regression gate once T0-5's separate Task.Run fix lands.
+        // T0-5 fix landed: HandleLifetimeExit now wraps host.DisposeAsync() in Task.Run, which does
+        // not flow the ambient SynchronizationContext into its delegate -- the delegate always runs
+        // on a thread-pool thread with SynchronizationContext.Current == null. FakeAsyncDisposableHost's
+        // DisposeAsync still awaits its gate WITHOUT ConfigureAwait(false) (deliberately, unchanged --
+        // that's what proves the fix doesn't depend on well-behaved awaits downstream), but its
+        // continuation now resumes on the pool thread instead of posting to capturingContext, so
+        // disposal genuinely completes instead of hanging until disposeTimeout. This is the
+        // regression gate promised by this test's own prior name/comment ("becomes the actual
+        // regression gate once T0-5's separate Task.Run fix lands").
         var previousContext = SynchronizationContext.Current;
         var capturingContext = new NonPumpingSynchronizationContext();
         SynchronizationContext.SetSynchronizationContext(capturingContext);
@@ -67,9 +66,8 @@ public sealed class HandleLifetimeExitTests
             var restarter = new FakeApplicationRestarter { RestartRequested = false };
 
             // Completes the gate from a background thread, after this thread has already reached
-            // HandleLifetimeExit's blocking wait below -- proves the deadlock is in the
-            // CONTINUATION never running (queued on capturingContext, never pumped), not in the
-            // gate itself never completing.
+            // HandleLifetimeExit's blocking wait below -- proves completion is driven by the gate
+            // actually resolving, not a coincidence of ordering.
             _ = Task.Run(async () =>
             {
                 await Task.Delay(50);
@@ -82,13 +80,14 @@ public sealed class HandleLifetimeExitTests
             var elapsed = DateTime.UtcNow - start;
 
             Assert.True(elapsed < TimeSpan.FromSeconds(2),
-                $"HandleLifetimeExit should return once its bounded disposeTimeout elapses, took {elapsed}.");
-            Assert.False(host.DisposeAsyncCompleted,
-                "the dispose task's continuation should never have run -- it was posted to a " +
-                "SynchronizationContext nothing pumps, which IS the T0-5 deadlock condition.");
-            Assert.True(capturingContext.PostedCallbackCount > 0,
-                "a continuation should have been posted to the captured context (proving the await " +
-                "really captured it), even though nothing ever ran it.");
+                $"HandleLifetimeExit should return promptly once DisposeAsync completes, took {elapsed}.");
+            Assert.True(host.DisposeAsyncCompleted,
+                "DisposeAsync's continuation should run to completion on Task.Run's own pool thread " +
+                "-- if this is false, the fix regressed and the UI-thread deadlock is back.");
+            // Code-review nit: Assert.Equal (not Assert.True(x == 0, "...")) so a failure's message
+            // reports the actual count, not just "false" -- nothing in the DisposeAsync chain should
+            // ever touch the calling thread's SynchronizationContext once it's wrapped in Task.Run.
+            Assert.Equal(0, capturingContext.PostedCallbackCount);
         }
         finally
         {

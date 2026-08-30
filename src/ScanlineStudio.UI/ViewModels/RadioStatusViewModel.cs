@@ -460,10 +460,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // wedged audio server, hang outright), not a single Dispatcher.Post hop. Accepted anyway:
         // on any healthy machine this resolves in well under a second, and the pathological-hang
         // case is a pre-existing risk in SetReceivingSafeAsync itself, not something this retry
-        // introduces -- not fixed here. A no-op when the earlier attempt already succeeded (the
-        // overwhelmingly common case): the `!_isReceiving` guard above skips the property set
-        // entirely, so OnIsReceivingChanged never fires and no redundant StartReceivingAsync call
-        // happens.
+        // introduces -- not fixed here. A no-op when the earlier attempt already succeeded: the
+        // `!_isReceiving` guard above skips the property set entirely, so OnIsReceivingChanged never
+        // fires and no redundant StartReceivingAsync call happens.
+        //
+        // T0-1 correction (production_audit.md): "already succeeded" is no longer the overwhelmingly
+        // common case this comment used to claim. Program.cs's own StartReceivingAsync launch attempt
+        // now runs backgrounded (Task.Run), not synchronously before this ViewModel is constructed --
+        // so on a healthy launch, this retry now typically fires WHILE the background attempt is
+        // still in flight, not just on genuine failure. SetReceivingFailed's own catch handles that
+        // race by re-syncing from _sstvSession.IsReceiving rather than assuming failure -- see that
+        // method's own comment.
         //
         // Tier B audit finding, correcting this comment's own prior claim: the settings-file read
         // this retry's own await chain reaches (JsonSettingsStore.LoadAsync -> File.Exists/
@@ -1109,7 +1116,16 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 try
                 {
                     _suppressReceivingCommand = true;
-                    IsReceiving = !value;
+                    // T0-1 code-review correction: re-sync from the actual current state, not a
+                    // blind `!value` flip. Since Program.cs's own StartReceivingAsync launch attempt
+                    // now runs backgrounded (T0-1, production_audit.md) rather than completing before
+                    // this ViewModel is constructed, a call here that throws (e.g. a TimeoutException
+                    // racing that still-in-flight background attempt) does NOT necessarily mean the
+                    // operation ultimately failed -- the background attempt can still succeed AFTER
+                    // this one times out. Reading _sstvSession.IsReceiving reflects ground truth
+                    // either way, instead of risking the toggle showing "Halt" while capture is
+                    // actually live (or vice versa).
+                    IsReceiving = _sstvSession.IsReceiving;
                 }
                 finally
                 {
