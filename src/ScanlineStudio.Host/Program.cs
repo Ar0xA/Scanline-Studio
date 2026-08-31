@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
@@ -40,6 +41,12 @@ internal static partial class Program
     [STAThread]
     public static void Main(string[] args)
     {
+        // T1-18 (production_audit.md): CLAUDE.md §4 mandates this repo-wide -- no legacy text
+        // (.ini/.dfm/.mtm/.MDT/inline C++ literals, Windows-31J/CP932 for Japanese-origin content)
+        // may be decoded without it registered first. Must run before any code could attempt such a
+        // decode; first statement in Main is the earliest point in this composition root.
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(args);
 
         // File provider alongside the console provider CreateApplicationBuilder already registers

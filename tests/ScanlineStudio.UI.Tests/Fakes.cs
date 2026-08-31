@@ -944,9 +944,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public List<RadioConnectionSpec> TestConnectionCalls { get; } = [];
 
+    // T1-11: lets tests confirm a real, bounded (CanBeCanceled == true) token reaches this call --
+    // the regression the fix closes (default/CancellationToken.None has CanBeCanceled == false).
+    public List<CancellationToken> TestConnectionTokens { get; } = [];
+
     public Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default)
     {
         TestConnectionCalls.Add(spec);
+        TestConnectionTokens.Add(ct);
         return Task.FromResult(TestConnectionResultToReturn);
     }
 

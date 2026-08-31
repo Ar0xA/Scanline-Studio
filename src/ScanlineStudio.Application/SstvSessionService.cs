@@ -1854,6 +1854,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // maintenance warning was ever raised for it, so any UI-layer cache of a decoder-read
             // value (currently only RxImagePaneViewModel.RxBpfPreset) needs this signal every time,
             // not just on the "overdue warning just cleared" subset.
+            //
+            // T1-4: also unconditionally logged, same reasoning -- a periodic restart with no prior
+            // maintenance warning (the common case) used to leave zero trace of it anywhere.
+            SafeLog(() => Log.DecoderRestarted(_logger));
             DecoderInstanceReplaced?.Invoke();
         }
         catch (Exception ex)
@@ -5090,6 +5094,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX maintenance warning cleared")]
         public static partial void MaintenanceWarningCleared(ILogger logger);
+
+        // T1-4 (production_audit.md): OnDecoderRestarted fired DecoderInstanceReplaced with zero
+        // logging -- a periodic decoder restart (avoids an int-overflow) happened with no trace at
+        // all when no maintenance warning had been active for it (the common case), unlike its
+        // sibling maintenance events above.
+        [LoggerMessage(Level = LogLevel.Information, Message = "Decoder instance restarted")]
+        public static partial void DecoderRestarted(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "RX force-stopped for required maintenance restart")]
         public static partial void MaintenanceCriticalStop(ILogger logger);

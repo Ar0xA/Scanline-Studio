@@ -309,6 +309,37 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsTestingConnection);
     }
 
+    // T1-11 (production_audit.md): all 4 "Test Connection" commands used to call TestConnectionAsync
+    // with no CancellationToken, unlike the sibling TestPttAsync/TestFlrigPttAsync -- a hung
+    // PollAsync left "Testing…" stuck forever with no way to retry (the command auto-disables while
+    // running). Fixed by wrapping each call in a local, bounded CancellationTokenSource. A real
+    // 30-second timeout can't be waited out in a unit test -- this instead confirms the actual
+    // regression is closed: a real, bounded token (CanBeCanceled == true) now reaches the call,
+    // where CancellationToken.None/default (CanBeCanceled == false) used to.
+    [AvaloniaFact]
+    public async Task TestConnectionCommands_AllFourBackends_PassABoundedCancellationToken()
+    {
+        var radioSession = new FakeRadioSessionService { RigId = "none" };
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.RigctldHost = "127.0.0.1";
+        vm.RigctldPort = 4532;
+        vm.FlrigHost = "127.0.0.1";
+        vm.FlrigPort = 12345;
+        vm.HamlibModel = 1035;
+
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        await vm.TestFlrigConnectionCommand.ExecuteAsync(null);
+        await vm.TestOmniRigConnectionCommand.ExecuteAsync(null);
+        await vm.TestHamlibConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(4, radioSession.TestConnectionTokens.Count);
+        Assert.All(radioSession.TestConnectionTokens, token => Assert.True(token.CanBeCanceled));
+    }
+
     [AvaloniaFact]
     public async Task TestRigctldConnectionCommand_Failure_SetsStatusMessageToFailedKey()
     {
