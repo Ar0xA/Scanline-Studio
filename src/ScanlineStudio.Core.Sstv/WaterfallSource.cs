@@ -9,7 +9,7 @@ namespace ScanlineStudio.Core.Sstv;
 public sealed class WaterfallSource : IWaterfallSource, IWaterfallSourceReconfiguration, IDisposable
 {
     // NOT readonly (restart-required-settings backlog item 4, 2026-08-27) -- volatile, not
-    // lock-guarded: PushSamples/EmitFrame (the audio drain thread) reads it once per emitted frame
+    // lock-guarded: PushSamples/BuildFrame (the audio drain thread) reads it once per emitted frame
     // only to compute binWidthHz, and RequestSampleRate (any thread, called by
     // ScanlineStudio.Application.SstvSessionService at the exact moment it commits an RX capture
     // restart -- see IWaterfallSourceReconfiguration's own doc comment for why it must never be
@@ -87,18 +87,36 @@ public sealed class WaterfallSource : IWaterfallSource, IWaterfallSourceReconfig
 
             if (_accumulatedCount == _windowSize)
             {
-                EmitFrame();
+                // T1-2 (production_audit.md): compute the frame BEFORE sliding the accumulator, and
+                // slide BEFORE publishing (_frames.OnNext) -- a throwing subscriber must never leave
+                // the accumulator un-slid. It used to: OnNext ran first (inside the old EmitFrame),
+                // and a throw from it skipped the Array.Copy/_accumulatedCount reset below entirely,
+                // so _accumulatedCount stayed at _windowSize. The VERY NEXT PushSamples call then
+                // immediately re-triggered this branch with the SAME stale accumulator content before
+                // consuming any of the newly-pushed samples -- a duplicate, stale frame silently
+                // re-emitted (confirmed empirically: an all-zeros window's -180dB floor frame,
+                // re-published a second time ahead of the genuinely fresh one). Building the frame
+                // data and sliding first means the accumulator is always left correct regardless of
+                // what a subscriber does with the frame handed to it below.
+                var frame = BuildFrame();
 
                 var keep = _windowSize - _hopSize;
                 Array.Copy(_accumulator, _hopSize, _accumulator, 0, keep);
                 _accumulatedCount = keep;
+
+                _frames.OnNext(frame);
             }
         }
     }
 
     public void Dispose() => _frames.Dispose();
 
-    private void EmitFrame()
+    // T1-2 (production_audit.md): pure computation only -- no _frames.OnNext here. See this method's
+    // own call site in PushSamples for why publishing is deliberately separated from computing.
+    // Precondition (unchecked -- single call site, always holds there): _accumulatedCount ==
+    // _windowSize, and _accumulator must not yet have been slid for this window -- this reads all
+    // _windowSize entries unconditionally, with no awareness of fill state.
+    private WaterfallFrame BuildFrame()
     {
         Span<float> real = new float[_windowSize];
         Span<float> imag = new float[_windowSize];
@@ -130,7 +148,7 @@ public sealed class WaterfallSource : IWaterfallSource, IWaterfallSourceReconfig
         }
 
         var binWidthHz = (double)_sampleRate / _windowSize;
-        _frames.OnNext(new WaterfallFrame(magnitudesDb, binWidthHz, DateTimeOffset.UtcNow));
+        return new WaterfallFrame(magnitudesDb, binWidthHz, DateTimeOffset.UtcNow);
     }
 
     private static float[] BuildHannWindow(int size)
