@@ -1662,13 +1662,41 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             Dispatcher.UIThread.Post(() => HamlibPttTestSucceeded = result.Success);
             if (!result.Success)
             {
-                Dispatcher.UIThread.Post(() => TestPttErrorMessage = result.ErrorMessage);
+                // T1-7 (production_audit.md): used to assign result.ErrorMessage directly -- raw
+                // English, unlike the sibling TestConnectionAsync path, which already wraps its own
+                // result through this same localized-template convention. Nested try/catch, same
+                // reasoning as TestRigctldConnectionAsync's own posted lambda above -- this runs
+                // after the outer try/catch has already exited, so a broken locale key's GetString
+                // FormatException would otherwise escape uncaught onto the dispatcher loop.
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", result.ErrorMessage ?? string.Empty);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.TestHamlibPttStatusDisplayFailed(_logger, ex);
+                        TestPttErrorMessage = null;
+                    }
+                });
             }
         }
         catch (Exception ex)
         {
             Log.TestPttFailed(_logger, model, ex);
-            Dispatcher.UIThread.Post(() => TestPttErrorMessage = ex.Message);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", ex.Message);
+                }
+                catch (Exception displayEx)
+                {
+                    Log.TestHamlibPttStatusDisplayFailed(_logger, displayEx);
+                    TestPttErrorMessage = null;
+                }
+            });
         }
         finally
         {
@@ -1724,13 +1752,37 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             Dispatcher.UIThread.Post(() => FlrigPttTestSucceeded = result.Success);
             if (!result.Success)
             {
-                Dispatcher.UIThread.Post(() => TestPttErrorMessage = result.ErrorMessage);
+                // T1-7 (production_audit.md): same fix and reasoning as TestPttAsync's own equivalent
+                // site above.
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", result.ErrorMessage ?? string.Empty);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.TestFlrigPttStatusDisplayFailed(_logger, ex);
+                        TestPttErrorMessage = null;
+                    }
+                });
             }
         }
         catch (Exception ex)
         {
             Log.TestFlrigPttFailed(_logger, host, port, ex);
-            Dispatcher.UIThread.Post(() => TestPttErrorMessage = ex.Message);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", ex.Message);
+                }
+                catch (Exception displayEx)
+                {
+                    Log.TestFlrigPttStatusDisplayFailed(_logger, displayEx);
+                    TestPttErrorMessage = null;
+                }
+            });
         }
         finally
         {
@@ -3706,6 +3758,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPtt(model={Model}) threw unexpectedly")]
         public static partial void TestPttFailed(ILogger logger, uint model, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the Hamlib PTT-test result status message failed; status left blank")]
+        public static partial void TestHamlibPttStatusDisplayFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "TestFlrigConnection invoked: host={Host}, port={Port}")]
         public static partial void TestFlrigConnectionInvoked(ILogger logger, string host, int port);
 
@@ -3729,6 +3784,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestFlrigPtt({Host}:{Port}) threw unexpectedly")]
         public static partial void TestFlrigPttFailed(ILogger logger, string host, int port, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Formatting the flrig PTT-test result status message failed; status left blank")]
+        public static partial void TestFlrigPttStatusDisplayFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "DisconnectRadio invoked")]
         public static partial void DisconnectRadioInvoked(ILogger logger);

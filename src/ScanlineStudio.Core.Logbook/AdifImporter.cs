@@ -6,14 +6,15 @@ using ScanlineStudio.Abstractions.Radio;
 namespace ScanlineStudio.Core.Logbook;
 
 /// <summary>See <see cref="IAdifImporter"/>. Reads the whole input up front (<c>ReadToEnd</c>),
-/// re-encodes it as UTF-8 bytes, and works with byte-offset slicing rather than incremental
-/// <see cref="TextReader"/> reads or char-index slicing — ADIF's own field framing
-/// (<c>&lt;name:length&gt;</c> followed by exactly <c>length</c> UTF-8 <b>bytes</b>, which may
-/// themselves contain <c>&lt;</c>/newlines) requires byte-exact slicing to correctly parse a
-/// non-ASCII value (matches <see cref="AdifExporter"/>'s own byte-count field lengths). Scanning
-/// for the ASCII delimiter bytes <c>&lt;</c>/<c>&gt;</c> directly against the UTF-8 byte array is
-/// safe even though the surrounding value bytes may be multi-byte — a core UTF-8 property is that
-/// no continuation byte of a multi-byte sequence ever equals an ASCII byte value.</summary>
+/// re-encodes it as bytes in the caller-selected source encoding (default UTF-8, matching
+/// <see cref="AdifExporter"/>'s own output encoding), and works with byte-offset slicing rather
+/// than incremental <see cref="TextReader"/> reads or char-index slicing — ADIF's own field framing
+/// (<c>&lt;name:length&gt;</c> followed by exactly <c>length</c> <b>bytes</b> of the source file's
+/// own encoding, which may themselves contain <c>&lt;</c>/newlines) requires byte-exact slicing to
+/// correctly parse a non-ASCII value. Scanning for the ASCII delimiter bytes <c>&lt;</c>/<c>&gt;</c>
+/// directly against the byte array is safe for both UTF-8 (no continuation byte of a multi-byte
+/// sequence ever equals an ASCII byte value) and any single-byte code page like Windows-1252 (every
+/// byte IS a full character, and the first 128 code points match ASCII in both).</summary>
 public sealed class AdifImporter : IAdifImporter
 {
     /// <summary>Fields consumed unconditionally, regardless of value. <c>MODE</c>/<c>SUBMODE</c>/
@@ -35,15 +36,26 @@ public sealed class AdifImporter : IAdifImporter
         "COUNTRY", "COMMENT", "STATION_CALLSIGN",
     };
 
-    public IReadOnlyList<QsoRecord> Import(TextReader reader)
+    public IReadOnlyList<QsoRecord> Import(TextReader reader, Encoding? sourceEncoding = null)
     {
-        var bytes = Encoding.UTF8.GetBytes(reader.ReadToEnd());
-        var position = SkipHeader(bytes);
+        // T1-17 (production_audit.md): must be the SAME encoding the caller used to decode the
+        // reader's own underlying bytes, or the byte-count length slicing below misaligns for any
+        // non-ASCII content -- see this parameter's own doc comment on IAdifImporter.Import.
+        // Auditor code-review finding (2026-08-31): the class doc comment's own byte-scan safety
+        // argument only holds for UTF-8 or a single-byte code page -- a multi-byte encoding like
+        // UTF-16 (e.g. a BOM'd source file StreamReader auto-detected) puts null bytes between
+        // ASCII delimiter bytes, silently breaking the eoh/eor scan (zero records, no exception).
+        // Re-encode through UTF-8 instead of trusting an unsafe caller-supplied encoding.
+        var encoding = sourceEncoding is not null && IsByteScanSafe(sourceEncoding)
+            ? sourceEncoding
+            : Encoding.UTF8;
+        var bytes = encoding.GetBytes(reader.ReadToEnd());
+        var position = SkipHeader(bytes, encoding);
         var records = new List<QsoRecord>();
 
         while (position < bytes.Length)
         {
-            var (fields, nextPosition, foundEor) = ParseRecord(bytes, position);
+            var (fields, nextPosition, foundEor) = ParseRecord(bytes, position, encoding);
             position = nextPosition;
             if (!foundEor)
             {
@@ -56,10 +68,17 @@ public sealed class AdifImporter : IAdifImporter
         return records;
     }
 
+    /// <summary>True only for UTF-8 or a single-byte code page (e.g. Windows-1252) -- the two cases
+    /// the class doc comment's byte-scan safety argument actually covers. A multi-byte encoding like
+    /// UTF-16/UTF-32 puts non-ASCII bytes (including embedded nulls) between the ASCII delimiter
+    /// bytes the eoh/eor scan looks for, so it must never reach <see cref="Import"/>'s byte-slicing
+    /// path.</summary>
+    private static bool IsByteScanSafe(Encoding encoding) => encoding.IsSingleByte || encoding.CodePage == Encoding.UTF8.CodePage;
+
     /// <summary>Scans for the first <c>&lt;eoh&gt;</c> tag (case-insensitive, like every other ADIF
     /// tag) using the same tag-scanning logic as <see cref="ParseRecord"/> rather than a fixed
     /// ASCII substring search — a real header could in principle spell it any case.</summary>
-    private static int SkipHeader(byte[] bytes)
+    private static int SkipHeader(byte[] bytes, Encoding encoding)
     {
         var position = 0;
         while (true)
@@ -76,7 +95,7 @@ public sealed class AdifImporter : IAdifImporter
                 return 0;
             }
 
-            var tagContent = Encoding.UTF8.GetString(bytes, tagStart + 1, tagEnd - tagStart - 1);
+            var tagContent = encoding.GetString(bytes, tagStart + 1, tagEnd - tagStart - 1);
             if (tagContent.Equals("eoh", StringComparison.OrdinalIgnoreCase))
             {
                 return tagEnd + 1;
@@ -90,7 +109,7 @@ public sealed class AdifImporter : IAdifImporter
     /// stopping at the next <c>&lt;eor&gt;</c> marker. A field tag with no <c>:length</c> part
     /// (malformed, or a stray header-only tag like a repeated <c>&lt;eoh&gt;</c>) is skipped rather
     /// than aborting the whole import.</summary>
-    private static (Dictionary<string, string> Fields, int NextPosition, bool FoundEor) ParseRecord(byte[] bytes, int position)
+    private static (Dictionary<string, string> Fields, int NextPosition, bool FoundEor) ParseRecord(byte[] bytes, int position, Encoding encoding)
     {
         var fields = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -108,7 +127,7 @@ public sealed class AdifImporter : IAdifImporter
                 return (fields, bytes.Length, false);
             }
 
-            var tagContent = Encoding.UTF8.GetString(bytes, tagStart + 1, tagEnd - tagStart - 1);
+            var tagContent = encoding.GetString(bytes, tagStart + 1, tagEnd - tagStart - 1);
             position = tagEnd + 1;
 
             if (tagContent.Equals("eor", StringComparison.OrdinalIgnoreCase))
@@ -123,7 +142,7 @@ public sealed class AdifImporter : IAdifImporter
             }
 
             byteLength = Math.Min(byteLength, bytes.Length - position);
-            var value = Encoding.UTF8.GetString(bytes, position, byteLength);
+            var value = encoding.GetString(bytes, position, byteLength);
             position += byteLength;
 
             if (byteLength > 0)

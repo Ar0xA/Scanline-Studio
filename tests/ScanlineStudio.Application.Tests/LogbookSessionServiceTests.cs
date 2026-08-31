@@ -88,6 +88,14 @@ public sealed class LogbookSessionServiceTests
         Assert.Equal(repository.Records[0].Id, result.Record.Id);
         Assert.Equal(0, result.AdifUdpSentCount);
         Assert.False(result.QrzUploaded);
+        // T1-7 (production_audit.md): this used to be hardcoded null -- the real failure reason
+        // (already logged server-side) never reached the caller, only that SOMETHING failed.
+        //
+        // Auditor code-review finding (2026-08-31): the reason belongs in PostPersistError, not
+        // QrzError -- this throw is from ADIF-UDP, not QRZ, and QrzError renders through a
+        // QRZ-specific "QRZ: failed (...)" UI string regardless of the real cause.
+        Assert.Null(result.QrzError);
+        Assert.Equal("network unreachable", result.PostPersistError);
     }
 
     [Fact]
@@ -292,6 +300,68 @@ public sealed class LogbookSessionServiceTests
             Assert.Equal(2, repository.Records.Count);
             Assert.Contains(repository.Records, r => r.Callsign == "W1AW");
             Assert.Contains(repository.Records, r => r.Callsign == "DL2QSK");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ImportAdifFileAsync_Windows1252SourceFileWithNoBom_DecodesAccentedFieldCorrectly()
+    {
+        // T1-17 (production_audit.md): a non-UTF-8 ADIF file (e.g. Windows-1252, common from other
+        // ham-logging software) with no BOM used to get silently mis-decoded as UTF-8 by
+        // StreamReader's own default. Windows-1252 is a single-byte encoding, so the byte-count ADIF
+        // length prefix (<NAME:4>) equals the character count here -- no multi-byte-length concern.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+        var repository = new FakeLogbookRepository();
+        var service = CreateService(repository);
+        var path = Path.Combine(Path.GetTempPath(), $"scanline-studio-import-test-{Guid.NewGuid()}.adi");
+        var windows1252 = System.Text.Encoding.GetEncoding(1252);
+        var adifText = "<EOH>" +
+            "<CALL:4>W1AW<QSO_DATE:8>20260101<TIME_ON:4>1200<NAME:4>Jörg<EOR>";
+        await File.WriteAllBytesAsync(path, windows1252.GetBytes(adifText));
+
+        try
+        {
+            var imported = await service.ImportAdifFileAsync(path);
+
+            var record = Assert.Single(imported);
+            Assert.Equal("W1AW", record.Callsign);
+            Assert.Equal("Jörg", record.Name);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ImportAdifFileAsync_Utf16SourceFileWithBom_StillParsesRecords()
+    {
+        // Auditor code-review finding (2026-08-31): StreamReader's own BOM detection correctly
+        // decodes a UTF-16 file, but AdifImporter's byte-count length slicing is only safe for UTF-8
+        // or a single-byte code page (see AdifImporter's own class doc comment) -- a multi-byte
+        // encoding puts non-ASCII bytes (including embedded nulls) between the ASCII eoh/eor
+        // delimiter bytes the scan looks for, silently breaking it (zero records, no exception, a
+        // reported "success"). A UTF-16 ADIF file used to import fine (Import hardcoded UTF-8,
+        // re-encoding the correctly-decoded text) before this regression was introduced and then
+        // fixed by rejecting an unsafe caller-supplied encoding inside Import itself.
+        var repository = new FakeLogbookRepository();
+        var service = CreateService(repository);
+        var path = Path.Combine(Path.GetTempPath(), $"scanline-studio-import-test-{Guid.NewGuid()}.adi");
+        var adifText = "<EOH>" +
+            "<CALL:4>W1AW<QSO_DATE:8>20260101<TIME_ON:4>1200<EOR>";
+        byte[] utf16Bytes = [.. System.Text.Encoding.Unicode.GetPreamble(), .. System.Text.Encoding.Unicode.GetBytes(adifText)];
+        await File.WriteAllBytesAsync(path, utf16Bytes);
+
+        try
+        {
+            var imported = await service.ImportAdifFileAsync(path);
+
+            var record = Assert.Single(imported);
+            Assert.Equal("W1AW", record.Callsign);
         }
         finally
         {

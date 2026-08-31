@@ -339,6 +339,40 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
+    public async Task LoadThumbnailAsync_ExifOrientation_FitsUsingPostOrientDimensions()
+    {
+        // T1-15 (production_audit.md): this method used to skip AutoOrient entirely, the same bug
+        // class already fixed once for StockImageLibrary (Core.Imaging) -- mirrors that class's own
+        // LoadThumbnailAsync_ExifOrientation_FitsUsingPostOrientDimensions test exactly. A 4x2
+        // source rotated to 2x4 is now TALL, so fitting within maxDimension=4 should produce a
+        // 2-wide x 4-tall thumbnail, not the pre-orient 4-wide x 2-tall shape.
+        var dbPath = TempDbPath();
+        var imagePath = Path.Combine(Path.GetTempPath(), $"scanline-studio-history-thumb-exif-test-{Guid.NewGuid()}.jpg");
+        try
+        {
+            using (var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(4, 2))
+            {
+                image.Metadata.ExifProfile = new SixLabors.ImageSharp.Metadata.Profiles.Exif.ExifProfile();
+                image.Metadata.ExifProfile.SetValue(SixLabors.ImageSharp.Metadata.Profiles.Exif.ExifTag.Orientation, (ushort)6);
+                await image.SaveAsJpegAsync(imagePath);
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            var entry = new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed);
+
+            var thumbnail = await store.LoadThumbnailAsync(entry, maxDimension: 4);
+
+            Assert.Equal(2, thumbnail.Width);
+            Assert.Equal(4, thumbnail.Height);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            File.Delete(imagePath);
+        }
+    }
+
+    [Fact]
     public async Task GetImagesDirectoryAsync_NoSectionConfigured_ReturnsTheDefaultPicturesFolder()
     {
         var dbPath = TempDbPath();

@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace ScanlineStudio.Abstractions.Logbook;
 
 /// <summary>Reads ADIF 3.x text into <see cref="QsoRecord"/>s — see spec/08-logging.md's "ADIF
@@ -8,5 +10,12 @@ namespace ScanlineStudio.Abstractions.Logbook;
 /// rather than silently skipping data the caller didn't ask to skip.</summary>
 public interface IAdifImporter
 {
-    IReadOnlyList<QsoRecord> Import(TextReader reader);
+    /// <summary>T1-17 (production_audit.md): ADIF field lengths are BYTE counts in the source
+    /// file's own encoding, not character counts -- <paramref name="sourceEncoding"/> must be the
+    /// SAME encoding the caller used to decode <paramref name="reader"/>'s underlying bytes into
+    /// text, or the byte-count length slicing below misaligns for any non-ASCII content (every
+    /// encoding agrees on ASCII's own single-byte-per-character mapping, so this only matters once
+    /// accented/non-Latin text is involved). Defaults to UTF-8, matching every existing caller's own
+    /// implicit assumption and this codebase's own <c>AdifExporter</c> output encoding.</summary>
+    IReadOnlyList<QsoRecord> Import(TextReader reader, Encoding? sourceEncoding = null);
 }

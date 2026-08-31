@@ -473,10 +473,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// this class), not shared across layers for this. "—" while no reception has completed yet
     /// (see <see cref="_latchedFrequencyHz"/>'s own doc comment for why that's the whole decoding
     /// duration, not a transient gap).</summary>
+    // T1-13 (production_audit.md): "MHz" used to be a hardcoded English literal -- decimal
+    // formatting stays ambient-culture, deliberately, matching RadioStatusViewModel.FrequencyDisplay's
+    // own reasoning (a live screen-only readout, not a persisted/round-tripped value); interpolation,
+    // not ToString(format), dodges CA1305 the same way.
     public string LatchedFrequencyDisplay => _latchedFrequencyHz is { } hz
         ? _latchedRigMode is { } mode
-            ? $"{hz / 1_000_000.0:0.000000} MHz · {mode}"
-            : $"{hz / 1_000_000.0:0.000000} MHz"
+            ? _localization.GetString("Panes.RxImage.LatchedFrequencyWithModeFormat", $"{hz / 1_000_000.0:0.000000}", mode)
+            : _localization.GetString("Panes.RxImage.LatchedFrequencyFormat", $"{hz / 1_000_000.0:0.000000}")
         : "—";
 
     /// <summary>ui_transition_plan.md step 5 (T1-6): raw accessors for the Logbook prefill (Log QSO,
@@ -621,7 +625,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// exactly (DisplayName + real VisCode, not a placeholder).</summary>
     public string DetectedModeDisplay => DetectedMode is { } mode ? $"{mode.DisplayName} — VIS {mode.VisCode}" : "—";
 
-    public string LineTimeText => DetectedMode is { } mode ? $"{mode.LineDurationMs:0.0} ms" : "—";
+    // T1-13 (production_audit.md): "ms" used to be a hardcoded English literal.
+    public string LineTimeText => DetectedMode is { } mode ? _localization.GetString("Panes.RxImage.LineTimeFormat", $"{mode.LineDurationMs:0.0}") : "—";
 
     public string LinesText => DetectedMode is { } mode ? mode.ImageHeight.ToString(CultureInfo.InvariantCulture) : "—";
 

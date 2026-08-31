@@ -108,6 +108,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     public async Task<IImageSource> LoadThumbnailAsync(ReceiveHistoryEntry entry, int maxDimension, CancellationToken ct = default)
     {
         using var image = await Image.LoadAsync<SixLabors.ImageSharp.PixelFormats.Rgb24>(entry.FilePath, ct).ConfigureAwait(false);
+        // T1-15 (production_audit.md): this class used to skip AutoOrient entirely, the same bug
+        // class already fixed once for StockImageLibrary (Core.Imaging) -- decoded SSTV images
+        // rarely carry EXIF orientation, but a re-decoded WAV/image saved through a path that does
+        // would show sideways here while every other read-direction site orients correctly. Must
+        // run BEFORE the fit computation, same ordering rationale as every other AutoOrient call
+        // site in this codebase -- the fit must be measured from the POST-orient dimensions.
+        image.Mutate(x => x.AutoOrient());
         var (width, height) = FitWithinLongestSide(image.Width, image.Height, maxDimension);
         image.Mutate(x => x.Resize(width, height));
 

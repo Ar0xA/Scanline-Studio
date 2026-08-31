@@ -937,7 +937,10 @@ public sealed class RadioStatusViewModelTests
             SwrRatio: 1.2f, AlcLevel: 50f, PowerPercent: 75f));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("SWR 1.2 · ALC 50% · PWR 75%", vm.RigMetersDisplay);
+        // T1-13 (production_audit.md): SWR/ALC/PWR now route through FakeLocalizationService, which
+        // echoes the raw key -- not a formatted string. Same convention as
+        // TestRigctldConnectionCommand_Failure_SetsStatusMessageToFailedKey elsewhere in this suite.
+        Assert.Equal("RadioStatus.Meters.SwrFormat · RadioStatus.Meters.AlcFormat · RadioStatus.Meters.PwrFormat", vm.RigMetersDisplay);
     }
 
     [AvaloniaFact]
@@ -969,7 +972,8 @@ public sealed class RadioStatusViewModelTests
             SwrRatio: 1.5f, AlcLevel: null, PowerPercent: 100f));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("SWR 1.5 · PWR 100%", vm.RigMetersDisplay);
+        // T1-13 (production_audit.md): see the AllThreeMetersPresent test's own comment above.
+        Assert.Equal("RadioStatus.Meters.SwrFormat · RadioStatus.Meters.PwrFormat", vm.RigMetersDisplay);
     }
 
     // User-reported gap (2026-08-18): "while TX lights up, receiving should not stay green" -- the
@@ -1061,7 +1065,10 @@ public sealed class RadioStatusViewModelTests
             14_230_000, RadioMode.Usb, IsTransmitting: true, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
             SwrRatio: 1.2f, AlcLevel: 50f, PowerPercent: 75f));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("SWR 1.2 · ALC 50% · PWR 75%", vm.RigMetersDisplay);
+        // T1-13 (production_audit.md): SWR/ALC/PWR now route through FakeLocalizationService, which
+        // echoes the raw key -- not a formatted string. Same convention as
+        // TestRigctldConnectionCommand_Failure_SetsStatusMessageToFailedKey elsewhere in this suite.
+        Assert.Equal("RadioStatus.Meters.SwrFormat · RadioStatus.Meters.AlcFormat · RadioStatus.Meters.PwrFormat", vm.RigMetersDisplay);
 
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
@@ -1117,13 +1124,16 @@ public sealed class RadioStatusViewModelTests
             14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
             BandwidthHz: 2400));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("BW 2400 Hz", vm.BandwidthDisplay);
+        // T1-13 (production_audit.md): now routes through FakeLocalizationService, which echoes the
+        // raw key -- not a formatted string.
+        Assert.Equal("RadioStatus.BandwidthDisplayFormat", vm.BandwidthDisplay);
 
         radioSession.Push(new RadioState(
             14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow,
             BandwidthHz: null));
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("BW —", vm.BandwidthDisplay);
+        // T1-13 (production_audit.md): now routes through FakeLocalizationService's raw-key echo.
+        Assert.Equal("RadioStatus.BandwidthUnavailable", vm.BandwidthDisplay);
     }
 
     [AvaloniaFact]
@@ -1146,14 +1156,17 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.CanReadBandwidth);
         Assert.True(vm.CanSetBandwidth);
-        Assert.Equal("BW 2400 Hz", vm.BandwidthDisplay);
+        // T1-13 (production_audit.md): now routes through FakeLocalizationService, which echoes the
+        // raw key -- not a formatted string.
+        Assert.Equal("RadioStatus.BandwidthDisplayFormat", vm.BandwidthDisplay);
 
         radioSession.PushConnectionEvent(new RadioConnectionEvent(RadioConnectionState.Disconnected, null, null, DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.CanReadBandwidth);
         Assert.False(vm.CanSetBandwidth);
-        Assert.Equal("BW —", vm.BandwidthDisplay);
+        // T1-13 (production_audit.md): now routes through FakeLocalizationService's raw-key echo.
+        Assert.Equal("RadioStatus.BandwidthUnavailable", vm.BandwidthDisplay);
         Assert.False(vm.SetBandwidthCommand.CanExecute(null));
     }
 
