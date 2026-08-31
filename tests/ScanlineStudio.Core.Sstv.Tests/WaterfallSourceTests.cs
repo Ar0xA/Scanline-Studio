@@ -243,4 +243,63 @@ public sealed class WaterfallSourceTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => reconfig.RequestSampleRate(sampleRate));
     }
+
+    [Fact]
+    public void PushSamples_ThrowingFirstSubscriber_PropagatesUncaught_SkipsLaterSubscriber()
+    {
+        // T1-2 (production_audit.md): proves IWaterfallSource's own documented contract -- unlike
+        // IRadioController.StateChanges, a Frames subscriber's exception is NOT caught/contained here;
+        // it propagates straight out of PushSamples. Subject<T>.OnNext also skips notifying any
+        // subscriber registered after the one that threw, same as RadioController's own
+        // PollLoop_SurvivesAThrowingStateChangesSubscriber test relies on -- this is Subject<T>'s own
+        // documented behavior, not something WaterfallSource adds.
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: 64);
+        var expected = new InvalidOperationException("Injected first subscriber failure.");
+        var laterFrames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(_ => throw expected);
+        source.Frames.Subscribe(laterFrames.Add);
+
+        var actual = Assert.Throws<InvalidOperationException>(() => source.PushSamples(new float[64]));
+
+        Assert.Same(expected, actual);
+        Assert.Empty(laterFrames);
+    }
+
+    [Fact]
+    public void PushSamples_AfterAThrowingSubscriber_DoesNotReemitAStaleDuplicateFrame()
+    {
+        // T1-2 (production_audit.md), real bug fixed: the accumulator's slide-forward used to run
+        // AFTER _frames.OnNext, so a throwing subscriber left it un-advanced -- the VERY NEXT
+        // PushSamples call re-triggered the same full-window branch with the SAME stale accumulator
+        // content before consuming any of the newly-pushed samples, silently re-publishing a stale
+        // duplicate frame. Confirmed empirically before the fix (a duplicate all-zeros -180dB-floor
+        // frame, then the genuinely fresh one) -- this test pins the fix: exactly one frame comes out,
+        // and it reflects the FRESH data, not the discarded window.
+        const int windowSize = 8;
+        const int hopSize = 4;
+        using var source = new WaterfallSource(sampleRate: 8000, windowSize: windowSize, hopSize: hopSize);
+        var shouldThrow = true;
+        var frames = new List<WaterfallFrame>();
+        source.Frames.Subscribe(f =>
+        {
+            if (shouldThrow)
+            {
+                shouldThrow = false;
+                throw new InvalidOperationException("Injected one-time subscriber failure.");
+            }
+
+            frames.Add(f);
+        });
+
+        Assert.Throws<InvalidOperationException>(() => source.PushSamples(new float[windowSize])); // all zeros
+        Assert.Empty(frames);
+
+        source.PushSamples(Enumerable.Repeat(1f, hopSize).ToArray());
+
+        var frame = Assert.Single(frames);
+        // A stale re-emit of the all-zeros window would show every bin at the -180dB silence floor
+        // (20*log10(max(0, 1e-9))); the fresh frame (half zeros, half real data after the hop-size
+        // slide) must not.
+        Assert.Contains(frame.MagnitudesDb, m => m > -180f);
+    }
 }

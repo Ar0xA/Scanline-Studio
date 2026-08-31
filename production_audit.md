@@ -263,6 +263,10 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
+**Update (2026-08-31):** Tier C is now closed (see below) and T1-2 (Tier D) is done — see the
+"Tier D progress" note further below. T1-1/T1-3/T1-5/T1-6/T1-14/T1-16 still each need their own
+plan-review round.
+
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
 - **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
   doc comment confirming the design is deliberate).
@@ -283,11 +287,25 @@ T1-14/T1-16 (Tier D) still need their own plan-review round.
   test. Applying that fix's own comment update briefly dropped the actual publish call; caught by a
   now-failing test (`PollLoop_PublishesStateChanges_AndUpdatesLastKnownState`), fixed immediately.
 
+**Tier D progress — T1-2 closed (2026-08-31):** re-scoped per the correction above (user confirmed
+"tests only" as the starting scope), but verifying the "no state corruption" half of that scope
+empirically (a throwaway test, deleted after confirming) found a real bug: `WaterfallSource`'s
+internal accumulator never slid forward after a throwing `Frames` subscriber, since the old
+`EmitFrame()` called `_frames.OnNext` BEFORE the slide — the next `PushSamples` call then
+re-emitted a stale duplicate frame. User approved fixing it in the same pass. Fixed by splitting
+`EmitFrame()` into a pure `BuildFrame()` (compute only) and reordering `PushSamples` to slide the
+accumulator before publishing. One auditor code-review round, go — confirmed the fix is
+bit-identical output (pure reordering), closes the gap including the multi-window-per-call case,
+and also caught a separate pre-existing doc-comment overstatement (`IWaterfallSource.cs` claimed
+`SstvSessionService` "wraps every subscriber call" in try/catch; it actually wraps its own whole
+`Waterfall.PushSamples` call, no per-subscriber isolation) — corrected. Full `Core.Sstv.Tests`
+suite (1524 tests) green.
+
 ---
 
 ## Tier 2 — medium priority, batch with adjacent work
 
-- **Core.Sstv:** per-line array/delegate allocations in scanline decoders (`YCbCrSequentialScanlineDecoder.cs:16-18`, `YCbCrLinePairedScanlineDecoder.cs:18-21`); `PixelSampleReader` delegate indirection on the hottest read path; `WaterfallSource.EmitFrame` allocates 2 scratch arrays/frame; event fan-out allocates twice per raise (`AnalogFmSstvDecoder.cs:2211`, `RestartableSstvDecoder.cs:763,1730`); `SstvModeRegistry` uses 43-branch if-chains instead of tables (`:958-1004`); 4 near-identical scanline decoders share copy-pasted index-walk math (extract *only* the walker, not the channel logic); channel dispatch by magic string instead of enum; `AnalogFmSstvDecoder.cs` is 7,945 lines at ~62% review-history comments — extract the narrative to `docs/`, keep only the invariant statements inline (safe, additive, do this one); `WaterfallSource` has an unsynchronized `_accumulatedCount` cross-thread read/write and no `_disposed` guard on the audio thread.
+- **Core.Sstv:** per-line array/delegate allocations in scanline decoders (`YCbCrSequentialScanlineDecoder.cs:16-18`, `YCbCrLinePairedScanlineDecoder.cs:18-21`); `PixelSampleReader` delegate indirection on the hottest read path; `WaterfallSource.BuildFrame` allocates 2 scratch arrays/frame; event fan-out allocates twice per raise (`AnalogFmSstvDecoder.cs:2211`, `RestartableSstvDecoder.cs:763,1730`); `SstvModeRegistry` uses 43-branch if-chains instead of tables (`:958-1004`); 4 near-identical scanline decoders share copy-pasted index-walk math (extract *only* the walker, not the channel logic); channel dispatch by magic string instead of enum; `AnalogFmSstvDecoder.cs` is 7,945 lines at ~62% review-history comments — extract the narrative to `docs/`, keep only the invariant statements inline (safe, additive, do this one); `WaterfallSource` has an unsynchronized `_accumulatedCount` cross-thread read/write and no `_disposed` guard on the audio thread.
 - **Application:** `ConfigurationPresetService` has 5 near-identical try/catch push blocks (collapses via Tier-0 `UpdateAsync` work); `OptionsSettingsService._loadedSettings` is now dead state; `OptionsSnapshot` mapping triplicated across `Defaults`/`LoadAsync`/`SaveAsync`; `TemplateStore.SaveAsync`/`ExportAdifFileAsync` write non-atomically (temp-file+rename fix, cheap); `ImportAdifFileAsync` does N individual transactions with no partial-failure reporting; fire-and-forget `Task.Run` work (audio auto-save encode, RxAudioAutoSaver completion) isn't tracked or drained on `DisposeAsync`.
 - **Radio/CAT:** 4 near-identical `AcquireAsync`/timeout-wrapper/lazy-connect implementations across the 4 backend projects — extract a shared base, but preserve 2 real asymmetries (unbounded vs. bounded wait, Rigctld's deliberate no-lock dispose); Hamlib does one `Task.Run` per native call (up to 6 pool hops per 250ms poll) — wrap the whole method body once instead; OmniRig has zero logging anywhere (the one backend that can't be tested locally, so diagnosability matters most); `RigctldClientProtocol.ReadLineAsync` has no max line length (unbounded growth against a mis-pointed host); Hamlib connect-cleanup can leak a handle if `RigCleanup` throws before `_rig` is cleared (2-line swap).
 - **UI:** `TxControlsPaneViewModel.Dispose()` doesn't dispose its CTS or unsubscribe editor event handlers; `UpdateFilteredEntries` does `Clear()`+N`Add()` per keystroke with no debounce; `TranslateBindingSource` only prunes dead handlers on a culture change (O(n²) growth over a long session with no language switch) — investigate actual growth before fixing; `TxImageEditorPaneViewModel` is a 4,140-line god object (extract `EditorUndoStack`/`TemplateVariableScanner` as separate testable collaborators, sequence after T0-11/T0-12).
