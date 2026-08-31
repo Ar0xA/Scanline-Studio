@@ -149,20 +149,8 @@ public sealed partial class ReceivedImageBuffer : IReceivedImageBuffer
         return Task.Run(
             () =>
             {
-                using var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(snapshot.Width, snapshot.Height);
-                image.ProcessPixelRows(accessor =>
-                {
-                    for (var y = 0; y < snapshot.Height; y++)
-                    {
-                        var sourceRow = snapshot.GetScanline(y);
-                        var destinationRow = accessor.GetRowSpan(y);
-                        for (var x = 0; x < snapshot.Width; x++)
-                        {
-                            var pixel = sourceRow[x];
-                            destinationRow[x] = new SixLabors.ImageSharp.PixelFormats.Rgb24(pixel.R, pixel.G, pixel.B);
-                        }
-                    }
-                });
+                // T1-15 (production_audit.md): shared with ImageSourceWriter via ImageSharpPixelConversion.
+                using var image = ImageSharpPixelConversion.FromImageSource(snapshot);
                 image.Save(path);
 
                 // Isolated deliberately: this Task is the one this class's own callers await -- an

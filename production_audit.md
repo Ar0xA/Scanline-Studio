@@ -247,6 +247,22 @@ awaitable-seam treatment `RxImagePaneViewModel._loadQuickModeGridTask` already u
   `TryParseExact` throwing `FormatException`. Only the source-file-encoding half (`LogbookSessionService.cs:135`'s
   `StreamReader` with no declared encoding) is still open.
 
+**Tier B closed (2026-08-31):** T1-7, T1-13, T1-15, T1-17 implemented and committed. Auditor
+code-review round found two real must-fix issues before commit, both fixed and re-verified:
+- **T1-17 regression:** a UTF-16 (BOM'd) source file imported silently as zero records — the
+  encoding threaded from `StreamReader.CurrentEncoding` into `AdifImporter.Import`'s byte-count
+  slicing is only safe for UTF-8 or a single-byte code page (the class's own doc comment already
+  said so); a multi-byte encoding broke the ASCII eoh/eor scan with no exception. Fixed by rejecting
+  an unsafe caller-supplied encoding inside `Import` itself (falls back to UTF-8), plus a new
+  UTF-16-BOM regression test.
+- **T1-7(b) misattribution:** the post-persist failure reason was written into `LogQsoResult.QrzError`,
+  which the UI renders through a QRZ-specific "QRZ: failed (...)" string — misattributing e.g. a
+  settings.json permissions error to QRZ, even with QRZ upload disabled. Fixed with a new, distinct
+  `LogQsoResult.PostPersistError` field and a neutral locale key.
+
+T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
+T1-14/T1-16 (Tier D) still need their own plan-review round.
+
 ---
 
 ## Tier 2 — medium priority, batch with adjacent work

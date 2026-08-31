@@ -42,7 +42,7 @@ public sealed class PaneViewModelTests
         radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("14.230000 MHz", vm.FrequencyDisplay);
+        Assert.Equal("RadioStatus.FrequencyDisplayFormat", vm.FrequencyDisplay);
         Assert.Equal("Usb", vm.ModeDisplay);
     }
 
@@ -396,7 +396,7 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("Scottie 1", vm.DetectedModeText);
-        Assert.Equal("138.2 ms", vm.LineTimeText);
+        Assert.Equal("Panes.RxImage.LineTimeFormat", vm.LineTimeText);
         Assert.Equal("256", vm.LinesText);
     }
 
@@ -806,16 +806,6 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task LatchedFrequencyDisplay_StationAThenRetuneThenStationB_EachFrameKeepsItsOwnFrequency()
     {
-        // Auditor code-review finding (2026-08-29): LatchedFrequencyDisplay formats with the
-        // thread's CurrentCulture (same convention as the production RadioStatusViewModel.FrequencyDisplay
-        // it mirrors), so a hardcoded "14.230000" literal would fail on a non-invariant-decimal-style
-        // dev machine (e.g. de-DE's comma separator). Scoped narrowly via try/finally, restored
-        // immediately after -- this test has no yield point that would let another test observe the
-        // mutated culture in between.
-        var originalCulture = System.Globalization.CultureInfo.CurrentCulture;
-        System.Globalization.CultureInfo.CurrentCulture = System.Globalization.CultureInfo.InvariantCulture;
-        try
-        {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
@@ -833,7 +823,9 @@ public sealed class PaneViewModelTests
         await historyStore.RecordAsync(entryA);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("14.230000 MHz · Usb", vm.LatchedFrequencyDisplay);
+        // T1-13 (production_audit.md): now routes through FakeLocalizationService, which echoes
+        // the raw key -- not a formatted string. Same convention as RadioStatusViewModelTests.cs.
+        Assert.Equal("Panes.RxImage.LatchedFrequencyWithModeFormat", vm.LatchedFrequencyDisplay);
 
         // A new reception starts (the operator retunes in between) -- must go back to "—", not
         // keep showing A's frequency, until B's own entry actually lands.
@@ -848,17 +840,12 @@ public sealed class PaneViewModelTests
         await historyStore.RecordAsync(entryB);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("7.171000 MHz · Lsb", vm.LatchedFrequencyDisplay);
+        Assert.Equal("Panes.RxImage.LatchedFrequencyWithModeFormat", vm.LatchedFrequencyDisplay);
 
         // A's own row, independently, is untouched by B ever completing.
         var storedA = historyStore.RecordedEntries.Single(e => e.Id == "a");
         Assert.Equal(14_230_000, storedA.FrequencyHz);
         Assert.Equal(RadioMode.Usb, storedA.RigMode);
-        }
-        finally
-        {
-            System.Globalization.CultureInfo.CurrentCulture = originalCulture;
-        }
     }
 
     // ui_transition_plan.md step 3 (T1-5): full-size viewer entry points off this pane
@@ -6380,6 +6367,27 @@ public sealed class PaneViewModelTests
         // ("Panes.Logbook.Status.LoggedFormat"), not the trailing refresh failure's
         // ("Panes.Logbook.Error.SearchFailed"), must be what's showing.
         Assert.Equal("Panes.Logbook.Status.LoggedFormat", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_PostPersistStepFails_ShowsNeutralMessage_NotQrzFailed()
+    {
+        // Auditor code-review finding (2026-08-31): a non-QRZ post-persist failure (settings load,
+        // ADIF export, ADIF-UDP send) used to be reported through LogQsoResult.QrzError, which
+        // BuildLogStatusMessage renders through the QRZ-specific "QRZ: failed (...)" string --
+        // misattributing e.g. a settings.json permissions error to QRZ, even when QRZ upload is
+        // disabled entirely. LogQsoResult.PostPersistError is the distinct, correctly-attributed
+        // field for this case.
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FormCallsign = "N0CALL";
+        logbook.LogResultToReturn = new LogQsoResult(SampleQsoRecord("1"), 0, 0, false, QrzError: null, PostPersistError: "settings.json access denied");
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.Logbook.Status.LoggedWithPostPersistError", vm.StatusMessage);
     }
 
     [AvaloniaFact]

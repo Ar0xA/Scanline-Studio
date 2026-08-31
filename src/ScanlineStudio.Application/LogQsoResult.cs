@@ -10,5 +10,10 @@ namespace ScanlineStudio.Application;
 /// logged inside <see cref="IAdifUdpStreamer"/>) — <see cref="AdifUdpSentCount"/>/
 /// <see cref="AdifUdpEnabledCount"/> is the full granularity surfaced to callers, matching
 /// <see cref="IAdifUdpStreamer.SendLoggedQsoAsync"/>'s own return shape. <see cref="QrzError"/> DOES
-/// carry a real reason, since QRZ's HTTP API returns one.</summary>
-public sealed record LogQsoResult(QsoRecord Record, int AdifUdpSentCount, int AdifUdpEnabledCount, bool QrzUploaded, string? QrzError);
+/// carry a real reason, since QRZ's HTTP API returns one — it must never carry a reason from
+/// anywhere else (auditor code-review finding, 2026-08-31: an unrelated settings/ADIF-export/
+/// ADIF-UDP throw once landed here too, misattributing e.g. a settings.json permissions error to
+/// QRZ specifically). <see cref="PostPersistError"/> carries that other case instead — set only
+/// when the whole best-effort span after persistence threw, independent of and mutually exclusive
+/// with a real per-service QRZ failure reason.</summary>
+public sealed record LogQsoResult(QsoRecord Record, int AdifUdpSentCount, int AdifUdpEnabledCount, bool QrzUploaded, string? QrzError, string? PostPersistError = null);

@@ -29,20 +29,8 @@ public sealed class ImageSourceWriter : IImageSourceWriter
                     Directory.CreateDirectory(directory);
                 }
 
-                using var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(source.Width, source.Height);
-                image.ProcessPixelRows(accessor =>
-                {
-                    for (var y = 0; y < source.Height; y++)
-                    {
-                        var sourceRow = source.GetScanline(y);
-                        var destinationRow = accessor.GetRowSpan(y);
-                        for (var x = 0; x < source.Width; x++)
-                        {
-                            var pixel = sourceRow[x];
-                            destinationRow[x] = new SixLabors.ImageSharp.PixelFormats.Rgb24(pixel.R, pixel.G, pixel.B);
-                        }
-                    }
-                });
+                // T1-15 (production_audit.md): shared with ReceivedImageBuffer via ImageSharpPixelConversion.
+                using var image = ImageSharpPixelConversion.FromImageSource(source);
                 // SaveAsPngAsync's SYNC counterpart, explicit -- image.Save(path) infers the
                 // encoder from the path's extension (code-review nit): both current callers always
                 // pass a ".png" path, but this method's own name promises PNG regardless of what the
