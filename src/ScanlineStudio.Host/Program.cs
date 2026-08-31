@@ -47,6 +47,17 @@ internal static partial class Program
         // decode; first statement in Main is the earliest point in this composition root.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        // Missing-feature sweep (2026-08-31): legacy YONIQ refuses a second launch outright
+        // (Mmsstv.cpp's WinMain, silently exits if a TMmsstv window already exists) -- this port
+        // never had an equivalent, letting unlimited concurrent instances fight over the same audio
+        // devices, radio connection, and settings file. Checked as early as possible, before any of
+        // the slow startup work below (host builder, file logging, DI) -- no point paying that cost
+        // on a launch that's about to exit.
+        if (!TryAcquireSingleInstanceLock(args, Console.Error, out var singleInstanceMutex))
+        {
+            return;
+        }
+
         var hostBuilder = Microsoft.Extensions.Hosting.Host.CreateApplicationBuilder(args);
 
         // File provider alongside the console provider CreateApplicationBuilder already registers
@@ -324,7 +335,7 @@ internal static partial class Program
         // dispose-then-ClearAllPools-then-conditional-restart-spawn ordering this feature adds is
         // directly unit-testable, not a documented manual step.
         var applicationRestarter = host.Services.GetRequiredService<IApplicationRestarter>();
-        lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider);
+        lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider, singleInstanceMutex: singleInstanceMutex);
 
         try
         {
@@ -335,6 +346,12 @@ internal static partial class Program
             Log.LifetimeStartThrew(logger, ex);
             throw;
         }
+
+        // Defensive: keeps the single-instance mutex reachable for the JIT's own liveness analysis
+        // through the entire blocking lifetime.Start(args) call above -- without a later use, an
+        // aggressive optimizer could in principle treat the local as dead and let it finalize early,
+        // releasing the lock while the app is still genuinely running.
+        GC.KeepAlive(singleInstanceMutex);
     }
 
     /// <summary>Runs on the <c>ClassicDesktopStyleApplicationLifetime.Exit</c> event -- extracted
@@ -353,8 +370,10 @@ internal static partial class Program
     /// before a restart spawn -- from that point on, logging through <paramref name="logger"/>
     /// still reaches the console provider (unaffected by disposing just this one provider
     /// instance) but no longer the file, an accepted narrow gap for this last shutdown step
-    /// alone.</summary>
-    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null)
+    /// alone. <paramref name="singleInstanceMutex"/> (single-instance code-review finding) is
+    /// disposed right before the restart spawn, for the same "this process is still alive at this
+    /// point" reason -- see that disposal's own call-site comment for the full reasoning.</summary>
+    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null, Mutex? singleInstanceMutex = null)
     {
         // disposeTimeout is a testability seam only (test-suite fixes phase 1, item 5) -- the real
         // call site never passes it, so this is a no-op default-preserving parameter, not a behavior
@@ -427,11 +446,97 @@ internal static partial class Program
         Log.RestartSpawning(logger);
         fileLoggerProvider?.Dispose();
 
+        // Single-instance code-review finding: this process is still ALIVE here (lifetime.Exit
+        // fired, but Main hasn't returned yet, so the mutex is still held) -- StartNewInstance
+        // below re-launches without --allow-multiple-instances (ApplicationRestarter's own
+        // Environment.GetCommandLineArgs() has no way to know this run's own bypass reasoning), so
+        // the child races this process's own real exit for the same named lock. Released here,
+        // deterministically, before the spawn -- this process is the ONLY holder, so disposing it
+        // destroys the named object immediately, not just marks it for eventual release.
+        singleInstanceMutex?.Dispose();
+
         if (!restarter.StartNewInstance())
         {
             Log.RestartSpawnFailed(logger);
             Console.Error.WriteLine("Failed to spawn a new Scanline Studio instance for restart; the application will need to be relaunched manually.");
         }
+    }
+
+    /// <summary>Missing-feature sweep (2026-08-31): legacy YONIQ refuses a second launch outright
+    /// (<c>Mmsstv.cpp</c>'s <c>WinMain</c>, silently exits if a <c>TMmsstv</c> window already
+    /// exists) -- this port never had an equivalent, letting unlimited concurrent instances fight
+    /// over the same audio devices, radio connection, and settings file.
+    ///
+    /// Returns <see langword="true"/> (proceed) with <paramref name="mutex"/> set to the newly
+    /// acquired, held-for-the-process's-whole-lifetime lock, or <see langword="false"/> (the
+    /// caller must exit immediately, without starting the host) if another instance already holds
+    /// it. <c>--allow-multiple-instances</c> bypasses the check entirely (this port's own
+    /// equivalent of legacy's own <c>-Z</c> flag -- same escape hatch, useful for manual
+    /// multi-instance testing, clearer name -- an exact-arg match, not legacy's own whole-command-
+    /// line <c>strstr</c>, a strictly narrower/more predictable match) -- <paramref name="mutex"/>
+    /// is <see langword="null"/> in that case, matching the "nothing to hold, nothing to release"
+    /// reality. Legacy also skips its own refusal when a "TAppBuilder" (IDE-hosted design-time)
+    /// window is present -- deliberately not ported, this port has no equivalent design-time host.
+    ///
+    /// Code-review finding: writes to <paramref name="errorWriter"/> on rejection, but on the
+    /// dominant real launch path (a double-click, no attached console) that message reaches
+    /// nowhere a user can see -- checked BEFORE the logger exists, so it doesn't reach
+    /// <c>app.log</c> either. The real, narrower gain over legacy's own silent no-op: a caller who
+    /// DOES have a console (a terminal launch, a test) sees a clear message instead of nothing;
+    /// the GUI-double-click case is not meaningfully improved. Left as Console.Error anyway --
+    /// moving the check later so a rejected launch could log to <c>app.log</c> would mean touching
+    /// the shared, fixed-path log file from an instance that's about to exit, a worse tradeoff.
+    ///
+    /// Plain, unprefixed mutex name -- code-review correction: NOT because <c>Global\</c>/<c>Local\</c>
+    /// prefixes are unsupported on Unix (.NET's own Unix named-mutex implementation does recognize
+    /// them) but because unprefixed defaults to SESSION scope on both platforms, the correct
+    /// default for a per-login-session desktop app (not machine-wide, which <c>Global\</c> would
+    /// mean). <paramref name="mutex"/>'s own creation is guarded, not left to throw straight out of
+    /// <c>Main</c> before any window or logger exists -- the same failure class this file's own
+    /// `hostBuilder.Build()`/hosted-services startup are already hardened against (see those call
+    /// sites' own comments); a single-instance nicety must fail OPEN, not crash the app entirely,
+    /// if creating a named OS object is itself unavailable (a hostile/read-only temp directory, a
+    /// non-mutex object squatting the name). <c>initiallyOwned: false</c> -- only <c>createdNew</c>
+    /// is ever consulted, nothing ever <c>Wait</c>s on this handle, so claiming ownership would add
+    /// abandoned-mutex/thread-affinity semantics for no benefit; this is purely a name-existence
+    /// token. The real call site never explicitly releases the returned mutex on the normal exit
+    /// path -- held for the process's entire lifetime (kept alive by
+    /// <see cref="GC.KeepAlive(object?)"/> past the blocking <c>lifetime.Start(args)</c> call) and
+    /// released automatically by the OS when the process exits -- EXCEPT the restart path, which
+    /// disposes it explicitly before spawning a replacement process (see
+    /// <see cref="HandleLifetimeExit"/>'s own comment for why that one path can't just wait for
+    /// natural process exit). Testable via <paramref name="mutexName"/> -- the real call site
+    /// always uses the default, a fixed process-wide name; tests pass their own unique name so they
+    /// never collide with a genuinely running instance or with each other.</summary>
+    internal static bool TryAcquireSingleInstanceLock(string[] args, TextWriter errorWriter, out Mutex? mutex, string mutexName = "ScanlineStudio.SingleInstance")
+    {
+        if (args.Contains("--allow-multiple-instances"))
+        {
+            mutex = null;
+            return true;
+        }
+
+        bool createdNew;
+        try
+        {
+            mutex = new Mutex(initiallyOwned: false, name: mutexName, out createdNew);
+        }
+        catch (Exception ex)
+        {
+            errorWriter.WriteLine($"Single-instance check unavailable ({ex.Message}); continuing without it.");
+            mutex = null;
+            return true;
+        }
+
+        if (createdNew)
+        {
+            return true;
+        }
+
+        errorWriter.WriteLine("Scanline Studio is already running. Pass --allow-multiple-instances to override.");
+        mutex.Dispose();
+        mutex = null;
+        return false;
     }
 
     /// <summary>See the call site's own comment for why this must run before
