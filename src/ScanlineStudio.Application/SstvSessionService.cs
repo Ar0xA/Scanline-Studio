@@ -1898,45 +1898,118 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // ISstvDecoderMaintenance's own doc comment) -- this only needs to tear down capture and
             // notify the user, not request another swap. RestartableSstvDecoder raises this event
             // strictly after releasing its own swap lock, so ResetAgc() re-entering it from inside
-            // StopReceivingAsync below never contends for anything already held -- that part is
-            // confirmed (round-3 plan review).
+            // StopReceivingLockedAsync below never contends for anything already held -- that part
+            // is confirmed (round-3 plan review).
             //
-            // Round-15 correction: the earlier version of this comment additionally claimed the
-            // GetAwaiter().GetResult() below was "confirmed safe" via that same round-3 tracing.
-            // That tracing covered only the decoder swap lock above, not this synchronous block --
-            // MiniAudioEngine's OWN doc comments (ClaimCaptureSessionAsync's round-3-engine-review
-            // fix, DisposeCaptureSessionAsync's own doc comment) are the authoritative, currently-
-            // maintained source on whether a drain-thread-originated synchronous re-entrant call like
-            // this one can deadlock -- re-check those directly rather than trusting this comment's own
-            // conclusion, which was never independently verified against them and can go stale as
-            // that class evolves on its own schedule. Not re-verified as part of this chunk (out of
-            // scope -- MiniAudioEngine is a different project); flagging the overstated claim, not
-            // fixing or re-confirming the underlying question.
+            // T1-6 (production_audit.md), replaces the Round-15/Tier-B-Area-5 comments this method
+            // used to carry (both correct as far as they went, neither resolved the real question --
+            // see production_audit.md's own T1-6 note for that history): this fires SYNCHRONOUSLY on
+            // the audio capture drain thread (RestartableSstvDecoder's maintenance events fire inline
+            // from PushSamples, itself called from IAudioEngine.SamplesCaptured on that thread).
+            // Blocking that thread on _rxTransitionGate is the real hazard -- NOT a deadlock. This
+            // side is bounded by _cleanupTimeout via StopReceivingAsync's own
+            // WaitAsync(_cleanupTimeout, ...). Whichever OTHER caller holds the gate matters too --
+            // if it's a Stop-family caller (StopReceivingAsync/StopReceivingLockedAsync, e.g.
+            // PlayWithPttAsync's own RX-pause below), IT is independently bounded by
+            // StopReceivingLockedAsync's own `stopTask.WaitAsync(_cleanupTimeout)` around
+            // MiniAudioEngine.DisposeCaptureSessionAsync's Task.Run(session.Dispose) -> drain-thread
+            // Join (that WaitAsync is what actually bounds it, not the Task.Run dispatch itself) --
+            // this drain thread's own bound alone is sufficient regardless. A Start-family holder
+            // (StartReceivingAsync) is a DIFFERENT story -- its own far side (StartCaptureAsync's
+            // native device open) is unbounded (this file's own Area-4 finding) -- but that doesn't
+            // change the conclusion here: THIS thread still unblocks on its own _cleanupTimeout wait
+            // regardless of how long the other holder's own work takes.
+            // The real cost is a bounded ~5s FREEZE of this drain thread: capture keeps producing
+            // audio into the native ring with nothing draining it (real RX audio dropped mid-image),
+            // and the OTHER _rxTransitionGate holder's own stop likely times out and abandons its
+            // still-closing native session (CaptureStopWatchdogFired) once its own bound is reached.
+            // Reachable on an ordinary transmission, not just at shutdown -- PlayWithPttAsync's own
+            // routine RX-pause-for-TX step (its entry, see that method's own doc comment) acquires
+            // this exact gate too, not just DisposeAsync as the superseded comment here claimed.
             //
-            // Tier B Area 5 finding (risk, not fixed -- documented): this synchronous call now
-            // contends for _rxTransitionGate (Tier B Area 3's own addition) exactly like every other
-            // StopReceivingAsync caller. If DisposeAsync is concurrently inside ITS OWN
-            // StopReceivingAsync call (holding the gate, itself blocked on StopCaptureAsync's own
-            // drain-thread join) at the exact moment this event fires FROM that same drain thread,
-            // this call now blocks on the gate for up to _cleanupTimeout (5s) instead of returning in
-            // microseconds the way it did before that gate existed -- the "handlers are already
-            // detached" reasoning below covers a handler that already RETURNED, not one still
-            // in-flight and now blocked on this exact gate. Not a deadlock: DisposeCaptureSessionAsync
-            // dispatches the drain-thread join via Task.Run for a non-drain-thread caller (verified),
-            // so DisposeAsync's own wait is genuinely bounded, and this call's own gate wait is
-            // likewise bounded -- but a 5s shutdown stall is a real, new cost this event's handler
-            // did not pay before Area 3's gate existed.
-            StopReceivingAsync().GetAwaiter().GetResult();
-            _maintenanceWarningActive = false;
-            // Round-22 finding (nit): a throwing log call here used to skip Invoke() below entirely
-            // (sequenced after it) -- RX would already be force-stopped with the UI never told why.
-            SafeLog(() => Log.MaintenanceCriticalStop(_logger));
-            MaintenanceCriticalStopRaised?.Invoke();
+            // Fix: never let this drain-thread-originated call block waiting for a contended gate.
+            // Try a zero-wait, non-blocking acquire first (SemaphoreSlim.Wait(0) never suspends, so
+            // it can never itself hop this call off the drain thread or cause a wait).
+            if (_rxTransitionGate.Wait(0))
+            {
+                // Fast path (the overwhelmingly common case: gate free). Calls the PRIVATE
+                // already-locked method, not the public StopReceivingAsync -- this thread already
+                // holds the gate, and it's a non-reentrant SemaphoreSlim. Genuinely synchronous and
+                // safe end to end: StopReceivingLockedAsync has no await before
+                // IAudioEngine.StopCaptureAsync(), so MiniAudioEngine.ClaimCaptureSessionAsync's own
+                // speculative IsRunningOnDrainThread check still runs on THIS thread. In the normal
+                // case it sees ITS OWN session, taking the thread-blocking Wait() branch -- no hop,
+                // no self-join (MiniAudioCaptureSession.Dispose()'s own Thread.CurrentThread !=
+                // _drainThread guard). It CAN legitimately see a different session or null instead --
+                // e.g. MiniAudioEngine.DisposeAsync claims the capture session directly, without ever
+                // touching _rxTransitionGate -- in which case ClaimCaptureSessionAsync takes its
+                // async _captureLock.WaitAsync() branch instead. Still safe even then: the claim
+                // returns null or a FOREIGN session (never one requiring THIS thread's own Join), so
+                // no Task.Run(session.Dispose) this call triggers can ever target this thread -- see
+                // MiniAudioEngine.ClaimCaptureSessionAsync's own doc comment for why that distinction
+                // is load-bearing, not pedantic.
+                try
+                {
+                    StopReceivingLockedAsync().GetAwaiter().GetResult();
+                }
+                finally
+                {
+                    _rxTransitionGate.Release();
+                }
+
+                NotifyMaintenanceCriticalStop();
+            }
+            else
+            {
+                // Contended -- defer instead of freezing this drain thread for up to _cleanupTimeout.
+                // Returning immediately here lets DrainLoop exit normally, which is exactly what the
+                // OTHER gate holder's own MiniAudioEngine.DisposeCaptureSessionAsync call is (in the
+                // non-drain-thread case) blocked waiting for via its Task.Run(session.Dispose) join --
+                // so deferring, not blocking, is what lets that other call actually finish and release
+                // the gate. This deferred call then proceeds normally off the drain thread once the
+                // gate frees. StopReceivingAsync/StopReceivingLockedAsync are already idempotent
+                // no-ops if RX has already stopped by the time this runs (including post-DisposeAsync
+                // -- neither method checks _disposed, by existing design; see StopReceivingAsync's own
+                // doc comment). Known, accepted consequence of deferring: if a legitimate RX
+                // start/resume (e.g. PlayWithPttAsync's own post-TX resume) lands in the window before
+                // this deferred call actually runs, this stops THAT session too -- arguably still the
+                // right outcome for a critical/overdue restart notification, just a genuinely new
+                // ordering this synchronous call never had to consider before. Also deliberately NOT
+                // guarded against firing MaintenanceCriticalStopRaised after DisposeAsync has already
+                // torn this instance down -- parity with today's inline call, which has the identical
+                // exposure and was never guarded either; not a new gap this fix introduces.
+                SafeLog(() => Log.RxTransitionGateContendedDuringMaintenanceStop(_logger));
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await StopReceivingAsync().ConfigureAwait(false);
+                        NotifyMaintenanceCriticalStop();
+                    }
+                    catch (Exception ex)
+                    {
+                        SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartCriticallyOverdue), ex));
+                    }
+                });
+            }
         }
         catch (Exception ex)
         {
             SafeLog(() => Log.MaintenanceHandlerFailed(_logger, nameof(OnDecoderRestartCriticallyOverdue), ex));
         }
+    }
+
+    // T1-6 (production_audit.md): extracted so both the fast (gate-free) and deferred (gate-contended)
+    // paths above notify only AFTER the actual stop attempt completes, matching this method's own
+    // pre-existing behavior (notify after the attempt, even if that attempt itself timed out and
+    // stopped nothing -- unchanged by this fix, not strengthened). Round-22 finding (nit, still
+    // applies): a throwing log call here must not skip MaintenanceCriticalStopRaised below (sequenced
+    // after it) -- RX could already be force-stopped with the UI never told why.
+    private void NotifyMaintenanceCriticalStop()
+    {
+        _maintenanceWarningActive = false;
+        SafeLog(() => Log.MaintenanceCriticalStop(_logger));
+        MaintenanceCriticalStopRaised?.Invoke();
     }
 
     public async Task StartReceivingAsync(CancellationToken ct = default)
@@ -2122,9 +2195,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task StopReceivingAsync()
     {
         // Bounded, not indefinite or uncancellable-and-unbounded -- DisposeAsync (this method's other
-        // production caller alongside PlayWithPttAsync's entry) has its own established contract of
-        // best-effort, never-hanging teardown (every other cleanup-path wait in this file uses this
-        // same _cleanupTimeout budget). Without a bound, a concurrent StartReceivingAsync still
+        // production caller alongside PlayWithPttAsync's entry and, since T1-6, the deferred
+        // Task.Run OnDecoderRestartCriticallyOverdue schedules on gate contention) has its own
+        // established contract of best-effort, never-hanging teardown (every other cleanup-path wait
+        // in this file uses this same _cleanupTimeout budget). Without a bound, a concurrent StartReceivingAsync still
         // resolving its own device/settings (itself unbounded -- a separate, already-tracked risk-tier
         // finding) would make DisposeAsync's own call here hang for as long as that resolution takes.
         // Safe to just give up and return on timeout: by the time DisposeAsync calls this, _disposed
@@ -2186,9 +2260,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
             // synchronously on that thread (ClaimCaptureSessionAsync's thread-blocking Wait() branch,
             // then session.Dispose() called directly, not via Task.Run), so stopTask is already
             // completed by the time it reaches WaitAsync and the 5s budget is never actually
-            // consulted. The watchdog only does real work for a NON-drain-thread caller (the two
-            // production callers via StartReceivingAsync's own guard: PlayWithPttAsync's entry, and
-            // DisposeAsync).
+            // consulted. The watchdog only does real work for a NON-drain-thread caller (PlayWithPttAsync's
+            // entry, DisposeAsync, and, since T1-6, the deferred Task.Run
+            // OnDecoderRestartCriticallyOverdue itself schedules on _rxTransitionGate contention --
+            // that deferred call runs on a genuine pool thread, not the drain thread it was
+            // originally invoked from).
             Task stopTask;
             try
             {
@@ -5104,6 +5180,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "RX force-stopped for required maintenance restart")]
         public static partial void MaintenanceCriticalStop(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Deferred a maintenance-triggered RX stop because _rxTransitionGate was already held by another caller")]
+        public static partial void RxTransitionGateContendedDuringMaintenanceStop(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Maintenance handler '{HandlerName}' threw")]
         public static partial void MaintenanceHandlerFailed(ILogger logger, string handlerName, Exception ex);

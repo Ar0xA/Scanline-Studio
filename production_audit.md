@@ -236,12 +236,27 @@ awaitable-seam treatment `RxImagePaneViewModel._loadQuickModeGridTask` already u
   already coalesces safely with O(1) drain-thread work. Remaining gap is narrower: no regression
   test exists gating a slow/throwing future subscriber (`WaterfallSourceTests.cs` has none, unlike
   `DecoderSubscriberFailureTests.cs`'s equivalent coverage for the decoder).
-- **T1-6:** `SstvSessionService.cs` contains two comments that disagree — a Round-15 retraction at
-  the call site (`:1899-1911`) flags the sync-over-async safety claim as unverified, but a later
-  Round-17 comment elsewhere in the same file (`:2172-2187`) appears to independently trace and
-  confirm the exact `MiniAudioEngine` mechanism that would resolve it, and was never used to update
-  the Round-15 text. Reconciling those two comments is this item's own necessary first step, not a
-  separate finding.
+- **T1-6, closed (2026-08-31):** `SstvSessionService.cs` used to contain two comments that
+  disagreed — a Round-15 retraction at the call site flagged the sync-over-async safety claim as
+  unverified, while a later Round-17 comment elsewhere in the same file appeared to independently
+  trace and confirm the exact `MiniAudioEngine` mechanism that would resolve it, never used to
+  update the Round-15 text. Independently re-traced `MiniAudioEngine.ClaimCaptureSessionAsync`/
+  `DisposeCaptureSessionAsync`/`MiniAudioCaptureSession.Dispose()` end to end: Round-17's own claim
+  was correct as far as it went (a drain-thread-originated synchronous re-entrant stop cannot
+  self-join-deadlock through `MiniAudioEngine`'s own machinery). But neither comment addressed a
+  real, separate issue one level out: `StopReceivingAsync()`'s own `_rxTransitionGate.WaitAsync(...)`
+  — the very FIRST line of that method — is a genuine async wait, and the gate is also held by
+  `PlayWithPttAsync`'s own routine RX-pause-for-TX step, not just `DisposeAsync` as the old comment
+  claimed. If contended at the exact moment `OnDecoderRestartCriticallyOverdue` fires (synchronously,
+  on the drain thread), the drain thread blocks for up to `_cleanupTimeout` (~5s) — a bounded stall,
+  not a deadlock (both sides are independently bounded), but a real cost (dropped RX audio, likely an
+  abandoned native capture session on the other side) reachable on an ordinary transmission, not just
+  at shutdown. Fixed: a zero-wait, non-blocking gate try-acquire first; on contention, defer the stop
+  to a background task instead of blocking the drain thread — breaks the dependency, since deferring
+  lets `DrainLoop` exit normally, letting the other gate holder finish and release it. One auditor
+  code-review round, go. New regression test uses two separate controllable gates (this project's own
+  established rule), confirmed via a temporary stash-and-rerun to fail against the pre-fix code
+  (blocks ~5s, matching the corrected bounded-stall framing exactly, not a hang).
 - **T1-17:** the "unguarded date-slice parsing throws the wrong exception type" half is already
   fixed — see `TT0-7` below, marked `DONE`; `AdifImporter.cs`'s date parsing now uses guarded
   `TryParseExact` throwing `FormatException`. Only the source-file-encoding half (`LogbookSessionService.cs:135`'s
@@ -263,8 +278,8 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
-**Update (2026-08-31):** Tier C is now closed (see below) and T1-2 (Tier D) is done — see the
-"Tier D progress" note further below. T1-1/T1-3/T1-5/T1-6/T1-14/T1-16 still each need their own
+**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6 (Tier D) are both done — see
+the "Tier D progress" notes further below. T1-1/T1-3/T1-5/T1-14/T1-16 still each need their own
 plan-review round.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
@@ -300,6 +315,19 @@ and also caught a separate pre-existing doc-comment overstatement (`IWaterfallSo
 `SstvSessionService` "wraps every subscriber call" in try/catch; it actually wraps its own whole
 `Waterfall.PushSamples` call, no per-subscriber isolation) — corrected. Full `Core.Sstv.Tests`
 suite (1524 tests) green.
+
+**Tier D progress — T1-6 closed (2026-08-31):** full detail in this item's own corrected entry in
+the "Corrections" block above. Summary: independently re-traced `MiniAudioEngine`'s
+capture-session-dispose machinery end to end and confirmed Round-17's own claim was correct as far
+as it went, but found a real, separate, previously-undiscovered issue one level out —
+`StopReceivingAsync()`'s own gate wait, contended against `PlayWithPttAsync`'s routine RX-pause (not
+just `DisposeAsync`), can freeze the audio drain thread for a bounded ~5s (not a deadlock — both
+sides are independently bounded) when `OnDecoderRestartCriticallyOverdue` fires synchronously on
+that thread. User approved fixing it. Fixed with a zero-wait try-acquire + defer-on-contention
+pattern; 2 rounds of plan-review (round 1 corrected my own initial "deadlock" framing to the accurate
+"bounded stall" one) + 1 code-review round, go. New regression test (two separate controllable
+gates) confirmed via stash-and-rerun to fail against the pre-fix code exactly as predicted (~5s
+block). Full `Application.Tests` suite (437 tests) green.
 
 ---
 
