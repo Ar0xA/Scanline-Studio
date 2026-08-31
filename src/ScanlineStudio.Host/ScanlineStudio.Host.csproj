@@ -42,6 +42,11 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <!-- T1-18 (production_audit.md): CLAUDE.md §4 mandates CP932/Windows-31J support for
+         Japanese-origin legacy YONIQ text (never assume UTF-8). No consumer needs it yet (the
+         legacy .ini/.mtm importer isn't built), but registering the provider is a repo-wide
+         precondition, not a per-feature one. -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
   </ItemGroup>
 
   <ItemGroup>

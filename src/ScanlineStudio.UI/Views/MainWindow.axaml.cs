@@ -28,6 +28,13 @@ public partial class MainWindow : Window
     // wouldn't reliably.
     private bool _isPopulatingConfigurationsMenu;
 
+    // T1-12 (production_audit.md): re-entry guard for DataContextChanged below -- that lambda does
+    // ~14 `vm.XXX += ...` subscriptions with no guard, so a second firing would double-subscribe
+    // every one of them (2 Options windows, 2 viewer windows, etc.). Latent today (DataContext is
+    // only ever assigned once), same "field survives a second firing, a local wouldn't" reasoning
+    // as _isPopulatingConfigurationsMenu above -- just never back-applied to this handler itself.
+    private bool _wired;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -148,8 +155,15 @@ public partial class MainWindow : Window
 
         DataContextChanged += (_, _) =>
         {
+            if (_wired)
+            {
+                return;
+            }
+
             if (DataContext is MainViewModel vm)
             {
+                _wired = true;
+
                 // Give-up-after-5 feature: the must-acknowledge popup (direct feedback: "should be a
                 // popup window, not a tiny text under the VFO" -- replaces this feature's earlier
                 // dismissible-toast, and later a persistent header text line that was tried alongside

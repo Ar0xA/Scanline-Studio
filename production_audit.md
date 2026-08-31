@@ -229,6 +229,24 @@ awaitable-seam treatment `RxImagePaneViewModel._loadQuickModeGridTask` already u
 | T1-17 | Audio/Imaging/Logbook | `AdifImporter` assumes UTF-8 regardless of source file encoding; unguarded date-slice parsing throws the wrong exception type and aborts mid-import, discarding already-mapped records | `AdifImporter.cs:40,298-307` |
 | T1-18 | Infra | `CodePagesEncodingProvider` (mandatory per CLAUDE.md §4 for CP932 legacy files) is registered nowhere in the repo — latent until legacy `.ini`/`.mtm` import is attempted | repo-wide, none found |
 
+**Corrections (2026-08-31, Tier-1 roadmap planning — see `PROJECT_BRIEF.md` for the ranked plan):**
+- **T1-2:** the "no stated scheduler/slow-subscriber policy" premise is stale.
+  `IWaterfallSource.cs`'s own doc comment already states the policy explicitly (added in a commit
+  predating this audit), and the one real production subscriber (`WaterfallPaneViewModel.OnFrame`)
+  already coalesces safely with O(1) drain-thread work. Remaining gap is narrower: no regression
+  test exists gating a slow/throwing future subscriber (`WaterfallSourceTests.cs` has none, unlike
+  `DecoderSubscriberFailureTests.cs`'s equivalent coverage for the decoder).
+- **T1-6:** `SstvSessionService.cs` contains two comments that disagree — a Round-15 retraction at
+  the call site (`:1899-1911`) flags the sync-over-async safety claim as unverified, but a later
+  Round-17 comment elsewhere in the same file (`:2172-2187`) appears to independently trace and
+  confirm the exact `MiniAudioEngine` mechanism that would resolve it, and was never used to update
+  the Round-15 text. Reconciling those two comments is this item's own necessary first step, not a
+  separate finding.
+- **T1-17:** the "unguarded date-slice parsing throws the wrong exception type" half is already
+  fixed — see `TT0-7` below, marked `DONE`; `AdifImporter.cs`'s date parsing now uses guarded
+  `TryParseExact` throwing `FormatException`. Only the source-file-encoding half (`LogbookSessionService.cs:135`'s
+  `StreamReader` with no declared encoding) is still open.
+
 ---
 
 ## Tier 2 — medium priority, batch with adjacent work
