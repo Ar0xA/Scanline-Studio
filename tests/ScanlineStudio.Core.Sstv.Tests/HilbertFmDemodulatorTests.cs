@@ -83,18 +83,19 @@ public class HilbertFmDemodulatorTests
     [Fact]
     public void DoFir_ImpulseResponse_IsReversedCoefficientArray()
     {
-        // Round-1 correction: DoFir's newest sample lands at the LAST buffer index, so H[0] pairs
-        // with the OLDEST sample -- a unit impulse fed through, followed by zeros, must read back the
-        // coefficient array in REVERSE order, not forward.
+        // Round-1 correction: DoFir's newest sample lands at the LAST logical index (FirDelayLine's
+        // own oldest-first convention, headMovesForward: true), so H[0] pairs with the OLDEST sample --
+        // a unit impulse fed through, followed by zeros, must read back the coefficient array in
+        // REVERSE order, not forward.
         const int tap = 5;
         var h = new double[] { 1, 2, 3, 4, 5, 6 }; // tap+1 = 6 coefficients
-        var z = new double[tap + 1];
+        var z = new FirDelayLine(tap, headMovesForward: true);
 
         var outputs = new double[tap + 1];
-        outputs[0] = HilbertFmDemodulator.DoFir(h, z, 1.0, tap); // impulse
+        outputs[0] = HilbertFmDemodulator.DoFir(h, z, 1.0); // impulse
         for (var i = 1; i <= tap; i++)
         {
-            outputs[i] = HilbertFmDemodulator.DoFir(h, z, 0.0, tap); // then zeros
+            outputs[i] = HilbertFmDemodulator.DoFir(h, z, 0.0); // then zeros
         }
 
         // After the impulse, as zeros flush it out, the impulse walks from the newest position

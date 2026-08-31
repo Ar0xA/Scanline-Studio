@@ -26,7 +26,9 @@ namespace ScanlineStudio.Core.Sstv;
 /// loudly.</item>
 /// <item><b>The FIR's impulse response is the coefficient array in REVERSED order</b>: legacy's
 /// `DoFIR` (`fir.cpp:29-37`) shifts the delay line toward index 0 and appends the newest sample at the
-/// LAST index, so `H[0]` pairs with the OLDEST sample in the window, not the newest. This is
+/// LAST index -- represented here as <see cref="FirDelayLine"/>'s own oldest-first convention (logical
+/// index 0 = oldest, logical index tap = newest, see that class's doc comment) -- so `H[0]` pairs with
+/// the OLDEST sample in the window, not the newest. This is
 /// load-bearing, not cosmetic -- `H` is exactly antisymmetric about its center tap (the Hamming window
 /// is symmetric about the center; the sinc-like `cos(x)/x` terms are odd), so reversing it flips its
 /// effective sign, which is exactly what makes the discriminator's sign convention come out right
@@ -151,7 +153,7 @@ internal sealed class HilbertFmDemodulator
     private readonly double _offNarrow;
     private readonly double _outNarrow;
     private readonly double[] _h;
-    private readonly double[] _z;
+    private readonly FirDelayLine _z;
     private readonly double[] _a = new double[4];
     private readonly IirFilter _smoothingFilter = new();
 
@@ -195,7 +197,7 @@ internal sealed class HilbertFmDemodulator
         _outNarrow = 32768.0 * sampleRate / (2 * Math.PI * NarrowBandwidthHz) / tierMultiplier;
 
         _h = MakeHilbert(tap, sampleRate, 100.0, sampleRate / 2.0 - 100.0);
-        _z = new double[tap + 1];
+        _z = new FirDelayLine(tap, headMovesForward: true);
 
         _smoothingFilter.Design(1800.0, sampleRate, 3);
     }
@@ -263,25 +265,19 @@ internal sealed class HilbertFmDemodulator
         return diff;
     }
 
-    private double DoFir(double input) => DoFir(_h, _z, input, _tap);
+    private double DoFir(double input) => DoFir(_h, _z, input);
 
-    // fir.cpp:29-37 -- free function mirroring legacy's own DoFIR(hp, zp, d, tap) signature exactly
-    // (rather than an instance method reaching into private fields) so it's directly unit-testable in
-    // isolation: newest sample lands at the LAST index of `z` (mutated in place), so H[0] pairs with
-    // the OLDEST sample in the window. See this class's own doc comment for why the direction of this
-    // shift is load-bearing, not an arbitrary implementation choice.
-    internal static double DoFir(double[] h, double[] z, double input, int tap)
+    // fir.cpp:29-37 -- free function mirroring legacy's own DoFIR(hp, zp, d, tap) semantics (rather
+    // than an instance method reaching into private fields) so it's directly unit-testable in
+    // isolation -- the tap parameter itself is dropped from this signature since FirDelayLine.Tap now
+    // carries it. z is a FirDelayLine constructed with headMovesForward=true (oldest-first), so its
+    // logical index 0 is the OLDEST sample in the window and H[0] pairs with it, not the newest. See
+    // this class's own doc comment and FirDelayLine's own doc comment for why this direction is
+    // load-bearing, not an arbitrary implementation choice.
+    internal static double DoFir(double[] h, FirDelayLine z, double input)
     {
-        Array.Copy(z, 1, z, 0, tap);
-        z[tap] = input;
-
-        var sum = 0.0;
-        for (var i = 0; i <= tap; i++)
-        {
-            sum += z[i] * h[i];
-        }
-
-        return sum;
+        z.Push(input);
+        return z.Convolve(h);
     }
 
     // fir.cpp:432-474 -- Hamming-windowed (0.54-0.46*cos(...), NOT Hann) sinc-difference Hilbert
