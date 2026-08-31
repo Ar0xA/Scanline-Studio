@@ -2746,29 +2746,23 @@ public sealed partial class SstvSessionService : ISstvSessionService
                     await Task.Run(
                         async () =>
                         {
+                            // T1-3 (production_audit.md): EncodeBatchedAsync directly -- no local
+                            // re-batching buffer needed at all, since decoder.PushSamples already
+                            // accepts ReadOnlyMemory<float> and this loop has no per-sample transform
+                            // to apply (unlike PumpToPlaybackAsync's own gain multiply). ChunkSize
+                            // itself is kept only for the trailing-silence padding loop below, no
+                            // longer for re-batching the encoder's own output.
                             const int ChunkSize = 4096;
-                            var buffer = new float[ChunkSize];
-                            var count = 0;
-
+                            //
                             // sampleRateOffsetHz: 0.0 and stationId: null (StationIdTransmitOptions.None) --
                             // both deliberate, see this method's own interface doc comment. TX BPF/LPF
                             // (Options stub backlog item 3) left at their legacy-matching defaults for
                             // the same reason -- this self-test is a minimal, deterministic decode
                             // check, not a faithful mirror of the user's real TX settings.
-                            await foreach (var sample in _encoder.EncodeAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct: ct)
+                            await foreach (var chunk in _encoder.EncodeBatchedAsync(mode, image, stationId: null, sampleRateOffsetHz: 0.0, ct: ct)
                                 .WithCancellation(ct).ConfigureAwait(false))
                             {
-                                buffer[count++] = sample;
-                                if (count == ChunkSize)
-                                {
-                                    decoder.PushSamples(buffer.AsMemory(0, count));
-                                    count = 0;
-                                }
-                            }
-
-                            if (count > 0)
-                            {
-                                decoder.PushSamples(buffer.AsMemory(0, count));
+                                decoder.PushSamples(chunk);
                             }
 
                             // Trailing silence: TryProcessBuffer can leave the final scanline undecoded
@@ -2825,7 +2819,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // estimate below, not re-resolve either independently -- MacroTextResolver's CW-ID text can
         // be time-dependent (DateTime.UtcNow), so two independent resolutions aren't guaranteed to
         // produce the same footer duration, which would make the estimate silently disagree with
-        // what EncodeAsync actually emits. Clock calibration plan-review (round 2): same requirement
+        // what EncodeBatchedAsync actually emits (T1-3: real playback now goes through the batched
+        // method -- see PlayWithPttAsync's own comment). Clock calibration plan-review (round 2): same requirement
         // now applies to sampleRateOffsetHz -- a settings change mid-resolution must not let the
         // estimate and the real encode see different effective rates.
         //
@@ -2845,7 +2840,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         try
         {
             var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
-            await PlayWithPttAsync(_encoder.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+            await PlayWithPttAsync(_encoder.EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
         }
         finally
         {
@@ -3338,7 +3333,15 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
     /// configured) after RX had already been paused above left RX stopped forever, since the old
     /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
-    private async Task PlayWithPttAsync(IAsyncEnumerable<float> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
+    // T1-3 (production_audit.md): samples is IAsyncEnumerable<ReadOnlyMemory<float>> (batched), not
+    // IAsyncEnumerable<float> -- verified this parameter has exactly ONE use in this method's whole
+    // 844-line body (the pass-through to PumpToPlaybackAsync below), so this is a pure type-plumbing
+    // change, not a logic change to anything PTT-safety-related in this method. Both real producers
+    // (AnalogFmSstvEncoder.EncodeBatchedAsync via TransmitAsync, GenerateTone via TuneAsync) batch
+    // now specifically so PumpToPlaybackAsync can consume batches directly -- see that method's own
+    // comment for why flattening back to individual floats before this point would erase the entire
+    // point of batching.
+    private async Task PlayWithPttAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
     {
         // Round-12 finding: single-flight guard, checked before ANYTHING else -- no RX pause, no
         // device resolution, no PTT touched. See _transmitInFlight's own doc comment for the failure
@@ -4474,19 +4477,50 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
-    private static async IAsyncEnumerable<float> GenerateTone(
+    // T1-3 (production_audit.md): batches its output into fixed-size chunks instead of yielding one
+    // float per await, so PlayWithPttAsync/PumpToPlaybackAsync can consume Tune's own tone the same
+    // way as a real SSTV transmission's audio -- see PlayWithPttAsync's own comment for why. Plan-
+    // review finding: `yield return` inside an async iterator completing synchronously is NOT itself
+    // a cooperative thread-yield point (the consumer's own await just continues inline) -- removing
+    // the old per-4096-sample `await Task.Yield()` on the theory that each batch's own yield already
+    // provides one would have removed the ONLY guaranteed suspension point in this whole path (with
+    // FakeAudioEngine, which accepts unbounded playback synchronously in tests, this loop would then
+    // run as one uninterrupted synchronous block). Kept, same cadence as before (once per batch now,
+    // was once per 4096 samples -- identical when ToneBatchSize is 4096, and harmless either way).
+    // Only caller is TuneAsync, private static, no test reaches this directly -- no separate
+    // per-float flatten wrapper kept around, unlike AnalogFmSstvEncoder's own EncodeAsync/
+    // EncodeBatchedAsync pair, since nothing needs the per-float shape here anymore.
+    private const int ToneBatchSize = 4096;
+
+    private static async IAsyncEnumerable<ReadOnlyMemory<float>> GenerateTone(
         double frequencyHz, TimeSpan duration, int sampleRate, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct)
     {
         var totalSamples = (long)(duration.TotalSeconds * sampleRate);
         var angularStep = 2.0 * Math.PI * frequencyHz / sampleRate;
+        var buffer = new float[ToneBatchSize];
+        var count = 0;
+
         for (var i = 0L; i < totalSamples; i++)
         {
             ct.ThrowIfCancellationRequested();
-            yield return (float)Math.Sin(angularStep * i);
-            if (i % 4096 == 0)
+
+            // Plan-review finding: MUST stay the absolute sample index i, never a per-batch-relative
+            // offset -- this project has hit exactly this local-vs-absolute-index bug class three
+            // separate times before (RX buffer phases 6c-6d). angularStep*i is what keeps the sine
+            // wave phase-continuous across every batch boundary.
+            buffer[count++] = (float)Math.Sin(angularStep * i);
+            if (count == ToneBatchSize)
             {
+                yield return buffer;
+                buffer = new float[ToneBatchSize];
+                count = 0;
                 await Task.Yield();
             }
+        }
+
+        if (count > 0)
+        {
+            yield return buffer.AsMemory(0, count);
         }
     }
 
@@ -4694,7 +4728,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <see cref="TuneAsync"/> (no <see cref="TransmitProgressChanged"/> reporting for a tone) and a
     /// real value for <see cref="TransmitAsync"/> (spec/18-path-to-1.0.md Medium item). The running
     /// sample counter is a local, not a field -- nothing must dangle across separate calls.</summary>
-    private async Task PumpToPlaybackAsync(IAsyncEnumerable<float> samples, int sampleRate, long? totalSamplesEstimate, CancellationToken ct)
+    // T1-3 (production_audit.md): samples is IAsyncEnumerable<ReadOnlyMemory<float>> (batched) --
+    // consumed via an outer loop over batches (few awaits) wrapping an inner, synchronous loop over
+    // each batch's own samples (unchanged from before: still one MoveNextAsync per SAMPLE would have
+    // been needed to get the per-sample gain multiply either way, so the win here is entirely in the
+    // OUTER loop's own await count, not a removed inner loop). chunkSize/buffer/count/gain-refresh
+    // cadence/ReportTransmitProgress cadence are ALL UNCHANGED from before this change, still driven
+    // entirely by this method's OWN chunkSize constant -- completely decoupled from whatever batch
+    // size the producer happens to use internally, deliberately, so this method's own observable
+    // behavior (progress-report frequency, gain-refresh frequency) is provably unaffected by T1-3.
+    private async Task PumpToPlaybackAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, long? totalSamplesEstimate, CancellationToken ct)
     {
         const int chunkSize = 4096;
         var buffer = new float[chunkSize];
@@ -4714,16 +4757,24 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // as the chunk-boundary number alone implies.
         var gain = _liveTxGain;
 
-        await foreach (var sample in samples.WithCancellation(ct).ConfigureAwait(false))
+        await foreach (var chunk in samples.WithCancellation(ct).ConfigureAwait(false))
         {
-            buffer[count++] = sample * gain;
-            if (count == chunkSize)
+            // Plan-review finding: chunk.Span is deliberately NOT hoisted to a local outside this
+            // inner loop -- the loop body contains an await (EnqueueAllAsync below), and a
+            // ReadOnlySpan<float> local can't live across one (CS4012/4013, the same constraint
+            // AnalogFmSstvEncoder.EncodeBatchedAsyncCore's own doc comment already documents for
+            // itself). `chunk.Span[i]` inline as a transient rvalue is correct.
+            for (var i = 0; i < chunk.Length; i++)
             {
-                await EnqueueAllAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
-                samplesEnqueued += count;
-                ReportTransmitProgress(samplesEnqueued, totalSamplesEstimate, sampleRate);
-                count = 0;
-                gain = _liveTxGain;
+                buffer[count++] = chunk.Span[i] * gain;
+                if (count == chunkSize)
+                {
+                    await EnqueueAllAsync(buffer.AsMemory(0, count), ct).ConfigureAwait(false);
+                    samplesEnqueued += count;
+                    ReportTransmitProgress(samplesEnqueued, totalSamplesEstimate, sampleRate);
+                    count = 0;
+                    gain = _liveTxGain;
+                }
             }
         }
 

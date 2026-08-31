@@ -85,8 +85,9 @@ public sealed class SstvSessionServiceLoopbackSelfTestTests
         // sampleRateOffsetHz 0.0 (the round trip has no physical hardware clock to correct for --
         // applying the real persisted offset would fabricate a slant) and no station-ID footer
         // (EndOfImage's documented low-risk false-lock-into-trailing-audio window). Uses the fake
-        // encoder here -- this test only cares about what was PASSED to EncodeAsync, not about a
-        // real decode.
+        // encoder here -- this test only cares about what was PASSED to EncodeBatchedAsync (T1-3,
+        // production_audit.md: the loopback self-test's real production path now uses the batched
+        // method), not about a real decode.
         var (service, encoder, _) = CreateServiceWithFakeEncoder();
 
         await service.RunLoopbackSelfTestAsync(SstvModeRegistry.MartinM1, TestImage1x1);

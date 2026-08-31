@@ -54,6 +54,43 @@ public interface ISstvEncoder
         CancellationToken ct = default);
 
     /// <summary>
+    /// T1-3 (production_audit.md): same parameters/defaults/semantics as <see cref="EncodeAsync"/>
+    /// (see that method's own doc comment) -- this exists purely so a hot-path consumer (real TX
+    /// playback, or anything else iterating a full transmission) pays CLR per-call
+    /// <c>MoveNextAsync</c>/state-machine dispatch overhead once per BATCH instead of once per
+    /// SAMPLE (~12.8M calls for a full PD290 image via <see cref="EncodeAsync"/>, vs. a few thousand
+    /// here) -- not a change to the underlying synthesis, timing, or audio content in any way.
+    ///
+    /// <b>Contract every implementation must uphold:</b>
+    /// <list type="bullet">
+    /// <item>Concatenating every yielded batch, in order, produces EXACTLY the same sample sequence
+    /// <see cref="EncodeAsync"/> yields for the identical arguments -- the two methods must be
+    /// substitutable for each other, differing only in delivery granularity.</item>
+    /// <item>A batch is never empty (zero-length) -- including the final one; if there is nothing
+    /// left to emit, no further batch is yielded, not an empty one.</item>
+    /// <item>The batch SIZE is an implementation detail -- callers must not assume any specific
+    /// value, or that every batch (even non-final ones) is the same size.</item>
+    /// <item>A caller must not retain a yielded <see cref="ReadOnlyMemory{Single}"/> past its own
+    /// enumeration step (i.e. past the point its <c>await foreach</c> loop body for that batch
+    /// returns) -- an implementation is free to reuse or otherwise invalidate the backing memory
+    /// once enumeration advances, even though <c>AnalogFmSstvEncoder</c>'s own implementation
+    /// currently always allocates a fresh array per batch (a stricter-than-required, deliberate
+    /// safety choice -- see that class's own doc comment at the allocation site). Copy out anything
+    /// that needs to outlive one enumeration step.</item>
+    /// </list>
+    /// </summary>
+    IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsync(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = 24,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
+        CancellationToken ct = default);
+
+    /// <summary>
     /// The exact total sample count a matching <see cref="EncodeAsync"/> call (same <paramref
     /// name="mode"/>/<paramref name="image"/>/<paramref name="stationId"/>) will emit -- computed
     /// without performing any audio synthesis (no tone generation, no filtering), only the same

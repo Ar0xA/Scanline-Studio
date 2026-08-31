@@ -278,9 +278,9 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
-**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16 (Tier D) are all
-done — see the "Tier D progress" notes further below. T1-1/T1-3/T1-5/T1-14 still each need their
-own plan-review round.
+**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16/T1-3 (Tier D) are all
+done — see the "Tier D progress" notes further below. T1-1/T1-5/T1-14 still each need their own
+plan-review round.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
 - **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
@@ -348,6 +348,28 @@ pinned-bug test flipped correct, a real DST-transition case, a migration/backfil
 self-healing-after-a-later-NULL test, and an unparseable-row-doesn't-crash-startup test — all
 confirmed via stash-and-rerun to fail against the pre-fix code exactly as predicted. Full
 `Core.Logbook.Tests` suite (189 tests) and full `UI.Tests` suite (1208 tests) green.
+
+**Tier D progress — T1-3 closed (2026-08-31):** confirmed `AnalogFmSstvEncoder.EncodeAsyncCore` never
+actually awaits real work (its one `await` was a no-op `Task.CompletedTask` trick), so the real cost
+was CLR per-call `MoveNextAsync` dispatch overhead, not thread-hop/suspension — corrected framing
+before proceeding. Blast radius was much larger than this item's own one-liner implied: ~60 test
+files call `EncodeAsync` directly. User chose an ADDITIVE new `EncodeBatchedAsync` interface member
+(not changing `EncodeAsync`'s own return type), so all ~60 test files stay untouched. Getting the
+real win also required tracing into `PlayWithPttAsync` (the exact method T1-5 is scoped to eventually
+extract) and `GenerateTone` (the Tune feature's own tone producer) — confirmed `PlayWithPttAsync`'s
+own `samples` parameter has exactly one use in its 844-line body (a pure pass-through), so this was a
+type-only change, not a PTT-safety logic change. User approved the full scope. `EncodeAsyncCore`
+renamed to `EncodeBatchedAsyncCore` (the sole DSP synthesis implementation, now batched);
+`EncodeAsync` derives its own per-float behavior from it via a `FlattenBatches` wrapper, specifically
+to avoid a second copy of the DSP math (the Scottie-class risk CLAUDE.md itself calls out). 2 rounds
+of plan-review (round 1 found and fixed: a `[EnumeratorCancellation]` gap that would have silently
+dropped a caller's `.WithCancellation(token)`, an incorrect "yield return is a cooperative yield
+point" premise in the `GenerateTone` batching, and an absolute-vs-relative sample-index risk) + 1
+code-review round (go, only doc/comment nits — folded in). New tests: `EncodeBatchedAsync` sync-throw
+tests mirroring `EncodeAsync`'s own, a flatten-equality test, a never-empty/uniform-batch-size test,
+and matching `RestartableSstvEncoder` delegation tests. Full solution build clean; full
+`Application.Tests` (437), `Core.Sstv.Tests` (1532, includes every pre-existing golden-vector/
+round-trip test proving the flatten-derived path is bit-identical), and `UI.Tests` (1208) all green.
 
 ---
 
