@@ -3669,12 +3669,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }, DispatcherPriority.Input);
     }
 
+    // T1-14 (production_audit.md): one call instead of 4 -- ComposePreview does the whole
+    // Crop->Resize->ApplyAdjustments->ApplyTemplate chain against ONE underlying ImageSharp
+    // representation instead of converting in/out once per stage, a real per-frame cost since this
+    // fires on every coalesced pointer-move frame (RecomputePreviewCoalesced). Deliberately does NOT
+    // touch BuildFinalOutput below, which still uses the old per-stage chain (a cold path, not the
+    // hot preview one T1-14 is about) -- ComposePreview's own doc comment states it must stay
+    // pixel-identical to that chain; this project's pixel-exact equivalence tests are the guard.
     private void RecomputePreviewPipeline()
     {
-        var cropped = _preparer.Crop(_workingCopy, CropRect);
-        var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
-        var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
-        var composited = _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
+        var composited = _preparer.ComposePreview(
+            _workingCopy, CropRect, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect,
+            BuildAdjustments(), BuildTemplateDocument());
         PreviewImage = _previewPool.Blit(composited);
     }
 

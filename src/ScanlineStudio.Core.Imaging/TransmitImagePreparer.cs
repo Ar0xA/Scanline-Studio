@@ -59,20 +59,35 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     public IImageSource Crop(IImageSource source, NormalizedRect region)
     {
         using var image = ToImageSharp(source);
+        CropInto(image, source.Width, source.Height, region);
+        return FromImageSharp(image);
+    }
 
-        var x = Math.Clamp((int)Math.Round(region.X * source.Width), 0, source.Width - 1);
-        var y = Math.Clamp((int)Math.Round(region.Y * source.Height), 0, source.Height - 1);
-        var width = Math.Clamp((int)Math.Round(region.Width * source.Width), 1, source.Width - x);
-        var height = Math.Clamp((int)Math.Round(region.Height * source.Height), 1, source.Height - y);
+    // T1-14: extracted so ComposePreview's own fused pipeline shares this EXACT logic rather than a
+    // second, independently-maintained copy of it -- the two can't silently drift apart, since
+    // there's only one implementation to drift. sourceWidth/sourceHeight are passed explicitly
+    // (not read from `image`) for clarity at the call site, not because it's load-bearing today --
+    // `image.Width`/`.Height` already equal them at every current call site (Mutate hasn't run yet).
+    private static void CropInto(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, int sourceWidth, int sourceHeight, NormalizedRect region)
+    {
+        var x = Math.Clamp((int)Math.Round(region.X * sourceWidth), 0, sourceWidth - 1);
+        var y = Math.Clamp((int)Math.Round(region.Y * sourceHeight), 0, sourceHeight - 1);
+        var width = Math.Clamp((int)Math.Round(region.Width * sourceWidth), 1, sourceWidth - x);
+        var height = Math.Clamp((int)Math.Round(region.Height * sourceHeight), 1, sourceHeight - y);
 
         image.Mutate(ctx => ctx.Crop(new Rectangle(x, y, width, height)));
-        return FromImageSharp(image);
     }
 
     public IImageSource Resize(IImageSource source, int width, int height, bool preserveAspect)
     {
         using var image = ToImageSharp(source);
+        ResizeInto(image, width, height, preserveAspect);
+        return FromImageSharp(image);
+    }
 
+    // T1-14: extracted, same reasoning as CropInto above.
+    private static void ResizeInto(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, int width, int height, bool preserveAspect)
+    {
         if (preserveAspect)
         {
             // Letterbox with solid black -- matches this app's raw-instrumentation aesthetic
@@ -94,8 +109,6 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             // choice, not a repeated silent default.
             image.Mutate(ctx => ctx.Resize(width, height));
         }
-
-        return FromImageSharp(image);
     }
 
     /// <summary>Brightness/Contrast/Saturation map the slider's -50..50 range to ImageSharp's own
@@ -131,7 +144,14 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         }
 
         using var image = ToImageSharp(source);
+        ApplyAdjustmentsInto(image, adjustments);
+        return FromImageSharp(image);
+    }
 
+    // T1-14: extracted, same reasoning as CropInto above. Callers (ComposePreview included) are
+    // responsible for their own IsIdentity check -- this method always applies the full chain.
+    private static void ApplyAdjustmentsInto(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, ImageAdjustments adjustments)
+    {
         image.Mutate(ctx =>
         {
             ctx.Brightness(1.0f + (float)(adjustments.Brightness / 50.0));
@@ -176,8 +196,6 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 ctx.GaussianSharpen(sharpenSigma);
             }
         });
-
-        return FromImageSharp(image);
     }
 
     public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay)
@@ -215,7 +233,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         }
 
         using var image = ToImageSharp(existingBase);
+        ApplyTemplateInto(image, document);
+        return FromImageSharp(image);
+    }
 
+    // T1-14: extracted, same reasoning as CropInto above. Reads image.Width/image.Height (not a
+    // separately-passed existingBase.Width/.Height) -- always equivalent since Resize's own
+    // contract guarantees `image` is always EXACTLY the target mode's dimensions by the time
+    // ComposePreview reaches this stage (ITransmitImagePreparer.Resize's own doc comment: "Always
+    // returns EXACTLY width x height").
+    private void ApplyTemplateInto(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateDocument document)
+    {
         foreach (var element in document.Elements.OrderBy(e => e.Z))
         {
             if (element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
@@ -223,18 +251,18 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 continue;
             }
 
-            var bounds = ToPixelBounds(element.Bounds, existingBase.Width, existingBase.Height);
+            var bounds = ToPixelBounds(element.Bounds, image.Width, image.Height);
 
             switch (element)
             {
                 case TemplateTextElement text:
-                    DrawTemplateText(image, text, bounds, existingBase.Height);
+                    DrawTemplateText(image, text, bounds, image.Height);
                     break;
                 case TemplateImageElement img:
                     DrawTemplateImage(image, img, bounds);
                     break;
                 case TemplateBoxElement box:
-                    DrawTemplateBox(image, box, bounds, existingBase.Height);
+                    DrawTemplateBox(image, box, bounds, image.Height);
                     break;
                 default:
                     // TemplateElement is a public abstract record -- an unrecognized subtype means
@@ -243,6 +271,37 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                     // harder bug to notice than a build/test failure right here.
                     throw new NotSupportedException($"Unrecognized {nameof(TemplateElement)} subtype: {element.GetType()}.");
             }
+        }
+    }
+
+    /// <summary>T1-14 (production_audit.md): the real, fused override of
+    /// <see cref="ITransmitImagePreparer.ComposePreview"/>'s own default 4-call-chain implementation
+    /// -- converts to <c>Image&lt;Rgb24&gt;</c> exactly ONCE, runs every stage's own Mutate/draw logic
+    /// (the SAME <c>*Into</c> helpers <see cref="Crop"/>/<see cref="Resize"/>/
+    /// <see cref="ApplyAdjustments"/>/<see cref="ApplyTemplate"/> themselves call, so there is only
+    /// ONE copy of each stage's own logic, not a second implementation that could drift from it) on
+    /// that single instance, then converts back exactly once -- instead of once per stage. Must stay
+    /// pixel-identical to the interface's own default implementation (see that method's own doc
+    /// comment) and to <c>TxImageEditorPaneViewModel.BuildFinalOutput</c>'s own separate, un-fused
+    /// chain -- pinned by this project's own pixel-exact equivalence tests, not just asserted
+    /// here.</summary>
+    public IImageSource ComposePreview(
+        IImageSource source, NormalizedRect cropRegion, int targetWidth, int targetHeight, bool preserveAspect,
+        ImageAdjustments adjustments, TemplateDocument templateDocument)
+    {
+        using var image = ToImageSharp(source);
+
+        CropInto(image, source.Width, source.Height, cropRegion);
+        ResizeInto(image, targetWidth, targetHeight, preserveAspect);
+
+        if (!adjustments.IsIdentity)
+        {
+            ApplyAdjustmentsInto(image, adjustments);
+        }
+
+        if (!templateDocument.IsEmpty)
+        {
+            ApplyTemplateInto(image, templateDocument);
         }
 
         return FromImageSharp(image);
