@@ -56,19 +56,22 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             command.Parameters.AddWithValue("$modeId", filter.ModeId);
         }
 
+        // T1-16 (production_audit.md): filters/sorts on ReceivedAtUtc, not the displayed ReceivedAt
+        // column -- see ReceivedAtUtc's own doc comment above EnsureSchema for why a raw TEXT compare
+        // on ReceivedAt's own local-offset format is NOT instant-based (a real, previously-live bug).
         if (filter.From is not null)
         {
-            command.CommandText += " AND ReceivedAt >= $from";
-            command.Parameters.AddWithValue("$from", filter.From.Value.ToString("O"));
+            command.CommandText += " AND ReceivedAtUtc >= $from";
+            command.Parameters.AddWithValue("$from", filter.From.Value.UtcDateTime.ToString("O"));
         }
 
         if (filter.To is not null)
         {
-            command.CommandText += " AND ReceivedAt <= $to";
-            command.Parameters.AddWithValue("$to", filter.To.Value.ToString("O"));
+            command.CommandText += " AND ReceivedAtUtc <= $to";
+            command.Parameters.AddWithValue("$to", filter.To.Value.UtcDateTime.ToString("O"));
         }
 
-        command.CommandText += " ORDER BY ReceivedAt DESC";
+        command.CommandText += " ORDER BY ReceivedAtUtc DESC";
 
         var results = new List<ReceiveHistoryEntry>();
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -142,8 +145,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath)
-            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath)
+            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc)
+            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc)
             """;
         command.Parameters.AddWithValue("$id", entry.Id);
         command.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
@@ -160,6 +163,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         // from entry.AudioFilePath (not hardcoded DBNull.Value) so a test/ReconcileWithDiskAsync-style
         // caller that already knows the path isn't forced through a second UPDATE round-trip.
         command.Parameters.AddWithValue("$audioFilePath", (object?)entry.AudioFilePath ?? DBNull.Value);
+        // T1-16 (production_audit.md): see ReceivedAtUtc's own doc comment above EnsureSchema.
+        command.Parameters.AddWithValue("$receivedAtUtc", entry.ReceivedAt.UtcDateTime.ToString("O"));
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -463,8 +468,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 // guard. An earlier version of this test suite had a test CLAIMING to cover this race
                 // that didn't (auditor-caught) -- removed rather than left as false confidence.
                 insert.CommandText = """
-                    INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged)
-                    SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged
+                    INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, ReceivedAtUtc)
+                    SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $receivedAtUtc
                     WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistory WHERE FilePath = $filePath)
                     """;
                 insert.Parameters.AddWithValue("$id", entry.Id);
@@ -475,6 +480,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 insert.Parameters.AddWithValue("$decodeState", entry.DecodeState.ToString());
                 insert.Parameters.AddWithValue("$note", DBNull.Value);
                 insert.Parameters.AddWithValue("$isFlagged", 0);
+                // T1-16 (production_audit.md): see ReceivedAtUtc's own doc comment above EnsureSchema.
+                insert.Parameters.AddWithValue("$receivedAtUtc", entry.ReceivedAt.UtcDateTime.ToString("O"));
                 importedCount += await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
@@ -553,6 +560,27 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// the same `history.db` serialize correctly via Microsoft.Data.Sqlite's own busy-retry instead
     /// of both observing "column missing" and the second `ALTER` throwing from inside this
     /// constructor-time call.</summary>
+    // T1-16 (production_audit.md): ReceivedAt stores a genuinely correct instant, but as
+    // DateTimeOffset.ToString("O") -- LOCAL offset preserved (ReceiveHistoryRecorder/
+    // ReconcileWithDiskAsync both stamp wall-clock local time, by design, since that's what the
+    // Gallery/status-bar UI displays). QueryAsync's own From/To/ORDER BY used to compare that TEXT
+    // column directly -- a lexicographic compare, not an instant-based one, so two rows/queries with
+    // DIFFERENT offsets (e.g. a query anchored at UTC midnight against rows stored at local offset)
+    // can sort/filter WRONG even though every individual value is itself correct (confirmed:
+    // "2026-08-09T20:00:00-05:00", a real instant AFTER 2026-08-10T00:00:00Z, sorts BEFORE it as
+    // text). Fixed with a SEPARATE column, not by changing ReceivedAt's own meaning: ReceivedAtUtc
+    // always stores DateTimeOffset.UtcDateTime.ToString("O") (fixed offset "Z", so lexicographic
+    // order among ReceivedAtUtc values IS chronological order) -- QueryAsync filters/sorts on THIS
+    // column exclusively now; ReceivedAt itself, its stored format, and every existing reader of
+    // ReceiveHistoryEntry.ReceivedAt are all untouched. Genuinely NULLABLE, not just nullable-for-
+    // schema-consistency: both write sites (RecordAsync, ReconcileWithDiskAsync's insert) always
+    // supply a real value, and BackfillReceivedAtUtc runs UNCONDITIONALLY on every startup (not
+    // gated on "just added this pass" -- auditor code-review finding, 2026-08-31: a one-time gate
+    // would let a NULL row introduced later, e.g. an older build's INSERT running against an
+    // already-migrated DB, or a parse failure, stay silently invisible from every filtered
+    // Gallery/status-bar view forever, with nothing left to ever repair it), scoped to
+    // `WHERE ReceivedAtUtc IS NULL` -- so any row that's ever NULL self-heals on the next startup
+    // once its ReceivedAt value parses, rather than being treated as a should-never-happen case.
     private void EnsureSchema()
     {
         using var connection = new SqliteConnection(_connectionString);
@@ -573,7 +601,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 IsFlagged INTEGER NOT NULL DEFAULT 0,
                 FrequencyHz INTEGER NULL,
                 RigMode TEXT NULL,
-                AudioFilePath TEXT NULL
+                AudioFilePath TEXT NULL,
+                ReceivedAtUtc TEXT NULL
             )
             """;
         createCommand.ExecuteNonQuery();
@@ -637,6 +666,15 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN AudioFilePath TEXT NULL");
         }
 
+        // T1-16 (production_audit.md): the 7th ALTER TABLE block, appended AFTER AudioFilePath --
+        // same "always appends, never reorders" reasoning as the columns above. See this new
+        // column's own doc comment (just above CREATE TABLE's own declaration) for why it exists
+        // and why it's a SEPARATE column rather than replacing ReceivedAt's own meaning.
+        if (!existingColumns.Contains("ReceivedAtUtc"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN ReceivedAtUtc TEXT NULL");
+        }
+
         // Backfill ONLY when DecodeState was newly added THIS pass -- never on subsequent startups,
         // and never for a fresh DB (CREATE TABLE already gave it the right default). GLOB, not
         // LIKE/instr: anchors on the real filename SHAPE ReceiveHistoryRecorder.RecordAbandonedImageAsync
@@ -651,19 +689,99 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             ExecuteNonQuery(connection, transaction, "UPDATE ReceiveHistory SET DecodeState = 'Abandoned' WHERE FilePath GLOB '*_partial_????????.png'");
         }
 
-        // Every logbook/gallery view query sorts by ReceivedAt DESC, ReconcileWithDiskAsync probes
-        // FilePath per candidate file, and SetLinkedQsoIdAsync's sibling ClearLinkedQsoIdAsync keys
-        // on LinkedQsoId -- without these, each is a full table scan (T0-9). CREATE INDEX IF NOT
+        // T1-16 (production_audit.md), auditor code-review finding (2026-08-31): backfills every row
+        // whose ReceivedAtUtc is still NULL -- runs EVERY pass, unconditionally, NOT gated on "the
+        // column was newly added this pass" the way DecodeState's own backfill above deliberately is.
+        // DecodeState's gate is correct for ITS OWN backfill because that one is a one-time,
+        // heuristic, GLOB-based guess -- re-running it on every startup risks re-classifying a row a
+        // future feature legitimately changed. This backfill is neither: it is idempotent (an
+        // already-non-NULL row is never touched, scoped by the WHERE clause below, not a pass-level
+        // flag) and non-destructive (it only ever fills a gap, never overwrites a real value). A
+        // gate here would leave a genuine, reachable failure mode: a NULL ReceivedAtUtc row (e.g. an
+        // OLDER build writes a fresh row against an already-migrated DB, or a hand/foreign-tool edit)
+        // silently DISAPPEARS from every filtered view forever (WHERE ReceivedAtUtc >= $from
+        // evaluates to SQL NULL, so the row never matches; ORDER BY sorts NULLs last, so it's also
+        // buried at the bottom of the unfiltered "All" view) -- with the old once-only gate, nothing
+        // would ever repair that row again. Per-row C# loop (DateTimeOffset.Parse + reformat), not a
+        // single SQL UPDATE with a computed expression: SQLite's own datetime()/strftime() functions
+        // don't reproduce .NET's "O" round-trip format byte-for-byte (different field widths, no
+        // fractional-second/timezone-suffix parity), so doing the conversion in .NET against the
+        // exact same parser QueryAsync's own read path already uses is the only way to guarantee the
+        // backfilled values match what a freshly-written row gets. Still runs inside this same
+        // transaction (this method's own doc comment's crash-safety guarantee) -- on a healthy,
+        // fully-migrated DB the WHERE clause matches zero rows (served by the new index below, which
+        // SQLite uses for IS NULL), so this costs nothing on the overwhelmingly common startup.
+        BackfillReceivedAtUtc(connection, transaction);
+
+        // Every logbook/gallery view query sorts/filters by ReceivedAtUtc, ReconcileWithDiskAsync
+        // probes FilePath per candidate file, and SetLinkedQsoIdAsync's sibling ClearLinkedQsoIdAsync
+        // keys on LinkedQsoId -- without these, each is a full table scan (T0-9). CREATE INDEX IF NOT
         // EXISTS is idempotent, so this runs unconditionally on every startup. Names are
         // table-qualified and explicit: this database file also holds the Qso table's indexes
         // (SqliteLogbookRepository.EnsureSchema), and SQLite's index namespace is per-database, not
         // per-table -- an accidental name collision would silently no-op under IF NOT EXISTS with no
         // error and no test failure.
-        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_ReceivedAt ON ReceiveHistory(ReceivedAt)");
+        //
+        // T1-16 (production_audit.md): IX_ReceiveHistory_ReceivedAt (on the old ReceivedAt column) is
+        // dropped, not kept alongside the new index below -- QueryAsync's own WHERE/ORDER BY now
+        // filter/sort exclusively on ReceivedAtUtc (ReceivedAt only ever appears in the plain SELECT
+        // list now, where no index helps), so the old index is pure dead weight this change itself
+        // creates -- cheap to remove now, no reason to carry it forward.
+        ExecuteNonQuery(connection, transaction, "DROP INDEX IF EXISTS IX_ReceiveHistory_ReceivedAt");
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_ReceivedAtUtc ON ReceiveHistory(ReceivedAtUtc)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_FilePath ON ReceiveHistory(FilePath)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_LinkedQsoId ON ReceiveHistory(LinkedQsoId)");
 
         transaction.Commit();
+    }
+
+    // T1-16 (production_audit.md): see EnsureSchema's own call site comment for why this is a
+    // per-row C# loop instead of a single SQL UPDATE, and why it's scoped to ReceivedAtUtc IS NULL
+    // rather than gated on "just added this pass." Auditor code-review finding (2026-08-31): a
+    // single unparseable ReceivedAt value (hand-edited DB, a foreign writer) must not crash app
+    // startup from inside DI resolution the way an unguarded throw here would (every subsequent
+    // launch would fail identically, since the transaction rolls back and the row stays NULL,
+    // re-triggering this same throw) -- log and leave that ONE row NULL instead, same shape as
+    // ReconcileWithDiskAsync's own per-file skip-and-log for a file it can't make sense of. A NULL
+    // row is a degraded-but-recoverable state now (invisible from filtered views until the value is
+    // fixed and a later startup's own IS-NULL scope picks it up again -- see the "unconditional,
+    // not gated" reasoning at the call site), not a permanent one.
+    private void BackfillReceivedAtUtc(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var rows = new List<(string Id, string ReceivedAt)>();
+        var selectCommand = connection.CreateCommand();
+        selectCommand.Transaction = transaction;
+        selectCommand.CommandText = "SELECT Id, ReceivedAt FROM ReceiveHistory WHERE ReceivedAtUtc IS NULL";
+        using (var reader = selectCommand.ExecuteReader())
+        {
+            // Fully materialize before issuing any UPDATE below -- same "no live reader during DDL/DML
+            // on the same connection" reasoning as the PRAGMA table_info probe above.
+            while (reader.Read())
+            {
+                rows.Add((reader.GetString(0), reader.GetString(1)));
+            }
+        }
+
+        foreach (var (id, receivedAt) in rows)
+        {
+            string utcText;
+            try
+            {
+                utcText = DateTimeOffset.Parse(receivedAt, System.Globalization.CultureInfo.InvariantCulture).UtcDateTime.ToString("O");
+            }
+            catch (FormatException ex)
+            {
+                Log.ReceivedAtUtcBackfillFailed(_logger, id, ex);
+                continue;
+            }
+
+            var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = "UPDATE ReceiveHistory SET ReceivedAtUtc = $utc WHERE Id = $id";
+            updateCommand.Parameters.AddWithValue("$utc", utcText);
+            updateCommand.Parameters.AddWithValue("$id", id);
+            updateCommand.ExecuteNonQuery();
+        }
     }
 
     private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
@@ -727,5 +845,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Disk/DB reconcile: imported {Count} entries from {Directory}")]
         public static partial void ReconcileImported(ILogger logger, int count, string directory);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Backfilling ReceivedAtUtc failed for entry {EntryId}; left NULL, will retry on the next startup")]
+        public static partial void ReceivedAtUtcBackfillFailed(ILogger logger, string entryId, Exception ex);
     }
 }
