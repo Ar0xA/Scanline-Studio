@@ -343,35 +343,29 @@ public sealed class SstvSessionServicePttSafetyTests
     // ------------------------------------------------------------------ risk B
 
     [Fact]
-    public async Task RiskB_UnlockRacingCleanup_DoesNotStrandRxStopped()
+    public async Task SetPttLockAsync_UnlockAfterLockedTransmitCompletes_ResumesRx()
     {
-        // Risk B, exercised deterministically at the ONE interleaving that matters: SetPttLockAsync(false)
-        // completes AFTER PlayWithPttAsync's cleanup snapshotted _pttLocked==true but BEFORE the
-        // cleanup published _rxPendingResumeAfterUnlock. The unlock's own deferred-resume check then
-        // ran against a still-false flag, so nothing would ever consume the flag the cleanup was about
-        // to set -- RX stopped forever. Driven from BeforeSetPtt on the un-key call so the unlock
-        // lands inside the cleanup window.
-        var (service, engine, radio, _) = CreateService();
+        // T1-5 plan-review (round 2/3) correction: this test's own name/comment used to claim it
+        // exercised Risk B's actual race window (SetPttLockAsync(false) landing DURING PlayWithPttAsync's
+        // cleanup, between its pttLockedAtCleanup snapshot and its own publish of the deferred-resume
+        // flag). It does not -- the BeforeSetPtt hook below only fires during an actual PTT command
+        // send, and Risk B's own race window has no command send inside it at all (pure, synchronous
+        // state-flag logic -- confirmed by direct re-read of PlayWithPttAsync's own cleanup body). The
+        // two calls below run fully SEQUENTIALLY (TransmitAsync's own await completes in full before
+        // SetPttLockAsync(false) is ever invoked), not concurrently. This is still a real, valid,
+        // worth-keeping test of a DIFFERENT thing: a locked transmit correctly defers its own RX-resume,
+        // and a LATER unlock correctly consumes and resumes it. See
+        // PttSafetyCoordinatorTests.cs's own DecideWasReceivingResume_ConcurrentUnlockAlreadyLanded_*
+        // and its RacingTryConsumeRxResumePending_* stress test for Risk B's actual coverage now that
+        // the decision logic is directly, deterministically testable.
+        var (service, engine, _, _) = CreateService();
         await service.StartReceivingAsync();
         await service.SetPttLockAsync(true);
 
-        var unlocked = false;
-        radio.BeforeSetPtt = tx =>
-        {
-            if (tx || unlocked)
-            {
-                return;
-            }
-
-            unlocked = true;
-        };
-
         await service.TransmitAsync(TestMode, TestImage);
-
-        // The unlock lands here, mimicking a user releasing the lock as the transmit's cleanup runs.
         await service.SetPttLockAsync(false);
 
-        Assert.True(((FakeAudioEngine)engine).IsCapturing, "RX must never be stranded stopped by an unlock racing cleanup");
+        Assert.True(((FakeAudioEngine)engine).IsCapturing, "RX must resume once the operator unlocks after a locked transmit completes");
     }
 
     // ------------------------------------------------------------------ round 2 blocker
