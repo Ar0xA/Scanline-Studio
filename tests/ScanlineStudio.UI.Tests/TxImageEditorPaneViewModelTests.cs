@@ -3975,6 +3975,31 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Single(vm.OverlayElements);
     }
 
+    // TX workflow modernization plan, Phase 3b: Ctrl-drag-to-duplicate.
+
+    [AvaloniaFact]
+    public void DuplicateElementForDrag_ClonesElement_AndSuppressesTheFollowingGeometryPush()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        var clone = vm.DuplicateElementForDrag(original);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.NotSame(original, clone);
+        Assert.Same(clone, vm.SelectedOverlayElement);
+
+        // Simulates the immediately-following Overlay drag's first move (OnCanvasPointerMoved's own
+        // `element.X += dxNormalized`) -- must NOT push a second undo step, or one Ctrl-drag gesture
+        // would need two Undo clicks to fully revert.
+        clone.X += 0.05;
+        clone.Y += 0.05;
+
+        vm.UndoCommand.Execute(null);
+        Assert.Single(vm.OverlayElements); // one Undo removed the clone entirely, not just its position
+    }
+
     [AvaloniaFact]
     public void Duplicate_BackgroundImageElement_CloneIsNotBackgroundAndNotLocked()
     {
@@ -4805,6 +4830,101 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(width >= 0.02); // MinNormalizedElementSize
         AssertClose(0.30, x - (width / 2)); // left edge stayed fixed
+    }
+
+    // TX workflow modernization plan, Phase 3a: draw-to-place drag-to-rect math.
+
+    [Fact]
+    public void ComputeRectFromDrag_AnchorTopLeftOfCurrent_DerivesCenterAnchoredRect()
+    {
+        var (centerX, centerY, width, height) = TxImageEditorPaneView.ComputeRectFromDrag(
+            anchor: new Avalonia.Point(100, 100), current: new Avalonia.Point(300, 200),
+            canvasDisplayWidth: 1000, canvasDisplayHeight: 1000);
+
+        // anchor/current normalize to (0.1,0.1) and (0.3,0.2) -> left=0.1, top=0.1, width=0.2, height=0.1
+        AssertClose(0.1, centerX - (width / 2));
+        AssertClose(0.1, centerY - (height / 2));
+        AssertClose(0.2, width);
+        AssertClose(0.1, height);
+    }
+
+    [Fact]
+    public void ComputeRectFromDrag_AnchorBottomRightOfCurrent_SameRectRegardlessOfDragDirection()
+    {
+        // Dragging from bottom-right back to top-left must produce the IDENTICAL rect a top-left-to-
+        // bottom-right drag over the same two points would -- a placement drag can go any direction.
+        var forward = TxImageEditorPaneView.ComputeRectFromDrag(
+            new Avalonia.Point(100, 100), new Avalonia.Point(300, 200), 1000, 1000);
+        var reversed = TxImageEditorPaneView.ComputeRectFromDrag(
+            new Avalonia.Point(300, 200), new Avalonia.Point(100, 100), 1000, 1000);
+
+        AssertClose(forward.CenterX, reversed.CenterX);
+        AssertClose(forward.CenterY, reversed.CenterY);
+        AssertClose(forward.Width, reversed.Width);
+        AssertClose(forward.Height, reversed.Height);
+    }
+
+    [Fact]
+    public void ComputeRectFromDrag_TinyDrag_FloorsBothAxesAtMinSize()
+    {
+        var (_, _, width, height) = TxImageEditorPaneView.ComputeRectFromDrag(
+            new Avalonia.Point(100, 100), new Avalonia.Point(101, 100), 1000, 1000, minSize: 0.02);
+
+        AssertClose(0.02, width);
+        AssertClose(0.02, height);
+    }
+
+    // TX workflow modernization plan, Phase 3c: alignment-guide snap math.
+
+    [Fact]
+    public void ComputeAlignmentSnap_LeftEdgeCloseToOtherElementsLeftEdge_SnapsXOnly()
+    {
+        // dragged left edge = 0.433 - 0.03 = 0.403, within threshold of the other's left edge (0.4).
+        // Every other dragged/target pairing (center, right edge, crop center) is deliberately far
+        // apart so this test isolates the one intended match, not a coincidental closer one.
+        var dragged = (X: 0.433, Y: 0.5, Width: 0.06, Height: 0.1);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.5, 0.99, 0.2, 0.1) }; // left edge = 0.4
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentSnap(dragged, others, cropCenter: (0.99, 0.99));
+
+        Assert.NotNull(x);
+        AssertClose(0.4, x!.Value - (dragged.Width / 2)); // dragged left edge now exactly on the other's left edge
+        Assert.Null(y); // Y was nowhere near any target, must not snap
+    }
+
+    [Fact]
+    public void ComputeAlignmentSnap_CentersClose_SnapsToExactCenterMatch()
+    {
+        var dragged = (X: 0.503, Y: 0.301, Width: 0.06, Height: 0.06);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.5, 0.99, 0.3, 0.02) };
+
+        var (x, _) = TxImageEditorPaneView.ComputeAlignmentSnap(dragged, others, cropCenter: (0.01, 0.01));
+
+        AssertClose(0.5, x!.Value);
+    }
+
+    [Fact]
+    public void ComputeAlignmentSnap_NearCropCenter_SnapsToCropCenterWithNoOtherElements()
+    {
+        var dragged = (X: 0.503, Y: 0.5, Width: 0.1, Height: 0.1);
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentSnap(
+            dragged, others: [], cropCenter: (0.5, 0.5));
+
+        AssertClose(0.5, x!.Value);
+        AssertClose(0.5, y!.Value);
+    }
+
+    [Fact]
+    public void ComputeAlignmentSnap_NothingWithinThreshold_ReturnsNullForBothAxes()
+    {
+        var dragged = (X: 0.1, Y: 0.1, Width: 0.05, Height: 0.05);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.9, 0.9, 0.05, 0.05) };
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentSnap(dragged, others, cropCenter: (0.5, 0.5));
+
+        Assert.Null(x);
+        Assert.Null(y);
     }
 
     [Fact]
@@ -6002,6 +6122,103 @@ public sealed class TxImageEditorPaneViewModelTests
         {
             return true;
         }
+    }
+
+    // TX workflow modernization plan, Phase 7: flatten. Uses the REAL TransmitImagePreparer (not a
+    // fake) -- a fake can't produce pixels to bake, and CanExecute/undo/source-replacement behavior
+    // needs the real bake path to actually run without throwing. Deep pixel-equivalence testing
+    // (the auditor-specified tolerance rule: tight bound on a solid box, MAE+outlier bound for text,
+    // plus a non-vacuous ink-presence assertion) is NOT built here -- tracked debt, not silently
+    // skipped, see PROJECT_BRIEF.md.
+    private static readonly SstvModeDefinition FlattenTestMode = new(
+        Id: "flatten-test", DisplayName: "FlattenTest", VisCode: 0,
+        ImageWidth: 80, ImageHeight: 60, ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+
+    // Same repo-root-relative font resolution as TransmitImagePreparerComposePreviewTests --
+    // TransmitImagePreparer's own default font path assumes assets/fonts sits next to the running
+    // assembly, which isn't true for this test project's output directory.
+    private static readonly string FlattenTestFontPath =
+        Path.Combine(FindRepoRoot(), "assets", "fonts", "DejaVuSansMono.ttf");
+
+    private static string FindRepoRoot()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "ScanlineStudio.sln")))
+        {
+            dir = Path.GetDirectoryName(dir);
+        }
+
+        return dir ?? throw new InvalidOperationException("Could not locate repo root (ScanlineStudio.sln) from " + AppContext.BaseDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_ValidBoxElement_RemovesElementAndReplacesSourceSameDimensions()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        var sourceBefore = vm.CurrentSource;
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.Null(vm.SelectedOverlayElement);
+        Assert.NotSame(sourceBefore, vm.CurrentSource);
+        Assert.Equal(sourceBefore.Width, vm.CurrentSource.Width);
+        Assert.Equal(sourceBefore.Height, vm.CurrentSource.Height);
+    }
+
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_ThenUndo_RestoresElementAndOriginalSourceReference()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        var sourceBefore = vm.CurrentSource;
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        Assert.Single(vm.OverlayElements);
+        // Bit-exact, not tolerance-based -- undo restores the pre-flatten source INSTANCE (the
+        // SourceBaseline swap in ApplyState), it does not re-derive it.
+        Assert.Same(sourceBefore, vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_ThenUndoThenRedo_ReappliesFlatten()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+        var sourceAfterFlatten = vm.CurrentSource;
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.RedoCommand.CanExecute(null));
+        vm.RedoCommand.Execute(null);
+
+        // Round-2 auditor finding this test pins: the redo counterpart snapshot must carry the
+        // OUTGOING baseline so redo can swap FORWARD again, not just backward -- without that fix
+        // redo silently left the flattened pixels unreachable (element gone, bake not restored).
+        Assert.Empty(vm.OverlayElements);
+        Assert.Same(sourceAfterFlatten, vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public void CanFlattenElement_ElementNotInOverlayElements_ReturnsFalse()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        vm.RemoveOverlayElementCommand.Execute(element);
+
+        Assert.False(vm.FlattenElementCommand.CanExecute(element));
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
