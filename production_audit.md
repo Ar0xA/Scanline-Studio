@@ -223,7 +223,7 @@ awaitable-seam treatment `RxImagePaneViewModel._loadQuickModeGridTask` already u
 | T1-11 | Cross-subsystem | "Test Connection" UI calls omit a cancellation token/timeout on 4 sites, unlike the sibling PTT-test calls — combined with T1-8/Hamlib timeout, can leave "Testing…" stuck indefinitely | `OptionsWindowViewModel.cs:1241,1326,1391,1539` |
 | T1-12 | UI | `MainWindow`'s cross-VM event wiring lives entirely inside `DataContextChanged` using `+=` with no re-entry guard — a second firing double-subscribes (2 Options windows, 2 viewer windows). Latent today (DataContext only assigned once), one-line guard | `Views/MainWindow.axaml.cs:147-780` |
 | T1-13 | UI | Frequency/SWR/ALC/PWR/duration values composed via raw string interpolation in ViewModels/converters, bypassing `ILocalizationService` — decimal separator and unit literals break on non-en-US culture | `RadioStatusViewModel.cs:535,536,562,578,583,588,1331`; `RxImagePaneViewModel.cs:469,470,596,598`; 3 more sites |
-| T1-14 | Audio/Imaging/Logbook | Every imaging operation (crop/resize/adjust/overlay/template/rotate) pays a full convert-in/convert-out; `RecomputePreview` fires per pointer-move — ~8 full-image conversions per preview frame, compounds with T0-12 | `TransmitImagePreparer.cs:1026-1062` and 7 call sites |
+| T1-14 `PARTIAL` | Audio/Imaging/Logbook | Every imaging operation (crop/resize/adjust/overlay/template/rotate) pays a full convert-in/convert-out; `RecomputePreview` fires per pointer-move — ~8 full-image conversions per preview frame, compounds with T0-12. **Corrected 2026-08-31:** the hot preview path (`TxImageEditorPaneViewModel.RecomputePreviewPipeline`) is fixed — see the "Tier D progress" note. The other 6 call sites named below are unchanged, deliberately (cold paths, not the "fires on every pointer-move" cost this item is about) | `TransmitImagePreparer.cs:1085-1121` (`ToImageSharp`/`FromImageSharp`) and 6 remaining call sites |
 | T1-15 | Audio/Imaging/Logbook | Same pixel-conversion loop duplicated in 7 places; already caused a real bug (`StockImageLibrary` missing an `AutoOrient` call `ImageFileLoader` had) | `ImageFileLoader.cs:35-54`, `StockImageLibrary.cs:94-113`, 5 more sites |
 | T1-16 | Audio/Imaging/Logbook | Timestamps stored as local-offset strings, compared lexicographically — diverges from chronological order across DST/timezone changes. Needs a migration decision before coding | `ReceiveHistoryRecorder.cs:373,428`; `SqliteReceiveHistoryStore.cs:419-422,142,462` |
 | T1-17 | Audio/Imaging/Logbook | `AdifImporter` assumes UTF-8 regardless of source file encoding; unguarded date-slice parsing throws the wrong exception type and aborts mid-import, discarding already-mapped records | `AdifImporter.cs:40,298-307` |
@@ -278,8 +278,9 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
-**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16/T1-3 (Tier D) are all
-done — see the "Tier D progress" notes further below. T1-14 still needs its own plan-review round.
+**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16/T1-3/T1-1/T1-5/T1-14
+are all done (T1-14 partially — see its own "Tier D progress" note below for scope) -- see the
+"Tier D progress" notes further below for all of these.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
 - **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
@@ -420,6 +421,37 @@ that could flake under thread-pool scheduling) — both fixed. Mutation check (r
 defect, not just passes vacuously. New `PttSafetyCoordinatorTests.cs` (10 tests) directly proves the
 extraction's own argued benefit: Race 1 and Risk B's deterministic half now testable via ordinary
 sequential calls. Full `Application.Tests` (447) and `UI.Tests` (1208) green.
+
+**Tier D progress — T1-14 partially closed (2026-08-31):** fused the TX image editor's hot preview
+pipeline (`TxImageEditorPaneViewModel.RecomputePreviewPipeline`, the one both the coalesced
+pointer-move path and the ~20 discrete one-shot triggers funnel through) from 4 separate
+Crop/Resize/ApplyAdjustments/ApplyTemplate calls (up to 8 ImageSharp round-trips per frame) into one
+new `ITransmitImagePreparer.ComposePreview` call (exactly 2, regardless of how many stages are
+non-trivial). Explicitly a **partial** closure, not full: the audit's own "7 call sites" count for
+this item names 6 more (`TxImageEditorPaneViewModel.BuildFinalOutput`, the method that actually
+produces the transmitted image; a second full-chain copy in `TxControlsPaneViewModel.cs`'s own
+mode-change reflow; and 4 individual-method call sites) — all deliberately left untouched, since they
+are cold paths, not the "fires on every pointer-move" cost this item's own one-liner is about.
+`ComposePreview` was added as a new interface member with a DEFAULT implementation (the literal
+un-fused 4-call chain) — the contract every implementer, including this project's own 2 test fakes,
+must stay pixel-identical to; `TransmitImagePreparer` overrides it with the real fused body, built by
+extracting shared `CropInto`/`ResizeInto`/`ApplyAdjustmentsInto`/`ApplyTemplateInto` helpers that BOTH
+the existing per-stage public methods and the new override call — one copy of each stage's own logic,
+not two that could drift apart. One plan-review round found 3 gaps in the first draft (the 2 fake
+implementers would have broken ~60 existing test assertions without the default-implementation shape;
+`BuildFinalOutput` needed an explicit "stays on the old chain, pixel-parity pinned by tests" statement;
+the test matrix needed a genuinely offset, non-full-frame crop case, since a full-frame-only matrix
+can't distinguish a `source.Width`-vs-`image.Width` mixup) — all folded in before implementing. One
+code-review round: go for production; folded in two more tests (a `TemplateBoxElement` case, and a
+reflection check pinning that `TransmitImagePreparer`'s own `ComposePreview` genuinely binds as the
+interface's implementation rather than silently falling through to the slower default on a future
+signature drift — pixel-exact tests alone can't catch that, since both paths produce identical output
+by design) plus a doc-comment nit fix. New `TransmitImagePreparerComposePreviewTests.cs` (9 tests,
+pixel-exact against the old 4-call chain, not tolerance-bounded — `ToImageSharp`/`FromImageSharp` are
+lossless 8-bit copies, so exact equality is the correct gate) — mutation check (swapped the crop
+region's own width/height source) confirmed all 9 actually fail against a broken implementation, not
+just pass vacuously. Full `Core.Imaging.Tests` (114), `Application.Tests` (447), and `UI.Tests` (1208)
+green.
 
 ---
 

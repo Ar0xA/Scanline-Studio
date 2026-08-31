@@ -288,4 +288,33 @@ public interface ITransmitImagePreparer
     /// editor's single-button UX (4 clicks returns to the original orientation); width/height are
     /// swapped in the result.</summary>
     IImageSource Rotate(IImageSource source);
+
+    /// <summary>T1-14 (production_audit.md): the TX image editor's live preview pipeline
+    /// (<c>TxImageEditorPaneViewModel.RecomputePreviewPipeline</c>, fired on every coalesced
+    /// pointer-move frame) as ONE call instead of 4 -- <see cref="Crop"/> -&gt; <see cref="Resize"/>
+    /// -&gt; <see cref="ApplyAdjustments"/> -&gt; <see cref="ApplyTemplate"/>, that exact order (same
+    /// as <see cref="ApplyTemplate"/>'s own doc comment requires). Exists purely to let
+    /// <c>TransmitImagePreparer</c> do the whole chain against ONE underlying image representation
+    /// instead of converting in and out of it once per stage -- a real per-frame cost this signature
+    /// itself doesn't change or need to know about (the 4 individual methods still exist, unchanged,
+    /// for every other caller).
+    ///
+    /// <b>Default implementation</b> is the literal 4-call chain, byte-for-byte what a caller could
+    /// already do by hand -- this is what a mock/fake implementation of this interface gets for free
+    /// without needing its own override, and it is also the CONTRACT every real override (this
+    /// project has exactly one, <c>TransmitImagePreparer</c>) must stay pixel-identical to. This
+    /// method must ALSO stay pixel-identical to <c>TxImageEditorPaneViewModel.BuildFinalOutput</c>'s
+    /// own separate, un-fused Crop-&gt;Resize-&gt;ApplyAdjustments-&gt;ApplyTemplate chain (the one
+    /// that actually produces the transmitted image) -- the preview and the real output must never
+    /// silently diverge. Pixel-exact equivalence tests are the drift guard for both of these, not
+    /// just a nice-to-have regression check.</summary>
+    IImageSource ComposePreview(
+        IImageSource source, NormalizedRect cropRegion, int targetWidth, int targetHeight, bool preserveAspect,
+        ImageAdjustments adjustments, TemplateDocument templateDocument)
+    {
+        var cropped = Crop(source, cropRegion);
+        var resized = Resize(cropped, targetWidth, targetHeight, preserveAspect);
+        var adjusted = ApplyAdjustments(resized, adjustments);
+        return ApplyTemplate(adjusted, templateDocument);
+    }
 }
