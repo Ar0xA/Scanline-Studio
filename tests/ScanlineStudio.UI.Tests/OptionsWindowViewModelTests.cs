@@ -1419,8 +1419,9 @@ public sealed class OptionsWindowViewModelTests
             RigId = "none",
             TestPttResultToReturn = new RadioConnectionTestResult(false, "hamlib-native", RadioCapabilities.PttControl, "PTT test finished, but turning PTT back off failed -- check your rig; it may still be transmitting."),
         };
+        var localization = new FakeLocalizationService();
         var vm = new OptionsWindowViewModel(
-            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(),
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), localization,
             new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         vm.HamlibModel = 1035;
@@ -1429,7 +1430,13 @@ public sealed class OptionsWindowViewModelTests
         await vm.TestPttCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Contains("check your rig", vm.TestPttErrorMessage, StringComparison.OrdinalIgnoreCase);
+        // T1-7 (production_audit.md): TestPttErrorMessage is now routed through
+        // Options.Radio.TestPtt.Failed (matching the sibling TestConnectionAsync convention), not
+        // assigned raw -- FakeLocalizationService.GetString returns the key verbatim, so the
+        // diagnostic text is checked via LastArgs, same pattern as this file's other GetString-args
+        // assertions.
+        Assert.Equal("Options.Radio.TestPtt.Failed", vm.TestPttErrorMessage);
+        Assert.Contains("check your rig", string.Join("; ", localization.LastArgs!), StringComparison.OrdinalIgnoreCase);
     }
 
     [AvaloniaFact]

@@ -384,7 +384,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// stub pill this replaces read "BW —", a bare value here read as unlabeled against the SPLIT/RIT
     /// pills sharing the same row).</summary>
     [ObservableProperty]
-    private string _bandwidthDisplay = "BW —";
+    private string _bandwidthDisplay;
 
     /// <summary>Staged, NOT live two-way bound to the rig -- same "explicit apply" shape as
     /// <see cref="TuneFrequencyHz"/>/<see cref="TuneCommand"/> above (plan-review finding: a
@@ -407,6 +407,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _localization = localization;
         _logger = logger;
         _frequencyDisplay = localization.GetString("RadioStatus.NoFrequency");
+        // T1-13 (production_audit.md): was a hardcoded "BW —" field initializer -- moved into the
+        // constructor body, same reasoning as _frequencyDisplay just above (a field initializer runs
+        // before _localization is assigned).
+        _bandwidthDisplay = localization.GetString("RadioStatus.BandwidthUnavailable");
         _modeDisplay = string.Empty;
         _isReceiving = sstvSession.IsReceiving;
         _catLinked = radioSession.IsGenuinelyConnected;
@@ -539,7 +543,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             _currentFrequencyHz = state.FrequencyHz;
             StoreCurrentPresetCommand.NotifyCanExecuteChanged();
-            FrequencyDisplay = $"{state.FrequencyHz / 1_000_000.0:0.000000} MHz";
+            // T1-13 (production_audit.md): "MHz" used to be a hardcoded English literal, violating
+            // CLAUDE.md's no-hardcoded-UI-strings rule regardless of the decimal formatting itself
+            // (see FormatRigMeters's own doc comment below for why the DECIMAL formatting stays
+            // ambient-culture, deliberately -- only the unit word needed a localization key).
+            // Interpolation, not ToString(format) -- CA1305 (error) flags an explicit ambient-culture
+            // ToString(format) call but not interpolation, matching this codebase's existing dodge.
+            FrequencyDisplay = _localization.GetString("RadioStatus.FrequencyDisplayFormat", $"{state.FrequencyHz / 1_000_000.0:0.000000}");
             ModeDisplay = state.Mode.ToString();
 
             // Tier B audit finding: try/finally, not a bare set-then-reset -- a throw from
@@ -566,7 +576,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // "BW " prefix (code-review finding): the stub pill this replaces read "BW —", and its
             // row-mates (SPLIT/RIT) keep their own label prefix -- a bare "2400 Hz" here read as an
             // unlabeled value against those neighbors.
-            BandwidthDisplay = state.BandwidthHz is { } bandwidthHz ? $"BW {bandwidthHz} Hz" : "BW —";
+            // T1-13 (production_audit.md): both branches used to be hardcoded English literals.
+            BandwidthDisplay = state.BandwidthHz is { } bandwidthHz
+                ? _localization.GetString("RadioStatus.BandwidthDisplayFormat", bandwidthHz)
+                : _localization.GetString("RadioStatus.BandwidthUnavailable");
         });
     }
 
@@ -576,23 +589,26 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// doesn't need cross-thread machinery wrapped around it just to verify). Invariant-culture: this
     /// is a live UI readout, not a persisted/round-tripped value, so culture-formatted decimals are
     /// fine here (unlike <c>MacroTextResolver.FormatFrequency</c>'s own baked-into-the-transmitted-
-    /// image reasoning for InvariantCulture, which doesn't apply to a screen-only readout).</summary>
-    private static string FormatRigMeters(RadioState state)
+    /// image reasoning for InvariantCulture, which doesn't apply to a screen-only readout). T1-13
+    /// (production_audit.md): the "SWR"/"ALC"/"PWR" labels used to be hardcoded English literals --
+    /// only that half needed a localization key; the decimal formatting above is deliberately
+    /// unchanged. No longer static -- needs <see cref="_localization"/>.</summary>
+    private string FormatRigMeters(RadioState state)
     {
         List<string> parts = [];
         if (state.SwrRatio is { } swr)
         {
-            parts.Add($"SWR {swr:0.0}");
+            parts.Add(_localization.GetString("RadioStatus.Meters.SwrFormat", $"{swr:0.0}"));
         }
 
         if (state.AlcLevel is { } alc)
         {
-            parts.Add($"ALC {alc:0}%");
+            parts.Add(_localization.GetString("RadioStatus.Meters.AlcFormat", $"{alc:0}"));
         }
 
         if (state.PowerPercent is { } power)
         {
-            parts.Add($"PWR {power:0}%");
+            parts.Add(_localization.GetString("RadioStatus.Meters.PwrFormat", $"{power:0}"));
         }
 
         return parts.Count > 0 ? string.Join(" · ", parts) : "—";
@@ -656,7 +672,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 // dead connection.
                 CanReadBandwidth = false;
                 CanSetBandwidth = false;
-                BandwidthDisplay = "BW —";
+                BandwidthDisplay = _localization.GetString("RadioStatus.BandwidthUnavailable");
             }
 
             if (giveUpMessage is not null)

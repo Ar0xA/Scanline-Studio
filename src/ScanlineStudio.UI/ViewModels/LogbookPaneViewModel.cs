@@ -815,6 +815,14 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// once at least one destination is enabled.</summary>
     private string BuildLogStatusMessage(LogQsoResult result)
     {
+        // Auditor code-review finding (2026-08-31): a settings/ADIF-export/ADIF-UDP failure (i.e.
+        // not a QRZ-specific one) must not render through the QRZ-only "QRZ: failed (...)" string
+        // below -- see LogQsoResult.PostPersistError's own doc comment.
+        if (result.PostPersistError is not null)
+        {
+            return _localization.GetString("Panes.Logbook.Status.LoggedWithPostPersistError", result.PostPersistError);
+        }
+
         var adifUdp = result.AdifUdpEnabledCount > 0
             ? _localization.GetString("Panes.Logbook.Status.AdifUdpForwarded", result.AdifUdpSentCount, result.AdifUdpEnabledCount)
             : _localization.GetString("Panes.Logbook.Status.AdifUdpNotConfigured");

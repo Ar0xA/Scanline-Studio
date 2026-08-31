@@ -1,3 +1,4 @@
+using System.Text;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
@@ -95,8 +96,18 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
             // The QSO IS already logged (line 53 succeeded) -- report that honestly, with degraded
             // best-effort telemetry (nothing sent/uploaded), rather than throwing and making a caller
             // believe logging itself failed.
+            //
+            // T1-7 (production_audit.md): the caller-visible result used to discard this failure
+            // reason entirely, even though it was already logged server-side -- the caller had no
+            // way to surface WHY the post-persist steps failed, only that they did.
+            //
+            // Auditor code-review finding (2026-08-31): a first-pass fix put ex.Message in QrzError
+            // -- wrong, since this catch covers settings/export/ADIF-UDP failures too, not just QRZ,
+            // and QrzError is rendered through a QRZ-specific "QRZ: failed (...)" locale string
+            // regardless of the real cause. Use PostPersistError instead -- see LogQsoResult's own
+            // doc comment.
             Log.PostPersistStepFailed(_logger, persisted.Id, ex);
-            return new LogQsoResult(persisted, 0, 0, false, null);
+            return new LogQsoResult(persisted, 0, 0, false, QrzError: null, PostPersistError: ex.Message);
         }
     }
 
@@ -132,8 +143,14 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     public async Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default)
     {
-        using var reader = new StreamReader(filePath);
-        var parsed = _adifImporter.Import(reader);
+        using var reader = new StreamReader(filePath, DetectAdifFallbackEncoding(filePath), detectEncodingFromByteOrderMarks: true);
+        // T1-17: StreamReader.CurrentEncoding only becomes accurate once BOM detection has actually
+        // run, which happens lazily on the first real read -- Peek() forces that without consuming
+        // any characters. AdifImporter's own byte-count field-length slicing must use this SAME
+        // encoding, or it misaligns for non-ASCII content (see IAdifImporter.Import's own doc
+        // comment).
+        reader.Peek();
+        var parsed = _adifImporter.Import(reader, reader.CurrentEncoding);
 
         var imported = new List<QsoRecord>(parsed.Count);
         foreach (var record in parsed)
@@ -143,6 +160,32 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         Log.AdifImported(_logger, filePath, imported.Count);
         return imported;
+    }
+
+    /// <summary>T1-17 (production_audit.md): <see cref="StreamReader"/>'s own BOM detection
+    /// (<c>detectEncodingFromByteOrderMarks: true</c> above) correctly picks UTF-8/UTF-16/UTF-32
+    /// from a real BOM -- the gap is the no-BOM case, where it silently falls back to this
+    /// constructor's given encoding regardless of what the file actually is. A non-UTF-8 ADIF file
+    /// (e.g. Windows-1252, common from other ham-logging software) with no BOM used to get silently
+    /// mis-decoded as UTF-8, corrupting any accented callsign/QTH/name field before
+    /// <see cref="ScanlineStudio.Core.Logbook.AdifImporter"/> ever saw it. A strict UTF-8 decode
+    /// attempt (throwing on the first invalid byte sequence, NOT <see cref="Encoding.UTF8"/>'s own
+    /// lossy replacement-character fallback) distinguishes "genuinely UTF-8" from "some other 8-bit
+    /// encoding" -- Windows-1252 is the fallback because it's a superset of ASCII that can decode
+    /// ANY byte sequence without failure, the standard heuristic for this exact scenario. Needs
+    /// T1-18's <c>CodePagesEncodingProvider</c> registration to resolve "Windows-1252" by name.</summary>
+    private static Encoding DetectAdifFallbackEncoding(string filePath)
+    {
+        var bytes = File.ReadAllBytes(filePath);
+        try
+        {
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
+            return Encoding.UTF8;
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.GetEncoding(1252);
+        }
     }
 
     public async Task<QrzCallsignLookupResult> LookupCallsignAsync(string callsign, CancellationToken ct = default)

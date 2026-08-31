@@ -226,6 +226,26 @@ public sealed class RadioSessionServiceTests
         Assert.Equal(4.2, raised.SwrCutoffThreshold);
     }
 
+    [Fact]
+    public async Task SaveSafetySettingsAsync_ThrowingSubscriber_DoesNotPropagate_AndSettingsAlreadyPersisted()
+    {
+        // T1-7 (production_audit.md): the disk write completes before SafetySettingsChanged is
+        // raised -- a throwing subscriber (a real one exists, TxControlsPaneViewModel.OnSafetySettingsChanged)
+        // used to propagate straight out of this method, which OptionsWindowViewModel's own caller
+        // wraps in one big multi-section Save/Apply try/catch, reporting the WHOLE save as failed
+        // even though this specific write already landed.
+        var controller = new FakeRadioController();
+        var settingsStore = new FakeSettingsStore();
+        var service = new RadioSessionService(controller, settingsStore, [], NullLogger<RadioSessionService>.Instance);
+        service.SafetySettingsChanged += _ => throw new InvalidOperationException("subscriber exploded");
+
+        await service.SaveSafetySettingsAsync(new RadioSafetySpec(true, 3.1));
+        var spec = await service.GetSafetySettingsAsync();
+
+        Assert.True(spec.SwrCutoffEnabled);
+        Assert.Equal(3.1, spec.SwrCutoffThreshold);
+    }
+
     // Options-dialog "Test PTT" button. Radio-safety-sensitive: every one of these proves the rig
     // ends up un-keyed (or the operator is told it might not be), never silently left keyed.
 

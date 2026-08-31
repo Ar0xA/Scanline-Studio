@@ -337,10 +337,28 @@ public sealed partial class RadioSessionService : IRadioSessionService
                 new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
                 RadioSafetySettingsJsonContext.Default.RadioSafetySettings),
             ct).ConfigureAwait(false);
-        SafetySettingsChanged?.Invoke(spec);
+        RaiseSafetySettingsChanged(spec);
     }
 
     public event Action<RadioSafetySpec>? SafetySettingsChanged;
+
+    // T1-7 (production_audit.md): the disk write above already succeeded by the time this runs --
+    // a throwing subscriber (a real one exists, TxControlsPaneViewModel.OnSafetySettingsChanged)
+    // used to propagate straight out of SaveSafetySettingsAsync, which OptionsWindowViewModel's own
+    // caller wraps in one big multi-section Save/Apply try/catch -- reporting the WHOLE save as
+    // failed even though this specific write already landed. Same guarded-raise shape as
+    // SstvSessionService.RaiseCapturePausedForTransmitChanged.
+    private void RaiseSafetySettingsChanged(RadioSafetySpec spec)
+    {
+        try
+        {
+            SafetySettingsChanged?.Invoke(spec);
+        }
+        catch (Exception ex)
+        {
+            Log.SafetySettingsChangedHandlerFailed(_logger, ex);
+        }
+    }
 
     /// <summary>See <see cref="IRadioSessionService.RequestHamlibLibraryPathAsync"/>.</summary>
     public Task<HamlibLibraryReloadResult?> RequestHamlibLibraryPathAsync(string? overridePath, CancellationToken ct = default)
@@ -391,6 +409,9 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPttAsync: rejected for {SpecType} -- a PTT test is already in progress")]
         public static partial void TestPttAlreadyInFlight(ILogger logger, string specType);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "A SafetySettingsChanged subscriber threw -- the settings write itself already succeeded")]
+        public static partial void SafetySettingsChangedHandlerFailed(ILogger logger, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "TestPttAsync: factory resolution failed for {SpecType}: {MatchCount} match(es)")]
         public static partial void TestPttResolutionFailed(ILogger logger, string specType, int matchCount);
