@@ -279,7 +279,7 @@ T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
 **Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16/T1-3 (Tier D) are all
-done — see the "Tier D progress" notes further below. T1-1/T1-5/T1-14 still each need their own
+done — see the "Tier D progress" notes further below. T1-5/T1-14 still each need their own
 plan-review round.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
@@ -370,6 +370,32 @@ tests mirroring `EncodeAsync`'s own, a flatten-equality test, a never-empty/unif
 and matching `RestartableSstvEncoder` delegation tests. Full solution build clean; full
 `Application.Tests` (437), `Core.Sstv.Tests` (1532, includes every pre-existing golden-vector/
 round-trip test proving the flatten-derived path is bit-identical), and `UI.Tests` (1208) all green.
+
+**Tier D progress — T1-1 closed (2026-08-31):** replaced the O(tap) `Array.Copy`-per-sample delay
+lines in `SearchBandpassFilter.ProcessSample`/`HilbertFmDemodulator.DoFir` with a new `FirDelayLine`
+sealed class — an O(1)-write circular buffer, walking-pointer convolution (no per-sample modulo:
+plan-review round 1 found capacity isn't a compile-time constant here, so a naive `%` in the hot loop
+is a real `idiv` that could cost more than the `Array.Copy` it replaces at high tap counts). 2 rounds
+of plan-review: round 1 found a genuine blocker — `HilbertFmDemodulator.ProcessSample`'s own
+`_z[_htap]` raw physical-index read, OUTSIDE `DoFir`, would have silently read the wrong tap once the
+head moved under a naive circular conversion (full demodulator corruption, not a small drift — the
+existing test suite's own short zero-history tests would NOT have caught it, confirmed during
+review). Fixed by routing every delay-line access through `FirDelayLine`'s own logical indexer, so
+that exact call site needed no textual change at all — correct by construction, not by caller
+discipline. Round 2 confirmed the fix and the gate-test plan, ready to build. 1 code-review round: go
+for production as specified; folded in a hardening nit (the indexer now throws
+`ArgumentOutOfRangeException` instead of a Release-inert `Debug.Assert`, with a new regression test)
+plus a doc-comment misattribution fix (a convention had been attributed to "legacy's own `Array.Copy`
+shift," but legacy's real `CFIR2::Do`/`DoFIR` don't shift at all — the shift was this port's own
+pre-change C# code). New bit-exact gate tests compare the full `ProcessSample` method (not just the
+FIR core in isolation — a `DoFir`-only comparison would have missed the blocker) against a test-local
+reference reproducing the pre-change linear implementation exactly, at every reachable tap including
+an odd one (8000Hz/Wide → tap 17, plan-review round 2's own correction to an earlier "2 reachable
+sample rates" framing that undersold the real 5000-48500Hz domain), ≥10x buffer capacity per case,
+mid-stream coefficient/mode switches landing at non-capacity-multiple offsets. Both gate tests
+confirmed via a deliberate mutation (flipped push direction) to fail hard against a broken
+implementation, then restored and re-verified. Full `Core.Sstv.Tests` suite (1556 tests) and full
+solution build green.
 
 ---
 
