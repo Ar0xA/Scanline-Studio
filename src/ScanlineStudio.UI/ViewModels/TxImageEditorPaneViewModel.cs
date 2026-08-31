@@ -92,7 +92,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     public sealed record RawImageElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin, bool IsBackground = false)
+        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin, bool IsBackground = false,
+        // TX workflow modernization plan, Phase 7 -- trailing, defaulted (0 = unknown, same
+        // convention IsBackground itself established), so ApplyState's own recreate-every-element-
+        // from-a-snapshot path doesn't lose this field on the first Undo.
+        int NaturalPixelWidth = 0, int NaturalPixelHeight = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -127,7 +131,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private sealed record EditorSnapshot(
         int RotationCount, NormalizedRect CropRect, bool PreserveAspect, bool LockAspectToMode,
         ImageAdjustments Adjustments, IReadOnlyList<RawElementSnapshot> OverlayElements,
-        IReadOnlyDictionary<string, string> TemplateVariables);
+        IReadOnlyDictionary<string, string> TemplateVariables,
+        // TX workflow modernization plan, Phase 7 -- see _sourceBaseline's own doc comment for why
+        // this is the baseline generation, not the live _originalSource.
+        IImageSource SourceBaseline, int SourceBaselineRotation);
 
     private const double MinNormalizedCropSize = 0.02;
 
@@ -233,6 +240,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // Also set/read by ApplyState (undo/redo) and RotateImageOnly -- see EditorSnapshot's own doc
     // comment for why this tracks orientation instead of retaining a pristine original image.
     private int _rotationCount;
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- the <see cref="_originalSource"/>
+    /// instance as of the last WHOLE-SOURCE REPLACEMENT (editor open, or a flatten), plus the
+    /// <see cref="_rotationCount"/> at that moment. This is what <see cref="EditorSnapshot"/>
+    /// retains instead of the live <see cref="_originalSource"/>, and the distinction is deliberate:
+    /// <see cref="RotateImageOnly"/> reassigns <see cref="_originalSource"/> to a NEW instance on
+    /// every rotate, so snapshotting the live reference would retain one full-resolution copy per
+    /// rotate (a 6000x4000 source is ~72 MB as Rgb24; 50 undo steps of rotation would retain ~3.6
+    /// GB). Every snapshot within one "generation" shares this ONE instance;
+    /// <see cref="ApplyState"/> re-derives orientation from it by rotating a delta, exactly as it
+    /// already does for the rotation-only case. Only a flatten mints a new baseline, and retaining
+    /// the pre-flatten image is inherent to flatten being undoable at all.</summary>
+    private IImageSource _sourceBaseline;
+
+    private int _sourceBaselineRotation;
 
     private readonly List<EditorSnapshot> _undoStack = [];
     private readonly List<EditorSnapshot> _redoStack = [];
@@ -426,6 +448,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         IReadOnlyDictionary<string, string>? currentContactVariables = null)
     {
         _originalSource = originalSource;
+        _sourceBaseline = originalSource;
+        _sourceBaselineRotation = 0;
         _targetMode = targetMode;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
@@ -943,7 +967,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
             box.CornerRadius),
         ImageElementViewModel image => new RawImageElementSnapshot(
-            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground),
+            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
+            image.NaturalPixelWidth, image.NaturalPixelHeight),
         _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
     };
 
@@ -1120,26 +1145,37 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public void DragCropResize(double dxNormalized, double dyNormalized) => ApplyCropResize(dxNormalized, dyNormalized);
 
     [RelayCommand]
-    private void AddOverlayElement()
+    private void AddOverlayElement() =>
+        AddOverlayElementAt(CropRect.X + (CropRect.Width / 2), CropRect.Y + (CropRect.Height / 2), DefaultElementWidth, DefaultTextElementHeight);
+
+    /// <summary>TX workflow modernization plan, Phase 3a -- <see cref="AddOverlayElement"/> (the
+    /// toolbar button's parameterless command) now delegates here with its own original
+    /// crop-centered seed as the default rect. The draw-to-place gesture
+    /// (<c>TxImageEditorPaneView.axaml.cs</c>'s armed-placement tunnel handler) calls this directly
+    /// with a caller-computed rect instead. <paramref name="centerX"/>/<paramref name="centerY"/>
+    /// are CENTER-anchored, matching <see cref="ITemplateElementViewModel.X"/>/<c>Y</c>'s own
+    /// convention (NOT <see cref="CropRect"/>'s top-left-anchored one) -- see
+    /// <see cref="ProjectRectToCropRelative"/>'s own doc comment for why X/Y are stored relative to
+    /// the full working copy, not the crop, despite this.</summary>
+    public void AddOverlayElementAt(double centerX, double centerY, double width, double height)
     {
-        // Seeded at the CROP's center (not the raw photo-center 0.5/0.5 that
-        // OverlayElementViewModel's own X/Y field defaults would otherwise leave in place) -- a
-        // tight, off-center crop would otherwise place brand-new text outside the visible/
-        // transmitted frame immediately. See ProjectRectToCropRelative's own doc comment for why
-        // X/Y are stored relative to the full working copy, not the crop, despite this.
         PushUndoSnapshot();
         var element = CreateOverlayElement(
             text: "Text",
-            x: CropRect.X + (CropRect.Width / 2),
-            y: CropRect.Y + (CropRect.Height / 2),
-            width: DefaultElementWidth,
-            height: DefaultTextElementHeight,
+            x: centerX,
+            y: centerY,
+            width: width,
+            height: height,
             fontSizeRelative: DefaultFontSizeRelative,
             color: new Rgb24(255, 255, 255),
             z: NextZ(),
             locked: false);
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
+        // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- unlike plain
+        // selection change, a brand-new element overrides even an open Geometry tab, since there's
+        // nothing to "compare positions" against yet.
+        SelectTextStyleTab();
         RecomputePreview();
     }
 
@@ -1147,14 +1183,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="AddOverlayElement"/> exactly (crop-centered seed, same undo/select/recompute
     /// shape), just for the box element type instead of text.</summary>
     [RelayCommand]
-    private void AddBoxElement()
+    private void AddBoxElement() =>
+        AddBoxElementAt(CropRect.X + (CropRect.Width / 2), CropRect.Y + (CropRect.Height / 2), DefaultElementWidth, DefaultBoxElementHeight);
+
+    /// <summary>TX workflow modernization plan, Phase 3a -- same delegation shape as
+    /// <see cref="AddOverlayElementAt"/> right above, see its own doc comment.</summary>
+    public void AddBoxElementAt(double centerX, double centerY, double width, double height)
     {
         PushUndoSnapshot();
         var element = CreateBoxElement(
-            x: CropRect.X + (CropRect.Width / 2),
-            y: CropRect.Y + (CropRect.Height / 2),
-            width: DefaultElementWidth,
-            height: DefaultBoxElementHeight,
+            x: centerX,
+            y: centerY,
+            width: width,
+            height: height,
             fillColor: new Rgb24(64, 64, 64),
             borderColor: null,
             borderThickness: 0,
@@ -1163,6 +1204,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             locked: false);
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
+        // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- see
+        // AddOverlayElement's own identical comment. Box's applicable tab is Geometry (no dedicated
+        // Box Style tab exists), so this is also the "already the fallback" case made explicit.
+        SelectGeometryTab();
         RecomputePreview();
     }
 
@@ -1170,9 +1215,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // (~1.8x), not flush to it -- plan-review finding: TextMeasurer's own line height (ascender +
     // descender + gap) exceeds a bare em size, so a box sized tight to the font fraction would
     // shrink-to-fit immediately on creation, making "Add text" a visible regression from day one.
-    private const double DefaultElementWidth = 0.3;
-    private const double DefaultTextElementHeight = 0.18;
-    private const double DefaultBoxElementHeight = 0.2;
+    // First three are `internal` (not private), not because anything outside this class writes them,
+    // but so TxImageEditorPaneView.axaml.cs's draw-to-place click-vs-drag branch (TX workflow
+    // modernization plan, Phase 3a) reads the exact same default-size values AddOverlayElement/
+    // AddBoxElement themselves use, rather than a second, driftable copy of the same three numbers.
+    internal const double DefaultElementWidth = 0.3;
+    internal const double DefaultTextElementHeight = 0.18;
+    internal const double DefaultBoxElementHeight = 0.2;
     private const double DefaultFontSizeRelative = 0.1;
 
     /// <summary>New elements default to drawing on top of everything already on the canvas --
@@ -1456,6 +1505,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="InsertImageElementCore"/> directly instead, batching the push/recompute itself.</summary>
     private void InsertImageElement(IImageSource source, ImageSourceOrigin origin)
     {
+        // TX workflow modernization plan, Phase 7 -- captured BEFORE DownsampleToBudget: "original
+        // size" (ResetImageElementToOriginalSize) means the source's own native resolution, not the
+        // working-copy-budget-capped copy this editor actually composites with.
+        var naturalPixelWidth = source.Width;
+        var naturalPixelHeight = source.Height;
+
         // Downsampled to the SAME working-copy budget as the background image itself (code-review
         // finding -- see DownsampleToBudget's own doc comment) before ANY of it touches the UI
         // thread's WriteableBitmap conversion or the real per-frame pipeline. Resolved once here,
@@ -1466,7 +1521,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             source, (int)(WorkingCopyWidth * WorkingCopyScaleFactor), (int)(WorkingCopyHeight * WorkingCopyScaleFactor), _preparer);
 
         PushUndoSnapshot();
-        InsertImageElementCore(downsampled, origin, cascadeIndex: 0);
+        InsertImageElementCore(downsampled, naturalPixelWidth, naturalPixelHeight, origin, cascadeIndex: 0);
         RecomputePreview();
     }
 
@@ -1481,7 +1536,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// repositioned -- so those elements would be invisible on the canvas, reachable only via the
     /// elements list) so a multi-file drop doesn't stack every element exactly on top of the first
     /// one, without ever pushing later elements off-canvas.</summary>
-    private void InsertImageElementCore(IImageSource downsampled, ImageSourceOrigin origin, int cascadeIndex)
+    private void InsertImageElementCore(
+        IImageSource downsampled, int naturalPixelWidth, int naturalPixelHeight, ImageSourceOrigin origin, int cascadeIndex)
     {
         const double CascadeOffset = 0.03;
         const int CascadeWrap = 8;
@@ -1495,9 +1551,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             fit: ImageFitMode.Contain,
             origin: origin,
             z: NextZ(),
-            locked: false);
+            locked: false,
+            naturalPixelWidth: naturalPixelWidth,
+            naturalPixelHeight: naturalPixelHeight);
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
+        // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- covers both
+        // call sites (toolbar/clipboard InsertImageElement AND the OS drag-drop path below), since
+        // both insert genuinely new image content, not a copy of something already on the canvas.
+        SelectImageTab();
     }
 
     private const int MaxDroppedImageFiles = 20;
@@ -1534,13 +1596,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             var truncated = paths.Count > MaxDroppedImageFiles;
             var capped = truncated ? paths.Take(MaxDroppedImageFiles).ToList() : paths;
 
-            var loaded = new List<(string Path, IImageSource Downsampled)>();
+            var loaded = new List<(string Path, IImageSource Downsampled, int NaturalWidth, int NaturalHeight)>();
             var failureCount = 0;
             foreach (var path in capped)
             {
                 try
                 {
                     var source = await _imageFileLoader.LoadOriginalAsync(path);
+                    // TX workflow modernization plan, Phase 7 -- captured before the downsample below,
+                    // same reasoning as InsertImageElement's own capture.
+                    var naturalWidth = source.Width;
+                    var naturalHeight = source.Height;
                     // Downsample-then-discard-the-full-res-copy INSIDE the loop, same reasoning as
                     // the class doc comment above -- `source` is never retained past this iteration.
                     // Offloaded via Task.Run: DownsampleToBudget/_preparer.Resize is real synchronous
@@ -1549,7 +1615,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     // would pay it up to MaxDroppedImageFiles times in a row with no progress feedback).
                     var downsampled = await Task.Run(() => DownsampleToBudget(
                         source, (int)(WorkingCopyWidth * WorkingCopyScaleFactor), (int)(WorkingCopyHeight * WorkingCopyScaleFactor), _preparer));
-                    loaded.Add((path, downsampled));
+                    loaded.Add((path, downsampled, naturalWidth, naturalHeight));
                 }
                 catch (Exception ex)
                 {
@@ -1570,7 +1636,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             {
                 for (var i = 0; i < loaded.Count; i++)
                 {
-                    InsertImageElementCore(loaded[i].Downsampled, new ImageSourceOrigin(ImageSourceKind.File, loaded[i].Path), cascadeIndex: i);
+                    InsertImageElementCore(
+                        loaded[i].Downsampled, loaded[i].NaturalWidth, loaded[i].NaturalHeight,
+                        new ImageSourceOrigin(ImageSourceKind.File, loaded[i].Path), cascadeIndex: i);
                 }
             }
             finally
@@ -1739,6 +1807,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
             AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
+            CopyCommand = CopySelectedElementCommand,
+            CutCommand = CutSelectedElementCommand,
+            PasteCommand = PasteElementCommand,
+            FlattenCommand = FlattenElementCommand,
+            CopyStyleCommand = CopySelectedElementStyleCommand,
+            PasteStyleCommand = PasteSelectedElementStyleCommand,
             AddPlateCommand = AddPlateBehindTextCommand,
             InsertFieldCommand = InsertFieldCommand,
             SetFontSizePresetCommand = SetFontSizePresetCommand,
@@ -1755,6 +1829,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // pushes explicitly before calling this; ApplyState's own restore is separately guarded
             // by _suspendPreview inside PushUndoSnapshotCoalesced regardless of ordering here).
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
+            // Same ordering reasoning, same reason it must be set AFTER FontSizeRelative/Color above
+            // in this initializer -- TX workflow modernization plan, Phase 1.
+            PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("OverlayStyle"),
         };
         element.CanvasFontSize = ComputeCanvasFontSize(element);
         element.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(element);
@@ -1790,6 +1867,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
             AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
+            CopyCommand = CopySelectedElementCommand,
+            CutCommand = CutSelectedElementCommand,
+            PasteCommand = PasteElementCommand,
+            FlattenCommand = FlattenElementCommand,
+            CopyStyleCommand = CopySelectedElementStyleCommand,
+            PasteStyleCommand = PasteSelectedElementStyleCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -1800,7 +1883,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
     private ImageElementViewModel CreateImageElement(
         double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked,
-        bool isBackground = false)
+        bool isBackground = false, int naturalPixelWidth = 0, int naturalPixelHeight = 0)
     {
         var element = new ImageElementViewModel(source)
         {
@@ -1813,6 +1896,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Z = z,
             Locked = locked,
             IsBackground = isBackground,
+            NaturalPixelWidth = naturalPixelWidth,
+            NaturalPixelHeight = naturalPixelHeight,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             RemoveCommand = RemoveOverlayElementCommand,
@@ -1823,6 +1908,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             DuplicateCommand = DuplicateCommand,
             AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
             SetAsBackgroundCommand = SetAsBackgroundCommand,
+            CopyCommand = CopySelectedElementCommand,
+            CutCommand = CutSelectedElementCommand,
+            PasteCommand = PasteElementCommand,
+            FlattenCommand = FlattenElementCommand,
+            FitCommand = SetSelectedImageFitCommand,
+            ResetToOriginalSizeCommand = ResetImageElementToOriginalSizeCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -1845,7 +1936,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
             box.CornerRadius),
         RawImageElementSnapshot image => CreateImageElement(
-            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground),
+            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
+            image.NaturalPixelWidth, image.NaturalPixelHeight),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
 
@@ -1995,7 +2087,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 };
                 return new PersistedImageElement(
                     image.X, image.Y, image.Width, image.Height, image.Z, image.Locked,
-                    assetFileName, image.Fit, originKind, originPayload, image.IsBackground);
+                    assetFileName, image.Fit, originKind, originPayload, image.IsBackground,
+                    image.NaturalPixelWidth, image.NaturalPixelHeight);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {raw.GetType()}.");
         }
@@ -2052,7 +2145,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // the four are safe to re-resolve from later).
                 var origin = new ImageSourceOrigin(ImageSourceKind.File, assetPath);
                 return new RawImageElementSnapshot(
-                    image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin, image.IsBackground);
+                    image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin, image.IsBackground,
+                    // Pre-Phase-7 templates carry no natural size. Falling back to the ASSET's own
+                    // dimensions is the honest value (the asset IS the pixels this element has) and
+                    // needs no migration -- same additive convention IsBackground's own doc comment
+                    // describes.
+                    image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
+                    image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
         }
@@ -2135,11 +2234,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="InsertField"/> (text-only, <see cref="CanInsertField"/>). Unrecognized/null keys
     /// are a no-op (matches <see cref="SetTextColorPreset"/>'s own default-arm behavior) rather than
     /// throwing, since <c>CommandParameter</c> is caller-supplied XAML, not internal state.
-    /// Deliberately does NOT call <see cref="PushUndoSnapshotCoalesced"/> -- the TEXT STYLE tab's own
-    /// <c>FontSizeRelative</c>/<c>Color</c> two-way bindings have no undo hook of their own today
-    /// either (unlike <c>Width</c>/<c>Height</c>/<c>X</c>/<c>Y</c>'s <c>OnXxxChanging</c> push), so
-    /// this stays consistent with that existing gap rather than fixing it as an unrelated
-    /// side-effect of this task.</summary>
+    /// No explicit <see cref="PushUndoSnapshotCoalesced"/> call needed here (TX workflow
+    /// modernization plan, Phase 1): the assignment below now goes through
+    /// <see cref="OverlayElementViewModel.OnFontSizeRelativeChanging"/>, which pushes on its own --
+    /// this used to be a real gap (no hook existed at all), closed once the Quick Style Flyout made
+    /// this property a primary editing surface, not just a preset shortcut.</summary>
     [RelayCommand(CanExecute = nameof(CanInsertField))]
     private void SetFontSizePreset(string? sizeKey)
     {
@@ -2196,6 +2295,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             element.IsSelected = ReferenceEquals(element, value);
         }
 
+        if (value is not null)
+        {
+            SwitchToApplicableTabIfNeeded(value);
+        }
+
         InsertFieldCommand.NotifyCanExecuteChanged();
         SetFontSizePresetCommand.NotifyCanExecuteChanged();
         SetTextColorPresetCommand.NotifyCanExecuteChanged();
@@ -2203,6 +2307,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         DuplicateCommand.NotifyCanExecuteChanged();
         CopySelectedElementCommand.NotifyCanExecuteChanged();
         CutSelectedElementCommand.NotifyCanExecuteChanged();
+        CopySelectedElementStyleCommand.NotifyCanExecuteChanged();
+        PasteSelectedElementStyleCommand.NotifyCanExecuteChanged();
         // Code-review finding: FontFamilyPickerItems/IsFontUnavailable MUST raise BEFORE
         // SelectedTextElement -- the Font ComboBox's ItemsSource is bound to
         // FontFamilyPickerItems and its SelectedItem (two-way) to SelectedTextElement.FontFamily.
@@ -2510,10 +2616,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// rather than an enum + converter (simpler to bind directly as three IsVisible targets in
     /// AXAML, matches this codebase's own existing preference for plain bool ObservableProperty
     /// state over enum-plus-converter machinery elsewhere in this file). Defaults to Text Style,
-    /// matching the mock's own default. "The tab set follows the selected type" (mock's own
-    /// interaction spec) is NOT auto-switched here -- deliberately left as a manual tab click, since
-    /// auto-switching would fight a user who deliberately left GEOMETRY open while clicking between
-    /// several elements to compare positions.</summary>
+    /// matching the mock's own default.
+    /// <para>TX workflow modernization plan, Phase 2 -- revises the original "never auto-switch"
+    /// policy, not abandons it: the original concern (auto-switching would fight a user who
+    /// deliberately left GEOMETRY open while clicking between several elements to compare positions)
+    /// is preserved exactly, since Geometry applies to every element type and is never
+    /// force-switched away from (see <see cref="SwitchToApplicableTabIfNeeded"/>). What changed is
+    /// the common case: selecting a text/image element while on an INAPPLICABLE tab (e.g. Image tab
+    /// selected, then a text element clicked) now switches to the applicable one, and a genuinely
+    /// NEW element (Add Text/Add Box toolbar, not Paste/Duplicate/Ctrl-drag-clone -- see each of
+    /// those commands' own call sites) force-selects its tab unconditionally, even overriding an
+    /// open Geometry tab, since there's nothing to "compare positions" against yet.</para></summary>
     [ObservableProperty]
     private bool _isTextStyleTabSelected = true;
 
@@ -2545,6 +2658,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         IsTextStyleTabSelected = false;
         IsGeometryTabSelected = false;
         IsImageTabSelected = true;
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 2 -- called on plain selection change (NOT on
+    /// new-element creation, which force-selects unconditionally instead, see each creation
+    /// command's own call site). Geometry applies to every element type, so it's never switched away
+    /// from here -- preserves the original "don't fight a user comparing positions" rationale
+    /// (<see cref="IsTextStyleTabSelected"/>'s own doc comment) while fixing the common case: an
+    /// inapplicable tab (Image while a text element is newly selected, or vice versa) switches to
+    /// the one that actually applies. Box elements have no dedicated tab of their own -- their
+    /// style lives in Geometry alongside position/size -- so Geometry is also their applicable tab.</summary>
+    private void SwitchToApplicableTabIfNeeded(ITemplateElementViewModel element)
+    {
+        if (IsGeometryTabSelected)
+        {
+            return;
+        }
+
+        switch (element)
+        {
+            case OverlayElementViewModel when !IsTextStyleTabSelected:
+                SelectTextStyleTab();
+                break;
+            case ImageElementViewModel when !IsImageTabSelected:
+                SelectImageTab();
+                break;
+            case BoxElementViewModel:
+                SelectGeometryTab();
+                break;
+        }
     }
 
     /// <summary>EditWindow redesign Phase 3, GEOMETRY tab -- aligns the selected element to one edge/
@@ -2605,6 +2747,324 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             _suspendPreview = false;
         }
+
+        RecomputePreview();
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 1 "Fit ▸" image-menu submenu -- same
+    /// selection-implicit/string-parameter shape as <see cref="AlignSelectedElementToCrop"/> right
+    /// above. <see cref="ImageElementViewModel.Fit"/> is a plain <c>[ObservableProperty]</c> with no
+    /// geometry-coalesce hook of its own (unlike X/Y/Width/Height), so no <c>_suspendPreview</c>
+    /// wrapping is needed here -- a single assignment is already a single undo step.</summary>
+    [RelayCommand]
+    private void SetSelectedImageFit(string mode)
+    {
+        if (SelectedOverlayElement is not ImageElementViewModel element || !Enum.TryParse<ImageFitMode>(mode, out var fit))
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        element.Fit = fit;
+        RecomputePreview();
+    }
+
+    private bool CanResetImageElementToOriginalSize(ImageElementViewModel? element) =>
+        element is not null && element.NaturalPixelWidth > 0 && element.NaturalPixelHeight > 0 && OverlayElements.Contains(element);
+
+    /// <summary>TX workflow modernization plan, Phase 7. "Original size" means the element renders
+    /// at its own NATURAL pixel count IN THE TRANSMITTED FRAME, which is not a division by the
+    /// mode's dimensions: an element's rendered pixel width is
+    /// <c>(Width / CropRect.Width) * contentWidth</c> (<see cref="ProjectRectToCropRelative"/>'s own
+    /// <c>finalWidth * targetWidth</c>), so inverting that gives
+    /// <c>Width = NaturalPixelWidth * CropRect.Width / contentWidth</c>. <c>contentWidth</c> is the
+    /// LETTERBOXED content extent (<see cref="TryGetCropContentMetrics"/>), not
+    /// <see cref="_targetMode"/>.ImageWidth -- using the mode dimension instead is wrong by exactly
+    /// the pad factor under the default aspect-preserving resize.
+    /// <para><b>Observable behavior, stated up front so it doesn't read as broken:</b> inserted
+    /// image elements are capped at <see cref="WorkingCopyScaleFactor"/>x the mode's dimensions by
+    /// <see cref="DownsampleToBudget"/>, and a real photo's NATURAL size is far larger than that
+    /// again -- so for any real photo this lands in the clamp-to-frame branch, and the observable
+    /// result is "fit to the crop frame at the image's natural aspect ratio," not a literal 1:1
+    /// pixel mapping. The clamp is UNIFORM (one factor on both axes) so the natural aspect always
+    /// survives it; the operator is told when it engaged.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanResetImageElementToOriginalSize))]
+    private void ResetImageElementToOriginalSize(ImageElementViewModel? element)
+    {
+        if (element is null || !OverlayElements.Contains(element) || element.NaturalPixelWidth <= 0 || element.NaturalPixelHeight <= 0)
+        {
+            return;
+        }
+
+        if (!TryGetCropContentMetrics(out _, out _, out var contentWidth, out var contentHeight) || contentWidth <= 0 || contentHeight <= 0)
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ResetToOriginalSizeUnavailable");
+            return;
+        }
+
+        var width = element.NaturalPixelWidth * CropRect.Width / contentWidth;
+        var height = element.NaturalPixelHeight * CropRect.Height / contentHeight;
+
+        // Uniform clamp (same factor both axes) if natural size would exceed the crop frame --
+        // preserves aspect ratio regardless of how much it engages. Floor matches
+        // TxImageEditorPaneView.MinNormalizedElementSize (0.02) -- a separate, deliberately
+        // identical constant on that class, not shared, same reasoning as that constant's own doc
+        // comment gives for not sharing MinNormalizedCropSize either.
+        const double minNormalizedElementSize = 0.02;
+        var fit = Math.Min(1.0, Math.Min(CropRect.Width / width, CropRect.Height / height));
+        var clamped = fit < 1.0;
+        width = Math.Max(width * fit, minNormalizedElementSize);
+        height = Math.Max(height * fit, minNormalizedElementSize);
+
+        // One click, one undo step: each assignment below would otherwise push its own coalesced
+        // step via OnWidthChanging/OnHeightChanging -- same _suspendPreview pattern
+        // AlignSelectedElementToCrop/SetAsBackground already use for exactly this.
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            element.Width = width;
+            element.Height = height;
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        Log.ResetImageElementToOriginalSize(_logger, element.NaturalPixelWidth, element.NaturalPixelHeight, clamped);
+        StatusMessage = clamped ? _localization.GetString("Panes.TxImageEditor.ResetToOriginalSizeFitted") : null;
+        RecomputePreview();
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- bake-frame pixel ceiling. At the natural
+    /// bake scale (source-crop pixels per target-frame pixel) a large photo into a small mode wants
+    /// a proportionally large bake frame (a 6000x4000 photo into a 320x256 mode wants roughly
+    /// 6000x4800, ~29 Mpx). Capped here, with the write-back deliberately LOCALISED to the element's
+    /// own bounding box (see <see cref="BakeElementIntoSource"/>) so hitting this cap softens only
+    /// the region under the element rather than resampling the entire photo through a round trip.</summary>
+    private const long MaxFlattenBakePixels = 24_000_000;
+
+    /// <summary>Outward margin, in SOURCE-crop pixels, added around the element's own bounding box
+    /// before writing the baked patch back. Covers bicubic ringing at the patch edges (~2px) plus
+    /// the sub-pixel slack in the two rect round-trips in <see cref="BakeElementIntoSource"/>.</summary>
+    private const int FlattenWriteBackMarginPx = 3;
+
+    /// <summary>Everything <see cref="BakeElementIntoSource"/> needs, captured on the UI thread
+    /// BEFORE the <see cref="Task.Run"/> offload -- that method is static and takes only this, so it
+    /// can never read mutable VM state off the UI thread.</summary>
+    private sealed record FlattenBakeRequest(
+        IImageSource Source, NormalizedRect CropRect, bool PreserveAspect, TemplateElement Element,
+        int ModeWidth, int ModeHeight, double PadX, double PadY, double ContentWidth, double ContentHeight);
+
+    /// <summary>Rasterises ONE element into a copy of <paramref name="request"/>.Source, so the
+    /// pipeline's own Crop-&gt;Resize reproduces it in the transmitted frame at the position/size
+    /// <c>ApplyTemplate</c> was already drawing it. Returns null when the element does not intersect
+    /// the transmitted frame at all (nothing to bake -- the caller reports it rather than silently
+    /// deleting the element).
+    /// <para><b>Why a uniformly-scaled copy of the TARGET FRAME, and not source space.</b>
+    /// <see cref="ProjectRectToCropRelative"/> produces bounds normalized against the target frame,
+    /// and every size-like element property (font size, stroke thickness, shadow/stack offsets,
+    /// corner radius, border thickness) is relative to that frame's HEIGHT. A UNIFORM scale of that
+    /// frame is therefore the one transform under which the existing projection stays valid with
+    /// zero rewriting -- which is precisely why this reuses <c>ComposePreview</c> (which already
+    /// consumes a <see cref="TemplateElement"/> built by <see cref="ProjectRectToCropRelative"/>)
+    /// rather than re-deriving or re-purposing that projection outside the space it was defined
+    /// for.</para>
+    /// <para><b>Adjustments are NOT baked</b> and the sliders are NOT reset (settled after a design
+    /// consult: baking current adjustments then zeroing the sliders was the original plan, but
+    /// <c>ApplyAdjustments</c>'s Gaussian sharpen/denoise use an ABSOLUTE pixel sigma and its gamma
+    /// is pointwise-nonlinear, so neither survives a change of raster scale -- baking them at any
+    /// scale other than exactly 1x is not equivalent, and baking at exactly 1x would force the
+    /// ENTIRE crop through a downscale/upscale round trip instead of just the element. Consequence,
+    /// stated rather than hidden: after a flatten the baked pixels are part of the photo and the
+    /// adjustment sliders apply to them from then on -- surfaced to the operator via
+    /// <see cref="StatusMessage"/>, not silently. Identical output when the sliders are at
+    /// identity.</para></summary>
+    private static IImageSource? BakeElementIntoSource(ITransmitImagePreparer preparer, FlattenBakeRequest request)
+    {
+        // The crop's real source-pixel rect -- the SAME rounding Crop itself applies, shared, not
+        // reimplemented (CropGeometry's own doc comment).
+        var crop = CropGeometry.Measure(request.Source.Width, request.Source.Height, request.CropRect);
+
+        // 1) Bake scale. The natural choice is "one baked frame pixel per source pixel of the crop":
+        // the background then passes through the bake essentially unresampled and the element is
+        // rasterized at native source resolution, so the pipeline's own single downscale is the only
+        // resample either of them sees -- exactly as if the element had been part of the photo.
+        var scale = Math.Max(1.0, Math.Max(crop.Width / request.ContentWidth, crop.Height / request.ContentHeight));
+        var budgetScale = Math.Sqrt(MaxFlattenBakePixels / ((double)request.ModeWidth * request.ModeHeight));
+        scale = Math.Min(scale, Math.Max(1.0, budgetScale));
+        var elementExtentPx = Math.Max(request.Element.Bounds.Width * request.ModeWidth, request.Element.Bounds.Height * request.ModeHeight);
+        if (elementExtentPx > 0)
+        {
+            scale = Math.Min(scale, Math.Max(1.0, TransmitImageLimits.MaxElementResizeDimensionPx / elementExtentPx));
+        }
+
+        // Floored at the mode's own dimensions: never bake BELOW transmit resolution.
+        var bakeWidth = Math.Max(request.ModeWidth, (int)Math.Round(scale * request.ModeWidth));
+        var bakeHeight = Math.Max(request.ModeHeight, (int)Math.Round(scale * request.ModeHeight));
+        // The ACTUAL per-axis scales after integer rounding -- used for the extraction geometry
+        // below rather than the requested `scale`, so a sub-pixel rounding difference between the
+        // axes can't shift the extracted rect.
+        var bakeScaleX = (double)bakeWidth / request.ModeWidth;
+        var bakeScaleY = (double)bakeHeight / request.ModeHeight;
+
+        // 2) The frame itself: the real pipeline, at bake resolution, with ONLY this element and
+        // adjustments explicitly at identity. ComposePreview is the existing fused
+        // Crop->Resize->(skip identity adjustments)->ApplyTemplate chain -- no new pipeline.
+        var baked = preparer.ComposePreview(
+            request.Source, request.CropRect, bakeWidth, bakeHeight, request.PreserveAspect,
+            new ImageAdjustments(), new TemplateDocument(Name: null, [request.Element]));
+
+        // 3) Element bounds -> CONTENT-relative fractions (letterbox padding removed). Computed from
+        // the 1x pad/content metrics the projection itself produced; identical at any uniform scale.
+        var left = ((request.Element.Bounds.X * request.ModeWidth) - request.PadX) / request.ContentWidth;
+        var top = ((request.Element.Bounds.Y * request.ModeHeight) - request.PadY) / request.ContentHeight;
+        var right = (((request.Element.Bounds.X + request.Element.Bounds.Width) * request.ModeWidth) - request.PadX) / request.ContentWidth;
+        var bottom = (((request.Element.Bounds.Y + request.Element.Bounds.Height) * request.ModeHeight) - request.PadY) / request.ContentHeight;
+
+        // 4) -> integer SOURCE-crop-relative write-back rect, rounded OUTWARD, margined, clamped.
+        // Localising the write-back is what keeps every background pixel outside the element's own
+        // box bit-identical to the original source -- a capped bake scale then degrades only the
+        // photo directly under the element, never the whole frame.
+        var writeLeft = Math.Clamp((int)Math.Floor(left * crop.Width) - FlattenWriteBackMarginPx, 0, crop.Width);
+        var writeTop = Math.Clamp((int)Math.Floor(top * crop.Height) - FlattenWriteBackMarginPx, 0, crop.Height);
+        var writeRight = Math.Clamp((int)Math.Ceiling(right * crop.Width) + FlattenWriteBackMarginPx, 0, crop.Width);
+        var writeBottom = Math.Clamp((int)Math.Ceiling(bottom * crop.Height) + FlattenWriteBackMarginPx, 0, crop.Height);
+        var writeWidth = writeRight - writeLeft;
+        var writeHeight = writeBottom - writeTop;
+        if (writeWidth <= 0 || writeHeight <= 0)
+        {
+            return null;
+        }
+
+        // 5) The same rect, mapped back into the BAKED frame's own pixel space (content offset by
+        // the letterbox pad, both scaled by the actual bake scale).
+        var patchLeft = Math.Clamp((int)Math.Round((request.PadX * bakeScaleX) + (writeLeft / (double)crop.Width * request.ContentWidth * bakeScaleX)), 0, bakeWidth - 1);
+        var patchTop = Math.Clamp((int)Math.Round((request.PadY * bakeScaleY) + (writeTop / (double)crop.Height * request.ContentHeight * bakeScaleY)), 0, bakeHeight - 1);
+        var patchRight = Math.Clamp((int)Math.Round((request.PadX * bakeScaleX) + (writeRight / (double)crop.Width * request.ContentWidth * bakeScaleX)), patchLeft + 1, bakeWidth);
+        var patchBottom = Math.Clamp((int)Math.Round((request.PadY * bakeScaleY) + (writeBottom / (double)crop.Height * request.ContentHeight * bakeScaleY)), patchTop + 1, bakeHeight);
+
+        var patch = preparer.CropPixels(baked, patchLeft, patchTop, patchRight - patchLeft, patchBottom - patchTop);
+        // preserveAspect: false -- the patch must land on the write-back rect EXACTLY. Under a
+        // stretch crop the two aspects legitimately differ, and letterboxing here would black-bar
+        // the photo underneath.
+        var fitted = preparer.Resize(patch, writeWidth, writeHeight, preserveAspect: false);
+        return preparer.Composite(request.Source, fitted, crop.X + writeLeft, crop.Y + writeTop);
+    }
+
+    private bool _isFlattening;
+
+    private bool CanFlattenElement(ITemplateElementViewModel? element) =>
+        !_isFlattening && element is not null && OverlayElements.Contains(element);
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- rasterise one element into the photo and
+    /// drop it from the document. Async + <see cref="Task.Run"/>-offloaded because the bake is a
+    /// genuine full-frame render at up to <see cref="MaxFlattenBakePixels"/> -- a multi-second
+    /// synchronous stall on the UI thread would be a real regression on this one gesture.
+    /// <para>Every input the bake depends on is captured up front and RE-VALIDATED after the await:
+    /// an offloaded compute means the operator can rotate, undo, re-crop or drag the element while
+    /// it runs, and applying a stale bake would corrupt the image with no visible cause. Discarding
+    /// is the correct response, not silently applying it. <see cref="PushUndoSnapshot"/>
+    /// deliberately runs AFTER the await, at the real mutation point, so an intervening edit isn't
+    /// swallowed into this step.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanFlattenElement))]
+    private async Task FlattenElementAsync(ITemplateElementViewModel? element)
+    {
+        if (element is null || !OverlayElements.Contains(element))
+        {
+            return;
+        }
+
+        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenUnavailable");
+            return;
+        }
+
+        var request = new FlattenBakeRequest(
+            _originalSource, CropRect, PreserveAspect, BuildTemplateElement(element),
+            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
+        var preparer = _preparer;
+
+        IImageSource? flattened;
+        _isFlattening = true;
+        FlattenElementCommand.NotifyCanExecuteChanged();
+        try
+        {
+            flattened = await Task.Run(() => BakeElementIntoSource(preparer, request));
+        }
+        catch (Exception ex)
+        {
+            Log.FlattenElementFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenFailed");
+            return;
+        }
+        finally
+        {
+            _isFlattening = false;
+            FlattenElementCommand.NotifyCanExecuteChanged();
+        }
+
+        if (flattened is null)
+        {
+            // Nothing of this element lands inside the transmitted frame. Deliberately NOT treated
+            // as "flatten == delete": silently removing an element the operator can still see on the
+            // canvas (outside the crop) would be a data-loss surprise.
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenOutsideFrame");
+            return;
+        }
+
+        // Stale-result guard. Every one of these is an input the bake actually consumed:
+        // TemplateElement is a record, so structural equality covers the element's geometry, text,
+        // resolved macros, colours and effects in one comparison.
+        if (!ReferenceEquals(_originalSource, request.Source)
+            || !CropRect.Equals(request.CropRect)
+            || PreserveAspect != request.PreserveAspect
+            || !OverlayElements.Contains(element)
+            || !BuildTemplateElement(element).Equals(request.Element))
+        {
+            Log.FlattenElementDiscardedAsStale(_logger);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenDiscardedStale");
+            return;
+        }
+
+        Log.FlattenElementInvoked(_logger, element.GetType().Name);
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            element.PropertyChanged -= OnOverlayElementPropertyChanged;
+            OverlayElements.Remove(element);
+            if (element is ImageElementViewModel imageElement)
+            {
+                imageElement.Dispose();
+            }
+
+            if (ReferenceEquals(SelectedOverlayElement, element))
+            {
+                SelectedOverlayElement = null;
+            }
+
+            // New generation: this source can never be reached from the old baseline by rotation,
+            // so ApplyState must restore it by instance (see its own branch and _sourceBaseline's
+            // doc comment). Baseline rotation is the CURRENT rotation -- the flattened image is
+            // baked in whatever orientation the editor is in right now.
+            _sourceBaseline = flattened;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(flattened);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        // Adjustment sliders are NOT reset and the adjustments were NOT baked -- see
+        // BakeElementIntoSource's own doc comment. Output is identical when they're at identity;
+        // when they aren't, the baked pixels are now subject to them, which the operator is told
+        // rather than left to discover.
+        StatusMessage = BuildAdjustments().IsIdentity
+            ? null
+            : _localization.GetString("Panes.TxImageEditor.FlattenAdjustmentsNowApply");
 
         RecomputePreview();
     }
@@ -2737,6 +3197,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         return copy;
     }
 
+    /// <summary>TX workflow modernization plan, Phase 3b -- Ctrl-drag-to-duplicate, called from
+    /// <c>TxImageEditorPaneView.axaml.cs</c>'s <c>OnOverlayElementPointerPressed</c> when Ctrl is
+    /// held (NOT Alt -- Alt+drag moves windows on many Linux desktop environments, Ctrl+drag matches
+    /// Illustrator/Inkscape/Sketch's own convention instead). Reuses <see cref="InsertClonedSnapshot"/>
+    /// wholesale (its harmless +0.02 seed offset is immediately overridden by the drag that follows).
+    /// <see cref="InsertClonedSnapshot"/>'s own <see cref="PushUndoSnapshot"/> call resets
+    /// <see cref="_pendingCoalesceProperty"/> to null -- re-arming it here to the SAME
+    /// <c>"OverlayGeometry"</c> key the immediately-following drag's first move will target means
+    /// <see cref="PushUndoSnapshotCoalesced"/> sees it already pending and no-ops, so one Ctrl-drag
+    /// gesture produces exactly one undo step (the clone-insert), not two.</summary>
+    public ITemplateElementViewModel DuplicateElementForDrag(ITemplateElementViewModel element)
+    {
+        var clone = InsertClonedSnapshot(BuildRawSnapshot(element));
+        _pendingCoalesceProperty = "OverlayGeometry";
+        return clone;
+    }
+
     /// <summary>Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for canvas
     /// elements -- NOT the OS clipboard (no cross-app paste target exists for a
     /// <see cref="RawElementSnapshot"/>), a plain in-memory field, same scope as every other
@@ -2791,6 +3268,95 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             var pasted = InsertClonedSnapshot(snapshot);
             _clipboardSnapshot = BuildRawSnapshot(pasted);
         }
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 1 -- Copy/Paste Style. A SEPARATE clipboard
+    /// field from <see cref="_clipboardSnapshot"/> (element copy/paste): copying an element's style
+    /// must not clobber a pending element paste, and vice versa. Reuses <see cref="BuildRawSnapshot"/>
+    /// wholesale rather than a second, narrower snapshot type -- <see cref="PasteSelectedElementStyle"/>
+    /// picks out only the style-relevant fields when applying, so nothing new needs to track "which
+    /// fields count as style" in two places. Gated to same-element-kind-only paste (text style onto
+    /// text, box style onto box) -- deliberately, to avoid an ambiguous partial application if the
+    /// two kinds' style fields don't line up (they don't: text has font/shadow/gradient/stack, box
+    /// has fill/border/corner-radius, nothing overlaps). Image elements have no copyable "style"
+    /// distinct from Fit (which already has its own quick-access submenu), so neither command is
+    /// reachable for them.</summary>
+    private RawElementSnapshot? _styleClipboardSnapshot;
+
+    private bool CanCopySelectedElementStyle() => SelectedOverlayElement is OverlayElementViewModel or BoxElementViewModel;
+
+    [RelayCommand(CanExecute = nameof(CanCopySelectedElementStyle))]
+    private void CopySelectedElementStyle()
+    {
+        if (SelectedOverlayElement is not (OverlayElementViewModel or BoxElementViewModel))
+        {
+            return;
+        }
+
+        _styleClipboardSnapshot = BuildRawSnapshot(SelectedOverlayElement);
+        PasteSelectedElementStyleCommand.NotifyCanExecuteChanged();
+    }
+
+    private bool CanPasteSelectedElementStyle() => _styleClipboardSnapshot switch
+    {
+        RawTextElementSnapshot => SelectedOverlayElement is OverlayElementViewModel,
+        RawBoxElementSnapshot => SelectedOverlayElement is BoxElementViewModel,
+        _ => false,
+    };
+
+    /// <summary>One coalesced undo step for the whole style application, same
+    /// <see cref="_suspendPreview"/>-wrapped-explicit-<see cref="PushUndoSnapshot"/> pattern
+    /// <see cref="AlignSelectedElementToCrop"/> already established -- without it, each property
+    /// assignment below would push its own step via that property's own change hook (where one
+    /// exists), turning one "paste style" click into several undo steps.</summary>
+    [RelayCommand(CanExecute = nameof(CanPasteSelectedElementStyle))]
+    private void PasteSelectedElementStyle()
+    {
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            switch (_styleClipboardSnapshot, SelectedOverlayElement)
+            {
+                case (RawTextElementSnapshot style, OverlayElementViewModel text):
+                    text.FontFamily = style.FontFamily;
+                    text.FontSizeRelative = style.FontSizeRelative;
+                    text.Color = style.Color;
+                    text.StrokeColor = style.StrokeColor;
+                    text.StrokeThickness = style.StrokeThickness;
+                    text.ShadowColor = style.ShadowColor;
+                    text.ShadowOffsetX = style.ShadowOffsetX;
+                    text.ShadowOffsetY = style.ShadowOffsetY;
+                    text.RotationDegrees = style.RotationDegrees;
+                    text.GradientEnabled = style.GradientEnabled;
+                    text.GradientKind = style.GradientKind;
+                    // Same fallback convention as CreateOverlayElement's own default-red/blue pair --
+                    // GradientStartColor/EndColor are non-nullable on the VM (they always drive a
+                    // real gradient stop), the raw snapshot's nullability is only about whether
+                    // gradient colors were ever customized away from that default.
+                    text.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
+                    text.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
+                    text.Bold = style.Bold;
+                    text.Italic = style.Italic;
+                    text.StackColor = style.StackColor;
+                    text.StackStepX = style.StackStepX;
+                    text.StackStepY = style.StackStepY;
+                    break;
+                case (RawBoxElementSnapshot style, BoxElementViewModel box):
+                    box.FillColor = style.FillColor;
+                    box.BorderColor = style.BorderColor;
+                    box.BorderThickness = style.BorderThickness;
+                    box.Opacity = style.Opacity;
+                    box.CornerRadius = style.CornerRadius;
+                    break;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
     }
 
     /// <summary>Phase 3 (spec/15-template-designer.md) -- discovers which template-variable KEYS are
@@ -3340,6 +3906,32 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _workingCopy = wasShared ? _originalSource : _preparer.Rotate(_workingCopy);
         _rotationCount = (_rotationCount + 1) % 4;
 
+        NotifyWorkingCopyGeometryChanged();
+    }
+
+    /// <summary>The WHOLE-SOURCE-REPLACEMENT counterpart to <see cref="RotateImageOnly"/> (TX
+    /// workflow modernization plan, Phase 7 -- flatten): swaps <see cref="_originalSource"/> outright
+    /// and rebuilds <c>_workingCopy</c> from scratch via <see cref="BuildWorkingCopy"/> rather than
+    /// transforming the existing one (there is no rotate/transform relationship between a pre- and
+    /// post-flatten image -- the whole photo changed, not just its orientation). Does NOT touch
+    /// <see cref="_rotationCount"/>, <see cref="_sourceBaseline"/> or <see cref="_sourceBaselineRotation"/>
+    /// -- callers own those, exactly as <see cref="RotateImageOnly"/>'s own doc comment says callers
+    /// own <c>_suspendPreview</c>/undo/recompute. Shares <see cref="NotifyWorkingCopyGeometryChanged"/>
+    /// with the rotate path so the two can't notify a different set of properties.</summary>
+    private void ReplaceSourceAndWorkingCopy(IImageSource newSource)
+    {
+        _originalSource = newSource;
+        _workingCopy = BuildWorkingCopy(newSource, _targetMode, _preparer);
+        NotifyWorkingCopyGeometryChanged();
+    }
+
+    /// <summary>Extracted verbatim from <see cref="RotateImageOnly"/> (TX workflow modernization
+    /// plan, Phase 7) so <see cref="ReplaceSourceAndWorkingCopy"/> raises the exact same property
+    /// changes -- see that method's own doc comment for why each of these is raised
+    /// (Phase 7 rearchitecture: CanvasDisplay* and the SafeArea* pixel properties derive from
+    /// WorkingCopyWidth/Height and have no notification of their own).</summary>
+    private void NotifyWorkingCopyGeometryChanged()
+    {
         WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
@@ -3839,7 +4431,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
 
     private EditorSnapshot CaptureSnapshot() =>
-        new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements, TemplateVariables);
+        new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements, TemplateVariables,
+            _sourceBaseline, _sourceBaselineRotation);
 
     private bool CanUndo() => _undoStack.Count > 0;
 
@@ -4076,10 +4669,36 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
             TemplateVariableRows.Clear();
 
-            var delta = ((snapshot.RotationCount - _rotationCount) % 4 + 4) % 4;
-            for (var i = 0; i < delta; i++)
+            // TX workflow modernization plan, Phase 7: the delta-rotation reconciliation below is
+            // only valid while the CURRENT source and the snapshot's source come from the same
+            // baseline -- i.e. while the only thing that changed between them is orientation. A
+            // flatten replaces the source wholesale, and no number of 90-degree rotations gets from
+            // a flattened image back to an unflattened one. Reference-compare the BASELINE (not
+            // _originalSource, which a rotate legitimately reassigns): distinct flattens always mint
+            // distinct instances, so identity is a sound generation test here.
+            if (!ReferenceEquals(snapshot.SourceBaseline, _sourceBaseline))
             {
-                RotateImageOnly();
+                _sourceBaseline = snapshot.SourceBaseline;
+                _sourceBaselineRotation = snapshot.SourceBaselineRotation;
+                ReplaceSourceAndWorkingCopy(snapshot.SourceBaseline);
+                // The baseline is stored at ITS OWN orientation, which is not necessarily the
+                // snapshot's -- rotate forward from the baseline's rotation to the snapshot's,
+                // reusing the identical RotateImageOnly path (never the Rotate COMMAND, for the
+                // reason this method's own doc comment already gives).
+                _rotationCount = snapshot.SourceBaselineRotation;
+                var baselineDelta = ((snapshot.RotationCount - snapshot.SourceBaselineRotation) % 4 + 4) % 4;
+                for (var i = 0; i < baselineDelta; i++)
+                {
+                    RotateImageOnly();
+                }
+            }
+            else
+            {
+                var delta = ((snapshot.RotationCount - _rotationCount) % 4 + 4) % 4;
+                for (var i = 0; i < delta; i++)
+                {
+                    RotateImageOnly();
+                }
             }
 
             LockAspectToMode = snapshot.LockAspectToMode;
@@ -4194,11 +4813,48 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         var relWidth = width / CropRect.Width;
         var relHeight = height / CropRect.Height;
 
+        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
+        {
+            return new NormalizedRect(relX - (relWidth / 2), relY - (relHeight / 2), relWidth, relHeight);
+        }
+
+        var targetWidth = (double)_targetMode.ImageWidth;
+        var targetHeight = (double)_targetMode.ImageHeight;
+
+        var finalCenterX = (padX + (relX * contentWidth)) / targetWidth;
+        var finalCenterY = (padY + (relY * contentHeight)) / targetHeight;
+        var finalWidth = relWidth * contentWidth / targetWidth;
+        var finalHeight = relHeight * contentHeight / targetHeight;
+
+        return new NormalizedRect(finalCenterX - (finalWidth / 2), finalCenterY - (finalHeight / 2), finalWidth, finalHeight);
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- the letterbox/stretch metrics
+    /// <see cref="ProjectRectToCropRelative"/> derives, in TARGET-MODE pixel space, extracted so the
+    /// flatten command reads the SAME numbers the projection itself uses rather than recomputing
+    /// them (a formula re-derived at a second call site is exactly the defect class that already hit
+    /// this method once -- a proven function's math silently drifting from a second copy). Returns
+    /// false in the two cases <see cref="ProjectRectToCropRelative"/> itself early-returns for
+    /// (degenerate <see cref="CropRect"/>, degenerate crop pixel size) -- callers must treat false as
+    /// "no valid projection exists right now," not substitute a fallback. Zoom-invariant, for the
+    /// same reason <see cref="ProjectRectToCropRelative"/>'s own doc comment gives:
+    /// <see cref="CropWidthPixels"/>/<see cref="CropHeightPixels"/> carry a factor of
+    /// <see cref="ZoomFactor"/> and <c>scaleX</c>/<c>scaleY</c> carry <c>1/ZoomFactor</c>, so the
+    /// products below carry none.</summary>
+    private bool TryGetCropContentMetrics(out double padX, out double padY, out double contentWidth, out double contentHeight)
+    {
+        padX = padY = contentWidth = contentHeight = 0;
+
+        if (CropRect.Width <= 0 || CropRect.Height <= 0)
+        {
+            return false;
+        }
+
         var cropWidthPixels = CropWidthPixels;
         var cropHeightPixels = CropHeightPixels;
         if (cropWidthPixels <= 0 || cropHeightPixels <= 0)
         {
-            return new NormalizedRect(relX - (relWidth / 2), relY - (relHeight / 2), relWidth, relHeight);
+            return false;
         }
 
         var targetWidth = (double)_targetMode.ImageWidth;
@@ -4215,17 +4871,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             scaleY = targetHeight / cropHeightPixels;
         }
 
-        var contentWidth = cropWidthPixels * scaleX;
-        var contentHeight = cropHeightPixels * scaleY;
-        var padX = (targetWidth - contentWidth) / 2;
-        var padY = (targetHeight - contentHeight) / 2;
-
-        var finalCenterX = (padX + (relX * contentWidth)) / targetWidth;
-        var finalCenterY = (padY + (relY * contentHeight)) / targetHeight;
-        var finalWidth = relWidth * contentWidth / targetWidth;
-        var finalHeight = relHeight * contentHeight / targetHeight;
-
-        return new NormalizedRect(finalCenterX - (finalWidth / 2), finalCenterY - (finalHeight / 2), finalWidth, finalHeight);
+        contentWidth = cropWidthPixels * scaleX;
+        contentHeight = cropHeightPixels * scaleY;
+        padX = (targetWidth - contentWidth) / 2;
+        padY = (targetHeight - contentHeight) / 2;
+        return true;
     }
 
     /// <summary>Font size in CANVAS DISPLAY pixels for the given TEXT element -- the counterpart to
@@ -4434,5 +5084,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "LoadTemplate({TemplateId}) discarded as stale -- a newer template selection superseded it")]
         public static partial void TemplateLoadDiscardedAsStale(ILogger logger, string templateId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Flatten element invoked: type={ElementType}")]
+        public static partial void FlattenElementInvoked(ILogger logger, string elementType);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Flatten element failed")]
+        public static partial void FlattenElementFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Flatten element result discarded as stale (editor state changed while baking)")]
+        public static partial void FlattenElementDiscardedAsStale(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Reset image element to original size: natural={NaturalWidth}x{NaturalHeight} clampedToFrame={Clamped}")]
+        public static partial void ResetImageElementToOriginalSize(ILogger logger, int naturalWidth, int naturalHeight, bool clamped);
     }
 }

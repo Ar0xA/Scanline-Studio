@@ -224,6 +224,25 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <inheritdoc cref="ITemplateElementViewModel.AlignSelectedElementToCropCommand"/>
     public IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.CopyCommand"/>
+    public IRelayCommand? CopyCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.CutCommand"/>
+    public IRelayCommand? CutCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.PasteCommand"/>
+    public IRelayCommand? PasteCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.FlattenCommand"/>
+    public IRelayCommand? FlattenCommand { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 1 -- text-only (box has its own separate
+    /// fill/border style, not this one; image has no copyable "style"), same parent-pushed,
+    /// no-CommandParameter shape as <see cref="DuplicateCommand"/>.</summary>
+    public IRelayCommand? CopyStyleCommand { get; init; }
+
+    public IRelayCommand? PasteStyleCommand { get; init; }
+
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
     /// <see cref="ImageElementViewModel.SetAsBackgroundCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>
@@ -271,6 +290,15 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// already applied pre-Phase-1 to X/Y alone). Covers BOTH the canvas pointer-drag path and the
     /// sidebar X/Y TextBox edits. Null only in tests/design-time contexts that don't care about undo.</summary>
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 1 -- closes a pre-existing gap:
+    /// <see cref="FontSizeRelative"/>/<see cref="Color"/> had NO undo hook at all before the Quick
+    /// Style Flyout made them a primary editing surface (see this class's own history at
+    /// <c>SetFontSizePreset</c>'s doc comment in the VM, which explicitly preserved the gap rather
+    /// than fix it as an unrelated side effect at the time). Coalesced under its OWN key, distinct
+    /// from <see cref="PushUndoSnapshotForGeometryChange"/>'s "OverlayGeometry" -- an unrelated style
+    /// tweak right after a drag must not fold invisibly into the drag's own undo step.</summary>
+    public Action? PushUndoSnapshotForStyleChange { get; init; }
 
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;
 
@@ -537,6 +565,10 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <see cref="ResolvedText"/> itself is filtered out of
     /// <c>TxImageEditorPaneViewModel.OnOverlayElementPropertyChanged</c>'s own recompute trigger).</summary>
     public void NotifyResolvedTextChanged() => OnPropertyChanged(nameof(ResolvedText));
+
+    partial void OnFontSizeRelativeChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     partial void OnXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
 

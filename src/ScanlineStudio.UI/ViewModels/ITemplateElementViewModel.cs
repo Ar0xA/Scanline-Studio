@@ -116,6 +116,28 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
     /// because all three element types' context menus offer "Align to Crop."</summary>
     IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
 
+    /// <summary>TX workflow modernization plan, Phase 1 -- element clipboard, parent-pushed the SAME
+    /// parameterless <c>TxImageEditorPaneViewModel.CopySelectedElementCommand</c>/
+    /// <c>CutSelectedElementCommand</c>/<c>PasteElementCommand</c> instances every element gets,
+    /// same "reads via SelectedOverlayElement, no CommandParameter" shape as
+    /// <see cref="DuplicateCommand"/>'s own doc comment. On the shared interface since all three
+    /// element types' context menus offer Cut/Copy/Paste, same reasoning as
+    /// <see cref="AlignSelectedElementToCropCommand"/>.</summary>
+    IRelayCommand? CopyCommand { get; init; }
+
+    IRelayCommand? CutCommand { get; init; }
+
+    IRelayCommand? PasteCommand { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- rasterise this element into the photo and
+    /// drop it from the document. On the shared interface (unlike, say,
+    /// <see cref="OverlayElementViewModel.CopyStyleCommand"/>) because flatten is type-agnostic --
+    /// it goes through <c>TxImageEditorPaneViewModel.BuildTemplateElement</c>, which already handles
+    /// every element type. Parameterised like <see cref="RemoveCommand"/>, not selection-implicit
+    /// like <see cref="DuplicateCommand"/>: this one is async and has a real per-element
+    /// <c>CanExecute</c>.</summary>
+    IRelayCommand? FlattenCommand { get; init; }
+
     /// <summary>Pushes ONE coalesced undo/redo step covering X/Y/Width/Height together (Phase 1
     /// plan-review finding: a diagonal drag-resize must collapse to one undo step, same reasoning as
     /// the pre-Phase-1 X/Y-only version covering a diagonal drag). Fires on <c>On*Changing</c> (before

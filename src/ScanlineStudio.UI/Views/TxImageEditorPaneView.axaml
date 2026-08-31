@@ -520,6 +520,26 @@
                                 Background="Transparent"
                                 PointerMoved="OnCanvasPointerMoved"
                                 PointerReleased="OnCanvasPointerReleased">
+                            <!-- TX workflow modernization plan, Phase 5: right-click on empty canvas
+                                 previously did nothing (no ContextMenu existed at this level, only
+                                 per-element ones). Avalonia's normal hit-testing means a right-click
+                                 landing ON an element still opens that element's own ContextMenu
+                                 first — this one only fires when the click lands on empty canvas
+                                 area, so it doesn't shadow the per-element menus. "Add Text/Box/
+                                 Image Here" at the click point is deliberately NOT here yet — it
+                                 needs Phase 3a's target-rect parameter on AddOverlayElement/
+                                 AddBoxElement, not built yet; add it once that lands. -->
+                            <Canvas.ContextMenu>
+                                <ContextMenu Classes="Industry">
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteElementCommand}" />
+                                    <Separator />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitSafeArea}" Click="OnFitSafeAreaClick" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitWidth}" Click="OnFitWidthClick" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitHeight}" Click="OnFitHeightClick" />
+                                    <Separator />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToggleType="CheckBox" IsChecked="{Binding SnapToGrid, Mode=TwoWay}" />
+                                </ContextMenu>
+                            </Canvas.ContextMenu>
 
                             <!-- Explicit Width/Height + Stretch="Fill" (was Stretch="None" with no
                                  explicit size, back when the Canvas was always native working-copy
@@ -739,6 +759,16 @@
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
                                                         <Separator />
+                                                        <!-- Round-1 (TX workflow modernization plan): Cut/Copy/Paste wire the
+                                                             already-existing element clipboard (Ctrl+C/X/V in
+                                                             TxImageEditorPaneView.axaml.cs) — the commands were shipped
+                                                             2026-08-17 but never reachable from these menus until now. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" Command="{Binding CopyStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" Command="{Binding PasteStyleCommand}" />
+                                                        <Separator />
                                                         <!-- EditWindow redesign Phase 6 (mockups/Editwindow): Insert Field/Align to Crop
                                                              submenus. Both reuse the SAME parent-pushed/toolbar-shared commands the
                                                              TEXT STYLE/GEOMETRY tabs already use (InsertFieldCommand,
@@ -800,8 +830,13 @@
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddPlate}" Command="{Binding AddPlateCommand}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringForward}" Command="{Binding MoveUpCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendBackward}" Command="{Binding MoveDownCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        </MenuItem>
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
@@ -965,6 +1000,16 @@
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
                                                         <Separator />
+                                                        <!-- Round-1 (TX workflow modernization plan): Cut/Copy/Paste wire the
+                                                             already-existing element clipboard (Ctrl+C/X/V in
+                                                             TxImageEditorPaneView.axaml.cs) — the commands were shipped
+                                                             2026-08-17 but never reachable from these menus until now. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" Command="{Binding CopyStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" Command="{Binding PasteStyleCommand}" />
+                                                        <Separator />
                                                         <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
                                                              element's own ContextMenu doc comment for the full reasoning
                                                              (AlignSelectedElementToCropCommand is generic across element types). -->
@@ -979,8 +1024,13 @@
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringForward}" Command="{Binding MoveUpCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendBackward}" Command="{Binding MoveDownCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        </MenuItem>
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
@@ -1078,6 +1128,14 @@
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
                                                         <Separator />
+                                                        <!-- Round-1 (TX workflow modernization plan): Cut/Copy/Paste wire the
+                                                             already-existing element clipboard (Ctrl+C/X/V in
+                                                             TxImageEditorPaneView.axaml.cs) — the commands were shipped
+                                                             2026-08-17 but never reachable from these menus until now. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
+                                                        <Separator />
                                                         <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
                                                              element's own ContextMenu doc comment for the full reasoning. -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
@@ -1091,9 +1149,20 @@
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackground}" Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ResetToOriginalSize}" Command="{Binding ResetToOriginalSizeCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitStretch}" Command="{Binding FitCommand}" CommandParameter="Stretch" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitContain}" Command="{Binding FitCommand}" CommandParameter="Contain" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitCover}" Command="{Binding FitCommand}" CommandParameter="Cover" />
+                                                        </MenuItem>
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringForward}" Command="{Binding MoveUpCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendBackward}" Command="{Binding MoveDownCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
+                                                        </MenuItem>
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
@@ -1322,9 +1391,15 @@
                                  content-driven widths, not equal thirds. UniformGrid genuinely divides
                                  its own width into N equal columns, which Stretch then fills. -->
                             <UniformGrid Columns="3">
+                                <!-- TX workflow modernization plan, Phase 3a: draw-to-place. NOT a
+                                     Command binding anymore — PointerPressed instead, so Shift
+                                     (sticky placement) is readable via KeyModifiers at arm time,
+                                     which a plain Click event carries no way to see. Clicking this
+                                     button arms the tool (crosshair cursor); the actual element is
+                                     created by a canvas press/release, not by this button itself. -->
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
                                         Content="{loc:Translate Panes.TxImageEditor.AddText}"
-                                        Command="{Binding AddOverlayElementCommand}" />
+                                        PointerPressed="OnArmTextPlacementPressed" />
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
                                         Content="{loc:Translate Panes.TxImageEditor.AddImage}">
                                     <Button.Flyout>
@@ -1383,9 +1458,10 @@
                                         </Flyout>
                                     </Button.Flyout>
                                 </Button>
+                                <!-- Same reasoning as the AddText button above. -->
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
-                                        Command="{Binding AddBoxElementCommand}" />
+                                        PointerPressed="OnArmBoxPlacementPressed" />
                             </UniformGrid>
                             <ItemsControl ItemsSource="{Binding OverlayElements}">
                                 <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the
@@ -1408,7 +1484,7 @@
                                 </ItemsControl.Styles>
                                 <ItemsControl.DataTemplates>
                                     <DataTemplate DataType="vm:OverlayElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20,20" Margin="0,0,0,2"
                                               Classes.elementRowSelected="{Binding IsSelected}"
                                               PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeText}" />
@@ -1417,6 +1493,22 @@
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- TX workflow modernization plan, Phase 8: layers-list/
+                                                 context-menu parity, so the two surfaces don't drift
+                                                 apart again — that drift is exactly how the old Font-
+                                                 Size/Text-Color preset inconsistency happened. Same
+                                                 parent-pushed DuplicateCommand the context menu's own
+                                                 Duplicate item binds — parameterless (reads
+                                                 SelectedOverlayElement), safe here because this row's
+                                                 own Grid.PointerPressed (OnElementRowPointerPressed)
+                                                 already selects THIS element before any child
+                                                 button's Click fires, same "any button in the row
+                                                 selects first" precedent RemoveCommand's own comment
+                                                 below already documents. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
+                                                    Command="{Binding DuplicateCommand}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
                                             <!-- Backlog item (user request, 2026-08-17): per-row delete, no
                                                  header-group-only path needed. RemoveCommand is the SAME
                                                  parent-pushed instance the context menu's own Remove item
@@ -1424,14 +1516,14 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
                                         </Grid>
                                     </DataTemplate>
                                     <DataTemplate DataType="vm:BoxElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20,20" Margin="0,0,0,2"
                                               Classes.elementRowSelected="{Binding IsSelected}"
                                               PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeBox}" />
@@ -1440,6 +1532,22 @@
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- TX workflow modernization plan, Phase 8: layers-list/
+                                                 context-menu parity, so the two surfaces don't drift
+                                                 apart again — that drift is exactly how the old Font-
+                                                 Size/Text-Color preset inconsistency happened. Same
+                                                 parent-pushed DuplicateCommand the context menu's own
+                                                 Duplicate item binds — parameterless (reads
+                                                 SelectedOverlayElement), safe here because this row's
+                                                 own Grid.PointerPressed (OnElementRowPointerPressed)
+                                                 already selects THIS element before any child
+                                                 button's Click fires, same "any button in the row
+                                                 selects first" precedent RemoveCommand's own comment
+                                                 below already documents. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
+                                                    Command="{Binding DuplicateCommand}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
                                             <!-- Backlog item (user request, 2026-08-17): per-row delete, no
                                                  header-group-only path needed. RemoveCommand is the SAME
                                                  parent-pushed instance the context menu's own Remove item
@@ -1447,7 +1555,7 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
@@ -1463,7 +1571,7 @@
                                          via the row's own context menu instead (Task #24, already ships
                                          this item). -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20" Margin="0,0,0,2"
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20,20" Margin="0,0,0,2"
                                               Classes.elementRowSelected="{Binding IsSelected}"
                                               PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
@@ -1472,6 +1580,22 @@
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- TX workflow modernization plan, Phase 8: layers-list/
+                                                 context-menu parity, so the two surfaces don't drift
+                                                 apart again — that drift is exactly how the old Font-
+                                                 Size/Text-Color preset inconsistency happened. Same
+                                                 parent-pushed DuplicateCommand the context menu's own
+                                                 Duplicate item binds — parameterless (reads
+                                                 SelectedOverlayElement), safe here because this row's
+                                                 own Grid.PointerPressed (OnElementRowPointerPressed)
+                                                 already selects THIS element before any child
+                                                 button's Click fires, same "any button in the row
+                                                 selects first" precedent RemoveCommand's own comment
+                                                 below already documents. -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
+                                                    Command="{Binding DuplicateCommand}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
                                             <!-- Backlog item (user request, 2026-08-17): per-row delete, no
                                                  header-group-only path needed. RemoveCommand is the SAME
                                                  parent-pushed instance the context menu's own Remove item
@@ -1479,7 +1603,7 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />

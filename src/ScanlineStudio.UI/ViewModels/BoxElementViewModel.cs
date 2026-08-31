@@ -74,6 +74,23 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.CopyCommand"/>
+    public IRelayCommand? CopyCommand { get; init; }
+
+    public IRelayCommand? CutCommand { get; init; }
+
+    public IRelayCommand? PasteCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.FlattenCommand"/>
+    public IRelayCommand? FlattenCommand { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 1 -- box-only (matches
+    /// <see cref="OverlayElementViewModel.CopyStyleCommand"/>'s own text-only precedent: box style
+    /// is fill/border/corner-radius, not the text one).</summary>
+    public IRelayCommand? CopyStyleCommand { get; init; }
+
+    public IRelayCommand? PasteStyleCommand { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;

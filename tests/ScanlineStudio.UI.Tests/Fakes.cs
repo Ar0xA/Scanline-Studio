@@ -1642,6 +1642,26 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     // there's nothing to resolve; the VM/AXAML layer only needs a real, non-empty list to populate
     // the font-family picker's ItemsSource against.
     public IReadOnlyList<string> AvailableFontFamilies { get; } = ["DejaVu Sans Mono", "Barlow"];
+
+    // TX workflow modernization plan, Phase 7 -- same "call-tracking, plausibly-shaped result, not
+    // real pixel behavior" convention as every other method above. Flatten's own pixel-equivalence
+    // tests use the REAL TransmitImagePreparer, not this fake -- a fake can't produce pixels to
+    // compare against.
+    public int CropPixelsCallCount { get; private set; }
+
+    public IImageSource CropPixels(IImageSource source, int x, int y, int width, int height)
+    {
+        CropPixelsCallCount++;
+        return new ArrayImageSource(width, height, new Rgb24[width * height]);
+    }
+
+    public int CompositeCallCount { get; private set; }
+
+    public IImageSource Composite(IImageSource background, IImageSource overlay, int x, int y)
+    {
+        CompositeCallCount++;
+        return new ArrayImageSource(background.Width, background.Height, new Rgb24[background.Width * background.Height]);
+    }
 }
 
 internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
