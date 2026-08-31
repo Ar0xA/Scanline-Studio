@@ -1300,14 +1300,31 @@ internal sealed class FakeImageFileLoader : IImageFileLoader
 
     public List<TaskCompletionSource<IImageSource>> PendingLoads { get; } = [];
 
+    /// <summary>Every path passed to <see cref="LoadAsync"/>/<see cref="LoadOriginalAsync"/>, in call
+    /// order -- lets a drop-multiple-files test assert a capped/short-circuited request never even
+    /// reached the loader for the paths past the cap, not just that the RESULT looks capped.</summary>
+    public List<string> RequestedPaths { get; } = [];
+
+    /// <summary>When a requested path is a key here, that call throws the mapped exception instead of
+    /// returning <see cref="ResultToReturn"/> -- lets a multi-file drop test fail specific files
+    /// while the rest succeed, matching <c>AddImagesFromDroppedFilesAsync</c>'s own per-file
+    /// try/catch contract.</summary>
+    public Dictionary<string, Exception> FailForPath { get; } = [];
+
     public Task<IImageSource> LoadAsync(string path, int targetWidth, int targetHeight, CancellationToken ct = default)
-        => GatedOrImmediate();
+        => GatedOrImmediate(path);
 
     public Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
-        => GatedOrImmediate();
+        => GatedOrImmediate(path);
 
-    private Task<IImageSource> GatedOrImmediate()
+    private Task<IImageSource> GatedOrImmediate(string path)
     {
+        RequestedPaths.Add(path);
+        if (FailForPath.TryGetValue(path, out var ex))
+        {
+            return Task.FromException<IImageSource>(ex);
+        }
+
         if (!UseManualGating)
         {
             return Task.FromResult(ResultToReturn ?? throw new InvalidOperationException("No result configured."));
