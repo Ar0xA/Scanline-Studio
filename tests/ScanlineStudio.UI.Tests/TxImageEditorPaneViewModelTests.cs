@@ -2126,6 +2126,148 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Empty(vm.OverlayElements);
     }
 
+    // Missing-feature sweep (2026-08-31): OS file drag-and-drop onto the TX editor
+    // (AddImagesFromDroppedFilesAsync). Same load-pipeline reuse as the 3 sources above, plus its
+    // own batch-specific rules: a shared 20-file cap, one undo step for the whole drop, and a
+    // cascade offset so a multi-file drop doesn't stack every element on top of the first.
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_EmptyList_SetsStatusAndAddsNothing()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImagesFromDroppedFilesAsync([]);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Equal("Panes.TxImageEditor.NoImageFilesDropped", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_AllFilesFail_SetsStatusAndAddsNothing()
+    {
+        var loader = new FakeImageFileLoader();
+        loader.FailForPath["/tmp/a.jpg"] = new InvalidOperationException("decode failed");
+        loader.FailForPath["/tmp/b.jpg"] = new InvalidOperationException("decode failed");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/a.jpg", "/tmp/b.jpg"]);
+
+        Assert.Empty(vm.OverlayElements);
+        // No PushUndoSnapshot when nothing was actually inserted -- a drop that adds nothing must
+        // not create a no-op undo step.
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Equal("Panes.TxImageEditor.AddImageFailed", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_SomeFilesFail_AddsTheRestAndReportsFailureCount()
+    {
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        loader.FailForPath["/tmp/bad.jpg"] = new InvalidOperationException("decode failed");
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/good1.jpg", "/tmp/bad.jpg", "/tmp/good2.jpg"]);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.Equal("Panes.TxImageEditor.SomeDroppedImagesFailed", vm.StatusMessage);
+        // loaded.Count=2, capped.Count=3, failureCount=1 -- the 3 numeric args the locale string's
+        // own {0}/{1}/{2} placeholders format.
+        Assert.Equal(new object[] { 2, 3, 1 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_MoreThanCap_OnlyLoadsFirst20AndReportsTruncation()
+    {
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        var paths = Enumerable.Range(0, 25).Select(i => $"/tmp/{i}.jpg").ToList();
+
+        await vm.AddImagesFromDroppedFilesAsync(paths);
+
+        Assert.Equal(20, vm.OverlayElements.Count);
+        Assert.Equal(20, loader.RequestedPaths.Count);
+        Assert.Equal(paths.Take(20), loader.RequestedPaths);
+        Assert.Equal("Panes.TxImageEditor.DroppedImagesTruncated", vm.StatusMessage);
+        Assert.Equal(new object[] { 20, 20, 25 }, localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_AllSucceed_ClearsStatusMessage()
+    {
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        vm.StatusMessage = "stale message from an earlier action";
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/a.jpg", "/tmp/b.jpg"]);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.Null(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_MultipleFiles_CascadesPositionsAndWrapsAt8()
+    {
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var paths = Enumerable.Range(0, 9).Select(i => $"/tmp/{i}.jpg").ToList();
+
+        await vm.AddImagesFromDroppedFilesAsync(paths);
+
+        var elements = vm.OverlayElements.Cast<ImageElementViewModel>().ToList();
+        Assert.Equal(9, elements.Count);
+        for (var i = 0; i < 8; i++)
+        {
+            AssertClose(0.5 + 0.03 * i, elements[i].X);
+            AssertClose(0.5 + 0.03 * i, elements[i].Y);
+        }
+
+        // cascadeIndex 8 wraps back to offset 0 (CascadeWrap=8), matching element 0's own position.
+        AssertClose(elements[0].X, elements[8].X);
+        AssertClose(elements[0].Y, elements[8].Y);
+        // Last one dropped is the one left selected, matching every other Add* source's own
+        // "select what you just inserted" convention.
+        Assert.Same(elements[^1], vm.SelectedOverlayElement);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_MultipleFiles_IsOneUndoStep()
+    {
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/a.jpg", "/tmp/b.jpg", "/tmp/c.jpg"]);
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        // One Undo removes all 3 elements from the drop, not just the last one -- the whole drop is
+        // one gesture, one undo step (this editor's own established convention).
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void ReportDroppedFilesUnreadable_SetsStatusMessage()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.ReportDroppedFilesUnreadable(new InvalidOperationException("drag payload malformed"));
+
+        Assert.Equal("Panes.TxImageEditor.DroppedFilesUnreadable", vm.StatusMessage);
+    }
+
     // Auditor usability review follow-up (2026-08-18): 4th image source, clipboard paste -- Phase 2's
     // own logged scope cut, picked back up. Same shape as AddImageFromFileAsync's own tests just
     // above, since AddImageFromClipboardAsync reuses the identical picker-call -> loader-call ->

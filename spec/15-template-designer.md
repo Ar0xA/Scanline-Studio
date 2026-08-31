@@ -364,4 +364,7 @@ aspect-locked element resize both shipped the same day (see Known gaps above), a
 batch of Bold/Italic text styling (real vendored font-file variants, not synthesized), DIST/BEAM
 insert-field chips, the legacy "3D" stacked-copy text effect, bitmap-pattern text fill, clipboard-paste
 as a 4th "+ IMAGE" source (with a Ctrl+V fallback), and removal of the dead SOURCE row stub. OS
-drag-drop as an image source and perspective transform remain non-goals, unchanged.
+drag-drop as an image source shipped 2026-08-31 (missing-feature sweep) — dropping one or more files
+onto the editor canvas inserts one picture ELEMENT per file (not a whole-bitmap replacement, unlike
+legacy YONIQ's own single-file `DropFile` behavior), capped at 20 files per drop. Perspective
+transform remains a non-goal, unchanged.
