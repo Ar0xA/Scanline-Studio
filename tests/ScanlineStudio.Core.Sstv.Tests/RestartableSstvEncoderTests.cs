@@ -126,12 +126,55 @@ public class RestartableSstvEncoderTests
         Assert.Equal(directSamples, wrappedSamples);
     }
 
+    // T1-3 (production_audit.md): mirrors the two EncodeAsync tests immediately above -- same
+    // "plain delegating method, not iterator" contract and same delegate-to-the-real-encoder
+    // correctness, now also for EncodeBatchedAsync.
+    [Fact]
+    public async Task EncodeBatchedAsync_DimensionMismatch_ThrowsSynchronouslyFromTheCall_NotDeferredToEnumeration()
+    {
+        var encoder = new RestartableSstvEncoder(sampleRate: 11025);
+        var mode = SstvModeRegistry.MartinM1;
+        var wrongSizedImage = new ArrayImageSource(1, 1, new Rgb24[1]);
+
+        var ex = Record.Exception(() => encoder.EncodeBatchedAsync(mode, wrongSizedImage));
+
+        Assert.IsType<ArgumentException>(ex); // thrown from the call itself, not from awaiting/enumerating
+        await Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task EncodeBatchedAsync_ProducesSameOutputAsDirectAnalogFmSstvEncoder_AtTheSameRate()
+    {
+        const int sampleRate = 11025;
+        var mode = SstvModeRegistry.MartinM1;
+        var image = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+
+        var wrapped = new RestartableSstvEncoder(sampleRate);
+        var direct = new AnalogFmSstvEncoder(sampleRate);
+
+        var wrappedSamples = await CollectBatchedAsync(wrapped.EncodeBatchedAsync(mode, image));
+        var directSamples = await CollectBatchedAsync(direct.EncodeBatchedAsync(mode, image));
+
+        Assert.Equal(directSamples, wrappedSamples);
+    }
+
     private static async Task<List<float>> CollectAsync(IAsyncEnumerable<float> samples)
     {
         var destination = new List<float>();
         await foreach (var sample in samples)
         {
             destination.Add(sample);
+        }
+
+        return destination;
+    }
+
+    private static async Task<List<float>> CollectBatchedAsync(IAsyncEnumerable<ReadOnlyMemory<float>> batches)
+    {
+        var destination = new List<float>();
+        await foreach (var batch in batches)
+        {
+            destination.AddRange(batch.ToArray());
         }
 
         return destination;

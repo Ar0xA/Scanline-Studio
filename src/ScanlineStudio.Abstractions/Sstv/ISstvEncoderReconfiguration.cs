@@ -8,13 +8,16 @@ namespace ScanlineStudio.Abstractions.Sstv;
 /// Restart-required-settings backlog item 4 (sample-rate live-apply, 2026-08-27):
 /// <see cref="BeginTransmission"/>/<see cref="EndTransmission"/> bracket EVERY call site that reads
 /// <see cref="ISstvEncoder.SampleRate"/> (directly, or via <see cref="ISstvEncoder.EstimateSampleCount"/>)
-/// and later depends on <see cref="ISstvEncoder.EncodeAsync"/> reflecting that SAME rate -- in this
-/// codebase, that is both the real TX path (<c>SstvSessionService.TransmitAsync</c>) AND the separate
-/// RX-loopback self-test (<c>SstvSessionService.RunLoopbackSelfTestAsync</c>). The bracket must open
-/// BEFORE the first <see cref="ISstvEncoder.SampleRate"/>-derived read and close only AFTER the
-/// resulting audio has fully played out (or the self-test's encode has fully completed) -- a caller
-/// that reads the rate, then calls <c>EndTransmission</c> too early, then calls
-/// <see cref="ISstvEncoder.EncodeAsync"/> defeats the whole point. The bracket is reference-counted
+/// and later depends on <see cref="ISstvEncoder.EncodeAsync"/>/<see cref="ISstvEncoder.EncodeBatchedAsync"/>
+/// (T1-3, production_audit.md: the real TX path now uses the batched member; RenderSegments/tests
+/// still use the per-float one -- this bracket's own requirement applies identically to both, they
+/// share the same underlying synthesis) reflecting that SAME rate -- in this codebase, that is both
+/// the real TX path (<c>SstvSessionService.TransmitAsync</c>) AND the separate RX-loopback self-test
+/// (<c>SstvSessionService.RunLoopbackSelfTestAsync</c>). The bracket must open BEFORE the first
+/// <see cref="ISstvEncoder.SampleRate"/>-derived read and close only AFTER the resulting audio has
+/// fully played out (or the self-test's encode has fully completed) -- a caller that reads the rate,
+/// then calls <c>EndTransmission</c> too early, then calls <see cref="ISstvEncoder.EncodeAsync"/>/
+/// <see cref="ISstvEncoder.EncodeBatchedAsync"/> defeats the whole point. The bracket is reference-counted
 /// (not a bool) specifically because a real transmission and the loopback self-test can have
 /// overlapping brackets in a real window (round-4 plan-review finding C3) -- always call
 /// <see cref="EndTransmission"/> from a <c>finally</c>.</summary>
