@@ -239,16 +239,20 @@ public sealed class SqliteReceiveHistoryStoreTests
     }
 
     [Fact]
-    public async Task QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased()
+    public async Task QueryAsync_DateRangeCompareIsInstantBased_NotLexicographicOnStoredOffset()
     {
-        // Regression test for a real bug an auditor caught in the UI layer: RxHistoryPaneViewModel's
-        // "frames today" status-bar count originally queried UTC midnight, on the (false) assumption
-        // that ReceivedAt is always stored UTC -- but ReceiveHistoryRecorder.RecordCompletedImageAsync/
-        // RecordAbandonedImageAsync both actually write DateTimeOffset.Now (LOCAL offset). This
-        // store's own From/To filter (EnsureSchema's ReceivedAt TEXT column, compared via SQLite's
-        // default BINARY collation on ToString("O")) is a LEXICOGRAPHIC TEXT compare, not an
-        // instant-based one -- so a query whose own offset differs from the stored rows' offset can
-        // silently miss a row that IS chronologically in range once real instants are compared.
+        // T1-16 (production_audit.md), regression test for a real bug an auditor caught in the UI
+        // layer: RxHistoryPaneViewModel's "frames today" status-bar count originally queried UTC
+        // midnight, on the (false) assumption that ReceivedAt is always stored UTC -- but
+        // ReceiveHistoryRecorder.RecordCompletedImageAsync/RecordAbandonedImageAsync both actually
+        // write DateTimeOffset.Now (LOCAL offset). This store's own From/To filter USED TO compare
+        // that column directly via SQLite's default BINARY collation on ToString("O") -- a
+        // LEXICOGRAPHIC TEXT compare, not an instant-based one -- so a query whose own offset
+        // differed from the stored rows' offset could silently miss a row that IS chronologically in
+        // range once real instants are compared. Fixed: queries now filter on a separate, always-UTC
+        // ReceivedAtUtc column (see that column's own doc comment above SqliteReceiveHistoryStore.
+        // EnsureSchema) -- this test used to assert the BUGGY (miss) result as expected; flipped to
+        // assert the correct one once the fix landed.
         var dbPath = TempDbPath();
         try
         {
@@ -259,19 +263,53 @@ public sealed class SqliteReceiveHistoryStoreTests
             var storedAtLocalOffset = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.FromHours(-5));
             await store.RecordAsync(new ReceiveHistoryEntry("1", storedAtLocalOffset, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
 
-            // A query anchored on the SAME offset as the write finds it -- this is the property the
-            // "local Today" fix (matching ReceiveHistoryRecorder's own local-offset writes) relies on.
+            // A query anchored on the SAME offset as the write still finds it.
             var matchingOffsetQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 9, 0, 0, 0, TimeSpan.FromHours(-5)));
             Assert.Single(await store.QueryAsync(matchingOffsetQuery));
 
             // The SAME real instant is >= UTC midnight on the 10th (2026-08-10T01:00:00Z >=
-            // 2026-08-10T00:00:00Z), so an instant-based compare WOULD find it here too -- but the
-            // stored string "2026-08-09T20:00:00.0000000-05:00" sorts BEFORE the query string
-            // "2026-08-10T00:00:00.0000000+00:00" (day-digit '0' < '1' is the first difference),
-            // so the lexicographic compare misses it. This is exactly the class of bug a UTC-anchored
-            // query hit against these locally-offset rows in production.
+            // 2026-08-10T00:00:00Z) -- the OLD lexicographic compare missed this (the stored string
+            // "2026-08-09T20:00:00.0000000-05:00" sorts BEFORE the query string
+            // "2026-08-10T00:00:00.0000000+00:00", day-digit '0' < '1' being the first difference,
+            // even though the real instants are correctly ordered the other way). The fixed,
+            // instant-based compare finds it.
             var utcMidnightNextDayQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
-            Assert.Empty(await store.QueryAsync(utcMidnightNextDayQuery));
+            Assert.Single(await store.QueryAsync(utcMidnightNextDayQuery));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task QueryAsync_DateRangeCompareAcrossARealDstTransition_IsInstantBased()
+    {
+        // T1-16 (production_audit.md): the previous test's UTC-vs-local mismatch is an ARTIFICIAL
+        // trigger (a caller anchoring at UTC when it should anchor local) -- this one shows the same
+        // class of bug was reachable with NO caller mistake at all: two real US-Eastern offsets
+        // (EST/-05:00 before, EDT/-04:00 after) straddling an actual DST-forward transition
+        // (2026-03-08 02:00 EST -> 03:00 EDT, the 2nd Sunday in March). ReceiveHistoryRecorder's own
+        // DateTimeOffset.Now would genuinely produce rows in both offsets across that boundary on a
+        // real US-Eastern machine.
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            // 01:30 EST == 06:30Z -- captured shortly before the DST jump.
+            var storedJustBeforeDstJump = new DateTimeOffset(2026, 3, 8, 1, 30, 0, TimeSpan.FromHours(-5));
+            await store.RecordAsync(new ReceiveHistoryEntry("1", storedJustBeforeDstJump, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed));
+
+            // A query anchored at 02:00 EDT == 06:00Z -- a real instant BEFORE the stored row
+            // (06:30Z), so an instant-based compare correctly finds it. The OLD lexicographic compare
+            // did not: "...T01:30:00...-05:00" sorts BEFORE "...T02:00:00...-04:00" (the hour digit
+            // '1' < '2' is the first difference), so the stored row would have read as NOT >= the
+            // query -- a false miss despite the real instants being correctly ordered the other way,
+            // with neither offset being a caller mistake -- both are genuine EST/EDT wall-clock
+            // offsets for this exact date.
+            var queryJustAfterDstJump = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 3, 8, 2, 0, 0, TimeSpan.FromHours(-4)));
+            Assert.Single(await store.QueryAsync(queryJustAfterDstJump));
         }
         finally
         {
@@ -570,7 +608,7 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var columns = await ReadColumnNamesAsync(dbPath);
 
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc"];
             Assert.Equal(expectedColumns, columns);
         }
         finally
@@ -618,7 +656,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -672,7 +710,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -762,6 +800,217 @@ public sealed class SqliteReceiveHistoryStoreTests
             Assert.False(loadedA.IsFlagged);
             Assert.Null(loadedA.FrequencyHz);
             Assert.Null(loadedA.RigMode);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_ExistingPreT1_16Database_AddsReceivedAtUtc_BackfillsItFromReceivedAt_AndDropsTheOldIndex()
+    {
+        // T1-16 (production_audit.md): seeds a pre-fix DB with the full 11-column schema (every
+        // column up to and including AudioFilePath) MINUS ReceivedAtUtc, plus the OLD
+        // IX_ReceiveHistory_ReceivedAt index this fix drops -- exactly what a real installation that
+        // predates this change has on disk, backfill AND index migration both exercised together.
+        var dbPath = TempDbPath();
+        try
+        {
+            var storedAtLocalOffset = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.FromHours(-5));
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL,
+                        DecodeState TEXT NOT NULL DEFAULT 'Completed',
+                        Note TEXT NULL,
+                        IsFlagged INTEGER NOT NULL DEFAULT 0,
+                        FrequencyHz INTEGER NULL,
+                        RigMode TEXT NULL,
+                        AudioFilePath TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var createOldIndex = seedConnection.CreateCommand();
+                createOldIndex.CommandText = "CREATE INDEX IX_ReceiveHistory_ReceivedAt ON ReceiveHistory(ReceivedAt)";
+                await createOldIndex.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath) VALUES ('a', $receivedAt, 'robot36', '/tmp/a.png', NULL, 'Completed', NULL, 0, NULL, NULL, NULL)";
+                insert.Parameters.AddWithValue("$receivedAt", storedAtLocalOffset.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            var migratedColumns = await ReadColumnNamesAsync(dbPath);
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc"];
+            Assert.Equal(expectedColumns, migratedColumns);
+
+            var indexNames = await ReadIndexNamesAsync(dbPath);
+            Assert.DoesNotContain("IX_ReceiveHistory_ReceivedAt", indexNames);
+            Assert.Contains("IX_ReceiveHistory_ReceivedAtUtc", indexNames);
+
+            // Read the raw backfilled value directly -- proves the backfill computed the CORRECT UTC
+            // instant, not just "some non-null string". Must match exactly what RecordAsync would
+            // have written for the same source value (entry.ReceivedAt.UtcDateTime.ToString("O")).
+            await using var verifyConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+            await verifyConnection.OpenAsync();
+            var select = verifyConnection.CreateCommand();
+            select.CommandText = "SELECT ReceivedAtUtc FROM ReceiveHistory WHERE Id = 'a'";
+            var rawUtc = (string)(await select.ExecuteScalarAsync())!;
+            Assert.Equal(storedAtLocalOffset.UtcDateTime.ToString("O"), rawUtc);
+
+            // And confirm the fix actually works end-to-end through the backfilled column: a query
+            // anchored at UTC midnight on the 10th (the exact scenario the pinned-bug test above used)
+            // now finds this migrated row too, not just a freshly-recorded one.
+            var utcMidnightNextDayQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+            Assert.Single(await store.QueryAsync(utcMidnightNextDayQuery));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_ReceivedAtUtcLeftNullByAnOlderBuildOrForeignWriter_SelfHealsOnTheNextStartup()
+    {
+        // Auditor code-review finding (2026-08-31): the first-pass fix gated the ReceivedAtUtc
+        // backfill on "only when the column was newly added this pass" (matching DecodeState's own
+        // gate) -- but unlike DecodeState's one-time heuristic backfill, that gate was WRONG here: a
+        // NULL ReceivedAtUtc silently excludes a row from every filtered query (WHERE
+        // ReceivedAtUtc >= $from evaluates to SQL NULL) and buries it at the bottom of the
+        // unfiltered "All" view (ORDER BY sorts NULLs last) -- and with a one-time gate, nothing
+        // would ever repair a row that went NULL AFTER the column already existed (e.g. an older
+        // build's own INSERT, which doesn't know about this column, running against an
+        // already-migrated history.db -- this file's own ParseDecodeState doc comment already
+        // designs for exactly this "a downgrade... " scenario being real, not hypothetical). Fixed:
+        // the backfill now runs unconditionally, scoped to `WHERE ReceivedAtUtc IS NULL`, every
+        // startup. This test seeds an ALREADY-migrated DB (has the ReceivedAtUtc column, matching
+        // today's real schema) with one row that has it NULL -- simulating exactly that older-build
+        // scenario -- and confirms the very next store construction heals it.
+        var dbPath = TempDbPath();
+        try
+        {
+            var storedAtLocalOffset = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.FromHours(-5));
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL,
+                        DecodeState TEXT NOT NULL DEFAULT 'Completed',
+                        Note TEXT NULL,
+                        IsFlagged INTEGER NOT NULL DEFAULT 0,
+                        FrequencyHz INTEGER NULL,
+                        RigMode TEXT NULL,
+                        AudioFilePath TEXT NULL,
+                        ReceivedAtUtc TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc) VALUES ('a', $receivedAt, 'robot36', '/tmp/a.png', NULL, 'Completed', NULL, 0, NULL, NULL, NULL, NULL)";
+                insert.Parameters.AddWithValue("$receivedAt", storedAtLocalOffset.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            await using var verifyConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+            await verifyConnection.OpenAsync();
+            var select = verifyConnection.CreateCommand();
+            select.CommandText = "SELECT ReceivedAtUtc FROM ReceiveHistory WHERE Id = 'a'";
+            var rawUtc = (string)(await select.ExecuteScalarAsync())!;
+            Assert.Equal(storedAtLocalOffset.UtcDateTime.ToString("O"), rawUtc);
+
+            // And the row is now genuinely visible through a filtered query, not just non-null.
+            var utcMidnightNextDayQuery = new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 10, 0, 0, 0, TimeSpan.Zero));
+            Assert.Single(await store.QueryAsync(utcMidnightNextDayQuery));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task EnsureSchema_OneRowHasAnUnparseableReceivedAt_DoesNotCrashStartup_StillBackfillsTheOtherRow()
+    {
+        // Auditor code-review finding (2026-08-31): the backfill's DateTimeOffset.Parse used to be
+        // unguarded -- a single unparseable ReceivedAt value (hand-edited DB, a foreign writer) would
+        // have thrown out of the constructor, from inside DI resolution, and would have kept throwing
+        // on EVERY subsequent launch (the transaction rolls back, so the row stays NULL, re-triggering
+        // the same throw). Fixed: log and leave that one row's own ReceivedAtUtc NULL instead. This
+        // does not fully repair that row (it stays invisible from filtered queries, same reasoning as
+        // the self-healing test above -- there is no correct UTC value to derive from unparseable
+        // text), but the app starts, and every OTHER row still backfills correctly.
+        var dbPath = TempDbPath();
+        try
+        {
+            var goodRowLocalOffset = new DateTimeOffset(2026, 8, 9, 20, 0, 0, TimeSpan.FromHours(-5));
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insertBad = seedConnection.CreateCommand();
+                insertBad.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId) VALUES ('bad', 'not-a-real-timestamp', 'robot36', '/tmp/bad.png', NULL)";
+                await insertBad.ExecuteNonQueryAsync();
+
+                var insertGood = seedConnection.CreateCommand();
+                insertGood.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId) VALUES ('good', $receivedAt, 'robot36', '/tmp/good.png', NULL)";
+                insertGood.Parameters.AddWithValue("$receivedAt", goodRowLocalOffset.ToString("O"));
+                await insertGood.ExecuteNonQueryAsync();
+            }
+
+            // Must not throw -- this is the regression itself.
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+
+            await using var verifyConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString());
+            await verifyConnection.OpenAsync();
+            var select = verifyConnection.CreateCommand();
+            select.CommandText = "SELECT Id, ReceivedAtUtc FROM ReceiveHistory ORDER BY Id";
+            var values = new Dictionary<string, string?>();
+            await using (var reader = await select.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                {
+                    values[reader.GetString(0)] = reader.IsDBNull(1) ? null : reader.GetString(1);
+                }
+            }
+
+            Assert.Null(values["bad"]);
+            Assert.Equal(goodRowLocalOffset.UtcDateTime.ToString("O"), values["good"]);
+
+            // The good row is fully usable through the public API too.
+            var found = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter(From: new DateTimeOffset(2026, 8, 9, 0, 0, 0, TimeSpan.Zero))));
+            Assert.Equal("good", found.Id);
         }
         finally
         {
@@ -1356,13 +1605,16 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var indexNames = await ReadIndexNamesAsync(dbPath);
 
-            Assert.Contains("IX_ReceiveHistory_ReceivedAt", indexNames);
+            // T1-16 (production_audit.md): IX_ReceiveHistory_ReceivedAt (on the old, no-longer-queried
+            // ReceivedAt column) is gone -- QueryAsync now filters/sorts on ReceivedAtUtc exclusively.
+            Assert.DoesNotContain("IX_ReceiveHistory_ReceivedAt", indexNames);
+            Assert.Contains("IX_ReceiveHistory_ReceivedAtUtc", indexNames);
             Assert.Contains("IX_ReceiveHistory_FilePath", indexNames);
             Assert.Contains("IX_ReceiveHistory_LinkedQsoId", indexNames);
 
             // Name-only assertions above would still pass if an index silently pointed at the
             // wrong column -- check each index actually indexes the column its name claims.
-            Assert.Equal("ReceivedAt", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_ReceivedAt")).ColumnName);
+            Assert.Equal("ReceivedAtUtc", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_ReceivedAtUtc")).ColumnName);
             Assert.Equal("FilePath", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_FilePath")).ColumnName);
             Assert.Equal("LinkedQsoId", Assert.Single(await ReadIndexColumnsAsync(dbPath, "IX_ReceiveHistory_LinkedQsoId")).ColumnName);
         }

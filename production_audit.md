@@ -278,9 +278,9 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
-**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6 (Tier D) are both done — see
-the "Tier D progress" notes further below. T1-1/T1-3/T1-5/T1-14/T1-16 still each need their own
-plan-review round.
+**Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16 (Tier D) are all
+done — see the "Tier D progress" notes further below. T1-1/T1-3/T1-5/T1-14 still each need their
+own plan-review round.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
 - **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
@@ -328,6 +328,26 @@ pattern; 2 rounds of plan-review (round 1 corrected my own initial "deadlock" fr
 "bounded stall" one) + 1 code-review round, go. New regression test (two separate controllable
 gates) confirmed via stash-and-rerun to fail against the pre-fix code exactly as predicted (~5s
 block). Full `Application.Tests` suite (437 tests) green.
+
+**Tier D progress — T1-16 closed (2026-08-31):** `SqliteReceiveHistoryStore`'s `ReceivedAt` column
+stores a genuinely correct instant (local offset preserved), but `QueryAsync`'s own `From`/`To`/
+`ORDER BY` used to compare that TEXT column directly — a lexicographic compare, not an instant-based
+one, so two rows/queries with different offsets could sort/filter wrong even though every individual
+value was itself correct. User chose the fix shape (of 2 presented): a new, separate `ReceivedAtUtc`
+column (not changing `ReceivedAt`'s own meaning), matching this file's own established
+`ALTER TABLE ADD COLUMN` + backfill schema-evolution pattern (already used 6 times). One auditor
+code-review round found a real no-go issue in the first pass: gating the backfill on "only when the
+column was newly added this pass" (copying `DecodeState`'s own one-time-heuristic-backfill
+convention) would let a `NULL ReceivedAtUtc` introduced LATER (e.g. an older build's own write
+against an already-migrated DB) stay silently invisible from every filtered view forever, with
+nothing left to ever repair it — data-invisibility, not a nit. Fixed: the backfill now runs
+unconditionally every startup, scoped to `WHERE ReceivedAtUtc IS NULL` (idempotent, non-destructive,
+so no gate is needed), plus a per-row try/catch so one unparseable value degrades to "that one row
+stays NULL" instead of crashing app startup on every subsequent launch. New tests: the renamed
+pinned-bug test flipped correct, a real DST-transition case, a migration/backfill test, a
+self-healing-after-a-later-NULL test, and an unparseable-row-doesn't-crash-startup test — all
+confirmed via stash-and-rerun to fail against the pre-fix code exactly as predicted. Full
+`Core.Logbook.Tests` suite (189 tests) and full `UI.Tests` suite (1208 tests) green.
 
 ---
 
@@ -572,7 +592,7 @@ anything, so a bad record aborts the import with **zero rows committed**, not a 
 | TT1-11 | Radio/CAT | Zero test coverage for lifecycle-call serialization (T1-8) in either direction — neither the undefined-behavior half (`Connect`/`Disconnect` racing) nor the claimed-safe half (`SetPttAsync` racing `Disconnect`). Add a characterization test (pin current behavior, not desired) so T1-8's eventual lock has a red/green signal instead of a paper argument |
 | TT1-12 | Radio/CAT | No test is anchored to the real `hamlib/include/hamlib/rig.h` header — every P/Invoke constant is hand-typed, comment-verified only. Add a `HamlibNativeLayoutTests` with `Marshal.SizeOf`/offset assertions on the `value_t` union (catches a silently-reinterpreted-meter-reading class of bug with no compiler-catchable signal today) plus a table-driven constant-vs-citation test |
 | TT1-13 `DEFERRED` — own future plan | Radio/CAT | `HamlibRadioProtocolTests.cs:393-427` sequences a 3-way dispose/PTT/poll race using `CallDelay` + two bare `Task.Delay(20)` calls — assumed ordering, not enforced; this is the regression gate for a physically-keyed-transmitter-on-disposed-handle bug and is a real CI flake risk. Replace with explicit gates per this project's own "deterministic gates, not shared race" rule |
-| TT1-14 | Audio/Imaging/Logbook | Zero mixed-UTC-offset ordering test for `SqliteReceiveHistoryStore`/`SqliteLogbookRepository` (T1-16); the one test that touches the issue (`QueryAsync_DateRangeCompareIsLexicographicOnStoredOffset_NotInstantBased`) asserts the broken behavior as the contract. Blocked on the migration-shape decision T1-16 already flags — don't write until that's settled |
+| TT1-14 `DONE` | Audio/Imaging/Logbook | Closed alongside T1-16 (2026-08-31). `SqliteReceiveHistoryStore`'s own mixed-offset ordering bug is fixed; the pinned-bug test is renamed (`QueryAsync_DateRangeCompareIsInstantBased_NotLexicographicOnStoredOffset`) and flipped to assert the correct result, plus a new dedicated real-DST-transition test and 3 migration/backfill tests (including a self-healing-after-a-NULL-row test, added during code-review). `SqliteLogbookRepository` was checked and does NOT share this bug class — its own `StartUtc` column is already UTC, not local-offset (`ORDER BY StartUtc DESC`) |
 | TT1-15 | Audio/Imaging/Logbook | `MiniAudioDeviceMuteQuery` has one happy-path test and no dispose-race test, while its sibling `MiniAudioDeviceEnumerator` has exactly the missing test (`DisposeAsync_RacingConcurrentRefreshAsync`). Copy it verbatim — cheap, closes a native-context-use-after-release class of bug (a crash, not a wrong value) |
 | TT1-16 | Audio/Imaging/Logbook | Every QRZ HTTP test fixture is `HttpStatusCode.OK` — zero `EnsureSuccessStatusCode`/status-code handling anywhere in source or tests. A 5xx currently surfaces as a nonsense XML-parse error instead of "QRZ is down." Cheap `[Theory]` addition, the `FakeHttpMessageHandler.ResponseFactory` seam already supports it |
 | TT1-17 `DONE` | Infra | Fixed shared paths in `JsonSettingsStoreTests.cs:102,121,156` (`/tmp/relocated`, `/tmp/fresh-install-target`, `/tmp/conflict`) with inline cleanup that's **skipped on any assertion failure** — one failed run permanently poisons every subsequent run on that machine. Two-line fix: derive from the per-test temp subdirectory |

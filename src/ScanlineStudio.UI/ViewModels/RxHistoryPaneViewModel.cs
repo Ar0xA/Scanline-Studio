@@ -309,13 +309,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <b>Auditor-caught correction</b>: an earlier version of this comment/implementation anchored
     /// to UTC midnight on the claim that <c>ReceivedAt</c> is always stored UTC -- FALSE.
     /// <c>ReceiveHistoryRecorder.RecordCompletedImageAsync</c>/<c>RecordAbandonedImageAsync</c> both
-    /// write <c>DateTimeOffset.Now</c> (LOCAL offset), and <c>SqliteReceiveHistoryStore</c>'s
-    /// `From`/`To` filter is a lexicographic TEXT compare on `ToString("O")`, which only stays
-    /// correct when the query's own offset matches the stored rows' -- a UTC-anchored query against
-    /// locally-offset rows silently misses or double-counts several hours' worth of frames around
-    /// every day boundary on any non-UTC machine. Fixed to match <see cref="ShowTodayOnly"/>'s own
-    /// `DateTime.Today` (local) convention below -- the two filters are now genuinely consistent, not
-    /// a "separate, pre-existing inconsistency" as an earlier version of this comment claimed.
+    /// write <c>DateTimeOffset.Now</c> (LOCAL offset). Fixed to match <see cref="ShowTodayOnly"/>'s
+    /// own `DateTime.Today` (local) convention below -- the two filters are now genuinely consistent,
+    /// not a "separate, pre-existing inconsistency" as an earlier version of this comment claimed.
+    /// T1-16 (production_audit.md) update: <c>SqliteReceiveHistoryStore</c>'s own `From`/`To` filter
+    /// used to be a lexicographic TEXT compare on `ReceivedAt`'s own `ToString("O")` value, which
+    /// only stayed correct when the query's own offset matched the stored rows' -- since fixed
+    /// (queries now filter on a separate, always-UTC `ReceivedAtUtc` column, genuinely instant-based
+    /// regardless of either side's offset). The local-anchoring choice here remains correct and
+    /// unchanged for a DIFFERENT reason: "today" means the local calendar day, which only
+    /// `DateTime.Today` (not a UTC anchor) actually captures -- it was never the offset-matching
+    /// workaround alone that made this right.
     ///
     /// Also includes <see cref="ReceiveDecodeState.Abandoned"/> (partial) entries alongside
     /// <see cref="ReceiveDecodeState.Completed"/> ones -- <see cref="ReceiveHistoryFilter"/> has no
@@ -541,7 +545,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// click-any-thumbnail grid, no step-nav spinner or jump button drawn), so this is new UI, not a
     /// wiring pass; added because the underlying "jump to newest" gap is real and legacy-documented,
     /// not invented. <see cref="Entries"/> is already newest-first
-    /// (<c>SqliteReceiveHistoryStore.QueryAsync</c>'s own <c>ORDER BY ReceivedAt DESC</c>), so
+    /// (<c>SqliteReceiveHistoryStore.QueryAsync</c>'s own <c>ORDER BY ReceivedAtUtc DESC</c>), so
     /// "newest" is simply the first entry already loaded -- no new query needed, unlike
     /// <see cref="RefreshAsync"/>.</summary>
     [RelayCommand(CanExecute = nameof(CanSelectLatest))]
