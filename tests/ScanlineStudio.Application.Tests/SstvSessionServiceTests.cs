@@ -251,6 +251,68 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task DecoderRestartCriticallyOverdue_WhileRxTransitionGateContended_DefersInsteadOfBlockingTheCallingThread()
+    {
+        // T1-6 (production_audit.md): the real maintenance event fires SYNCHRONOUSLY on the audio
+        // capture drain thread -- if _rxTransitionGate is already held by another caller (e.g. a
+        // concurrent PlayWithPttAsync RX-pause, not just DisposeAsync as an earlier version of this
+        // gap's own comment claimed), blocking that thread waiting for the gate risks a bounded
+        // ~_cleanupTimeout drain-thread freeze (real RX audio silently dropped, not a deadlock --
+        // both sides are independently bounded). This proves the fix: the raise itself returns
+        // promptly instead of waiting out that bound, and the deferred stop+notify still happen once
+        // the gate frees.
+        //
+        // Two SEPARATE controllable gates, not one shared gate plus assumed scheduling order (this
+        // project's own established rule -- a shared-gate test can pass by scheduling luck against
+        // unfixed code): reachedStopGate proves the FIRST StopReceivingAsync call has genuinely
+        // acquired _rxTransitionGate and is blocked inside StopCaptureAsync before this test fires
+        // the maintenance event; captureStopGate is what that first call is actually blocked on.
+        var (service, audioEngine, decoder, _, _, _, _) = CreateService();
+        await service.StartReceivingAsync();
+
+        var captureStopGate = new TaskCompletionSource();
+        var reachedStopGate = new TaskCompletionSource();
+        audioEngine.OnStopCaptureAsync = () =>
+        {
+            reachedStopGate.TrySetResult();
+            return captureStopGate.Task;
+        };
+
+        // Simulates another _rxTransitionGate holder (e.g. PlayWithPttAsync's own RX-pause step) --
+        // acquires the gate, then blocks inside StopCaptureAsync on captureStopGate.
+        var firstStopTask = service.StopReceivingAsync();
+        await reachedStopGate.Task; // the gate is now genuinely held, not just "about to be"
+
+        var criticalStopRaised = 0;
+        var notified = new TaskCompletionSource();
+        service.MaintenanceCriticalStopRaised += () =>
+        {
+            criticalStopRaised++;
+            notified.TrySetResult();
+        };
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        decoder.RaiseRestartCriticallyOverdue();
+        sw.Stop();
+
+        // The regression this test exists to catch: without the fix, this call blocks (via
+        // StopReceivingAsync().GetAwaiter().GetResult()) waiting out _rxTransitionGate's own
+        // WaitAsync(_cleanupTimeout, ...) bound before returning -- several seconds. A well-under-1s
+        // return proves it deferred instead of blocking.
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(1), $"Expected a prompt return, took {sw.Elapsed}.");
+
+        // Not yet notified -- the deferred stop is itself waiting on the still-held gate.
+        Assert.Equal(0, criticalStopRaised);
+
+        captureStopGate.SetResult(); // let the first caller's own StopCaptureAsync finish...
+        await firstStopTask; // ...which releases _rxTransitionGate.
+
+        await notified.Task.WaitAsync(TimeSpan.FromSeconds(5)); // the deferred stop can now proceed
+        Assert.Equal(1, criticalStopRaised);
+        Assert.False(service.IsReceiving);
+    }
+
+    [Fact]
     public async Task PushSamples_DecoderThrows_WaterfallStillReceivesTheSamples()
     {
         var (service, audioEngine, decoder, waterfall, _, _, _) = CreateService();
