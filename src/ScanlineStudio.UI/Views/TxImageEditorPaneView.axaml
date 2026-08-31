@@ -471,7 +471,13 @@
                          at the well's own right edge. Same "ScrollViewer clips to its own viewport"
                          mechanism already documented for the corner "+" marks and the Phase A
                          panel-title fix. -->
-                    <Border Background="{StaticResource IndustryNeutral200}" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1">
+                    <!-- Missing-feature sweep (2026-08-31): OS file drag-and-drop target — see
+                         TxImageEditorPaneView.axaml.cs's own OnEditorDrop doc comment for why THIS
+                         Border, not EditorScrollViewer or EditorCanvas, is the right element (it's
+                         backgrounded everywhere, unlike the ScrollViewer's own un-backgrounded
+                         centering gutter, so it's hit-testable regardless of zoom/scroll position). -->
+                    <Border x:Name="EditorWell" Background="{StaticResource IndustryNeutral200}" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                            DragDrop.AllowDrop="True" DragDrop.Drop="OnEditorDrop" DragDrop.DragOver="OnEditorDragOver">
                     <Panel>
                     <ScrollViewer x:Name="EditorScrollViewer"
                                   HorizontalScrollBarVisibility="Auto"

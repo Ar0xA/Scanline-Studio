@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using ScanlineStudio.UI.ViewModels;
@@ -803,5 +804,69 @@ public partial class TxImageEditorPaneView : UserControl
             text.IsEditingText = false;
             e.Handled = true;
         }
+    }
+
+    /// <summary>Missing-feature sweep (2026-08-31): OS file drag-and-drop onto the TX editor -- see
+    /// <see cref="TxImageEditorPaneViewModel.AddImagesFromDroppedFilesAsync"/>'s own doc comment for
+    /// the full feature reasoning. Wired on <c>EditorWell</c> (the well <c>Border</c>, not
+    /// <c>EditorScrollViewer</c> or <c>EditorCanvas</c>) -- the ScrollViewer's own un-backgrounded
+    /// centering gutter (the common case at Fit zoom, see <c>OnEditorWheelChanged</c>'s own
+    /// comment for the identical hit-testing hazard) is NOT hit-testable, so Avalonia's own
+    /// ancestor walk for a drop landing there would never find <c>AllowDrop</c> if it were set on
+    /// the ScrollViewer instead; the well IS backgrounded everywhere, so it's a reliable target
+    /// regardless of zoom/scroll position.
+    ///
+    /// <c>DataFormat.File</c>/<c>TryGetFiles()</c> -- Avalonia 11.3's drag-drop API
+    /// (<c>DataFormats.Files</c>/<see cref="IDataObject.GetFiles"/> are obsolete in this version and
+    /// would not compile under this project's own <c>TreatWarningsAsErrors</c>). Only accepts
+    /// <see cref="DragDropEffects.Copy"/> when the payload actually contains files (`&amp;=`, not a
+    /// plain assignment, so a source only offering Move/Link is correctly rejected rather than
+    /// forced into a Copy it never advertised).</summary>
+    private void OnEditorDragOver(object? sender, DragEventArgs e)
+    {
+        e.DragEffects = e.DataTransfer.Contains(DataFormat.File) ? e.DragEffects & DragDropEffects.Copy : DragDropEffects.None;
+    }
+
+    /// <summary><see cref="IDataTransfer"/>'s own items are only valid until it's disposed, which
+    /// happens once this handler returns -- the local file paths are read out SYNCHRONOUSLY, before
+    /// the single `await` below, not lazily inside
+    /// <see cref="TxImageEditorPaneViewModel.AddImagesFromDroppedFilesAsync"/>. Folders are excluded
+    /// (<see cref="IStorageItem"/> covers both files and folders; <c>OfType&lt;IStorageFile&gt;</c>
+    /// keeps only files). The path-extraction itself is wrapped in its own try/catch, separate from
+    /// the ViewModel's own outer guard around the rest of the work -- this code-behind has no
+    /// logger of its own (unlike e.g. <c>MainWindow.axaml.cs</c>'s own code-behind handlers), so a
+    /// failure here reports through <see cref="TxImageEditorPaneViewModel.ReportDroppedFilesUnreadable"/>
+    /// instead of being silently swallowed (this is <c>async void</c> -- there is no caller to
+    /// observe a fault otherwise).</summary>
+    private async void OnEditorDrop(object? sender, DragEventArgs e)
+    {
+        e.Handled = true;
+        // Code-review finding: this event's own DragEffects is a SEPARATE value from
+        // OnEditorDragOver's -- it's seeded from the platform's allowed-effects mask (typically
+        // Copy|Move|Link) and returned to the drag SOURCE unchanged if left alone. A source that
+        // sees Move still set treats the drop as a move and deletes the original file -- this
+        // editor only ever inserts a COPY of the dropped image, never takes ownership of the file.
+        e.DragEffects &= DragDropEffects.Copy;
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        List<string> paths;
+        try
+        {
+            paths = (e.DataTransfer.TryGetFiles() ?? [])
+                .OfType<IStorageFile>()
+                .Select(f => f.TryGetLocalPath())
+                .OfType<string>()
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            vm.ReportDroppedFilesUnreadable(ex);
+            return;
+        }
+
+        await vm.AddImagesFromDroppedFilesAsync(paths);
     }
 }

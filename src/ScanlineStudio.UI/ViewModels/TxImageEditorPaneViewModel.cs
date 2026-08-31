@@ -1204,6 +1204,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
+        await AddImageFromPathAsync(path);
+    }
+
+    /// <summary>Missing-feature sweep (2026-08-31): factored out of <see cref="AddImageFromFileAsync"/>'s
+    /// own body -- the load+insert half, unchanged behavior/contract from what that method already
+    /// did inline before this split. NOT shared with <see cref="AddImagesFromDroppedFilesAsync"/>
+    /// (code-review correction) -- that method deliberately re-implements load+downsample+insert on
+    /// its own (Task.Run offload, batched push/recompute via <see cref="InsertImageElementCore"/>
+    /// instead of one push/recompute per file), so there are genuinely two "load a path into an
+    /// image element" bodies, not one shared one.</summary>
+    private async Task AddImageFromPathAsync(string path)
+    {
         IImageSource source;
         try
         {
@@ -1432,11 +1444,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.RxHistory, entry.Id));
     }
 
-    /// <summary>Shared by all 3 Phase 2 image sources -- same crop-centered seed/undo/select/
-    /// recompute shape as <see cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>. Default
-    /// Contain fit (not Stretch) -- an inserted photo keeping its own aspect ratio by default is the
-    /// less-surprising choice; <see cref="ImageElementViewModel.Fit"/> isn't yet user-editable in
-    /// Phase 2 (Phase 4's style panel territory), but the pipeline/VM plumbing already supports it.</summary>
+    /// <summary>Shared by all 4 Phase 2/missing-feature-sweep image sources -- same crop-centered
+    /// seed/undo/select/recompute shape as <see cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>.
+    /// Default Contain fit (not Stretch) -- an inserted photo keeping its own aspect ratio by default
+    /// is the less-surprising choice; <see cref="ImageElementViewModel.Fit"/> isn't yet user-editable
+    /// in Phase 2 (Phase 4's style panel territory), but the pipeline/VM plumbing already supports it.
+    /// One-source-at-a-time push+recompute -- <see cref="AddImagesFromDroppedFilesAsync"/>'s own
+    /// multi-file batch does NOT call this (would be N undo steps + N pipeline runs for one user
+    /// gesture, violating this editor's own established "one gesture, one undo step" convention --
+    /// see <see cref="ApplySnappedElementBounds"/>'s own doc comment); it calls
+    /// <see cref="InsertImageElementCore"/> directly instead, batching the push/recompute itself.</summary>
     private void InsertImageElement(IImageSource source, ImageSourceOrigin origin)
     {
         // Downsampled to the SAME working-copy budget as the background image itself (code-review
@@ -1449,9 +1466,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             source, (int)(WorkingCopyWidth * WorkingCopyScaleFactor), (int)(WorkingCopyHeight * WorkingCopyScaleFactor), _preparer);
 
         PushUndoSnapshot();
+        InsertImageElementCore(downsampled, origin, cascadeIndex: 0);
+        RecomputePreview();
+    }
+
+    /// <summary>Missing-feature sweep (2026-08-31): the shared core <see cref="InsertImageElement"/>
+    /// factors down to -- create the element, add it, select it -- with NO push/no recompute, so a
+    /// caller inserting several elements for one user gesture (<see cref="AddImagesFromDroppedFilesAsync"/>)
+    /// can batch those into one undo step and one pipeline run instead of one each.
+    /// <paramref name="cascadeIndex"/> offsets each successive element diagonally (wrapped at 8 steps
+    /// -- <c>DefaultElementWidth</c> is 0.3 of the normalized canvas, so unwrapped growth would push
+    /// element centers outside [0,1] well before a 20-file drop finishes, and this editor's own
+    /// established convention is that out-of-bounds content is clipped at render time, not
+    /// repositioned -- so those elements would be invisible on the canvas, reachable only via the
+    /// elements list) so a multi-file drop doesn't stack every element exactly on top of the first
+    /// one, without ever pushing later elements off-canvas.</summary>
+    private void InsertImageElementCore(IImageSource downsampled, ImageSourceOrigin origin, int cascadeIndex)
+    {
+        const double CascadeOffset = 0.03;
+        const int CascadeWrap = 8;
+        var offset = CascadeOffset * (cascadeIndex % CascadeWrap);
         var element = CreateImageElement(
-            x: CropRect.X + (CropRect.Width / 2),
-            y: CropRect.Y + (CropRect.Height / 2),
+            x: CropRect.X + (CropRect.Width / 2) + offset,
+            y: CropRect.Y + (CropRect.Height / 2) + offset,
             width: DefaultElementWidth,
             height: DefaultElementWidth,
             source: downsampled,
@@ -1461,7 +1498,120 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             locked: false);
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
-        RecomputePreview();
+    }
+
+    private const int MaxDroppedImageFiles = 20;
+
+    /// <summary>Missing-feature sweep (2026-08-31): OS file drag-and-drop onto the TX editor,
+    /// wired from <c>TxImageEditorPaneView.axaml.cs</c>'s own <c>OnEditorDrop</c> code-behind
+    /// handler. Legacy YONIQ's own equivalent (<c>Main.cpp</c>'s <c>DropFile</c>) replaces the
+    /// WHOLE TX bitmap with the one dropped file (<c>DragQueryFile(hDrop, 0, ...)</c> -- index 0
+    /// only, silently ignoring any additional files); this port's own architecture is
+    /// template/compositing-based, not "one flat bitmap," so a dropped file is a new picture
+    /// ELEMENT (the same shape as the existing "+ IMAGE" flyout's 3 sources), and -- a deliberate
+    /// improvement over legacy, not an oversight -- a multi-file drop inserts one element PER file
+    /// instead of silently discarding all but the first.
+    ///
+    /// One undo step, one pipeline recompute, for the WHOLE drop (not per file) -- matches this
+    /// editor's own established "one gesture, one undo step" convention (see
+    /// <see cref="ApplySnappedElementBounds"/>'s own doc comment); each file is loaded and
+    /// downsampled INSIDE the loop, one at a time, with the full-resolution decode discarded before
+    /// the next iteration starts, so a large multi-file drop doesn't hold every full-res decode in
+    /// memory at once. Capped at <see cref="MaxDroppedImageFiles"/> -- nothing bounds how many files
+    /// an OS drag-drop can hand this method otherwise, and each one is a real decode plus a
+    /// synchronous downsample.</summary>
+    public async Task AddImagesFromDroppedFilesAsync(IReadOnlyList<string> paths)
+    {
+        try
+        {
+            if (paths.Count == 0)
+            {
+                Log.DroppedFilesEmpty(_logger);
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.NoImageFilesDropped");
+                return;
+            }
+
+            var truncated = paths.Count > MaxDroppedImageFiles;
+            var capped = truncated ? paths.Take(MaxDroppedImageFiles).ToList() : paths;
+
+            var loaded = new List<(string Path, IImageSource Downsampled)>();
+            var failureCount = 0;
+            foreach (var path in capped)
+            {
+                try
+                {
+                    var source = await _imageFileLoader.LoadOriginalAsync(path);
+                    // Downsample-then-discard-the-full-res-copy INSIDE the loop, same reasoning as
+                    // the class doc comment above -- `source` is never retained past this iteration.
+                    // Offloaded via Task.Run: DownsampleToBudget/_preparer.Resize is real synchronous
+                    // CPU work that would otherwise stall the UI thread once per dropped file (the
+                    // single-image path via InsertImageElement pays this cost once; a multi-file drop
+                    // would pay it up to MaxDroppedImageFiles times in a row with no progress feedback).
+                    var downsampled = await Task.Run(() => DownsampleToBudget(
+                        source, (int)(WorkingCopyWidth * WorkingCopyScaleFactor), (int)(WorkingCopyHeight * WorkingCopyScaleFactor), _preparer));
+                    loaded.Add((path, downsampled));
+                }
+                catch (Exception ex)
+                {
+                    Log.AddImageFromDroppedFileFailed(_logger, path, ex);
+                    failureCount++;
+                }
+            }
+
+            if (loaded.Count == 0)
+            {
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+                return;
+            }
+
+            PushUndoSnapshot();
+            _suspendPreview = true;
+            try
+            {
+                for (var i = 0; i < loaded.Count; i++)
+                {
+                    InsertImageElementCore(loaded[i].Downsampled, new ImageSourceOrigin(ImageSourceKind.File, loaded[i].Path), cascadeIndex: i);
+                }
+            }
+            finally
+            {
+                _suspendPreview = false;
+            }
+
+            RecomputePreview();
+
+            // Priority: truncation > failures > success -- both are real, but they mean different
+            // things and call for different operator actions (re-drop the remainder that got cut,
+            // vs. those specific files are just unreadable), so collapsing both into one generic
+            // "some failed" message would destroy the information the status line exists to convey.
+            StatusMessage = truncated
+                ? _localization.GetString("Panes.TxImageEditor.DroppedImagesTruncated", loaded.Count, MaxDroppedImageFiles, paths.Count)
+                : failureCount > 0
+                    ? _localization.GetString("Panes.TxImageEditor.SomeDroppedImagesFailed", loaded.Count, capped.Count, failureCount)
+                    : null;
+        }
+        catch (Exception ex)
+        {
+            // Same outer-guard shape as OnReadyRackTemplateSelected's own try/catch -- this is an
+            // async void event handler's real body (TxImageEditorPaneView.axaml.cs's own
+            // OnEditorDrop has no caller to observe a fault), so any exception this loop's own
+            // per-file try/catch didn't already handle (a bug in DownsampleToBudget/CreateImageElement/
+            // RecomputePreview itself) must be caught HERE, not left to crash the process --
+            // AppDomain.UnhandledException only logs, it does not prevent termination.
+            Log.AddImageFromFileFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+        }
+    }
+
+    /// <summary>Missing-feature sweep (2026-08-31): the code-behind's own <c>OnEditorDrop</c> extracts
+    /// local file paths from the drop payload BEFORE calling <see cref="AddImagesFromDroppedFilesAsync"/>
+    /// -- that extraction itself can throw (a malformed platform drag payload, a revoked storage
+    /// handle) and the code-behind has no logger of its own to report through, so it calls this
+    /// instead of swallowing the exception silently.</summary>
+    public void ReportDroppedFilesUnreadable(Exception exception)
+    {
+        Log.DroppedFilesUnreadable(_logger, exception);
+        StatusMessage = _localization.GetString("Panes.TxImageEditor.DroppedFilesUnreadable");
     }
 
     /// <summary>Phase 2 (spec/15-template-designer.md) "set as background" -- moves an existing
@@ -4248,6 +4398,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromFile failed")]
         public static partial void AddImageFromFileFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImagesFromDroppedFiles: failed to load {Path}")]
+        public static partial void AddImageFromDroppedFileFailed(ILogger logger, string path, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "AddImagesFromDroppedFiles: drop contained no resolvable image files")]
+        public static partial void DroppedFilesEmpty(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "AddImagesFromDroppedFiles: failed to read the drop payload")]
+        public static partial void DroppedFilesUnreadable(ILogger logger, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "AddImageFromClipboard failed")]
         public static partial void AddImageFromClipboardFailed(ILogger logger, Exception exception);
