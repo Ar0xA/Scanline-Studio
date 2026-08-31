@@ -1356,9 +1356,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>Refreshes <see cref="RxHistoryPickerEntries"/> -- called when the "From RX history"
     /// flyout opens (View-level), not kept live/subscribed (same "no lifecycle hook to unsubscribe"
     /// reasoning as <see cref="AddLastRxImage"/>). <see cref="IReceiveHistoryStore.QueryAsync"/>
-    /// already returns newest-first (<c>SqliteReceiveHistoryStore</c>'s own <c>ORDER BY ReceivedAt
-    /// DESC</c>), capped client-side to <see cref="RxHistoryPickerMaxEntries"/> since the store has
-    /// no server-side limit parameter.</summary>
+    /// already returns newest-first (<c>SqliteReceiveHistoryStore</c>'s own <c>ORDER BY
+    /// ReceivedAtUtc DESC</c>), capped client-side to <see cref="RxHistoryPickerMaxEntries"/> since
+    /// the store has no server-side limit parameter.</summary>
     [RelayCommand]
     private async Task RefreshRxHistoryPickerAsync()
     {
