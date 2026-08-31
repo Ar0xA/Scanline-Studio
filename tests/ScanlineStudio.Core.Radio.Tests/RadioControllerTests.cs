@@ -44,12 +44,15 @@ public class RadioControllerTests
     }
 
     [Fact]
-    public async Task ConnectAsync_CancelledToken_PublishesFailed_NotStuckOnConnecting()
+    public async Task ConnectAsync_AlreadyCancelledToken_ThrowsBeforePublishingAnyEvent()
     {
-        // Regression test for chunk 3b round 2's finding F2: the cancellation check used to sit
-        // outside ConnectAsync's own try block, so a cancelled token was the one failure between
-        // Connecting and Connected that published no terminal event at all -- every subscriber
-        // latched on Connecting forever while only the caller saw the throw.
+        // T1-8 (production_audit.md): ConnectAsync now waits on an internal lifecycle lock via
+        // SemaphoreSlim.WaitAsync(timeout, ct) BEFORE anything else -- that overload checks the token
+        // before touching the semaphore's count, so an already-cancelled token now throws here, before
+        // Connecting is ever published. This supersedes the old
+        // ConnectAsync_CancelledToken_PublishesFailed_NotStuckOnConnecting expectation (Connecting-then-
+        // Failed) for THIS specific case -- see the next test for that original regression's coverage,
+        // now driven deterministically via a mid-connect cancellation instead.
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
         var events = new List<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
@@ -57,6 +60,37 @@ public class RadioControllerTests
 
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => controller.ConnectAsync(new TestConnectionSpec(), cts.Token));
+
+        Assert.Empty(events);
+    }
+
+    [Fact]
+    public async Task ConnectAsync_TokenCancelledWhileConnecting_PublishesFailed_NotStuckOnConnecting()
+    {
+        // Regression test for chunk 3b round 2's finding F2: the cancellation check used to sit
+        // outside ConnectAsync's own try block, so a cancelled token was the one failure between
+        // Connecting and Connected that published no terminal event at all -- every subscriber
+        // latched on Connecting forever while only the caller saw the throw. Drives the cancellation
+        // from a ConnectionEvents subscriber reacting to Connecting (synchronous, non-blocking --
+        // Cancel() never calls back into a lifecycle method, so this is legal under T1-8's own
+        // no-synchronous-reentrant-lifecycle-call rule) rather than pre-cancelling, so the token is
+        // still live when ConnectAsync's internal lock-wait runs -- see the previous test for the
+        // pre-cancelled case, which now short-circuits before Connecting is ever published.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var events = new List<RadioConnectionState>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var cts = new CancellationTokenSource();
+        using var sub = controller.ConnectionEvents.Subscribe(e =>
+        {
+            events.Add(e.State);
+            if (e.State == RadioConnectionState.Connecting)
+            {
+                cts.Cancel();
+            }
+        });
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => controller.ConnectAsync(new TestConnectionSpec(), cts.Token));
@@ -475,9 +509,14 @@ public class RadioControllerTests
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
             _ => throw new IOException("simulated: dead backend")));
 
-        var events = new List<RadioConnectionEvent>();
+        // ConcurrentQueue, not List: this test's own PollInterval (5ms) drives events.Add and
+        // WaitUntilAsync's condition() check from two different threads fast enough to occasionally
+        // enumerate mid-Add and throw "Collection was modified" -- a pre-existing test-infra race,
+        // unrelated to production code. ConcurrentQueue.Enqueue/GetEnumerator are safe against each
+        // other; order is preserved (FIFO), so ordering assertions below are unaffected.
+        var events = new System.Collections.Concurrent.ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -492,11 +531,44 @@ public class RadioControllerTests
         Assert.Equal(4, events.Count(e => e.State == RadioConnectionState.Reconnecting));
         var giveUp = Assert.Single(events, e => e.State == RadioConnectionState.Disconnected);
         Assert.NotNull(giveUp.Reason);
-        Assert.Equal(RadioConnectionState.Disconnected, events[^1].State); // terminal
+        Assert.Equal(RadioConnectionState.Disconnected, events.Last().State); // terminal
 
         Assert.Equal("none", controller.RigId);
         Assert.False(controller.IsGenuinelyConnected);
         Assert.Null(controller.LastKnownState);
+
+        await controller.DisconnectAsync(); // must complete promptly -- session already torn down
+    }
+
+    [Fact]
+    public async Task GivesUpAfter5ConsecutiveTransportFailures_ThrowingStateChangesSubscriber_StillPublishesDisconnectedAndLogsGaveUp()
+    {
+        // Auditor code-review finding (2026-08-31): the give-up path's own StateChanges publish used
+        // to be a raw _stateChanges.OnNext(null), bypassing the subscriber-exception guard every other
+        // publish in this file goes through -- a throwing subscriber there would propagate out of the
+        // poll loop's own catch block BEFORE Log.GaveUp/the Disconnected ConnectionEvent below it ever
+        // ran, so the must-acknowledge give-up notification a real operator depends on would never
+        // fire. T1-10 (production_audit.md, same batch) makes this path materially more reachable --
+        // flrig/OmniRig "no rig attached" now routes here instead of looping on CommandFailed forever.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
+            _ => throw new IOException("simulated: dead backend")));
+
+        // ConcurrentQueue, not List -- see the sibling give-up test's own comment on this exact race.
+        var events = new System.Collections.Concurrent.ConcurrentQueue<RadioConnectionEvent>();
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        using var connectionSub = controller.ConnectionEvents.Subscribe(events.Enqueue);
+        using var throwingStateSub = controller.StateChanges.Subscribe(_ => throw new InvalidOperationException("boom"));
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+
+        await WaitUntilAsync(
+            () => events.Any(e => e.State == RadioConnectionState.Disconnected),
+            TimeSpan.FromSeconds(5));
+
+        var giveUp = Assert.Single(events, e => e.State == RadioConnectionState.Disconnected);
+        Assert.NotNull(giveUp.Reason);
+        Assert.Equal("none", controller.RigId);
 
         await controller.DisconnectAsync(); // must complete promptly -- session already torn down
     }

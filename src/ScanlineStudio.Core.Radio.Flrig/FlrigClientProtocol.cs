@@ -68,10 +68,18 @@ public sealed partial class FlrigClientProtocol : IRadioProtocol
                 // Cheap (no serial I/O, no mutex_serial on flrig's side) and checked every poll --
                 // every other read below can return a fabricated placeholder instead of a fault when
                 // the transceiver isn't actually there, so this must be verified first.
+                //
+                // T1-10 (production_audit.md): this used to throw RadioProtocolException (command-
+                // level -- "the connection is fine, don't touch backoff," per RadioController's own
+                // poll-loop comment), so a genuinely unplugged/offline rig polled flrig's own daemon
+                // forever at normal cadence and never reached RadioController's backoff/give-up path
+                // the way Hamlib/rigctld's equivalent transport failures already do. IOException
+                // matches HamlibRadioProtocol's own convention for "the rig itself is gone," not just
+                // "the daemon rejected this one command."
                 var xcvrName = await CallAsync("rig.get_xcvr", [], requestCt).ConfigureAwait(false);
                 if (string.IsNullOrEmpty(xcvrName))
                 {
-                    throw new RadioProtocolException(
+                    throw new IOException(
                         "flrig reports no transceiver connected (rig offline/unplugged, or flrig's own XML-RPC toggle is disabled).");
                 }
 

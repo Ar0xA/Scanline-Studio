@@ -1013,9 +1013,19 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public int DisconnectCallCount { get; private set; }
 
+    /// <summary>T1-8 (production_audit.md): the real RadioController.DisconnectAsync can now throw
+    /// TimeoutException (its own internal lifecycle lock timed out) -- lets a test simulate that
+    /// against OptionsWindowViewModel's Disconnect branch without a real wedged lock.</summary>
+    public Exception? DisconnectException { get; set; }
+
     public Task DisconnectAsync()
     {
         DisconnectCallCount++;
+        if (DisconnectException is { } ex)
+        {
+            throw ex;
+        }
+
         return Task.CompletedTask;
     }
 

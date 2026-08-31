@@ -58,11 +58,23 @@ public sealed partial class OmniRigRadioProtocol : IRadioProtocol
                 // Cheap pre-check, same role FlrigClientProtocol.PollAsync gives rig.get_xcvr --
                 // every other read below short-circuits on a non-Online status instead of reading
                 // stale/meaningless values from an offline rig.
+                //
+                // T1-10 (production_audit.md): this used to throw RadioProtocolException (command-
+                // level -- "the connection is fine, don't touch backoff," per RadioController's own
+                // poll-loop comment) for every non-Online status, so a genuinely unplugged/not-
+                // responding rig polled OmniRig's own daemon forever at normal cadence and never
+                // reached RadioController's backoff/give-up path the way Hamlib/rigctld's equivalent
+                // transport failures already do. IOException matches HamlibRadioProtocol's own
+                // convention for "the rig itself is gone," not just "the daemon rejected this one
+                // command" -- applies to all 4 non-Online statuses (NotConfigured/Disabled/PortBusy/
+                // NotResponding alike), since none of them can be fixed by simply retrying the next
+                // command at normal cadence; only reconfiguring OmniRig itself or the physical
+                // connection resolves any of them.
                 var status = await _client.GetStatusAsync(requestCt).ConfigureAwait(false);
                 if (status != RigStatusX.Online)
                 {
                     var statusText = await _client.GetStatusTextAsync(requestCt).ConfigureAwait(false);
-                    throw new RadioProtocolException($"OmniRig reports rig status '{status}': {statusText}");
+                    throw new IOException($"OmniRig reports rig status '{status}': {statusText}");
                 }
 
                 if (Capabilities == RadioCapabilities.None)
