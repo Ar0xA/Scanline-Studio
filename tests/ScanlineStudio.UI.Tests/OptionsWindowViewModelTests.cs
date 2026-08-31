@@ -1029,6 +1029,32 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task ToggleRadioConnectionCommand_DisconnectThrows_SetsErrorMessage_DoesNotCrash()
+    {
+        // T1-8 (production_audit.md): RadioController.DisconnectAsync can now throw TimeoutException
+        // (its own internal lifecycle lock timed out) -- this used to be effectively non-throwing
+        // (every internal failure was swallowed and logged inside RadioController itself), and this
+        // Disconnect branch sat outside ToggleRadioConnectionAsync's own try/catch (unlike the Connect
+        // branch), so an uncaught throw here would have surfaced as an unhandled exception on the UI
+        // thread via AsyncRelayCommand's own rethrow-on-fault behavior. Guards against that regression.
+        var radioSession = new FakeRadioSessionService { RigId = "elecraft-k3", DisconnectException = new TimeoutException("Timed out after 00:01:00 waiting for another radio lifecycle operation to finish.") };
+        var localization = new FakeLocalizationService();
+        var vm = new OptionsWindowViewModel(
+            new OptionsSettingsService(new FakeSettingsStore(), NullLogger<OptionsSettingsService>.Instance), localization,
+            new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, radioSession.DisconnectCallCount);
+        // FakeLocalizationService.GetString echoes the raw key, not a formatted string -- same
+        // convention as every other localized-message assertion in this file.
+        Assert.Equal("Options.Radio.Disconnect.Failed", vm.ConnectRadioErrorMessage);
+        Assert.Contains("Timed out", string.Join("; ", localization.LastArgs!), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [AvaloniaFact]
     public async Task ToggleRadioConnectionCommand_ConnectThrows_SetsErrorMessage()
     {
         var radioSession = new FakeRadioSessionService
