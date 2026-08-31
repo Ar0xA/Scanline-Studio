@@ -27,10 +27,20 @@ namespace ScanlineStudio.Abstractions.Sstv;
 /// right choice for a rolling display, just not "the same pattern"). A slow subscriber therefore
 /// delays the calling thread (in practice, the audio drain thread via the orchestrator's fan-out) --
 /// subscribers doing real UI work must marshal to their own scheduler (e.g. Avalonia's Dispatcher),
-/// not block here. The production fan-out (<c>SstvSessionService</c>) already wraps every subscriber
-/// call in a try/catch, containing both the exception-propagation gap above and a `Dispose()`-during-
-/// in-flight-push race (`ObjectDisposedException` from `OnNext`) -- a future direct consumer of this
-/// interface (bypassing that fan-out) would need to add its own containment.
+/// not block here. The production caller (<c>SstvSessionService</c>) wraps its own call to
+/// <see cref="PushSamples"/> as a whole in a try/catch (not each subscriber call individually --
+/// there is no per-subscriber isolation here, unlike <c>StateChanges</c>), containing both the
+/// exception-propagation gap above and a `Dispose()`-during-in-flight-push race
+/// (`ObjectDisposedException` from `OnNext`) -- a future direct consumer of this interface (bypassing
+/// that caller) would need to add its own containment. T1-2 (production_audit.md): a throwing
+/// subscriber can never leave the just-completed WINDOW's own slide-forward state stale/un-advanced
+/// for the NEXT <see cref="PushSamples"/> call, regardless of whether anything catches the throw --
+/// see <c>WaterfallSource.PushSamples</c>'s own comment for the ordering guarantee this depends on
+/// (a real bug this fixed: an un-advanced accumulator used to silently re-emit a stale duplicate
+/// frame on the very next call). This does NOT cover a throw mid-way through a single
+/// <see cref="PushSamples"/> call that would otherwise have filled more than one window -- any
+/// samples past the point of the throw are simply never accumulated (dropped, not corrupted; a
+/// display-only time gap in the waterfall, pre-existing and unchanged by this guarantee).
 ///
 /// <b><see cref="PushSamples"/> is single-producer-only</b> (round-1 code-review finding): its
 /// internal accumulator is mutated with no synchronization of its own -- two threads calling it
