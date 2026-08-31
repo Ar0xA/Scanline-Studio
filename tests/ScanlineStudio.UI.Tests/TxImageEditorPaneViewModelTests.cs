@@ -6128,8 +6128,9 @@ public sealed class TxImageEditorPaneViewModelTests
     // fake) -- a fake can't produce pixels to bake, and CanExecute/undo/source-replacement behavior
     // needs the real bake path to actually run without throwing. Deep pixel-equivalence testing
     // (the auditor-specified tolerance rule: tight bound on a solid box, MAE+outlier bound for text,
-    // plus a non-vacuous ink-presence assertion) is NOT built here -- tracked debt, not silently
-    // skipped, see PROJECT_BRIEF.md.
+    // plus a non-vacuous ink-presence assertion) lives further down, in
+    // FlattenElementAsync_SolidBoxElement_InteriorMatchesFillColorAfterResample and
+    // FlattenElementAsync_TextElement_MatchesDirectRenderWithinToleranceAndLeavesVisibleInk.
     private static readonly SstvModeDefinition FlattenTestMode = new(
         Id: "flatten-test", DisplayName: "FlattenTest", VisCode: 0,
         ImageWidth: 80, ImageHeight: 60, ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
@@ -6219,6 +6220,111 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.RemoveOverlayElementCommand.Execute(element);
 
         Assert.False(vm.FlattenElementCommand.CanExecute(element));
+    }
+
+    // Auditor-specified tolerance rule (PROJECT_BRIEF.md flatten test debt), tight-bound half: a
+    // 160x120 source into an 80x60 mode forces a REAL 2x downscale, so this exercises actual
+    // resampling in BakeElementIntoSource's bake-then-write-back path, not a scale=1 no-op. Source
+    // and mode share one aspect ratio (4:3) so CropRect=(0,0,1,1) projects with zero letterbox pad --
+    // confirmed against ProjectRectToCropRelative/TryGetCropContentMetrics's own formulas, not
+    // assumed -- so the default centered box's TemplateBoxElement.Bounds equals its raw
+    // (X-Width/2, Y-Height/2, Width, Height) exactly, letting this test locate the box's interior
+    // pixels in target space without needing to call that private method.
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_SolidBoxElement_InteriorMatchesFillColorAfterResample()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(160, 120), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        Assert.Equal(new Rgb24(64, 64, 64), ((BoxElementViewModel)element).FillColor);
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        var actual = preparer.ComposePreview(
+            vm.CurrentSource, vm.CropRect, FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight,
+            vm.PreserveAspect, new ImageAdjustments(), new TemplateDocument(Name: null, []));
+
+        // Default box: centered (0.5, 0.5), 0.3x0.2 -> target-pixel rect [28,52)x[24,36). Margined
+        // in by 3px on every side to stay clear of the fill/background edge (antialiasing, plus the
+        // bake's own resample), leaving a solid interior that should resample right back to the
+        // exact fill color with no blending contribution from anything outside the box.
+        for (var y = 27; y < 33; y++)
+        {
+            for (var x = 31; x < 49; x++)
+            {
+                Assert.Equal(new Rgb24(64, 64, 64), actual.GetScanline(y)[x]);
+            }
+        }
+    }
+
+    // MAE+outlier-fraction half of the same tolerance rule, plus the non-vacuous ink-presence
+    // assertion the auditor specifically called out (proving flatten didn't just silently drop the
+    // element rather than actually baking visible ink). Text can't use the box test's exact-equality
+    // bound: BakeElementIntoSource rasterizes the glyphs at 2x bake resolution and downsamples them
+    // back through the crop/composite chain, so anti-aliased edge pixels legitimately differ in
+    // rounding from a direct render at the final 80x60 target resolution -- the interior-fill case
+    // above has no edges to speak of, text is almost all edge.
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_TextElement_MatchesDirectRenderWithinToleranceAndLeavesVisibleInk()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(160, 120), FlattenTestMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        var text = (OverlayElementViewModel)element;
+        var sourceBefore = vm.CurrentSource;
+
+        // Same identity projection as the box test above (matching source/mode aspect, full-frame
+        // crop) -- the reference element's Bounds is the element's own raw center-anchored rect.
+        var bounds = new NormalizedRect(text.X - (text.Width / 2), text.Y - (text.Height / 2), text.Width, text.Height);
+        var referenceElement = new TemplateTextElement(
+            bounds, text.Z, text.ResolvedText, new FontSpec(text.FontFamily, text.FontSizeRelative, text.Bold, text.Italic), text.Color);
+        var expected = preparer.ComposePreview(
+            sourceBefore, vm.CropRect, FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight,
+            vm.PreserveAspect, new ImageAdjustments(), new TemplateDocument(Name: null, [referenceElement]));
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        var actual = preparer.ComposePreview(
+            vm.CurrentSource, vm.CropRect, FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight,
+            vm.PreserveAspect, new ImageAdjustments(), new TemplateDocument(Name: null, []));
+
+        long sumAbsDiff = 0;
+        var pixelCount = 0;
+        var outlierCount = 0;
+        var inkPixelCount = 0;
+        for (var y = 0; y < FlattenTestMode.ImageHeight; y++)
+        {
+            for (var x = 0; x < FlattenTestMode.ImageWidth; x++)
+            {
+                var e = expected.GetScanline(y)[x];
+                var a = actual.GetScanline(y)[x];
+                var diff = Math.Abs(e.R - a.R) + Math.Abs(e.G - a.G) + Math.Abs(e.B - a.B);
+                sumAbsDiff += diff;
+                pixelCount++;
+                if (diff > 90)
+                {
+                    outlierCount++;
+                }
+
+                // Background is pure black; "Text" in white ink leaves plainly non-black pixels
+                // wherever a glyph landed, regardless of anti-aliasing rounding. Threshold set well
+                // below full white -- at this frame's small text height (fontSizeRelative 0.1 into
+                // an 80x60 mode is ~6px tall), most glyph pixels are partial-coverage edge pixels,
+                // not solid interior.
+                if (a.R > 40 && a.G > 40 && a.B > 40)
+                {
+                    inkPixelCount++;
+                }
+            }
+        }
+
+        var mae = (double)sumAbsDiff / (pixelCount * 3);
+        var outlierFraction = (double)outlierCount / pixelCount;
+        Assert.True(mae < 1.5, $"Mean absolute error too high: {mae}");
+        Assert.True(outlierFraction < 0.02, $"Outlier fraction too high: {outlierFraction}");
+        Assert.True(inkPixelCount > 5, $"Expected visible text ink after flatten, found {inkPixelCount} bright pixels");
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
