@@ -279,8 +279,7 @@ T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
 **Update (2026-08-31):** Tier C is now closed (see below) and T1-2/T1-6/T1-16/T1-3 (Tier D) are all
-done — see the "Tier D progress" notes further below. T1-5/T1-14 still each need their own
-plan-review round.
+done — see the "Tier D progress" notes further below. T1-14 still needs its own plan-review round.
 
 **Tier C closed (2026-08-31):** all 3 decided and implemented.
 - **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
@@ -396,6 +395,31 @@ mid-stream coefficient/mode switches landing at non-capacity-multiple offsets. B
 confirmed via a deliberate mutation (flipped push direction) to fail hard against a broken
 implementation, then restored and re-verified. Full `Core.Sstv.Tests` suite (1556 tests) and full
 solution build green.
+
+**Tier D progress — T1-5 closed (2026-08-31):** extracted a `PttSafetyCoordinator` class owning the 8
+PTT keying/un-keying state fields out of `SstvSessionService`'s `PlayWithPttAsync`/`SetPttLockAsync`/
+`DisposeAsync`; `_disposed`/`_transmitInFlight`/`_pttLockGate` deliberately stay on the service.
+Corrected framing: this does NOT shrink `PlayWithPttAsync`'s own line count — the real value is
+state-machine testability (the two documented lost-update races are now directly testable via
+ordinary sequential calls, no thread races needed), not size reduction; "biggest lift" undersold how
+much design work the shape itself needed, not the amount of code moved. A dedicated investigation
+found the regression suite's own `RiskB_UnlockRacingCleanup_DoesNotStrandRxStopped` test does not
+actually force the race it claims to (its two calls run sequentially, not concurrently) — user
+approved fixing this in the same pass, not deferring it. 3 rounds of plan-review: round 1 set the
+direction (pure-synchronous coordinator, no I/O/callbacks — avoids a self-deadlock risk a
+callback-shaped design would have introduced); round 2 found 5 real blockers in the first concrete
+design (a flag that would permanently latch a false alarm on the no-radio path, a count that could go
+negative, a missing `RunContinuationsAsynchronously` risking inline-continuation self-deadlock, an
+unreturnable log-choice, a stress-test invariant satisfied by the exact bug it was meant to catch);
+round 3 re-derived the design from a fresh line-by-line re-read of the actual source (not the prior
+round's own summary) and found 2 of those blocker classes recurring plus 3 more field-ownership gaps,
+before finally verifying "ready to build." 1 code-review round: go for production, only cosmetic/
+test-only nits (dangling XML doc `<see cref>`s to now-moved fields, a stress-test thread-id assertion
+that could flake under thread-pool scheduling) — both fixed. Mutation check (removed
+`ReleaseKeyedSlot`'s null-guard) confirmed the pre-existing 66-test regression suite catches a real
+defect, not just passes vacuously. New `PttSafetyCoordinatorTests.cs` (10 tests) directly proves the
+extraction's own argued benefit: Race 1 and Risk B's deterministic half now testable via ordinary
+sequential calls. Full `Application.Tests` (447) and `UI.Tests` (1208) green.
 
 ---
 
