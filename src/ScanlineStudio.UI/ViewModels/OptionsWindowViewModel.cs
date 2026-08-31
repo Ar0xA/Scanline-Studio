@@ -1005,7 +1005,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         if (IsRadioConnected)
         {
             Log.DisconnectRadioInvoked(_logger);
-            await _radioSession.DisconnectAsync().ConfigureAwait(false);
+            try
+            {
+                // T1-8 (production_audit.md): RadioController.DisconnectAsync now throws
+                // TimeoutException if another lifecycle call holds the internal lock past its own
+                // bound (a new possibility this method never had to handle before -- every prior
+                // internal failure was swallowed and logged inside RadioController itself). Uncaught,
+                // this would surface as an unhandled exception on the UI thread via
+                // AsyncRelayCommand's own rethrow-on-fault behavior.
+                await _radioSession.DisconnectAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.DisconnectRadioFailed(_logger, ex);
+                Dispatcher.UIThread.Post(() => ConnectRadioErrorMessage = _localization.GetString("Options.Radio.Disconnect.Failed", ex.Message));
+                return;
+            }
+
             // Stale test-status messages ("already connected") no longer apply once actually
             // disconnected -- same reasoning as OnRadioBackendIdChanged's own clearing below.
             Dispatcher.UIThread.Post(() =>
@@ -3796,5 +3812,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ConnectRadio failed")]
         public static partial void ConnectRadioFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "DisconnectRadio failed")]
+        public static partial void DisconnectRadioFailed(ILogger logger, Exception ex);
     }
 }

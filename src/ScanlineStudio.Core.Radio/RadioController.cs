@@ -33,6 +33,13 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     // status line. 5 consecutive transport-level failures with no intervening success or
     // CommandFailed (both reset the counter -- see RunPollLoopAsync's own catch blocks) now gives up:
     // a full disconnect, not another backoff round.
+    //
+    // T1-9 (production_audit.md): deliberately no auto-recovery after give-up -- a fresh
+    // ConnectAsync (the Options dialog's own reconnect affordance) is the only way back. Give-up is
+    // never silent (RadioStatusViewModel/OptionsWindowViewModel both surface a must-acknowledge
+    // "gave up" notification), so the operator always knows to go there. Confirmed as the intended
+    // design, not revisited: a background retry-forever after give-up would reopen the exact
+    // "silent retry against a dead config" complaint this threshold exists to fix.
     private const int MaxConnectAttempts = 5;
 
     private readonly IReadOnlyList<IRadioProtocolFactory> _factories;
@@ -56,10 +63,38 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
     // (DisconnectAsync -> DisposeAsync -> app quit) is worse.
     private static readonly TimeSpan ProtocolDisposeTimeout = TimeSpan.FromSeconds(10);
 
+    // T1-8 (production_audit.md): bounds _lifecycleLock's own wait (see that field's doc comment).
+    // ConnectAsync's locked region can run DisconnectLockedAsync's own worst case (PollLoopShutdownTimeout
+    // + ProtocolDisposeTimeout = 20s) TWICE -- once unconditionally at the top, and again from its own
+    // catch block on the RigId-getter-throws path (_sessionActive can already be true there) -- so 30s
+    // is not a safety margin, it's the real worst case. 60s leaves genuine headroom above it. Exceeds
+    // Program.cs's own ~10s host-teardown budget, so a wedged DisposeAsync during app shutdown never
+    // actually waits out this bound -- Program's own timeout is the real backstop there, this one only
+    // matters for a live ConnectAsync/DisconnectAsync call during normal operation.
+    private static readonly TimeSpan LifecycleLockTimeout = TimeSpan.FromSeconds(60);
+
+    // T1-8 (production_audit.md): ConnectAsync/DisconnectAsync/DisposeAsync now serialize against each
+    // other through this -- see IRadioController's own doc comment for the guarantee this provides and
+    // the hard rule it depends on (no ConnectionEvents/StateChanges subscriber may call back into any of
+    // these 3 methods SYNCHRONOUSLY -- doing so deadlocks the singleton controller, since Subject<T>.OnNext
+    // runs subscribers inline on the publishing thread, which by then already holds this lock). Never
+    // disposed -- see DisposeAsync's own comment on why (matches HamlibProtocolFactory.Dispose's identical
+    // reasoning for its own SemaphoreSlim).
+    private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
+
     private IRadioProtocol? _protocol;
     private CancellationTokenSource? _pollLoopCts;
     private Task? _pollLoopTask;
-    private bool _disposed;
+
+    // T1-8 (production_audit.md): was `private bool _disposed;`, plain-write/plain-read. Now an atomic
+    // claim (Interlocked.Exchange in DisposeAsync) so two concurrent DisposeAsync calls can't both pass
+    // a "not yet disposed" check before either sets it -- see DisposeAsync's own comment. IsDisposed's
+    // Volatile.Read also fixes a pre-existing non-volatile cross-thread read of the old field (relevant
+    // on ARM64, a supported target -- see HamlibProtocolFactory's own volatile field for the same class
+    // of fix).
+    private int _disposeClaimed;
+
+    private bool IsDisposed => Volatile.Read(ref _disposeClaimed) != 0;
 
     // True from the moment ConnectAsync successfully resolves a protocol until DisconnectAsync tears
     // the session down -- deliberately NOT derived from `_protocol is not null`. The poll loop's
@@ -129,7 +164,7 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
     public async Task ConnectAsync(RadioConnectionSpec spec, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
+        ObjectDisposedException.ThrowIf(IsDisposed, this);
         ArgumentNullException.ThrowIfNull(spec);
 
         if (spec.Strategy == PollingStrategy.Scan)
@@ -138,62 +173,115 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 "PollingStrategy.Scan is not implemented by this RadioController reference implementation.");
         }
 
-        await DisconnectAsync().ConfigureAwait(false);
+        // T1-8 (production_audit.md): an already-cancelled token fails HERE, before Connecting is ever
+        // published -- SemaphoreSlim.WaitAsync(timeout, ct) checks the token before touching the count.
+        // Deliberately no events published in that case (better than the old Connecting-then-Failed:
+        // a caller whose token was already cancelled never wanted to connect). See IRadioController's
+        // own doc comment.
+        if (!await _lifecycleLock.WaitAsync(LifecycleLockTimeout, ct).ConfigureAwait(false))
+        {
+            Log.LifecycleLockTimedOut(_logger, nameof(ConnectAsync), LifecycleLockTimeout);
+            throw new TimeoutException(
+                $"Timed out after {LifecycleLockTimeout} waiting for another radio lifecycle operation to finish.");
+        }
 
-        PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
-
-        IRadioProtocol resolved;
         try
         {
-            // Inside the try, not above it: this used to sit outside, so a cancelled token was the one
-            // failure between Connecting and Connected that published no terminal event at all --
-            // every subscriber latched on Connecting forever while only the caller saw the throw.
-            ct.ThrowIfCancellationRequested();
+            // Re-checked immediately after acquiring the lock: a concurrent DisposeAsync could have
+            // claimed and torn down the controller while this call was waiting for the lock -- the
+            // early check above only rejects the common already-disposed-before-the-call case.
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
 
-            resolved = ResolveProtocol(spec);
-            _protocol = resolved;
-            // Set BEFORE reading RigId: everything from here on is reachable by DisconnectAsync's
-            // (_sessionActive-gated) teardown, so a throw out of a backend's own RigId getter disposes
-            // the protocol instead of orphaning it. _protocol non-null with _sessionActive false is
-            // exactly the state that teardown skips.
-            _sessionActive = true;
-            _rigId = resolved.RigId;
+            await DisconnectLockedAsync().ConfigureAwait(false);
+
+            PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
+
+            IRadioProtocol resolved;
+            try
+            {
+                // Inside the try, not above it: this used to sit outside, so a cancelled token was the
+                // one failure between Connecting and Connected that published no terminal event at all
+                // -- every subscriber latched on Connecting forever while only the caller saw the throw.
+                ct.ThrowIfCancellationRequested();
+
+                resolved = ResolveProtocol(spec);
+                _protocol = resolved;
+                // Set BEFORE reading RigId: everything from here on is reachable by
+                // DisconnectLockedAsync's (_sessionActive-gated) teardown, so a throw out of a backend's
+                // own RigId getter disposes the protocol instead of orphaning it. _protocol non-null
+                // with _sessionActive false is exactly the state that teardown skips.
+                _sessionActive = true;
+                _rigId = resolved.RigId;
+            }
+            catch (Exception ex)
+            {
+                // Connecting was already published above -- without this, a cancelled token or a
+                // resolution failure leaves every subscriber latched on Connecting forever while only
+                // the caller sees the throw.
+                PublishConnectionEvent(RadioConnectionState.Failed, ex.Message, ex);
+                // A no-op unless _sessionActive was already set (the RigId-getter-throws case) -- the
+                // ct-cancelled and ResolveProtocol-throws cases have no session to tear down yet.
+                await DisconnectLockedAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            // Code-review nit: reset BEFORE the publish below, matching this file's own write-then-publish
+            // discipline at every other _connectionConfirmed site (benign either order here -- a fresh
+            // session's latch is already false whenever this line is reached -- but consistency removes
+            // the need to reason about why THIS site is the one exception).
+            _connectionConfirmed = false;
+            PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
+            // Logs the local just resolved, not _protocol: belt-and-suspenders against a field read
+            // racing a concurrent teardown -- structurally no longer reachable via a SYNCHRONOUS
+            // reentrant subscriber call now that ConnectAsync/DisconnectAsync/DisposeAsync serialize
+            // against each other (T1-8, production_audit.md -- see IRadioController's own doc comment;
+            // a subscriber that tried this would now deadlock instead), but logging the local costs
+            // nothing and avoids relying on that guarantee here too.
+            Log.Connected(_logger, spec.GetType().Name, resolved.Capabilities);
+            _lastLoggedFailureState = null;
+
+            _pollLoopCts = new CancellationTokenSource();
+            // Capture the token into a local before scheduling: Task.Run's lambda body executes later,
+            // on a thread-pool thread, so reading the _pollLoopCts field directly inside it would race
+            // a concurrent DisconnectAsync that nulls the field before the lambda actually runs --
+            // NullReferenceException, caught by a test that connects and immediately disconnects.
+            var loopCt = _pollLoopCts.Token;
+            _pollLoopTask = Task.Run(() => RunPollLoopAsync(spec, loopCt), CancellationToken.None);
         }
-        catch (Exception ex)
+        finally
         {
-            // Connecting was already published above -- without this, a cancelled token or a resolution
-            // failure leaves every subscriber latched on Connecting forever while only the caller sees
-            // the throw.
-            PublishConnectionEvent(RadioConnectionState.Failed, ex.Message, ex);
-            // A no-op unless _sessionActive was already set (the RigId-getter-throws case) -- the
-            // ct-cancelled and ResolveProtocol-throws cases have no session to tear down yet.
-            await DisconnectAsync().ConfigureAwait(false);
-            throw;
+            _lifecycleLock.Release();
         }
-
-        // Code-review nit: reset BEFORE the publish below, matching this file's own write-then-publish
-        // discipline at every other _connectionConfirmed site (benign either order here -- a fresh
-        // session's latch is already false whenever this line is reached -- but consistency removes
-        // the need to reason about why THIS site is the one exception).
-        _connectionConfirmed = false;
-        PublishConnectionEvent(RadioConnectionState.Connected, reason: null, error: null);
-        // Logs the local just resolved, not _protocol: a ConnectionEvents subscriber that reacts to
-        // Connected by synchronously calling DisconnectAsync (nothing prevents that -- Subject<T>.OnNext
-        // runs subscribers inline) would null _protocol before this line's first await, turning a field
-        // read here into a NullReferenceException.
-        Log.Connected(_logger, spec.GetType().Name, resolved.Capabilities);
-        _lastLoggedFailureState = null;
-
-        _pollLoopCts = new CancellationTokenSource();
-        // Capture the token into a local before scheduling: Task.Run's lambda body executes later, on
-        // a thread-pool thread, so reading the _pollLoopCts field directly inside it would race a
-        // concurrent DisconnectAsync that nulls the field before the lambda actually runs --
-        // NullReferenceException, caught by a test that connects and immediately disconnects.
-        var loopCt = _pollLoopCts.Token;
-        _pollLoopTask = Task.Run(() => RunPollLoopAsync(spec, loopCt), CancellationToken.None);
     }
 
     public async Task DisconnectAsync()
+    {
+        // T1-8 (production_audit.md): bounded, not indefinite -- a caller must not hang forever behind
+        // a wedged concurrent lifecycle call. See LifecycleLockTimeout's own doc comment for the bound.
+        if (!await _lifecycleLock.WaitAsync(LifecycleLockTimeout).ConfigureAwait(false))
+        {
+            Log.LifecycleLockTimedOut(_logger, nameof(DisconnectAsync), LifecycleLockTimeout);
+            throw new TimeoutException(
+                $"Timed out after {LifecycleLockTimeout} waiting for another radio lifecycle operation to finish.");
+        }
+
+        try
+        {
+            await DisconnectLockedAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+    }
+
+    // T1-8 (production_audit.md): the actual teardown body, split out of the public DisconnectAsync so
+    // ConnectAsync/DisposeAsync can call it directly while already holding _lifecycleLock -- both call
+    // into this (ConnectAsync twice: unconditionally at its own top, and again from its own catch
+    // block), and re-acquiring the same non-reentrant semaphore from inside itself would deadlock on
+    // literally every connect, not just under concurrent external callers. Assumes the caller already
+    // holds _lifecycleLock; never call this directly without it.
+    private async Task DisconnectLockedAsync()
     {
         if (_pollLoopCts is not null)
         {
@@ -260,7 +348,13 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                 }
             }
 
-            _stateChanges.OnNext(null);
+            // T1-8 (production_audit.md): was a raw _stateChanges.OnNext(null) -- an unguarded publish
+            // that bypassed the subscriber-exception guard every other publish in this file goes
+            // through (PublishState/PublishConnectionEvent both catch and log; this didn't). Routed
+            // through PublishState (widened to accept the null "disconnected" sentinel) while already
+            // restructuring this method for the lifecycle lock -- pre-existing gap, unrelated to the
+            // lock itself. The poll loop's own give-up path had an identical gap; fixed the same way.
+            PublishState(null);
             PublishConnectionEvent(RadioConnectionState.Disconnected, reason: null, error: null);
             Log.Disconnected(_logger);
         }
@@ -385,7 +479,12 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
                     _rigId = "none";
                     _connectionConfirmed = false;
                     _sessionActive = false;
-                    _stateChanges.OnNext(null);
+                    // T1-8 (production_audit.md), auditor code-review finding (2026-08-31): was a raw
+                    // _stateChanges.OnNext(null) -- a throwing subscriber here would propagate out of
+                    // this catch block BEFORE Log.GaveUp/the Disconnected publish below ever run, so
+                    // the must-acknowledge give-up notification would never fire. Routed through
+                    // PublishState, same guard as DisconnectLockedAsync's own equivalent publish.
+                    PublishState(null);
 
                     // Log + publish BEFORE the dispose below, with NO await in between:
                     // SafeDisposeProtocolAsync is unbounded (unlike DisconnectAsync's own
@@ -582,7 +681,11 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         return TimeSpan.FromMilliseconds(delayMs);
     }
 
-    private void PublishState(RadioState state)
+    // T1-8 (production_audit.md): widened from RadioState to RadioState? so DisconnectLockedAsync's
+    // own "disconnected" sentinel publish can go through this same subscriber-exception guard instead
+    // of calling _stateChanges.OnNext directly -- the RunPollLoopAsync call site below is unaffected,
+    // its own `state` argument is never null.
+    private void PublishState(RadioState? state)
     {
         try
         {
@@ -616,13 +719,44 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_disposed)
+        // T1-8 (production_audit.md): atomic claim, not a plain check-then-write -- two concurrent
+        // DisposeAsync calls could otherwise both pass a "not yet disposed" check before either wrote
+        // true, and both would then try to run teardown. Exactly one caller (whichever wins the
+        // exchange) proceeds past this point; every other caller returns immediately.
+        if (Interlocked.Exchange(ref _disposeClaimed, 1) != 0)
         {
             return;
         }
 
-        _disposed = true;
-        await DisconnectAsync().ConfigureAwait(false);
+        if (!await _lifecycleLock.WaitAsync(LifecycleLockTimeout).ConfigureAwait(false))
+        {
+            // Shutdown must still complete even if some other lifecycle call is wedged -- Program.cs's
+            // own bounded teardown already assumes DisposeAsync itself won't hang forever on this.
+            // Deliberately logged, not thrown: unlike ConnectAsync/DisconnectAsync there is no caller
+            // left in a shutdown path to usefully react to a thrown exception. End state on this path:
+            // IsDisposed already reads true (the claim above already happened), but the real teardown
+            // (poll loop stop, protocol dispose, subject completion) never ran, and no later
+            // DisposeAsync call will retry it -- an accepted leak, not a bug, matching this class's own
+            // existing PollLoopShutdownTimeout/ProtocolDisposeTimeout precedent of "abandon rather than
+            // hang app shutdown forever."
+            Log.LifecycleLockTimedOut(_logger, nameof(DisposeAsync), LifecycleLockTimeout);
+            return;
+        }
+
+        try
+        {
+            await DisconnectLockedAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _lifecycleLock.Release();
+        }
+
+        // Outside the lock, not inside its try/finally: only the exchange-winning caller ever reaches
+        // here, so there is no reentrancy exposure -- and OnCompleted runs subscriber code inline
+        // (Subject<T>'s own contract), so keeping it out of the locked region means even a subscriber
+        // that ignores the "no synchronous reentrant lifecycle call" rule can't deadlock against a lock
+        // this method has already released.
         _stateChanges.OnCompleted();
         _stateChanges.Dispose();
         _connectionEvents.OnCompleted();
@@ -679,5 +813,8 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "RadioController disposed")]
         public static partial void Disposed(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "{Operation} timed out after {Timeout} waiting for another radio lifecycle operation to finish")]
+        public static partial void LifecycleLockTimedOut(ILogger logger, string operation, TimeSpan timeout);
     }
 }

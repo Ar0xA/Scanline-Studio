@@ -76,12 +76,15 @@ public sealed class OmniRigRadioProtocolTests
     [InlineData(RigStatusX.Disabled)]
     [InlineData(RigStatusX.PortBusy)]
     [InlineData(RigStatusX.NotResponding)]
-    public async Task PollAsync_NotOnline_ThrowsWithStatusText(RigStatusX status)
+    public async Task PollAsync_NotOnline_ThrowsIOExceptionWithStatusText(RigStatusX status)
     {
+        // T1-10 (production_audit.md): IOException, not RadioProtocolException, for all 4 non-Online
+        // statuses -- none of them are fixed by retrying the next command at normal cadence, so all
+        // must reach RadioController's transport-level backoff/give-up path.
         var client = new FakeOmniRigComClient { Status = status, StatusText = "some status text" };
         var sut = CreateSut(client);
 
-        var ex = await Assert.ThrowsAsync<RadioProtocolException>(() => sut.PollAsync(CancellationToken.None));
+        var ex = await Assert.ThrowsAsync<IOException>(() => sut.PollAsync(CancellationToken.None));
         Assert.Contains("some status text", ex.Message, StringComparison.Ordinal);
     }
 

@@ -263,6 +263,26 @@ code-review round found two real must-fix issues before commit, both fixed and r
 T1-8/T1-9/T1-10 (Tier C) still need one user decision each before coding. T1-1/T1-2/T1-3/T1-5/T1-6/
 T1-14/T1-16 (Tier D) still need their own plan-review round.
 
+**Tier C closed (2026-08-31):** all 3 decided and implemented.
+- **T1-9:** kept manual-only recovery after give-up (user's own decision, no code change beyond a
+  doc comment confirming the design is deliberate).
+- **T1-10:** flrig/OmniRig's "no rig attached" check now throws `IOException` instead of
+  `RadioProtocolException`, matching `HamlibRadioProtocol`'s own convention — reaches
+  `RadioController`'s transport-level backoff/give-up path instead of looping on `CommandFailed`
+  forever.
+- **T1-8:** `RadioController.ConnectAsync`/`DisconnectAsync`/`DisposeAsync` now serialize against
+  each other via an internal `SemaphoreSlim`, closing the documented-but-unenforced contract.
+  CLAUDE.md §7's full 2-round plan-review + code-review cadence (concurrency work) ran in full: round
+  1 of plan-review found a genuine self-deadlock hazard (`ConnectAsync`/`DisposeAsync` both call
+  `DisconnectAsync` internally — fixed via a private `DisconnectLockedAsync` split); round 2 found a
+  disposed-flag TOCTOU (fixed via an atomic `Interlocked.Exchange` claim) and a new uncaught-exception
+  path on the Options dialog's Disconnect button (fixed with a try/catch, matching the existing
+  Connect-branch pattern). The code-review round found one more real gap — a second unguarded
+  `_stateChanges.OnNext(null)` publish in the poll loop's give-up path, made materially more
+  reachable by T1-10's own change — fixed the same way as the first instance, plus a new regression
+  test. Applying that fix's own comment update briefly dropped the actual publish call; caught by a
+  now-failing test (`PollLoop_PublishesStateChanges_AndUpdatesLastKnownState`), fixed immediately.
+
 ---
 
 ## Tier 2 — medium priority, batch with adjacent work

@@ -74,15 +74,18 @@ public sealed partial class FlrigClientProtocolTests
     }
 
     [Fact]
-    public async Task PollAsync_XcvrOffline_ThrowsRadioProtocolException()
+    public async Task PollAsync_XcvrOffline_ThrowsIOException()
     {
+        // T1-10 (production_audit.md): IOException, not RadioProtocolException -- a genuinely
+        // unplugged/offline rig must reach RadioController's transport-level backoff/give-up path,
+        // not loop forever at normal poll cadence the way a command-level failure does.
         var handler = new FakeHttpMessageHandler
         {
             ResponseFactory = (_, body) => MethodNameOf(body) == "rig.get_xcvr" ? StringResponse("") : throw new InvalidOperationException("Should not be called"),
         };
         await using var protocol = CreateProtocol(handler);
 
-        await Assert.ThrowsAsync<RadioProtocolException>(() => protocol.PollAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<IOException>(() => protocol.PollAsync(CancellationToken.None));
     }
 
     [Fact]

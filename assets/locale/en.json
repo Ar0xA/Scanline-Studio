@@ -593,6 +593,7 @@
   "Options.Radio.Disconnect": "Disconnect",
   "Options.Radio.Connect.Help": "Connects the app's real radio session, saving any changes above first. Takes effect immediately, no restart needed.",
   "Options.Radio.Connect.SaveFailed": "Couldn't save settings before connecting: {0}",
+  "Options.Radio.Disconnect.Failed": "Couldn't disconnect: {0}",
   "Options.Radio.Disconnect.Help": "Disconnects the app's real radio session.",
   "Options.Radio.Connect.Help.None": "Select a backend above first -- there is nothing to connect to with \"None\".",
   "Options.Radio.Connect.Help.NeedsTestConnection": "Run \"Test connection\" successfully first.",

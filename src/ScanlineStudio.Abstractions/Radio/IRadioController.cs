@@ -82,18 +82,34 @@ public interface IRadioController
     IObservable<RadioState> StateChanges { get; }
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }
 
-    /// <summary><b>Lifecycle calls are not internally serialized.</b> <see cref="ConnectAsync"/>,
-    /// <see cref="DisconnectAsync"/>, and <see cref="IAsyncDisposable.DisposeAsync"/> (where implemented)
-    /// must not overlap each other — the caller owns that mutual exclusion. Overlapping them is
-    /// undefined: e.g. a <see cref="DisconnectAsync"/> landing inside a concurrent
-    /// <see cref="ConnectAsync"/>'s own teardown-then-resolve window can observe a fully torn-down
-    /// controller, no-op, and return as if it disconnected successfully — while the session it meant to
-    /// stop finishes coming up and keeps polling. The <c>Set*Async</c> members and the two observable
-    /// streams ARE safe to call/subscribe concurrently with each other and with a lifecycle call.</summary>
+    /// <summary><b>Lifecycle calls ARE internally serialized</b> (T1-8, production_audit.md — this
+    /// used to say the opposite; two real callers, a preset switch and the Options dialog's own
+    /// Connect/Disconnect toggle, each only guarded against themselves, never against each other).
+    /// <see cref="ConnectAsync"/>, <see cref="DisconnectAsync"/>, and
+    /// <see cref="IAsyncDisposable.DisposeAsync"/> (where implemented) queue behind one another instead
+    /// of overlapping — a caller no longer needs its own mutual-exclusion around these 3 methods.
+    /// <b>Hard rule this depends on:</b> no <see cref="ConnectionEvents"/>/<see cref="StateChanges"/>
+    /// subscriber may call back into any of these 3 methods SYNCHRONOUSLY (blocking, not merely
+    /// awaiting) from inside its own <c>OnNext</c>/<c>OnCompleted</c> handler. Both streams publish
+    /// inline on the calling thread; every <see cref="ConnectionEvents"/> publish and most
+    /// <see cref="StateChanges"/> publishes happen while the internal lock is already held, so a
+    /// synchronous reentrant call from one of THOSE deadlocks outright. The one exception —
+    /// <see cref="StateChanges"/>'s normal source, the background poll loop — holds no lock, so a
+    /// synchronous reentrant call from a poll-loop-driven publish instead stalls
+    /// <see cref="DisconnectAsync"/> for its own internal bounded wait (currently 10s) before the poll
+    /// loop is abandoned and torn down anyway — not a deadlock, but still a multi-second stall and
+    /// still never intentional. Treat the rule as absolute regardless of which publish triggered it.
+    /// Awaiting (yielding, then calling back in later) is fine. A bounded wait
+    /// backs the internal lock too — a caller stuck behind an abnormally slow or wedged concurrent
+    /// lifecycle call gets a thrown <see cref="TimeoutException"/> rather than hanging forever (an
+    /// already-cancelled <paramref name="ct"/> to <see cref="ConnectAsync"/> fails at this same point,
+    /// before <see cref="RadioConnectionState.Connecting"/> is ever published). The <c>Set*Async</c>
+    /// members and the two observable streams ARE still safe to call/subscribe concurrently with each
+    /// other and with a lifecycle call.</summary>
     Task ConnectAsync(RadioConnectionSpec spec, CancellationToken ct);
 
     /// <summary>See <see cref="ConnectAsync"/>'s own doc comment for the lifecycle-serialization
-    /// requirement this method shares.</summary>
+    /// guarantee and the synchronous-reentrancy rule this method shares.</summary>
     Task DisconnectAsync();
     Task SetFrequencyAsync(long hz, CancellationToken ct);
     Task SetModeAsync(RadioMode mode, CancellationToken ct);
