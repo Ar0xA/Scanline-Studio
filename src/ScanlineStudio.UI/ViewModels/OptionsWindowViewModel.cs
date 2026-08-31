@@ -70,6 +70,22 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// this long if the operator doesn't click Stop first.</summary>
     private static readonly TimeSpan MaxTuneDuration = TimeSpan.FromSeconds(30);
 
+    /// <summary>T1-11 (production_audit.md): the 4 "Test Connection" commands (rigctld/flrig/
+    /// OmniRig/Hamlib) used to call <c>TestConnectionAsync</c> with no cancellation token at all,
+    /// unlike the sibling <see cref="MaxTestPttDuration"/>-bounded PTT tests -- a hung
+    /// <c>PollAsync</c> left "Testing…" stuck forever with no way to retry (the command auto-disables
+    /// while running). Same value as <see cref="MaxTuneDuration"/>, no particular relationship to it
+    /// otherwise -- both just need "long enough for a real device, short enough a human doesn't wonder
+    /// if the app hung."
+    /// <para>Code-review finding: closes the hang for rigctld/flrig/OmniRig, but NOT fully for
+    /// Hamlib -- <c>HamlibRadioProtocol</c> only honors its token at the semaphore wait boundary
+    /// (uncontended here, so instant), and <c>PollAsync</c>'s own <c>EnsureConnectedAsync</c>
+    /// (<c>rig_open</c>) takes no cancellation token at all. A wedged native <c>rig_open</c> can
+    /// still leave "Testing…" stuck for the Hamlib backend specifically -- same pre-existing
+    /// limitation <c>Program.cs</c> already documents elsewhere, not something this fix
+    /// introduces or fully closes.</para></summary>
+    private static readonly TimeSpan MaxTestConnectionDuration = TimeSpan.FromSeconds(30);
+
     /// <summary>Fixed AFC-lock tone, matching <see cref="RadioStatusViewModel"/>'s own
     /// <c>TuneFrequencyHz</c> default -- this tab's Tune button is scoped to the "key a tone, dial
     /// Pwr to the wattage I want" workflow only, not a general-purpose configurable test-tone
@@ -1238,7 +1254,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
         try
         {
-            var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port)).ConfigureAwait(false);
+            using var cts = new CancellationTokenSource(MaxTestConnectionDuration);
+            var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 RigctldTestSucceeded = result.Success;
@@ -1323,7 +1340,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
         try
         {
-            var result = await _radioSession.TestConnectionAsync(new FlrigConnectionSpec(host, port)).ConfigureAwait(false);
+            using var cts = new CancellationTokenSource(MaxTestConnectionDuration);
+            var result = await _radioSession.TestConnectionAsync(new FlrigConnectionSpec(host, port), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 FlrigTestSucceeded = result.Success;
@@ -1388,7 +1406,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
         try
         {
-            var result = await _radioSession.TestConnectionAsync(new OmniRigConnectionSpec()).ConfigureAwait(false);
+            using var cts = new CancellationTokenSource(MaxTestConnectionDuration);
+            var result = await _radioSession.TestConnectionAsync(new OmniRigConnectionSpec(), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 OmniRigTestSucceeded = result.Success;
@@ -1536,7 +1555,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         };
         try
         {
-            var result = await _radioSession.TestConnectionAsync(spec).ConfigureAwait(false);
+            using var cts = new CancellationTokenSource(MaxTestConnectionDuration);
+            var result = await _radioSession.TestConnectionAsync(spec, cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 HamlibCatTestSucceeded = result.Success;
