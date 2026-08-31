@@ -226,6 +226,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // would each trigger a full Crop+Resize+ApplyOverlay against transiently inconsistent state.
     private bool _suspendPreview;
 
+    // T0-12: guards RecomputePreviewCoalesced's deferred Dispatcher.UIThread.Post continuation --
+    // see Dispose()'s own comment.
+    private bool _disposed;
+
     // Also set/read by ApplyState (undo/redo) and RotateImageOnly -- see EditorSnapshot's own doc
     // comment for why this tracks orientation instead of retaining a pristine original image.
     private int _rotationCount;
@@ -520,6 +524,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // scope decision.
     public void Dispose()
     {
+        // T0-12: _disposed guards RecomputePreviewCoalesced's deferred Dispatcher.UIThread.Post
+        // continuation -- today this can't actually fire post-teardown (nothing calls Dispose()
+        // yet), but the moment a future discard path IS wired here, an unguarded continuation would
+        // Lock() an already-disposed pooled WriteableBitmap and NRE.
+        _disposed = true;
         _workingCopyPool.Dispose();
         _previewPool.Dispose();
     }
@@ -3214,7 +3223,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Width: rect.Height,
         Height: rect.Width);
 
-    partial void OnCropRectChanged(NormalizedRect value) => NotifyCropRectDerivedPropertiesAndRecomputePreview();
+    // T0-12: the only one of this method's 4 callers (Rotate, NudgeCropResize, ApplyState are the
+    // other 3, all one-shot discrete actions left synchronous) that fires on every PointerMoved
+    // during a crop-handle drag -- coalesced accordingly.
+    partial void OnCropRectChanged(NormalizedRect value) =>
+        NotifyCropRectDerivedPropertiesAndRecomputePreview(coalesceRecompute: true);
 
     /// <summary>Split out from <see cref="OnCropRectChanged"/> so <see cref="Rotate"/> can call it
     /// unconditionally -- CommunityToolkit's generated <see cref="CropRect"/> setter skips this
@@ -3222,9 +3235,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// equality), which a rotate performed before any crop edit hits every time (the initial
     /// <c>(0,0,1,1)</c> transforms to itself). Relying on the hook alone would leave the preview and
     /// pixel-derived properties stale after such a rotate.</summary>
-    private void NotifyCropRectDerivedPropertiesAndRecomputePreview()
+    private void NotifyCropRectDerivedPropertiesAndRecomputePreview(bool coalesceRecompute = false)
     {
-        RecomputePreview();
+        if (coalesceRecompute)
+        {
+            RecomputePreviewCoalesced();
+        }
+        else
+        {
+            RecomputePreview();
+        }
+
         OnPropertyChanged(nameof(CropLeftPixels));
         OnPropertyChanged(nameof(CropTopPixels));
         OnPropertyChanged(nameof(CropWidthPixels));
@@ -3232,10 +3253,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(CropRightPixels));
         OnPropertyChanged(nameof(CropBottomPixels));
 
-        // Pushed AFTER RecomputePreview() above, not before: CanvasFontSize is filtered out of
-        // OnOverlayElementPropertyChanged's own RecomputePreview trigger (it's canvas-chrome-only,
-        // never feeds the real pipeline), so ordering here doesn't cause a redundant second
-        // recompute -- see CanvasFontSize's own doc comment.
+        // T0-12: when coalesceRecompute is true, the pipeline pass above runs on a LATER tick, not
+        // synchronously after RefreshOverlayElementCanvasFontSizes() below -- this no longer
+        // guarantees a same-tick ordering. Still correct either way: CanvasFontSize is filtered out
+        // of OnOverlayElementPropertyChanged's own RecomputePreview trigger (it's canvas-chrome-only,
+        // never feeds the real pipeline, see CanvasFontSize's own doc comment), and the deferred
+        // pipeline reads live state regardless of when RefreshOverlayElementCanvasFontSizes ran.
         RefreshOverlayElementCanvasFontSizes();
     }
 
@@ -3269,17 +3292,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RefreshOverlayElementCanvasFontSizes();
     }
 
-    partial void OnBrightnessChanged(double value) => RecomputePreview();
+    // T0-12: coalesced -- each fires on every drag-delta tick of the bound Slider (plain TwoWay
+    // binding, no throttling at the View layer).
+    partial void OnBrightnessChanged(double value) => RecomputePreviewCoalesced();
 
-    partial void OnContrastChanged(double value) => RecomputePreview();
+    partial void OnContrastChanged(double value) => RecomputePreviewCoalesced();
 
-    partial void OnSaturationChanged(double value) => RecomputePreview();
+    partial void OnSaturationChanged(double value) => RecomputePreviewCoalesced();
 
-    partial void OnGammaChanged(double value) => RecomputePreview();
+    partial void OnGammaChanged(double value) => RecomputePreviewCoalesced();
 
-    partial void OnSharpenChanged(double value) => RecomputePreview();
+    partial void OnSharpenChanged(double value) => RecomputePreviewCoalesced();
 
-    partial void OnDenoiseChanged(double value) => RecomputePreview();
+    partial void OnDenoiseChanged(double value) => RecomputePreviewCoalesced();
 
     /// <summary>Re-fits the CURRENT crop rect the instant the lock engages, rather than waiting for
     /// the next drag -- legacy's own `SBRatioClick` (`PicRect.cpp:653-662`) does the same on click.
@@ -3464,7 +3489,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             OnPropertyChanged(nameof(SelectedBoxElementCornerRadiusPx));
         }
 
-        RecomputePreview();
+        // T0-12: coalesced -- fires on every PointerMoved while dragging/resizing a selected canvas
+        // element (X/Y/Width/Height feed the pipeline directly, so aren't in the early-return filter
+        // list above), same per-pointer-move hot path as the crop drag and adjustment sliders.
+        RecomputePreviewCoalesced();
     }
 
     private void ApplyCropMove(double dx, double dy)
@@ -3589,7 +3617,60 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // this method (already called on every mutation that could add/remove a {word} reference:
         // element add/remove/Text edit, Rotate, Undo/Redo) rather than a separate trigger mechanism.
         RescanTemplateVariables();
+        RecomputePreviewPipeline();
+    }
 
+    // T0-12 (production_audit.md): coalesces the 3 genuinely hot, per-pointer-move triggers (crop
+    // drag via OnCropRectChanged, the 6 adjustment sliders' On*Changed hooks, and overlay-element
+    // drag/resize via OnOverlayElementPropertyChanged's trailing call) into a single deferred
+    // pipeline pass per UI-thread idle tick, instead of running the full synchronous
+    // Crop->Resize->ApplyAdjustments->ApplyTemplate pipeline on every raw PointerMoved/slider-drag-
+    // delta event. All 3 triggers are themselves only ever raised on the UI thread (Avalonia's own
+    // routed pointer events / TwoWay Slider bindings), so unlike WaterfallPaneViewModel.OnFrame's
+    // own coalescing (fed from a non-UI thread) this needs no lock -- a plain bool flag is safe.
+    // RescanTemplateVariables stays eager/synchronous on every call (cheap -- a regex scan, not the
+    // actual perf problem) so the fill-bar variable rows don't go stale mid-drag; only the expensive
+    // pipeline pass is deferred and coalesced. RecomputePreview() itself is left untouched/synchronous
+    // for the ~20 discrete one-shot call sites (button clicks, undo/redo, template load, Rotate) --
+    // those already fire once per user action and deferring them would just add a frame of visible
+    // lag for no benefit.
+    private bool _recomputePreviewScheduled;
+
+    private void RecomputePreviewCoalesced()
+    {
+        if (_suspendPreview)
+        {
+            return;
+        }
+
+        RescanTemplateVariables();
+
+        if (_recomputePreviewScheduled)
+        {
+            return;
+        }
+
+        _recomputePreviewScheduled = true;
+        // T0-12 real-window finding: real-window testing across several drag mechanisms (rapid
+        // discrete drag gestures, and a dense sustained single-gesture drag) consistently confirmed
+        // this coalesces correctly and stays responsive at DispatcherPriority.Input -- kept here
+        // rather than the plan's initial DispatcherPriority.Background choice, since one dense
+        // sustained-drag scenario showed Background go a long time without running (Input did not
+        // reproduce that under the same scenario). Input still sits below Render/Normal, so a burst
+        // of triggers still coalesces to one pass; it's simply less prone to falling behind a
+        // continuous stream of Input-priority pointer events than Background is.
+        Dispatcher.UIThread.Post(() =>
+        {
+            _recomputePreviewScheduled = false;
+            if (!_disposed && !_suspendPreview)
+            {
+                RecomputePreviewPipeline();
+            }
+        }, DispatcherPriority.Input);
+    }
+
+    private void RecomputePreviewPipeline()
+    {
         var cropped = _preparer.Crop(_workingCopy, CropRect);
         var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());

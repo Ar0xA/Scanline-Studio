@@ -303,6 +303,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new OperatorSettings { Callsign = "W1AW" });
         vm.AddOverlayElementCommand.Execute(null);
         ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "DE %m";
+        Dispatcher.UIThread.RunJobs();
 
         Assert.Contains(preparer.TemplateDocuments, d => d.Elements.Any(e => e is TemplateTextElement text && text.Content == "DE W1AW"));
     }
@@ -339,6 +340,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countBefore = preparer.ApplyTemplateCallCount;
 
         element.Text = "Hello";
+        Dispatcher.UIThread.RunJobs();
 
         Assert.True(preparer.ApplyTemplateCallCount > countBefore);
     }
@@ -360,6 +362,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // element left the collection.
         var countAfterRemoval = preparer.ApplyTemplateCallCount;
         element.Text = "Still mutated after removal";
+        Dispatcher.UIThread.RunJobs();
         Assert.Equal(countAfterRemoval, preparer.ApplyTemplateCallCount);
     }
 
@@ -904,6 +907,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countAfterUndo = preparer.ApplyTemplateCallCount;
 
         staleElement.Text = "still subscribed?";
+        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(countAfterUndo, preparer.ApplyTemplateCallCount);
     }
@@ -980,6 +984,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var callCountBefore = preparer.ApplyTemplateCallCount;
 
         vm.SelectedOverlayElement = elementB;
+        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(callCountBefore, preparer.ApplyTemplateCallCount);
     }
@@ -1153,6 +1158,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countAfterUndo = preparer.ApplyTemplateCallCount;
 
         ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "still subscribed";
+        Dispatcher.UIThread.RunJobs();
 
         Assert.True(preparer.ApplyTemplateCallCount > countAfterUndo);
     }
@@ -1534,6 +1540,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddOverlayElementCommand.Execute(null);
         vm.OverlayElements[0].X = 0.625;
         vm.OverlayElements[0].Y = 0.75;
+        Dispatcher.UIThread.RunJobs();
 
         var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
         var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
@@ -1560,6 +1567,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddOverlayElementCommand.Execute(null);
         vm.OverlayElements[0].X = 0.625;
         vm.OverlayElements[0].Y = 0.75;
+        Dispatcher.UIThread.RunJobs();
 
         var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
         var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
@@ -1578,6 +1586,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // Far outside the crop -- re-projects to a coordinate well outside [0,1].
         vm.OverlayElements[0].X = 0.0;
         vm.OverlayElements[0].Y = 0.0;
+        Dispatcher.UIThread.RunJobs();
 
         var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
         var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
@@ -1597,6 +1606,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.OverlayElements[0].X = 0.3;
         vm.OverlayElements[0].Y = 0.4;
         vm.CropRect = new NormalizedRect(0.5, 0.5, 0, 0);
+        Dispatcher.UIThread.RunJobs();
 
         var overlay = Assert.Single(preparer.TemplateDocuments[^1].Elements);
         var (overlayCenterX, overlayCenterY) = (overlay.Bounds.X + (overlay.Bounds.Width / 2), overlay.Bounds.Y + (overlay.Bounds.Height / 2));
@@ -1641,6 +1651,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countBeforeDirectSet = preparer.ApplyTemplateCallCount;
 
         element.CanvasFontSize = 12.34;
+        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(countBeforeDirectSet, preparer.ApplyTemplateCallCount);
     }
@@ -1686,6 +1697,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countBeforeDirectSet = preparer.ApplyTemplateCallCount;
 
         element.CanvasStrokeThicknessPixels = 12.34;
+        Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(countBeforeDirectSet, preparer.ApplyTemplateCallCount);
     }
@@ -1841,6 +1853,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var countBefore = preparer.ApplyTemplateCallCount;
 
         typeof(TxImageEditorPaneViewModel).GetProperty(propertyName)!.SetValue(vm, 25.0);
+        Dispatcher.UIThread.RunJobs();
 
         Assert.True(preparer.ApplyTemplateCallCount > countBefore);
     }
@@ -1857,6 +1870,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.Gamma = -15;
         vm.Sharpen = 40;
         vm.Denoise = 60;
+        Dispatcher.UIThread.RunJobs();
 
         var adjustments = preparer.Adjustments[^1];
         Assert.Equal(10, adjustments.Brightness);
@@ -1865,6 +1879,123 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(-15, adjustments.Gamma);
         Assert.Equal(40, adjustments.Sharpen);
         Assert.Equal(60, adjustments.Denoise);
+    }
+
+    // T0-12 (production_audit.md): RecomputePreviewCoalesced -- a burst of hot-path triggers before
+    // the UI thread goes idle must collapse into exactly one pipeline pass, same shape as
+    // WaterfallPaneViewModel_MultipleFramesBeforeUiThreadRuns_CoalescesToOnlyTheLatest
+    // (PaneViewModelTests.cs).
+
+    [AvaloniaFact]
+    public void RapidCropRectChanges_BeforeUiThreadRuns_CoalesceToOneRecomputePass()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        vm.CropRect = new NormalizedRect(0.1, 0.1, 0.5, 0.5);
+        vm.CropRect = new NormalizedRect(0.2, 0.2, 0.5, 0.5);
+        vm.CropRect = new NormalizedRect(0.3, 0.3, 0.5, 0.5);
+
+        Assert.Equal(countBefore, preparer.ApplyTemplateCallCount);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(countBefore + 1, preparer.ApplyTemplateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void RapidSliderChanges_BeforeUiThreadRuns_CoalesceToOneRecomputePass_UsingTheLastValues()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        vm.Brightness = 10;
+        vm.Brightness = 20;
+        vm.Brightness = 30;
+
+        Assert.Equal(countBefore, preparer.ApplyTemplateCallCount);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(countBefore + 1, preparer.ApplyTemplateCallCount);
+        Assert.Equal(30, preparer.Adjustments[^1].Brightness);
+    }
+
+    [AvaloniaFact]
+    public void RapidOverlayElementPositionChanges_BeforeUiThreadRuns_CoalesceToOneRecomputePass()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        vm.OverlayElements[0].X = 0.1;
+        vm.OverlayElements[0].Y = 0.1;
+        vm.OverlayElements[0].X = 0.6;
+        vm.OverlayElements[0].Y = 0.6;
+
+        Assert.Equal(countBefore, preparer.ApplyTemplateCallCount);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(countBefore + 1, preparer.ApplyTemplateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void MixedBurstAcrossAllThreeHotPaths_BeforeUiThreadRuns_StillCoalescesToOneRecomputePass()
+    {
+        // Proves the 3 hot-path triggers share ONE _recomputePreviewScheduled flag, not 3
+        // independent ones -- a burst spanning crop, a slider, and an overlay element in the same
+        // UI-thread turn still collapses to a single pipeline pass.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var countBefore = preparer.ApplyTemplateCallCount;
+
+        vm.CropRect = new NormalizedRect(0.1, 0.1, 0.5, 0.5);
+        vm.Brightness = 15;
+        vm.OverlayElements[0].X = 0.6;
+
+        Assert.Equal(countBefore, preparer.ApplyTemplateCallCount);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(countBefore + 1, preparer.ApplyTemplateCallCount);
+    }
+
+    [AvaloniaFact]
+    public void ElementTextChange_MidBurst_StillUpdatesTemplateVariableRowsSynchronously()
+    {
+        // The design's central behavioral guarantee: RescanTemplateVariables stays eager even though
+        // the expensive pipeline pass is deferred, so the fill-bar never goes stale mid-drag.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        vm.CropRect = new NormalizedRect(0.1, 0.1, 0.5, 0.5);
+        element.Text = "DE {his_call}";
+
+        // No RunJobs() here -- TemplateVariableRows must already reflect the just-typed token.
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("his_call", row.Key);
+    }
+
+    [AvaloniaFact]
+    public void DiscreteActionRightAfterACoalescedBurst_StillRecomputesSynchronously_NoLeakedCoalescing()
+    {
+        // Proves the NotifyCropRectDerivedPropertiesAndRecomputePreview(coalesceRecompute:) split
+        // didn't leak coalescing into Rotate -- a pending coalesced pass from a slider burst must
+        // not delay Rotate's own synchronous recompute.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(8, 8), WideMode, preparer);
+        vm.Brightness = 10; // schedules a coalesced pass, not yet run
+        var countBeforeRotate = preparer.ApplyTemplateCallCount;
+
+        vm.RotateCommand.Execute(null);
+
+        Assert.True(preparer.ApplyTemplateCallCount > countBeforeRotate, "Rotate must recompute synchronously, not wait for the pending coalesced pass");
     }
 
     [AvaloniaFact]
@@ -1948,6 +2079,7 @@ public sealed class TxImageEditorPaneViewModelTests
         element.BorderColor = new Rgb24(40, 50, 60);
         element.BorderThickness = 0.05;
         element.Opacity = 0.5;
+        Dispatcher.UIThread.RunJobs();
 
         var box = Assert.IsType<TemplateBoxElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
         Assert.Equal(new Rgb24(10, 20, 30), box.FillColor);
@@ -5099,6 +5231,7 @@ public sealed class TxImageEditorPaneViewModelTests
         element.FontFamily = "Barlow";
         element.StrokeColor = new Rgb24(255, 0, 0);
         element.StrokeThickness = 0.03;
+        Dispatcher.UIThread.RunJobs();
 
         var text = Assert.IsType<TemplateTextElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
         Assert.Equal("Barlow", text.Font.Family);
