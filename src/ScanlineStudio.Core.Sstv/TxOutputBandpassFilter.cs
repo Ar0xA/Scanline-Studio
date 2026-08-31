@@ -52,7 +52,7 @@ namespace ScanlineStudio.Core.Sstv;
 /// <b>On/off (legacy's <c>m_bpf</c>/`CBTXBPF`/`TXBPF`) is gated at the CALL SITE, not here</b> —
 /// mirrors legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (`sstv.cpp:2914`) exactly: when off, the
 /// delay line is never advanced at all, not merely bypassed post-construction. See
-/// <see cref="AnalogFmSstvEncoder.EncodeAsyncCore"/>'s own call site for the gate.
+/// <see cref="AnalogFmSstvEncoder.EncodeBatchedAsyncCore"/>'s own call site for the gate.
 /// </summary>
 internal sealed class TxOutputBandpassFilter
 {

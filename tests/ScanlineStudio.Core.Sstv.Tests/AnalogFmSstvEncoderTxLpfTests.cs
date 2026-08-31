@@ -3,7 +3,7 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// <summary>
 /// Options stub backlog item 3 (docs/plans/options-stub-item3-tx-bpf-lpf-plan.md) -- the TX LPF
 /// pre-VCO frequency-smoothing addition to <see cref="AnalogFmSstvEncoder.RenderSegments"/>/
-/// <see cref="AnalogFmSstvEncoder.EncodeAsyncCore"/>. Every assertion below is exact (a stated
+/// <see cref="AnalogFmSstvEncoder.EncodeBatchedAsyncCore"/>. Every assertion below is exact (a stated
 /// tolerance or bit-exact), not a vague "behavior differs" check -- a lesson item 2's own auditor
 /// code-review round applied here proactively.
 /// </summary>

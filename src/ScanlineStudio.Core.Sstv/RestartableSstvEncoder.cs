@@ -11,11 +11,12 @@ namespace ScanlineStudio.Core.Sstv;
 /// machinery, no threshold recompute, no scratch-file disposal chain -- just a plain instance
 /// replace under a lock.
 ///
-/// <see cref="EncodeAsync"/>/<see cref="EstimateSampleCount"/> are PLAIN DELEGATING METHODS, not
-/// iterators -- <see cref="ISstvEncoder"/> requires the dimension-mismatch
-/// <see cref="ArgumentException"/> to throw synchronously from the call, not deferred to enumeration
-/// (<see cref="AnalogFmSstvEncoder.EncodeAsync"/> is itself split for exactly this reason), and
-/// `SstvSessionService.TransmitAsync` calls <see cref="EncodeAsync"/> before keying PTT -- an
+/// <see cref="EncodeAsync"/>/<see cref="EncodeBatchedAsync"/>/<see cref="EstimateSampleCount"/> are
+/// PLAIN DELEGATING METHODS, not iterators -- <see cref="ISstvEncoder"/> requires the
+/// dimension-mismatch <see cref="ArgumentException"/> to throw synchronously from the call, not
+/// deferred to enumeration (<see cref="AnalogFmSstvEncoder.EncodeAsync"/> is itself split for
+/// exactly this reason), and `SstvSessionService.TransmitAsync`/`TuneAsync` call
+/// <see cref="EncodeAsync"/>/<see cref="EncodeBatchedAsync"/> before keying PTT -- an
 /// iterator-shaped wrapper would move that throw to mid-playback, PTT already keyed. Each call
 /// resolves which inner instance it's delegating to ONCE, into a local, not per-<c>MoveNextAsync</c>
 /// -- defense in depth on top of the <see cref="BeginTransmission"/>/<see cref="EndTransmission"/>
@@ -62,6 +63,28 @@ public sealed class RestartableSstvEncoder : ISstvEncoder, ISstvEncoderReconfigu
         }
 
         return inner.EncodeAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
+    }
+
+    /// <summary>See <see cref="EncodeAsync"/>'s own doc comment for why this is a plain delegating
+    /// method, not an iterator.</summary>
+    public IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsync(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = TxOutputBandpassFilter.DefaultTapCount,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
+        CancellationToken ct = default)
+    {
+        AnalogFmSstvEncoder inner;
+        lock (_gate)
+        {
+            inner = _inner;
+        }
+
+        return inner.EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
     }
 
     public long EstimateSampleCount(

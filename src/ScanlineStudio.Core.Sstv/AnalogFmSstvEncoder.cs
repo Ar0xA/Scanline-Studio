@@ -20,6 +20,13 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
     public int SampleRate { get; }
 
+    // T1-3 (production_audit.md): batch size EncodeBatchedAsyncCore accumulates into before
+    // yielding. Matches both real production consumers' own existing local-buffer size
+    // (SstvSessionService.PumpToPlaybackAsync, the TX loopback self-test), which is purely
+    // coincidental convenience, not a contract -- ISstvEncoder.EncodeBatchedAsync's own doc comment
+    // explicitly forbids callers from assuming any specific batch size.
+    private const int EncodeBatchSize = 4096;
+
     // Milestone-audit Phase 3 SHOULD finding (spec/14-roadmap.md): without this guard, a too-small
     // image throws IndexOutOfRangeException from deep inside a scanline encoder's own pixel-index
     // loop (e.g. RgbSequentialScanlineEncoder.cs's `image.GetScanline(lineIndex)[x]` for x up to
@@ -29,12 +36,18 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     // Main.cpp:6692 etc.) -- this port's equivalent contract is "the image IS sized to the mode,"
     // enforced here instead of assumed by every caller.
     //
-    // Deliberately a plain (non-iterator) method delegating to EncodeAsyncCore, not
-    // `async IAsyncEnumerable<float> EncodeAsync` directly: a C# iterator method's body doesn't run
-    // until the FIRST `MoveNextAsync()` call, so a guard written inside the iterator itself would
-    // still defer the throw to whenever the caller starts enumerating -- better than throwing after
-    // partial output, but not as clean as throwing synchronously at the `EncodeAsync()` call site
-    // itself, which this split achieves.
+    // Deliberately a plain (non-iterator) method delegating to EncodeBatchedAsyncCore (T1-3:
+    // formerly EncodeAsyncCore, before it became the batched producer -- see that method's own doc
+    // comment), not `async IAsyncEnumerable<float> EncodeAsync` directly: a C# iterator method's
+    // body doesn't run until the FIRST `MoveNextAsync()` call, so a guard written inside the
+    // iterator itself would still defer the throw to whenever the caller starts enumerating --
+    // better than throwing after partial output, but not as clean as throwing synchronously at the
+    // `EncodeAsync()` call site itself, which this split achieves.
+    //
+    // T1-3: derived from EncodeBatchedAsyncCore via FlattenBatches, not a second implementation of
+    // the DSP synthesis -- see EncodeBatchedAsyncCore's own doc comment for why (avoids exactly the
+    // "two copies of the same math silently diverge" bug class this project has been burned by
+    // before, e.g. the Scottie TX-channel-order incident, CLAUDE.md's own worked example).
     public IAsyncEnumerable<float> EncodeAsync(
         SstvModeDefinition mode,
         IImageSource image,
@@ -48,7 +61,53 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     {
         ValidateImageDimensions(mode, image);
 
-        return EncodeAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
+        // CA2016 false positive, deliberately suppressed: FlattenBatches' own ct parameter must be
+        // left UNBOUND here, not forwarded -- see FlattenBatches' own doc comment. Its
+        // [EnumeratorCancellation] attribute means leaving the argument at its default lets a
+        // caller's own `.WithCancellation(token)` on THIS method's returned enumerable flow directly
+        // into the flatten step; explicitly forwarding `ct` here (what the analyzer suggests) would
+        // BIND the parameter, silently defeating that -- the exact bug this shape exists to avoid.
+#pragma warning disable CA2016
+        return FlattenBatches(EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct));
+#pragma warning restore CA2016
+    }
+
+    /// <summary>See <see cref="ISstvEncoder.EncodeBatchedAsync"/>'s own doc comment for the full
+    /// contract. Same synchronous-validation split as <see cref="EncodeAsync"/>, same reasoning.</summary>
+    public IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsync(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = TxOutputBandpassFilter.DefaultTapCount,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
+        CancellationToken ct = default)
+    {
+        ValidateImageDimensions(mode, image);
+
+        return EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
+    }
+
+    // T1-3 (production_audit.md), plan-review finding: EncodeAsync's own per-float behavior is
+    // DERIVED from EncodeBatchedAsyncCore below via this flatten, specifically so there is only ONE
+    // copy of the DSP synthesis math in this class. Needs ITS OWN [EnumeratorCancellation], not just
+    // relying on the ct already baked into `batches`' own production -- without it, a caller doing
+    // `EncodeAsync(mode, image).WithCancellation(token)` (no ct positional/named argument at all)
+    // silently drops that token on the floor, since GetAsyncEnumerator(token) would have nothing
+    // marked to receive it.
+    private static async IAsyncEnumerable<float> FlattenBatches(
+        IAsyncEnumerable<ReadOnlyMemory<float>> batches,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var batch in batches.WithCancellation(ct).ConfigureAwait(false))
+        {
+            for (var i = 0; i < batch.Length; i++)
+            {
+                yield return batch.Span[i];
+            }
+        }
     }
 
     /// <summary>Resolves <see cref="SampleRate"/> + <paramref name="sampleRateOffsetHz"/> into the
@@ -72,7 +131,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     /// truncation, NOT <c>CFQC::CalcLPF</c>'s own bare-truncation formula (item 2,
     /// `ZeroCrossingFrequencyCounter.SetTuning`) -- a real, easy-to-miss difference between this
     /// port's own two <c>CSmooz</c> consumers, code-review round 1 finding: extracted into one shared
-    /// method (was duplicated verbatim in <see cref="EncodeAsyncCore"/> and
+    /// method (was duplicated verbatim in <see cref="EncodeBatchedAsyncCore"/> and
     /// <see cref="RenderSegments"/>) specifically so this formula has exactly one place to test and
     /// one place to get right, after a review found NO test actually exercised the <c>+0.5</c> at a
     /// frequency where it changes the result (the chosen test frequency happened to make rounding and
@@ -81,14 +140,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         Math.Max(1, (int)(sampleRate / Math.Clamp(lpfFrequencyHz, 100.0, 3000.0) + 0.5));
 
     /// <summary>Spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
-    /// Replicates <see cref="EncodeAsyncCore"/>'s own running-accumulator expression verbatim
+    /// Replicates <see cref="EncodeBatchedAsyncCore"/>'s own running-accumulator expression verbatim
     /// (same per-segment formula, same operand order, same summation order) rather than summing
     /// <c>DurationMs</c> first and multiplying once -- floating-point addition is not associative,
     /// so those two forms are only guaranteed to agree in exact arithmetic; over the ~hundreds of
     /// thousands of segments a full image produces, they can diverge by enough to flip the final
     /// truncation by one sample on some (mode, image, stationId) combination even though a
     /// single-mode spot check would show exact agreement. This is a real traversal of every segment
-    /// (same iterators <see cref="EncodeAsyncCore"/> walks), not O(1) metadata math -- no tone
+    /// (same iterators <see cref="EncodeBatchedAsyncCore"/> walks), not O(1) metadata math -- no tone
     /// synthesis or filtering happens, but the cost is still proportional to image size.
     ///
     /// Honesty note on how this was verified: mutation-testing this specific property (temporarily
@@ -123,12 +182,12 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // A', not interleaved into GenerateFrequencySegments at all), so their count is added here
         // directly rather than recomputed from a duration -- no floating-point rounding drift. Mutual
         // exclusivity with CwEnabled (legacy's own single-value sys.m_CWID tri-state) is enforced with
-        // THIS EXACT expression at both this method and EncodeAsyncCore below -- must stay identical
+        // THIS EXACT expression at both this method and EncodeBatchedAsyncCore below -- must stay identical
         // at both sites so the estimate and the real encode can never disagree on whether a sound-file
         // block plays at all.
         var soundFile = options.CwEnabled ? null : options.SoundFileSamples;
 
-        // Cast BEFORE adding the raw sample count, matching EncodeAsyncCore's own real emission
+        // Cast BEFORE adding the raw sample count, matching EncodeBatchedAsyncCore's own real emission
         // exactly (it emits (long)idealSamplesSoFar tone samples, then soundFile.Length raw ones) --
         // folding the raw count into idealSamplesSoFar before this cast is a DIFFERENT, not
         // guaranteed-equal computation (the two truncations can round across an integer boundary
@@ -187,7 +246,15 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         }
     }
 
-    private async IAsyncEnumerable<float> EncodeAsyncCore(
+    // T1-3 (production_audit.md): formerly EncodeAsyncCore, yielding one float per MoveNextAsync
+    // call -- now the sole DSP synthesis implementation, batching its output into fixed-size chunks
+    // instead. EncodeAsync (above) derives its own per-float behavior from this via FlattenBatches,
+    // rather than duplicating the synthesis math -- see that method's own comment. Every line of
+    // actual DSP computation below (phase/effectiveSampleRate/idealSamplesSoFar-emittedSamples
+    // accumulator/lpfAverage/bandpassFilter/the frequencyHz<=0 branch) is IDENTICAL to what this
+    // method contained before T1-3 -- only what happens to the already-computed float changed
+    // (appended to a shared buffer and conditionally flushed, instead of yielded directly).
+    private async IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsyncCore(
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions stationId,
@@ -243,6 +310,19 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // nearest figure this line previously (incorrectly) claimed.
         var idealSamplesSoFar = 0.0;
         var emittedSamples = 0L;
+
+        // T1-3 (production_audit.md): shared across BOTH loops below (tone segments, then the
+        // sound-file/CW-ID row-playback tail) so a batch boundary can straddle the two without ever
+        // flushing early just because one loop ended -- every non-final batch is exactly
+        // EncodeBatchSize, the final one is whatever's left (mirrors the "if (count > 0) flush" tail
+        // shape both real production consumers already use on their own side). A FRESH array is
+        // allocated on every full-batch flush, deliberately not reused across yields -- see
+        // ISstvEncoder.EncodeBatchedAsync's own doc comment for the "don't retain past your
+        // enumeration step" contract this choice makes strictly safer than the minimum the contract
+        // requires. Do not switch this to a reused buffer without re-checking every consumer this
+        // stricter guarantee currently lets skip its own defensive copy.
+        var buffer = new float[EncodeBatchSize];
+        var count = 0;
 
         foreach (var (frequencyHz, durationMs) in GenerateFrequencySegments(mode, image, lineEncoder, stationId))
         {
@@ -314,7 +394,13 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 // filter's own on/off gate (legacy's m_bpf) lives here, at the call site, not inside
                 // the filter class -- when off, the delay line is never advanced at all, matching
                 // legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (sstv.cpp:2914) exactly.
-                yield return (float)(txBpfEnabled ? bandpassFilter.ProcessSample(sample) : sample);
+                buffer[count++] = (float)(txBpfEnabled ? bandpassFilter.ProcessSample(sample) : sample);
+                if (count == EncodeBatchSize)
+                {
+                    yield return buffer;
+                    buffer = new float[EncodeBatchSize];
+                    count = 0;
+                }
             }
         }
 
@@ -344,8 +430,21 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 // `.Span[i]` is a transient rvalue, never a declared local -- a ReadOnlySpan<float>
                 // local can't be declared inside this async iterator method (CS4012).
                 var raw = samples.Span[i];
-                yield return (float)(txBpfEnabled ? bandpassFilter.ProcessSample(raw) : raw);
+                buffer[count++] = (float)(txBpfEnabled ? bandpassFilter.ProcessSample(raw) : raw);
+                if (count == EncodeBatchSize)
+                {
+                    yield return buffer;
+                    buffer = new float[EncodeBatchSize];
+                    count = 0;
+                }
             }
+        }
+
+        // T1-3 (production_audit.md): final partial flush -- never an empty batch (ISstvEncoder.
+        // EncodeBatchedAsync's own contract), so only flush if something is actually pending.
+        if (count > 0)
+        {
+            yield return buffer.AsMemory(0, count);
         }
 
         await Task.CompletedTask;
@@ -353,15 +452,19 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
     // Test-only seam (mirrors GenerateFooterSegments' existing internal-for-testing pattern below):
     // renders an arbitrary segment sequence through the identical frequency-to-sample math used by
-    // EncodeAsyncCore above (running-accumulator sample count, silence handling, output bandpass
-    // filter) without needing a full SstvModeDefinition/IImageSource/CancellationToken round trip.
-    // Kept as a small, deliberately independent implementation rather than extracted shared code:
-    // EncodeAsyncCore's per-sample loop can't cleanly share a `ref double phase` across an iterator
-    // method boundary, and this method has no cancellation/async concerns of its own to preserve.
+    // EncodeBatchedAsyncCore above (running-accumulator sample count, silence handling, output
+    // bandpass filter) without needing a full SstvModeDefinition/IImageSource/CancellationToken
+    // round trip. Kept as a small, deliberately independent implementation rather than extracted
+    // shared code: EncodeBatchedAsyncCore's per-sample loop can't cleanly share a `ref double phase`
+    // across an iterator method boundary, and this method has no cancellation/async concerns of its
+    // own to preserve. T1-3 (production_audit.md): this stays a genuinely separate implementation,
+    // deliberately NOT switched to consume EncodeBatchedAsyncCore's own batched output -- it exists
+    // specifically to give golden-vector tests raw per-sample IEnumerable<float> access with no
+    // async/batching machinery in the way at all.
     //
     // Clock calibration (stub survey Tier 3), revised decision: widened int -> double so this same
     // test-only seam can also verify the sampleRateOffsetHz behavior directly (the accumulator/
-    // phaseIncrement math here is IDENTICAL to EncodeAsyncCore's, so a fractional effective rate
+    // phaseIncrement math here is IDENTICAL to EncodeBatchedAsyncCore's, so a fractional effective rate
     // exercises the exact same code shape a real offset-corrected transmission would). Purely
     // test-only, no external API stability contract -- every existing caller passes a plain `int`
     // literal/constant, which widens to `double` implicitly with no source changes needed anywhere.
@@ -409,7 +512,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
 
                 // applyFilter=false is test-only (verifying raw VCO phase behavior, e.g. that
                 // silence doesn't disturb phase continuity, independent of filter transients) --
-                // production always filters, matching EncodeAsyncCore.
+                // production always filters, matching EncodeBatchedAsyncCore.
                 yield return (float)(applyFilter ? bandpassFilter.ProcessSample(sample) : sample);
             }
         }

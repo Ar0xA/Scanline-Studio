@@ -30,7 +30,9 @@ internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguratio
     public StationIdTransmitOptions? LastStationIdOptions { get; private set; }
 
     /// <summary>Code-review finding (TX send-progress feature): separate from
-    /// <see cref="LastStationIdOptions"/> (which <see cref="EncodeAsync"/> writes) so a test can
+    /// <see cref="LastStationIdOptions"/> (which <see cref="EncodeBatchedAsync"/> writes, and
+    /// <see cref="EncodeAsync"/> derives from via flattening -- see that method's own doc comment)
+    /// so a test can
     /// assert BOTH calls received the exact same instance -- pins the plan-review requirement that
     /// <see cref="SstvSessionService.TransmitAsync"/> must reuse one resolved <c>stationId</c> for
     /// both the estimate and the real encode, never re-resolve independently.</summary>
@@ -76,7 +78,36 @@ internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguratio
     /// against it observes the guard deterministically instead of depending on timing.</summary>
     public Func<Task>? BeforeFirstYield { get; set; }
 
+    // T1-3 (production_audit.md): EncodeAsync derives its own per-float behavior from
+    // EncodeBatchedAsync via flattening, mirroring AnalogFmSstvEncoder's own real shape exactly --
+    // one recording site for all the Last*/BeforeFirstYield test hooks, not two hand-maintained
+    // copies that could silently drift from each other.
     public async IAsyncEnumerable<float> EncodeAsync(
+        SstvModeDefinition mode,
+        IImageSource image,
+        StationIdTransmitOptions? stationId = null,
+        double sampleRateOffsetHz = 0.0,
+        bool txBpfEnabled = true,
+        int txBpfTapCount = 24,
+        bool txLpfEnabled = false,
+        double txLpfFrequencyHz = 2000.0,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        await foreach (var batch in EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct).WithCancellation(ct).ConfigureAwait(false))
+        {
+            for (var i = 0; i < batch.Length; i++)
+            {
+                yield return batch.Span[i];
+            }
+        }
+    }
+
+    // T1-3 (production_audit.md): the real implementation -- yields SamplesToYield as ONE batch
+    // (every existing test's own array is small; the pump/loopback-self-test's own re-chunking, if
+    // any, is what actually exercises multi-batch behavior in production, not this fake). Keeps the
+    // exact same "await BeforeFirstYield before the first thing is yielded" timing contract
+    // EncodeAsync's own doc comment on BeforeFirstYield above already promises.
+    public async IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsync(
         SstvModeDefinition mode,
         IImageSource image,
         StationIdTransmitOptions? stationId = null,
@@ -98,11 +129,12 @@ internal sealed class FakeSstvEncoder : ISstvEncoder, ISstvEncoderReconfiguratio
             await beforeFirstYield();
         }
 
-        foreach (var sample in SamplesToYield)
+        ct.ThrowIfCancellationRequested();
+        if (SamplesToYield.Length > 0)
         {
-            ct.ThrowIfCancellationRequested();
-            yield return sample;
-            await Task.Yield();
+            yield return SamplesToYield;
         }
+
+        await Task.Yield();
     }
 }

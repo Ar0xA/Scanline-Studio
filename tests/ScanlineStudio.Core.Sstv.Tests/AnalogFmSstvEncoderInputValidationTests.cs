@@ -73,4 +73,65 @@ public class AnalogFmSstvEncoderInputValidationTests
 
         Assert.True(sampleCount > 0);
     }
+
+    // T1-3 (production_audit.md): EncodeBatchedAsync needs the identical synchronous-throw guarantee
+    // EncodeAsync already has -- both share the same ValidateImageDimensions/delegate-to-iterator
+    // split (see AnalogFmSstvEncoder.EncodeBatchedAsync's own doc comment), but that split is not
+    // itself tested by anything the interface's own contract could catch if a future edit broke it.
+    [Fact]
+    public void EncodeBatchedAsync_ImageSmallerThanMode_ThrowsImmediately_BeforeAnyEnumeration()
+    {
+        var mode = SstvModeRegistry.Robot72; // 320x240
+        var tooSmall = new ArrayImageSource(160, 120, new Rgb24[160 * 120]);
+        var encoder = new AnalogFmSstvEncoder(11025);
+
+        var ex = Assert.Throws<ArgumentException>(() => encoder.EncodeBatchedAsync(mode, tooSmall));
+        Assert.Contains("160x120", ex.Message);
+        Assert.Contains("320x240", ex.Message);
+    }
+
+    [Fact]
+    public void EncodeBatchedAsync_ImageMatchesWidthButNotHeight_ThrowsImmediately()
+    {
+        var mode = SstvModeRegistry.Robot72; // 320x240
+        var wrongHeight = new ArrayImageSource(320, 120, new Rgb24[320 * 120]);
+        var encoder = new AnalogFmSstvEncoder(11025);
+
+        var ex = Assert.Throws<ArgumentException>(() => encoder.EncodeBatchedAsync(mode, wrongHeight));
+        Assert.Contains("320x120", ex.Message);
+        Assert.Contains("320x240", ex.Message);
+    }
+
+    [Fact]
+    public void EncodeBatchedAsync_ImageLargerThanMode_ThrowsImmediately_BeforeAnyEnumeration()
+    {
+        var mode = SstvModeRegistry.Robot72; // 320x240
+        var tooLarge = new ArrayImageSource(640, 480, new Rgb24[640 * 480]);
+        var encoder = new AnalogFmSstvEncoder(11025);
+
+        var ex = Assert.Throws<ArgumentException>(() => encoder.EncodeBatchedAsync(mode, tooLarge));
+        Assert.Contains("640x480", ex.Message);
+        Assert.Contains("320x240", ex.Message);
+    }
+
+    [Fact]
+    public async Task EncodeBatchedAsync_CorrectlySizedImage_DoesNotThrow_AndProducesBatches()
+    {
+        var mode = SstvModeRegistry.Robot72;
+        var correctlySized = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, new Rgb24[mode.ImageWidth * mode.ImageHeight]);
+        var encoder = new AnalogFmSstvEncoder(11025);
+
+        var batchCount = 0;
+        await foreach (var batch in encoder.EncodeBatchedAsync(mode, correctlySized))
+        {
+            Assert.True(batch.Length > 0, "ISstvEncoder.EncodeBatchedAsync's own contract: never an empty batch.");
+            batchCount++;
+            if (batchCount > 1)
+            {
+                break; // don't need the whole (multi-second) transmission, just proof it started
+            }
+        }
+
+        Assert.True(batchCount > 0);
+    }
 }
