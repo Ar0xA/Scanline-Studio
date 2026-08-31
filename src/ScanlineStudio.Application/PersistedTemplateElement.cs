@@ -78,7 +78,12 @@ public enum PersistedImageSourceKind { File, RxHistory, LastRx, Clipboard }
 public sealed record PersistedImageElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     string AssetFileName, ImageFitMode Fit, PersistedImageSourceKind OriginKind, string? OriginPayload,
-    bool IsBackground = false)
+    bool IsBackground = false,
+    // TX workflow modernization plan, Phase 7 -- trailing, defaulted (missing-property deserializes
+    // to default), same additive convention IsBackground itself established, so no schema-version
+    // bump and no migration. 0 means "written before this field existed"; the loader falls back to
+    // the asset's own dimensions.
+    int NaturalPixelWidth = 0, int NaturalPixelHeight = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>What <see cref="ITemplateStore.SaveAsync"/> accepts and <see cref="ITemplateStore.LoadAsync"/>

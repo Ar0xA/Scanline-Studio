@@ -23,6 +23,21 @@ public partial class TxImageEditorPaneView : UserControl
         CropResize,
         Overlay,
         ElementResize,
+
+        /// <summary>TX workflow modernization plan, Phase 3a -- draw-to-place. Active from the
+        /// moment an armed placement tool (<see cref="_pendingPlacementKind"/>) receives a canvas
+        /// press until release, at which point the actual element is created (see
+        /// <see cref="OnCanvasPointerReleased"/>'s own Placing branch) -- unlike every other
+        /// <see cref="DragMode"/>, nothing on the canvas exists yet while this is active.</summary>
+        Placing,
+    }
+
+    /// <summary>Which toolbar "Add" button armed the placement tool currently pending on the canvas
+    /// -- see <see cref="_pendingPlacementKind"/>'s own doc comment.</summary>
+    private enum PlacementKind
+    {
+        Text,
+        Box,
     }
 
     /// <summary>Which side(s) of the element the pressed handle drags -- public (not the private
@@ -64,6 +79,21 @@ public partial class TxImageEditorPaneView : UserControl
     // in OnCanvasPointerMoved.
     private bool _pushedUndoThisGesture;
 
+    /// <summary>TX workflow modernization plan, Phase 3a -- non-null while a placement tool is
+    /// armed (an "Add Text"/"Add Box" toolbar button was pressed) but before the canvas press that
+    /// actually starts <see cref="DragMode.Placing"/>. A crosshair cursor is shown on
+    /// <see cref="EditorCanvas"/> for the whole armed duration, including this pre-press window --
+    /// set/cleared everywhere this field is, so the two can't drift apart.</summary>
+    private PlacementKind? _pendingPlacementKind;
+
+    /// <summary>Shift held at arm time (TX workflow modernization plan, Phase 3a) -- the tool stays
+    /// armed after a placement completes instead of disarming, for repeated placements. Captured
+    /// once, at arm time, not re-read from live modifier state later -- so releasing Shift mid-drag
+    /// doesn't change the outcome of the placement already in progress.</summary>
+    private bool _pendingPlacementSticky;
+
+    private Point _placementAnchorPoint;
+
     public TxImageEditorPaneView()
     {
         InitializeComponent();
@@ -86,6 +116,14 @@ public partial class TxImageEditorPaneView : UserControl
         // before ScrollContentPresenter's own wheel-scroll handling, which is what lets the
         // Ctrl/Cmd-gated branch below claim the event (e.Handled = true) ahead of native scroll.
         EditorScrollViewer.AddHandler(PointerWheelChangedEvent, OnEditorWheelChanged, RoutingStrategies.Tunnel);
+
+        // TX workflow modernization plan, Phase 3a -- Tunnel, same reasoning as the wheel handler
+        // above: crop-move/element-select/resize-handle are BUBBLING handlers on child controls
+        // (OnCropBodyPointerPressed/OnOverlayElementPointerPressed/OnElementResizeHandlePointerPressed),
+        // so they'd see a press before a Canvas-attached bubbling handler ever could. Tunneling here
+        // runs first and marks the event Handled while a placement is armed, so an armed click over
+        // an existing element starts a PLACEMENT, not a drag of that element.
+        EditorCanvas.AddHandler(PointerPressedEvent, OnArmedPlacementPressed, RoutingStrategies.Tunnel);
     }
 
     private TxImageEditorPaneViewModel? ViewModel => DataContext as TxImageEditorPaneViewModel;
@@ -102,6 +140,177 @@ public partial class TxImageEditorPaneView : UserControl
     private void OnFitWidthClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitWidth(EditorScrollViewer.Bounds.Width);
 
     private void OnFitHeightClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitHeight(EditorScrollViewer.Bounds.Height);
+
+    /// <summary>TX workflow modernization plan, Phase 3a -- "Add Text" toolbar button. Wired as
+    /// <c>PointerPressed</c> (not <c>Click</c>/<c>Command</c>) specifically so <see cref="Shift"/>
+    /// (sticky placement) is readable from <see cref="PointerPressedEventArgs.KeyModifiers"/> at arm
+    /// time -- a plain <c>Click</c> event carries no modifier state. Re-pressing the SAME button
+    /// while already armed with that kind disarms instead of re-arming (toggle), matching the
+    /// design's "clicking the button again cancels" requirement.</summary>
+    private void OnArmTextPlacementPressed(object? sender, PointerPressedEventArgs e) => TogglePlacementArm(PlacementKind.Text, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+
+    /// <summary>Same reasoning as <see cref="OnArmTextPlacementPressed"/> right above, for "Add Box".</summary>
+    private void OnArmBoxPlacementPressed(object? sender, PointerPressedEventArgs e) => TogglePlacementArm(PlacementKind.Box, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+
+    private void TogglePlacementArm(PlacementKind kind, bool sticky)
+    {
+        if (_pendingPlacementKind == kind)
+        {
+            DisarmPlacement();
+            return;
+        }
+
+        _pendingPlacementKind = kind;
+        _pendingPlacementSticky = sticky;
+        EditorCanvas.Cursor = new Cursor(StandardCursorType.Cross);
+    }
+
+    private void DisarmPlacement()
+    {
+        _pendingPlacementKind = null;
+        _pendingPlacementSticky = false;
+        EditorCanvas.Cursor = Cursor.Default;
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 3a -- the Tunnel handler registered in the
+    /// constructor. No-ops (returns without marking <paramref name="e"/> handled) when nothing is
+    /// armed, letting every existing bubbling handler (crop/element/resize-handle) run exactly as
+    /// before -- this is the ONLY new code that runs on every canvas press regardless of armed
+    /// state, so it has to stay cheap and clearly gated. Right-button while armed disarms rather
+    /// than starting a placement, and deliberately does NOT mark the event handled -- the existing
+    /// per-element/canvas <c>ContextMenu</c>s must still see the press and open normally.</summary>
+    private void OnArmedPlacementPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_pendingPlacementKind is null)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(EditorCanvas);
+        if (point.Properties.IsRightButtonPressed)
+        {
+            DisarmPlacement();
+            return;
+        }
+
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        _placementAnchorPoint = point.Position;
+        _dragMode = DragMode.Placing;
+        _lastPointerPosition = point.Position;
+        e.Pointer.Capture(EditorCanvas);
+        e.Handled = true;
+    }
+
+    /// <summary>Pure drag-to-rect math for <see cref="DragMode.Placing"/> (TX workflow modernization
+    /// plan, Phase 3a) -- unit-testable without a real drag, same reasoning/precedent as
+    /// <see cref="ComputeElementResize"/>/<see cref="SnapElementBoundsToGrid"/>. Anchor/current are
+    /// un-ordered (the drag can go in any direction from the press point) -- normalizes both by the
+    /// canvas's own display dimensions into the SAME [0,1] space
+    /// <see cref="ITemplateElementViewModel.X"/>/<c>Y</c>/<c>Width</c>/<c>Height</c> already use
+    /// (confirmed: dividing a display-pixel delta by <c>CanvasDisplayWidth</c>/<c>Height</c> cancels
+    /// <see cref="TxImageEditorPaneViewModel.ZoomFactor"/> out, same as every other drag delta in
+    /// this file), then derives a CENTER-anchored rect floored at <paramref name="minSize"/> per
+    /// axis -- same floor reasoning as <see cref="ComputeElementResize"/>'s own doc comment (an
+    /// unclamped near-zero size is invisible and <c>ApplyTemplate</c> skips it entirely).</summary>
+    public static (double CenterX, double CenterY, double Width, double Height) ComputeRectFromDrag(
+        Point anchor, Point current, double canvasDisplayWidth, double canvasDisplayHeight, double minSize = MinNormalizedElementSize)
+    {
+        var x1 = anchor.X / canvasDisplayWidth;
+        var y1 = anchor.Y / canvasDisplayHeight;
+        var x2 = current.X / canvasDisplayWidth;
+        var y2 = current.Y / canvasDisplayHeight;
+
+        var left = Math.Min(x1, x2);
+        var top = Math.Min(y1, y2);
+        var width = Math.Max(Math.Abs(x2 - x1), minSize);
+        var height = Math.Max(Math.Abs(y2 - y1), minSize);
+
+        return (left + (width / 2), top + (height / 2), width, height);
+    }
+
+    /// <summary>Below this real-pixel distance (TX workflow modernization plan, Phase 3a), a
+    /// placement press+release is treated as a plain CLICK (default-size element centered on the
+    /// point) rather than a DRAG (sized to the dragged rect) -- Avalonia can report a few pixels of
+    /// pointer jitter between press and release even for what a real user experiences as a single
+    /// click, so a literal zero-distance check would misclassify most clicks as a drag.</summary>
+    private const double PlacementClickThresholdPixels = 4;
+
+    /// <summary>TX workflow modernization plan, Phase 3c -- how close (normalized, same [0,1] space
+    /// as element X/Y/Width/Height) a dragged element's own edge/center has to land to another
+    /// element's edge/center (or the crop's own center) to snap to it at drop. 0.01 = 1% of the
+    /// working copy's width/height -- small enough that snapping only engages for a genuinely close
+    /// drop, not a coincidentally-nearby one.</summary>
+    private const double AlignmentSnapThresholdNormalized = 0.01;
+
+    /// <summary>Pure alignment-guide-snap math (TX workflow modernization plan, Phase 3c) --
+    /// unit-testable without a real drag, same reasoning/precedent as
+    /// <see cref="ComputeElementResize"/>/<see cref="SnapElementBoundsToGrid"/>. For EACH axis
+    /// independently: compares the dragged element's own left/center/right (X) or top/center/bottom
+    /// (Y) against every candidate target (every OTHER element's corresponding left/center/right or
+    /// top/center/bottom, plus <paramref name="cropCenter"/> for a center-only target) and returns
+    /// the CENTER-anchored position that puts the single CLOSEST matching pair exactly on top of
+    /// each other, or <see langword="null"/> for an axis with no match inside
+    /// <paramref name="thresholdNormalized"/>. Independent per axis -- a drop can snap X to one
+    /// element and Y to a completely different one, matching how alignment guides work in every
+    /// mainstream design tool.</summary>
+    public static (double? X, double? Y) ComputeAlignmentSnap(
+        (double X, double Y, double Width, double Height) dragged,
+        IReadOnlyList<(double X, double Y, double Width, double Height)> others,
+        (double X, double Y) cropCenter,
+        double thresholdNormalized = AlignmentSnapThresholdNormalized)
+    {
+        var xTargets = new List<double> { cropCenter.X };
+        var yTargets = new List<double> { cropCenter.Y };
+        foreach (var other in others)
+        {
+            xTargets.Add(other.X - (other.Width / 2));
+            xTargets.Add(other.X);
+            xTargets.Add(other.X + (other.Width / 2));
+            yTargets.Add(other.Y - (other.Height / 2));
+            yTargets.Add(other.Y);
+            yTargets.Add(other.Y + (other.Height / 2));
+        }
+
+        var xPoints = new (double Point, double CenterOffset)[]
+        {
+            (dragged.X - (dragged.Width / 2), dragged.Width / 2),
+            (dragged.X, 0),
+            (dragged.X + (dragged.Width / 2), -(dragged.Width / 2)),
+        };
+        var yPoints = new (double Point, double CenterOffset)[]
+        {
+            (dragged.Y - (dragged.Height / 2), dragged.Height / 2),
+            (dragged.Y, 0),
+            (dragged.Y + (dragged.Height / 2), -(dragged.Height / 2)),
+        };
+
+        return (FindClosestSnap(xPoints, xTargets, thresholdNormalized), FindClosestSnap(yPoints, yTargets, thresholdNormalized));
+    }
+
+    private static double? FindClosestSnap(
+        IReadOnlyList<(double Point, double CenterOffset)> draggedPoints, IReadOnlyList<double> targets, double threshold)
+    {
+        double? bestCenter = null;
+        var bestDistance = threshold;
+        foreach (var (point, centerOffset) in draggedPoints)
+        {
+            foreach (var target in targets)
+            {
+                var distance = Math.Abs(point - target);
+                if (distance <= bestDistance)
+                {
+                    bestDistance = distance;
+                    bestCenter = target + centerOffset;
+                }
+            }
+        }
+
+        return bestCenter;
+    }
 
     /// <summary>Task #23 (zoom slider addendum, plan-reviewed) -- Ctrl/Cmd+wheel zooms, anchored so
     /// the canvas pixel under the pointer stays under the pointer (near-universal convention for
@@ -159,9 +368,33 @@ public partial class TxImageEditorPaneView : UserControl
     public static double ComputeAnchoredOffset(double currentOffset, double fraction, double newContentSize, double anchorAfter) =>
         currentOffset + (fraction * newContentSize) - anchorAfter;
 
-    private void OnCropBodyPointerPressed(object? sender, PointerPressedEventArgs e) => StartDrag(DragMode.CropMove, e);
+    /// <summary>TX workflow modernization plan, Phase 5 blocker fix -- left-button gate added (was
+    /// missing here, unlike <see cref="OnOverlayElementPointerPressed"/>/
+    /// <see cref="OnElementResizeHandlePointerPressed"/>, which both already have it). Without it, a
+    /// right-click anywhere on the crop rect -- most of the visible canvas -- started a crop-move
+    /// drag and captured the pointer on <see cref="EditorCanvas"/> before any context menu could
+    /// show, silently eating the click a new canvas-level <c>ContextMenu</c> needs to reach.</summary>
+    private void OnCropBodyPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
 
-    private void OnCropHandlePointerPressed(object? sender, PointerPressedEventArgs e) => StartDrag(DragMode.CropResize, e);
+        StartDrag(DragMode.CropMove, e);
+    }
+
+    /// <summary>Same left-button gate and reasoning as <see cref="OnCropBodyPointerPressed"/> right
+    /// above.</summary>
+    private void OnCropHandlePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        StartDrag(DragMode.CropResize, e);
+    }
 
     /// <summary>Phase 1 (spec/15-template-designer.md): <see cref="ITemplateElementViewModel.Locked"/>
     /// is the REAL gate here -- the resize handle's own <c>IsVisible="{Binding !Locked}"</c> binding
@@ -206,6 +439,16 @@ public partial class TxImageEditorPaneView : UserControl
         if (element.Locked || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
         {
             return;
+        }
+
+        // TX workflow modernization plan, Phase 3b -- Ctrl-drag-to-duplicate. Clones the pressed
+        // element (its own +0.02 seed offset is immediately overridden by the drag below) and drags
+        // the CLONE, leaving the original in place -- same muscle-memory gesture Illustrator/
+        // Inkscape/Sketch use, deliberately Ctrl rather than Alt (see DuplicateElementForDrag's own
+        // doc comment for why).
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
+        {
+            element = vm.DuplicateElementForDrag(element);
         }
 
         _draggedElement = element;
@@ -317,9 +560,13 @@ public partial class TxImageEditorPaneView : UserControl
         // stays CropMove/CropResize-only -- Overlay/ElementResize still push through each element's
         // own On*Changing-coalesced PushUndoSnapshotForGeometryChange hook (unchanged), this only
         // adds bookkeeping, not a second push.
+        // Placing (TX workflow modernization plan, Phase 3a) excluded here too -- nothing exists on
+        // the canvas yet during a placement drag, so there is nothing to push an undo step FOR; the
+        // element is created (and its own single undo step pushed) once, at release, by
+        // AddOverlayElementAt/AddBoxElementAt.
         if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
-            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize))
+            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing))
             {
                 vm.PushUndoSnapshotForDragGesture();
             }
@@ -356,6 +603,11 @@ public partial class TxImageEditorPaneView : UserControl
                 element.Height = newHeight;
                 element.X += centerDeltaX;
                 element.Y += centerDeltaY;
+                break;
+            case DragMode.Placing:
+                // No live rubber-band preview yet (TX workflow modernization plan, Phase 3a scope
+                // cut, tracked as follow-up polish) -- the actual rect is computed once, from the
+                // anchor and release point together, in OnCanvasPointerReleased's own Placing branch.
                 break;
         }
     }
@@ -434,14 +686,93 @@ public partial class TxImageEditorPaneView : UserControl
     /// here beyond what already happens.</summary>
     private void OnCanvasPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        if (ViewModel is { SnapToGrid: true } vm && _dragMode is DragMode.Overlay or DragMode.ElementResize
-            && _draggedElement is { Locked: false } element)
+        if (ViewModel is { } vm)
         {
-            var (x, y, width, height) = SnapElementBoundsToGrid(element.X, element.Y, element.Width, element.Height);
-            // Code-review finding: apply as one atomic undo step via the VM, not 4 direct property
-            // assignments here -- see ApplySnappedElementBounds' own doc comment for why 4 separate
-            // assignments would need two Undos to fully revert a snapped drag.
-            vm.ApplySnappedElementBounds(element, x, y, width, height);
+            if (_dragMode is DragMode.Overlay or DragMode.ElementResize && _draggedElement is { Locked: false } element)
+            {
+                var x = element.X;
+                var y = element.Y;
+                var width = element.Width;
+                var height = element.Height;
+
+                if (vm.SnapToGrid)
+                {
+                    (x, y, width, height) = SnapElementBoundsToGrid(x, y, width, height);
+                }
+
+                // TX workflow modernization plan, Phase 3c -- alignment-guide snap, drop-only (NOT
+                // live-magnetic-during-drag: this editor's drag model is incremental deltas, not
+                // absolute writes, and a mid-drag absolute snap would decouple the element from the
+                // cursor -- same reasoning SnapToGrid's own doc comment already gives for grid snap
+                // being drop-only). Scoped to Overlay (move) drags only, not ElementResize -- "align
+                // this element with that one" is a move concept; resize-alignment is a different,
+                // more involved feature not built here. Merged with grid-snap's own result into ONE
+                // final position BEFORE the single ApplySnappedElementBounds call below (plan-review
+                // finding: two sequential snap-then-apply calls would be two undo steps for one
+                // drop) -- alignment takes priority per axis when both would apply; grid's result
+                // stands on an axis alignment didn't touch.
+                if (_dragMode == DragMode.Overlay)
+                {
+                    var others = vm.OverlayElements
+                        .Where(other => !ReferenceEquals(other, element))
+                        .Select(other => (other.X, other.Y, other.Width, other.Height))
+                        .ToList();
+                    var cropCenter = (vm.CropRect.X + (vm.CropRect.Width / 2), vm.CropRect.Y + (vm.CropRect.Height / 2));
+                    var (alignX, alignY) = ComputeAlignmentSnap((element.X, element.Y, element.Width, element.Height), others, cropCenter);
+                    x = alignX ?? x;
+                    y = alignY ?? y;
+                }
+
+                // Code-review finding: apply as one atomic undo step via the VM, not 4 direct property
+                // assignments here -- see ApplySnappedElementBounds' own doc comment for why 4 separate
+                // assignments would need two Undos to fully revert a snapped drag.
+                if (x != element.X || y != element.Y || width != element.Width || height != element.Height)
+                {
+                    vm.ApplySnappedElementBounds(element, x, y, width, height);
+                }
+            }
+
+            // TX workflow modernization plan, Phase 3a -- the actual element creation. Below
+            // PlacementClickThresholdPixels of real movement is a plain click (default size,
+            // centered on the release point); above it is a drag (sized to the dragged rect).
+            if (_dragMode == DragMode.Placing && _pendingPlacementKind is { } kind)
+            {
+                var released = e.GetPosition(EditorCanvas);
+                var distance = Point.Distance(_placementAnchorPoint, released);
+
+                double centerX, centerY, width2, height2;
+                if (distance < PlacementClickThresholdPixels)
+                {
+                    centerX = released.X / vm.CanvasDisplayWidth;
+                    centerY = released.Y / vm.CanvasDisplayHeight;
+                    width2 = TxImageEditorPaneViewModel.DefaultElementWidth;
+                    height2 = kind == PlacementKind.Text
+                        ? TxImageEditorPaneViewModel.DefaultTextElementHeight
+                        : TxImageEditorPaneViewModel.DefaultBoxElementHeight;
+                }
+                else
+                {
+                    (centerX, centerY, width2, height2) =
+                        ComputeRectFromDrag(_placementAnchorPoint, released, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
+                }
+
+                if (kind == PlacementKind.Text)
+                {
+                    vm.AddOverlayElementAt(centerX, centerY, width2, height2);
+                }
+                else
+                {
+                    vm.AddBoxElementAt(centerX, centerY, width2, height2);
+                }
+
+                // One-shot by default; Shift-held-at-arm-time (TX workflow modernization plan, Phase
+                // 3a "sticky" flexibility addition) keeps the tool armed for repeated placements
+                // instead of disarming here.
+                if (!_pendingPlacementSticky)
+                {
+                    DisarmPlacement();
+                }
+            }
         }
 
         _dragMode = DragMode.None;
@@ -544,6 +875,18 @@ public partial class TxImageEditorPaneView : UserControl
 
         if (e.Source is TextBox)
         {
+            return;
+        }
+
+        // TX workflow modernization plan, Phase 3a -- Esc disarms a placement tool that's armed but
+        // not yet pressed on the canvas (the mid-drag case is handled by CancelActiveDrag above,
+        // reached via the _dragMode != DragMode.None branch). Placed AFTER the TextBox guard
+        // (plan-review finding) so pressing Esc while typing somewhere in the sidebar doesn't also
+        // disarm an unrelated pending placement.
+        if (e.Key == Key.Escape && _pendingPlacementKind is not null)
+        {
+            DisarmPlacement();
+            e.Handled = true;
             return;
         }
 
@@ -653,24 +996,52 @@ public partial class TxImageEditorPaneView : UserControl
         }
 
         // Backlog item (user request, 2026-08-17): in-editor Copy/Cut/Paste for the selected canvas
-        // element.
-        if (ctrlOrCmd && e.Key == Key.C && vm.SelectedOverlayElement is not null)
+        // element. Shift excluded (TX workflow modernization plan round 2 finding): Ctrl+Shift+C/V
+        // are reserved for Copy Style/Paste Style below and would otherwise be silently swallowed
+        // here first.
+        var shiftHeld = e.KeyModifiers.HasFlag(KeyModifiers.Shift);
+
+        if (ctrlOrCmd && !shiftHeld && e.Key == Key.C && vm.SelectedOverlayElement is not null)
         {
             vm.CopySelectedElementCommand.Execute(null);
             e.Handled = true;
             return;
         }
 
-        if (ctrlOrCmd && e.Key == Key.X && vm.SelectedOverlayElement is not null)
+        if (ctrlOrCmd && !shiftHeld && e.Key == Key.X && vm.SelectedOverlayElement is not null)
         {
             vm.CutSelectedElementCommand.Execute(null);
             e.Handled = true;
             return;
         }
 
-        if (ctrlOrCmd && e.Key == Key.V && vm.PasteElementCommand.CanExecute(null))
+        if (ctrlOrCmd && !shiftHeld && e.Key == Key.V && vm.PasteElementCommand.CanExecute(null))
         {
             vm.PasteElementCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        // TX workflow modernization plan, Phase 1: Copy/Paste Style, Ctrl+Shift+C/V.
+        if (ctrlOrCmd && shiftHeld && e.Key == Key.C && vm.CopySelectedElementStyleCommand.CanExecute(null))
+        {
+            vm.CopySelectedElementStyleCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        if (ctrlOrCmd && shiftHeld && e.Key == Key.V && vm.PasteSelectedElementStyleCommand.CanExecute(null))
+        {
+            vm.PasteSelectedElementStyleCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
+        // TX workflow modernization plan, Phase 8: Duplicate = Ctrl+D. No Shift check needed here
+        // (unlike C/X/V above) -- nothing else in this handler uses Ctrl+Shift+D.
+        if (ctrlOrCmd && e.Key == Key.D && vm.DuplicateCommand.CanExecute(null))
+        {
+            vm.DuplicateCommand.Execute(null);
             e.Handled = true;
             return;
         }
@@ -757,6 +1128,16 @@ public partial class TxImageEditorPaneView : UserControl
         if (_pushedUndoThisGesture && vm.UndoCommand.CanExecute(null))
         {
             vm.UndoCommand.Execute(null);
+        }
+
+        // TX workflow modernization plan, Phase 3a -- a mid-drag Esc during Placing fully disarms
+        // (not just cancels this one drag), matching the "Esc disarms an armed tool" requirement.
+        // No undo step to revert here regardless: Placing never pushes one until the element is
+        // actually created (OnCanvasPointerMoved's own comment on excluding Placing from the
+        // _pushedUndoThisGesture branch), so _pushedUndoThisGesture is always false for this mode.
+        if (_dragMode == DragMode.Placing)
+        {
+            DisarmPlacement();
         }
 
         _dragMode = DragMode.None;

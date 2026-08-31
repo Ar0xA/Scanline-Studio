@@ -7,6 +7,22 @@ namespace ScanlineStudio.Abstractions.Imaging;
 /// <see cref="IImageFileLoader"/>/<see cref="IStockImageLibrary"/>.</summary>
 public readonly record struct NormalizedRect(double X, double Y, double Width, double Height);
 
+/// <summary>TX workflow modernization plan, Phase 7 -- shared numeric limits that both
+/// `TransmitImagePreparer` (Core.Imaging) and the TX editor VM (ScanlineStudio.UI, which cannot
+/// reference Core.Imaging directly, only this Abstractions project) need to agree on. Declared here
+/// rather than duplicated as two independently-maintained literals -- exactly the drift class this
+/// project has been bitten by before (a formula/constant re-derived at a second call site silently
+/// disagreeing with the first).</summary>
+public static class TransmitImageLimits
+{
+    /// <summary>Flat, destination-independent ceiling on an image element's own resize target
+    /// (mirrors `TransmitImagePreparer`'s own internal resize-cache sizing logic). The flatten
+    /// command's bake-scale computation must stay inside the same clamped/unclamped regime the live
+    /// render already uses, or a baked element could render at a different effective resolution than
+    /// what the operator saw in preview.</summary>
+    public const double MaxElementResizeDimensionPx = 4096;
+}
+
 /// <summary>Anchor is the CENTER of the text (matches drag-to-position UX: the user grabs the
 /// visual center, not a corner). <see cref="FontSizeRelative"/> is relative to the image's
 /// HEIGHT (stable reference regardless of aspect/stretch, unlike width which varies more under a
@@ -288,6 +304,26 @@ public interface ITransmitImagePreparer
     /// editor's single-button UX (4 clicks returns to the original orientation); width/height are
     /// swapped in the result.</summary>
     IImageSource Rotate(IImageSource source);
+
+    /// <summary>TX workflow modernization plan, Phase 7 (flatten command) -- exact, resampler-free
+    /// pixel-rect extraction, unlike <see cref="Crop"/>, which takes a NORMALIZED region and rounds
+    /// it. The flatten command has already computed an integer rect (matching the pipeline's own
+    /// crop rounding exactly, via the caller's own shared arithmetic) and must not have it
+    /// re-derived through a normalize/round round-trip that can slip a pixel. Throws
+    /// <see cref="ArgumentOutOfRangeException"/> for a non-positive size or a rect that isn't fully
+    /// inside <paramref name="source"/> -- deliberately NOT silently clamped like <see cref="Crop"/>,
+    /// since every caller of this overload is doing precise geometry and a silent clamp would hide
+    /// exactly the arithmetic bug it would otherwise mask.</summary>
+    IImageSource CropPixels(IImageSource source, int x, int y, int width, int height);
+
+    /// <summary>Opaque copy of <paramref name="overlay"/> onto a copy of <paramref name="background"/>
+    /// at (<paramref name="x"/>, <paramref name="y"/>), clipped to the background's own bounds --
+    /// no blending, no alpha (this namespace's <see cref="Rgb24"/> has none), no resampling. Returns
+    /// a NEW instance at <paramref name="background"/>'s dimensions; neither input is mutated
+    /// (<see cref="IImageSource"/> is read-only by contract). Off-canvas/negative offsets are legal
+    /// and produce a partial paste, matching how <see cref="ApplyTemplate"/> already treats a
+    /// partially out-of-frame element.</summary>
+    IImageSource Composite(IImageSource background, IImageSource overlay, int x, int y);
 
     /// <summary>T1-14 (production_audit.md): the TX image editor's live preview pipeline
     /// (<c>TxImageEditorPaneViewModel.RecomputePreviewPipeline</c>, fired on every coalesced

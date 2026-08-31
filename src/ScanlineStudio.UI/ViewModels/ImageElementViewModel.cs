@@ -55,6 +55,19 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     [ObservableProperty]
     private ImageFitMode _fit = ImageFitMode.Contain;
 
+    /// <summary>TX workflow modernization plan, Phase 7 -- the source's own native pixel dimensions
+    /// AS INSERTED, captured before <c>TxImageEditorPaneViewModel.DownsampleToBudget</c> caps
+    /// <see cref="Source"/> to the working-copy budget, so this is genuinely "original size" and not
+    /// the budget-capped copy this element actually composites with. 0 means unknown (a template
+    /// saved before this field existed, whose asset dimensions couldn't be resolved) --
+    /// <c>ResetImageElementToOriginalSizeCommand</c>'s own <c>CanExecute</c> gates on this rather
+    /// than guessing.</summary>
+    [ObservableProperty]
+    private int _naturalPixelWidth;
+
+    [ObservableProperty]
+    private int _naturalPixelHeight;
+
     [ObservableProperty]
     private double _imageWidth;
 
@@ -87,6 +100,28 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// (<c>Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}"</c>), never via a
     /// <c>$parent[ItemsControl]</c> binding path.</summary>
     public IRelayCommand? SetAsBackgroundCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.CopyCommand"/>
+    public IRelayCommand? CopyCommand { get; init; }
+
+    public IRelayCommand? CutCommand { get; init; }
+
+    public IRelayCommand? PasteCommand { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 1 "Fit ▸" image-menu submenu -- image-only,
+    /// same parent-pushed pattern as <see cref="SetAsBackgroundCommand"/>, string CommandParameter
+    /// (the fit mode name) same shape as <see cref="AlignSelectedElementToCropCommand"/>.</summary>
+    public IRelayCommand? FitCommand { get; init; }
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- image-only, element-parameterized (NOT
+    /// selection-implicit) same shape as <see cref="RemoveCommand"/>/<see cref="SetAsBackgroundCommand"/>
+    /// -- bound with <c>CommandParameter="{Binding}"</c>, never a <c>$parent[ItemsControl]</c>
+    /// binding path (<see cref="SetAsBackgroundCommand"/>'s own doc comment explains why that pattern
+    /// is a real, previously-hit crash in this codebase, not a style preference).</summary>
+    public IRelayCommand? ResetToOriginalSizeCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.FlattenCommand"/>
+    public IRelayCommand? FlattenCommand { get; init; }
 
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 

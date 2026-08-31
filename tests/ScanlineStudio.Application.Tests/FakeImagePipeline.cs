@@ -83,4 +83,22 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     public IReadOnlyList<string> AvailableFontFamilies { get; } = ["DejaVu Sans Mono"];
 
     public IImageSource Rotate(IImageSource source) => new FakeImageSource(source.Height, source.Width, new Rgb24(0, 0, 0));
+
+    // TX workflow modernization plan, Phase 7 -- flat fakes, same "return a plausibly-shaped result,
+    // don't try to reproduce real pixel behavior" convention as every other method above.
+    public List<(int X, int Y, int Width, int Height)> CropPixelsCalls { get; } = [];
+
+    public IImageSource CropPixels(IImageSource source, int x, int y, int width, int height)
+    {
+        CropPixelsCalls.Add((x, y, width, height));
+        return new FakeImageSource(width, height, new Rgb24(0, 0, 0));
+    }
+
+    public List<(IImageSource Background, IImageSource Overlay, int X, int Y)> CompositeCalls { get; } = [];
+
+    public IImageSource Composite(IImageSource background, IImageSource overlay, int x, int y)
+    {
+        CompositeCalls.Add((background, overlay, x, y));
+        return new FakeImageSource(background.Width, background.Height, new Rgb24(0, 0, 0));
+    }
 }

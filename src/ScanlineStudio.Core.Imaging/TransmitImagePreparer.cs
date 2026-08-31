@@ -70,11 +70,10 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     // `image.Width`/`.Height` already equal them at every current call site (Mutate hasn't run yet).
     private static void CropInto(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, int sourceWidth, int sourceHeight, NormalizedRect region)
     {
-        var x = Math.Clamp((int)Math.Round(region.X * sourceWidth), 0, sourceWidth - 1);
-        var y = Math.Clamp((int)Math.Round(region.Y * sourceHeight), 0, sourceHeight - 1);
-        var width = Math.Clamp((int)Math.Round(region.Width * sourceWidth), 1, sourceWidth - x);
-        var height = Math.Clamp((int)Math.Round(region.Height * sourceHeight), 1, sourceHeight - y);
-
+        // TX workflow modernization plan, Phase 7: rounding arithmetic moved to CropGeometry.Measure
+        // so the flatten command's write-back geometry shares this EXACT logic -- see that type's
+        // own doc comment.
+        var (x, y, width, height) = CropGeometry.Measure(sourceWidth, sourceHeight, region);
         image.Mutate(ctx => ctx.Crop(new Rectangle(x, y, width, height)));
     }
 
@@ -627,7 +626,11 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     // this specific canvas actually needs, while MaxElementResizeDimensionPxCeiling still bounds
     // the absolute worst case (a tiny destination with an astronomically oversized element).
     private const float MaxElementResizeDestinationMultiplier = 8f;
-    private const float MaxElementResizeDimensionPxCeiling = 4096f;
+
+    // TX workflow modernization plan, Phase 7: moved to Abstractions.Imaging.TransmitImageLimits so
+    // the flatten command's bake-scale computation (ScanlineStudio.UI, which cannot reference this
+    // project) reads the SAME ceiling rather than a second, driftable copy.
+    private const float MaxElementResizeDimensionPxCeiling = (float)TransmitImageLimits.MaxElementResizeDimensionPx;
 
     private void DrawTemplateImage(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds)
     {
@@ -1080,6 +1083,60 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         using var image = ToImageSharp(source);
         image.Mutate(ctx => ctx.Rotate(RotateMode.Rotate90));
         return FromImageSharp(image);
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 7 -- direct scanline copy, deliberately NOT
+    /// routed through <see cref="ToImageSharp"/>/<see cref="FromImageSharp"/> like every resampling
+    /// operation in this file: there is no resampler choice to make for an exact pixel-rect
+    /// extraction, and a full two-way ImageSharp conversion of a multi-megapixel source for what is
+    /// a memcpy is real, avoidable per-call cost on the flatten path (which already does one genuine
+    /// full-frame render via <see cref="ComposePreview"/>).</summary>
+    public IImageSource CropPixels(IImageSource source, int x, int y, int width, int height)
+    {
+        if (width <= 0 || height <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(width), $"Crop size must be positive, got {width}x{height}.");
+        }
+
+        if (x < 0 || y < 0 || x + width > source.Width || y + height > source.Height)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(x), $"Crop rect ({x},{y},{width},{height}) is outside the {source.Width}x{source.Height} source.");
+        }
+
+        var pixels = new Abstractions.Imaging.Rgb24[width * height];
+        for (var row = 0; row < height; row++)
+        {
+            source.GetScanline(y + row).Slice(x, width).CopyTo(pixels.AsSpan(row * width, width));
+        }
+
+        return new ArrayImageSource(width, height, pixels);
+    }
+
+    public IImageSource Composite(IImageSource background, IImageSource overlay, int x, int y)
+    {
+        var pixels = new Abstractions.Imaging.Rgb24[background.Width * background.Height];
+        for (var row = 0; row < background.Height; row++)
+        {
+            background.GetScanline(row).CopyTo(pixels.AsSpan(row * background.Width, background.Width));
+        }
+
+        var startX = Math.Max(0, x);
+        var startY = Math.Max(0, y);
+        var endX = Math.Min(background.Width, x + overlay.Width);
+        var endY = Math.Min(background.Height, y + overlay.Height);
+        var count = endX - startX;
+        if (count > 0)
+        {
+            for (var destinationY = startY; destinationY < endY; destinationY++)
+            {
+                overlay.GetScanline(destinationY - y)
+                    .Slice(startX - x, count)
+                    .CopyTo(pixels.AsSpan((destinationY * background.Width) + startX, count));
+            }
+        }
+
+        return new ArrayImageSource(background.Width, background.Height, pixels);
     }
 
     private static Image<SixLabors.ImageSharp.PixelFormats.Rgb24> ToImageSharp(IImageSource source)
