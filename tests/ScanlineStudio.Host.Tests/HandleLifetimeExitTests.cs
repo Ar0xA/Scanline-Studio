@@ -187,6 +187,32 @@ public sealed class HandleLifetimeExitTests
         Assert.True(restarter.StartNewInstanceCalled);
     }
 
+    [Fact]
+    public void WhenRestartRequested_ReleasesTheSingleInstanceMutexBeforeSpawning()
+    {
+        // Code-review finding: StartNewInstance's own child process re-launches without
+        // --allow-multiple-instances, and this process is still alive (Main hasn't returned) when
+        // the spawn happens -- if the mutex weren't released first, the child would race this
+        // process's own real exit for the same named lock and could lose, silently vanishing
+        // instead of restarting. Same "assert inside OnStartNewInstance, before the real spawn
+        // runs" technique as WhenRestartRequested_DisposesTheFileLoggerProviderBeforeSpawning above.
+        var mutexName = Guid.NewGuid().ToString("N");
+        var singleInstanceMutex = new Mutex(initiallyOwned: false, name: mutexName, out var createdNew);
+        Assert.True(createdNew); // sanity: this test's own setup actually holds the name
+
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        restarter.OnStartNewInstance = () =>
+        {
+            using var reacquired = new Mutex(initiallyOwned: false, name: mutexName, out var stillFree);
+            Assert.True(stillFree, "the single-instance mutex must be released before the restart spawn, or the child can lose the race and silently fail to start");
+        };
+
+        Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, fileLoggerProvider: null, singleInstanceMutex: singleInstanceMutex);
+
+        Assert.True(restarter.StartNewInstanceCalled);
+    }
+
     private sealed class FakeAsyncDisposableHost : IAsyncDisposable
     {
         /// <summary>Real, controllable gate -- defaults to already-completed so every OTHER test
