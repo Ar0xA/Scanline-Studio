@@ -51,8 +51,9 @@ namespace ScanlineStudio.Core.Sstv;
 /// H1 vs H2 at every preset) needs no delay-line compensation either.
 ///
 /// <b>The convolution window is CAUSAL, `[index-tap, index]`, not centered -- load-bearing, verified
-/// during plan-review, not a detail to gloss over.</b> `CFIR2::Do` pairs `H[0]` with the NEWEST sample
-/// and walks backward, giving a real, constant `tap/2`-sample group delay PER PRESET (~1.09ms at Wide,
+/// during plan-review, not a detail to gloss over.</b> `CFIR2::Do` pairs `H[0]` with the LOGICALLY
+/// NEWEST sample (index 0 in <see cref="FirDelayLine"/>'s own newest-first convention, see that class's
+/// doc comment) and walks backward, giving a real, constant `tap/2`-sample group delay PER PRESET (~1.09ms at Wide,
 /// ~2.90ms at Narrow, ~4.35ms at VeryNarrow, each rate-invariant within its own preset since tap scales
 /// with rate) -- NOT one constant across all presets; legacy carries this same tap-dependent delay, and
 /// nothing downstream in this port may assume Wide's 12-sample figure once Narrow/VeryNarrow are
@@ -83,7 +84,7 @@ internal sealed class SearchBandpassFilter
 {
     private double[] _h1; // locked/normal (HBPF) -- Band-1 item 4b. NOT readonly -- see UpdateSyncRestart.
     private readonly double[] _h2; // search/pre-lock (HBPFS) -- Piece B
-    private readonly double[] _z; // delay line, length tap+1. _z[0]=newest sample, _z[tap]=oldest.
+    private readonly FirDelayLine _z; // delay line, length tap+1. Logical index 0=newest sample, tap=oldest -- see FirDelayLine's own doc comment.
     private readonly int _tap;
     private readonly int _sampleRate; // retained (not just a ctor local) so UpdateSyncRestart can recompute H1
     private readonly double _h1Fch;
@@ -116,9 +117,9 @@ internal sealed class SearchBandpassFilter
         var h1Fcl = syncRestartEnabled ? 1100.0 : 1200.0; // lfq, sstv.cpp:1524
         _h1 = MakeFilter(_tap, sampleRate, fcl: h1Fcl, fch: h1Fch, att: h1Att);
         _h2 = MakeFilter(_tap, sampleRate, fcl: 400.0, fch: 2500.0, att: 20.0);
-        _z = new double[_tap + 1]; // zero-init -- matches CFIR2::Create's own zero-memset delay line
-                                    // (fir.cpp:1087-1088), confirmed never reset mid-stream on RX
-                                    // (Clear() is TX-only, sstv.cpp:2827).
+        _z = new FirDelayLine(_tap, headMovesForward: false); // zero-init -- matches CFIR2::Create's own
+                                    // zero-memset delay line (fir.cpp:1087-1088), confirmed never reset
+                                    // mid-stream on RX (Clear() is TX-only, sstv.cpp:2827).
     }
 
     /// <summary>Live-apply for a SyncRestart flag change (2026-08-27, restart-required-settings
@@ -175,9 +176,10 @@ internal sealed class SearchBandpassFilter
     /// O(tap) per call more expensive than Wide -- budget golden-vector fixture counts at those presets
     /// deliberately (see `GoldenVectorTests.cs`'s `RxBpfDecoderFixtures`).
     ///
-    /// CAUSAL, not centered -- <c>_z[0]</c> (this call's newest sample) pairs with <c>H[0]</c>, matching
-    /// <c>CFIR2::Do</c>'s real addressing (`fir.cpp:1131-1144`) exactly. See this class's own doc
-    /// comment for why this direction is load-bearing.
+    /// CAUSAL, not centered -- logical index 0 (this call's newest sample) pairs with <c>H[0]</c>,
+    /// matching <c>CFIR2::Do</c>'s real addressing (`fir.cpp:1131-1144`) exactly. See this class's own
+    /// doc comment and <see cref="FirDelayLine"/>'s own doc comment for why this direction is
+    /// load-bearing.
     ///
     /// <paramref name="useLocked"/> selects <c>H1</c> (locked/normal) vs <c>H2</c> (search/pre-lock) --
     /// the delay line itself always shifts regardless (matching <c>CFIR2::Do(d, hp)</c>'s own single-
@@ -185,17 +187,10 @@ internal sealed class SearchBandpassFilter
     /// coefficient table differs.</summary>
     public double ProcessSample(double input, bool useLocked)
     {
-        Array.Copy(_z, 0, _z, 1, _tap);
-        _z[0] = input;
+        _z.Push(input);
 
         var h = useLocked ? _h1 : _h2;
-        var sum = 0.0;
-        for (var i = 0; i <= _tap; i++)
-        {
-            sum += _z[i] * h[i];
-        }
-
-        return sum;
+        return _z.Convolve(h);
     }
 
     /// <summary>Literal port of `MakeFilter` (`fir.cpp:346-427`), BPF mode only (this filter is never
