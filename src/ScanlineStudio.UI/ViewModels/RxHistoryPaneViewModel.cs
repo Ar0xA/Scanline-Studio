@@ -7,6 +7,7 @@ using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Imaging;
@@ -1039,6 +1040,88 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
     }
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: what <see cref="SendToTxRequested"/>
+    /// carries -- <paramref name="FilePath"/> (a real file on disk, unlike Copy-to-TX's already-loaded
+    /// <see cref="IImageSource"/>, so this can't share that path's call site) and whatever contact
+    /// variables the entry's linked QSO (if any) resolved to, or <see langword="null"/> meaning
+    /// truly nothing was seeded, not "use whatever contact is currently on the RX pane."</summary>
+    public sealed record SendToTxRequest(string FilePath, IReadOnlyDictionary<string, string>? ContactVariables);
+
+    /// <summary>Same "genuine request/response the command awaits the typed answer" shape as
+    /// <see cref="ConfirmRequested"/> above -- set exactly once, by <c>MainWindow.axaml.cs</c>, to
+    /// <c>TxControlsPaneViewModel.OpenEditorForExternalFileAsync</c>. Returns
+    /// <see langword="true"/>/<see langword="false"/> for whether the TX editor slot was actually
+    /// claimed, so <see cref="SendSelectedEntryToTxAsync"/> can surface a refusal on this pane's own
+    /// <see cref="ErrorMessage"/> -- unlike Copy-to-TX's button, this pane has no view of
+    /// <c>TxControlsPaneViewModel.CanChangeSourceOrMode</c> to gate an <c>IsEnabled</c> binding on.
+    /// </summary>
+    public Func<SendToTxRequest, Task<bool>>? SendToTxRequested { get; set; }
+
+    private bool CanSendSelectedEntryToTx() => SelectedEntry is not null;
+
+    /// <summary>Gallery pane's "Send to TX" -- legacy precedent shared with Copy-to-TX
+    /// (<c>fileview.cpp</c>'s <c>CopyRectBitmap(pBitmapTXM)</c>): replaces/opens the editor with this
+    /// frame as a fresh base image, not an overlay. Captures <c>entry</c> BEFORE the QSO lookup's own
+    /// await (same discipline <see cref="ExportFrameAsync"/>'s own doc comment describes) and never
+    /// reads <see cref="SelectedEntry"/> again afterward.
+    /// <para>Contact-seed only when <see cref="ReceiveHistoryEntry.LinkedQsoId"/> is actually set --
+    /// unlike Copy-to-TX (which reads the LIVE RX pane's own current callsign/grid), a history entry
+    /// carries no callsign/grid of its own, so guessing would violate the same "absent, never blank"
+    /// convention <c>TxControlsPaneViewModel.BuildCurrentContactVariables</c>'s own doc comment
+    /// states: a blank/whitespace-only value stays unseeded, not seeded as "".</para></summary>
+    [RelayCommand(CanExecute = nameof(CanSendSelectedEntryToTx))]
+    private async Task SendSelectedEntryToTxAsync()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        ErrorMessage = null;
+        Log.SendSelectedEntryToTxInvoked(_logger, entry.Entry.Id);
+
+        Dictionary<string, string>? contactVariables = null;
+        if (entry.Entry.LinkedQsoId is { } qsoId)
+        {
+            QsoRecord? qso;
+            try
+            {
+                qso = await _logbookSession.GetQsoByIdAsync(qsoId);
+            }
+            catch (Exception ex)
+            {
+                // A lookup failure must not block sending the frame -- just seed nothing, same as an
+                // entry with no linked QSO at all.
+                Log.SendSelectedEntryToTxQsoLookupFailed(_logger, qsoId, ex);
+                qso = null;
+            }
+
+            if (qso is not null)
+            {
+                if (!string.IsNullOrWhiteSpace(qso.Callsign))
+                {
+                    (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_call"] = qso.Callsign.Trim();
+                }
+
+                if (!string.IsNullOrWhiteSpace(qso.GridSquare))
+                {
+                    (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_grid"] = qso.GridSquare.Trim();
+                }
+            }
+        }
+
+        if (SendToTxRequested is null)
+        {
+            return;
+        }
+
+        var opened = await SendToTxRequested(new SendToTxRequest(entry.Entry.FilePath, contactVariables)).ConfigureAwait(true);
+        if (!opened)
+        {
+            ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SendToTxRefused");
+        }
+    }
+
     partial void OnSelectedEntryChanged(RxHistoryEntryViewModel? value)
     {
         Log.SelectedEntryChanged(_logger);
@@ -1057,6 +1140,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         DeleteSelectedEntryCommand.NotifyCanExecuteChanged();
         OpenAudioFileLocationCommand.NotifyCanExecuteChanged();
         RedecodeSelectedEntryCommand.NotifyCanExecuteChanged();
+        // RX/TX pipeline fix plan (2026-09-01), item 3, auditor-caught: same recurring omission as
+        // the 2026-08-29 Delete-button incident documented above -- without this, "Send to TX" stays
+        // disabled on the ordinary click-a-thumbnail path, recovering only on tab detach/reattach.
+        SendSelectedEntryToTxCommand.NotifyCanExecuteChanged();
 
         if (_isRepopulating && value is null)
         {
@@ -1426,6 +1513,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ExportFrameAsync failed")]
         public static partial void ExportFrameFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SendSelectedEntryToTx invoked: entryId={EntryId}")]
+        public static partial void SendSelectedEntryToTxInvoked(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SendSelectedEntryToTx: linked QSO lookup failed for {QsoId} -- sending with no contact seeded")]
+        public static partial void SendSelectedEntryToTxQsoLookupFailed(ILogger logger, string qsoId, Exception ex);
     }
 }
 

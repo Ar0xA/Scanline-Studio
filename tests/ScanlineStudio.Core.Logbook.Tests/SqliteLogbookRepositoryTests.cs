@@ -219,6 +219,51 @@ public sealed class SqliteLogbookRepositoryTests
         }
     }
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3.</summary>
+    [Fact]
+    public async Task GetByIdAsync_ExistingRow_ReturnsIt()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var record = new QsoRecord(
+                Id: "1", Callsign: "N0CALL", StartUtc: new DateTimeOffset(2026, 8, 7, 12, 0, 0, TimeSpan.Zero),
+                EndUtc: null, FrequencyHz: 14230000, Mode: RadioMode.Usb, SstvModeId: "martin1",
+                RstSent: "59", RstReceived: "58", Name: "Alice", Qth: "Somewhere", GridSquare: "JO31",
+                Country: "Germany", Notes: "Nice signal", ReceivedImageId: "img-1", QslSent: true, QslReceived: true);
+            await repository.AddAsync(record);
+            await repository.AddAsync(record with { Id = "2", Callsign = "OTHER" }); // a second row rules out a bug that ignores the WHERE clause
+
+            var loaded = await repository.GetByIdAsync("1");
+
+            Assert.Equal(record, loaded);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task GetByIdAsync_UnknownId_ReturnsNull_DoesNotThrow()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            await repository.AddAsync(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, null, null, null, null, false, false));
+
+            var loaded = await repository.GetByIdAsync("does-not-exist");
+
+            Assert.Null(loaded);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
     [Fact]
     public async Task SearchAsync_UnrecognizedModeValue_FallsBackToUnknown_InsteadOfThrowing()
     {

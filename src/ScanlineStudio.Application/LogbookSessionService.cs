@@ -113,6 +113,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     public Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default) => _repository.SearchAsync(query, ct);
 
+    public Task<QsoRecord?> GetQsoByIdAsync(string id, CancellationToken ct = default) => _repository.GetByIdAsync(id, ct);
+
     /// <summary>Edits an already-logged QSO in place -- thin delegation to
     /// <see cref="ILogbookRepository.UpdateAsync"/> (already fully implemented). Deliberately does
     /// NOT re-push via ADIF-UDP or QRZ the way <see cref="LogQsoAsync"/> does: <see cref="_qrzUploader"/>'s

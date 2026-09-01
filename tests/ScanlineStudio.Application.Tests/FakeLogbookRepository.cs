@@ -61,6 +61,18 @@ internal sealed class FakeLogbookRepository : ILogbookRepository
         return Task.FromResult<IReadOnlyList<QsoRecord>>(results.OrderByDescending(r => r.StartUtc).ToList());
     }
 
+    public Exception? ThrowOnGetById { get; set; }
+
+    public Task<QsoRecord?> GetByIdAsync(string id, CancellationToken ct = default)
+    {
+        if (ThrowOnGetById is not null)
+        {
+            throw ThrowOnGetById;
+        }
+
+        return Task.FromResult(Records.FirstOrDefault(r => r.Id == id));
+    }
+
     public List<string> DeletedIds { get; } = [];
 
     public Exception? ThrowOnDelete { get; set; }

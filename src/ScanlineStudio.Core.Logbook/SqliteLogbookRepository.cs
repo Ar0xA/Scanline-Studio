@@ -135,28 +135,53 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
         while (await reader.ReadAsync(ct).ConfigureAwait(false))
         {
-            results.Add(new QsoRecord(
-                reader.GetString(0),
-                reader.GetString(1),
-                DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture),
-                reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
-                reader.IsDBNull(4) ? null : reader.GetInt64(4),
-                reader.IsDBNull(5) ? null : ParseMode(reader.GetString(5)),
-                reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7),
-                reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.IsDBNull(9) ? null : reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : reader.GetString(12),
-                reader.IsDBNull(13) ? null : reader.GetString(13),
-                reader.IsDBNull(14) ? null : reader.GetString(14),
-                reader.GetInt64(15) != 0,
-                reader.GetInt64(16) != 0));
+            results.Add(MapRecord(reader));
         }
 
         return results;
     }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: an ID lookup, not a callsign/date-range
+    /// query -- see this interface method's own doc comment for why <see cref="SearchAsync"/> can't
+    /// serve this. Same column list/order as <see cref="SearchAsync"/>'s own SELECT, so
+    /// <see cref="MapRecord"/> is shared rather than duplicated.</summary>
+    public async Task<QsoRecord?> GetByIdAsync(string id, CancellationToken ct = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+
+        var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived
+            FROM Qso WHERE Id = $id
+            """;
+        command.Parameters.AddWithValue("$id", id);
+
+        await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        return await reader.ReadAsync(ct).ConfigureAwait(false) ? MapRecord(reader) : null;
+    }
+
+    /// <summary>Shared row-mapping between <see cref="SearchAsync"/> and <see cref="GetByIdAsync"/> --
+    /// both SELECT the exact same 17-column list in the exact same order, so this was a real
+    /// duplication risk (a future column reorder in one query silently breaking only the other).</summary>
+    private static QsoRecord MapRecord(SqliteDataReader reader) => new(
+        reader.GetString(0),
+        reader.GetString(1),
+        DateTimeOffset.Parse(reader.GetString(2), System.Globalization.CultureInfo.InvariantCulture),
+        reader.IsDBNull(3) ? null : DateTimeOffset.Parse(reader.GetString(3), System.Globalization.CultureInfo.InvariantCulture),
+        reader.IsDBNull(4) ? null : reader.GetInt64(4),
+        reader.IsDBNull(5) ? null : ParseMode(reader.GetString(5)),
+        reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.IsDBNull(7) ? null : reader.GetString(7),
+        reader.IsDBNull(8) ? null : reader.GetString(8),
+        reader.IsDBNull(9) ? null : reader.GetString(9),
+        reader.IsDBNull(10) ? null : reader.GetString(10),
+        reader.IsDBNull(11) ? null : reader.GetString(11),
+        reader.IsDBNull(12) ? null : reader.GetString(12),
+        reader.IsDBNull(13) ? null : reader.GetString(13),
+        reader.IsDBNull(14) ? null : reader.GetString(14),
+        reader.GetInt64(15) != 0,
+        reader.GetInt64(16) != 0);
 
     public async Task<bool> DeleteAsync(string id, CancellationToken ct = default)
     {

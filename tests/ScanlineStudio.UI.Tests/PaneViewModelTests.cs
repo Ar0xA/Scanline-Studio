@@ -3131,6 +3131,100 @@ public sealed class PaneViewModelTests
         Assert.Equal(0, focusRequestedCount);
     }
 
+    // RX/TX pipeline fix plan (2026-09-01), item 3: no path from the Gallery into the TX editor.
+    // OpenEditorForExternalFileAsync is the public entry point RxHistoryPaneViewModel's
+    // SendSelectedEntryToTxCommand reaches through SendToTxRequested.
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_OpensEditorAndRequestsTransmitTabFocus()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var focusRequestedCount = 0;
+        vm.RequestTransmitTabFocus = () => focusRequestedCount++;
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += e => opened = e;
+
+        var result = await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(result);
+        Assert.NotNull(opened);
+        Assert.Same(imageFileLoader.ResultToReturn, opened!.CurrentSource);
+        Assert.Equal(1, focusRequestedCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_SeedsProvidedContactVariables()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += e => opened = e;
+
+        var contactVariables = new Dictionary<string, string>(StringComparer.Ordinal) { ["his_call"] = "W1AW", ["his_grid"] = "FN31pr" };
+        await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", contactVariables);
+        Dispatcher.UIThread.RunJobs();
+
+        var editor = opened!;
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call} {his_grid}";
+
+        Assert.Equal("W1AW", editor.TemplateVariableRows.Single(r => r.Key == "his_call").Value);
+        Assert.Equal("FN31pr", editor.TemplateVariableRows.Single(r => r.Key == "his_grid").Value);
+    }
+
+    /// <summary>Auditor round 2's blocker B, the regression this plan explicitly fixed: passing
+    /// <see langword="null"/> must mean "seed truly nothing," NOT silently fall back to the live RX
+    /// pane's own contact the way an unspecified-parameter default would have.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_NullContactVariables_LeavesTokenUnresolved_EvenWithARxContactWired()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            // Wired the same way MainWindow.axaml.cs wires it for a REAL, currently-active RX
+            // contact -- if OpenEditorForExternalFileAsync's null somehow fell back to this (the
+            // exact bug shape blocker B fixed), the assertion below would fail.
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += e => opened = e;
+
+        await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", null);
+        Dispatcher.UIThread.RunJobs();
+
+        var editor = opened!;
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "DE {his_call}";
+
+        Assert.Equal("DE {his_call}", element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_ClaimRefused_ReturnsFalse_DoesNotRequestTransmitTabFocus()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        firstEditor.AddOverlayElementCommand.Execute(null); // a genuine in-progress edit, not blank/untouched
+        var focusRequestedCount = 0;
+        vm.RequestTransmitTabFocus = () => focusRequestedCount++;
+
+        var result = await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(result);
+        Assert.Equal(0, focusRequestedCount);
+        Assert.Same(firstEditor, ExtractCurrentEditor(vm));
+    }
+
     /// <summary>ui_transition_plan.md step 5 (T1-6): "Copy to TX" seeds the new editor's HIS
     /// CALL/HIS GRID template variables from CurrentContactRequested, so a reply-card template
     /// comes up pre-filled with the received station's own callsign/grid.</summary>
@@ -5346,6 +5440,173 @@ public sealed class PaneViewModelTests
         Assert.Equal(85, Assert.Single(frameExporter.Calls).JpegQuality);
     }
 
+    // RX/TX pipeline fix plan (2026-09-01), item 3: no path from the Gallery into the TX editor.
+
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_SendSelectedEntryToTxCommand_CanExecute_MatchesSelection()
+    {
+        var vm = CreateRxHistoryPaneViewModel(new FakeReceiveHistoryStore());
+
+        Assert.False(vm.SendSelectedEntryToTxCommand.CanExecute(null));
+
+        vm.SelectedEntry = new RxHistoryEntryViewModel(new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed), null);
+
+        Assert.True(vm.SendSelectedEntryToTxCommand.CanExecute(null));
+    }
+
+    /// <summary>Auditor-caught regression (2026-09-01): the same recurring omission as the
+    /// 2026-08-29 Delete-button incident (see that test's own doc comment) -- OnSelectedEntryChanged
+    /// originally didn't fan out to SendSelectedEntryToTxCommand.NotifyCanExecuteChanged(), so the
+    /// button stayed disabled on the ordinary click-a-thumbnail path. CanExecute(null) alone (the
+    /// sibling test above) stays green even with the fan-out call removed -- only subscribing to the
+    /// real CanExecuteChanged event catches it.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTxCommand_CanExecuteChangedFiresWhenSelectionChanges()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var fireCount = 0;
+        vm.SendSelectedEntryToTxCommand.CanExecuteChanged += (_, _) => fireCount++;
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry became non-null.");
+
+        fireCount = 0;
+        vm.SelectedEntry = null;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(fireCount > 0, "Expected CanExecuteChanged to fire when SelectedEntry was cleared.");
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_NoLinkedQso_SendsWithNoContactVariables()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        RxHistoryPaneViewModel.SendToTxRequest? captured = null;
+        vm.SendToTxRequested = request =>
+        {
+            captured = request;
+            return Task.FromResult(true);
+        };
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.NotNull(captured);
+        Assert.Equal("/tmp/a.png", captured!.FilePath);
+        Assert.Null(captured.ContactVariables);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    /// <summary>Mirrors <c>TxControlsPaneViewModel_CopyReceivedImageToTx_SeedsHisCallAndHisGridFromCurrentContactRequested</c>'s
+    /// own "absent, never blank" convention -- a linked QSO's callsign/grid seed the same
+    /// his_call/his_grid keys Copy-to-TX uses, so the same template resolves the same way regardless
+    /// of which entry point supplied the contact.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_LinkedQso_SeedsHisCallAndHisGridFromTheQso()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed)],
+        };
+        var logbookSession = new FakeLogbookSessionService
+        {
+            Records = { new QsoRecord("qso-1", "W1AW", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, "FN31pr", null, null, null, false, false) },
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        RxHistoryPaneViewModel.SendToTxRequest? captured = null;
+        vm.SendToTxRequested = request =>
+        {
+            captured = request;
+            return Task.FromResult(true);
+        };
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.NotNull(captured!.ContactVariables);
+        Assert.Equal("W1AW", captured.ContactVariables!["his_call"]);
+        Assert.Equal("FN31pr", captured.ContactVariables!["his_grid"]);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_LinkedQsoLookupFails_SendsWithNoContactVariables_DoesNotThrow()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed)],
+        };
+        var logbookSession = new FakeLogbookSessionService { ThrowOnGetById = new InvalidOperationException("db locked") };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        RxHistoryPaneViewModel.SendToTxRequest? captured = null;
+        vm.SendToTxRequested = request =>
+        {
+            captured = request;
+            return Task.FromResult(true);
+        };
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.NotNull(captured);
+        Assert.Null(captured!.ContactVariables);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_Refused_SetsErrorMessage()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        vm.SendToTxRequested = _ => Task.FromResult(false);
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_UnwiredSendToTxRequested_DoesNotThrow()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.ErrorMessage);
+    }
+
     // ui_transition_plan.md step 4 (T1-4, reframed): per-item manual delete.
 
     [AvaloniaFact]
@@ -6101,12 +6362,13 @@ public sealed class PaneViewModelTests
         FakeSettingsStore? settingsStore = null,
         FakeUrlLauncher? urlLauncher = null,
         FakeClipboardImageService? clipboardImageService = null,
-        FakeRxAudioAutoSaver? audioAutoSaver = null) =>
+        FakeRxAudioAutoSaver? audioAutoSaver = null,
+        FakeLogbookSessionService? logbookSession = null) =>
         new(
             historyStore,
             new FakeLocalizationService(),
             NullLogger<RxHistoryPaneViewModel>.Instance,
-            new FakeLogbookSessionService(),
+            logbookSession ?? new FakeLogbookSessionService(),
             NullLogger<QsoLinkWindowViewModel>.Instance,
             frameExporter ?? new FakeReceivedFrameExporter(),
             filePicker ?? new FakeFilePickerService(),
