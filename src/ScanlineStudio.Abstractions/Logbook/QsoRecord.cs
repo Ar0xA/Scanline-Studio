@@ -49,6 +49,17 @@ public interface ILogbookRepository
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: looks up one QSO by
+    /// <see cref="QsoRecord.Id"/> directly -- added because the Gallery's "Send to TX" needs to
+    /// resolve a <see cref="Abstractions.Imaging.ReceiveHistoryEntry.LinkedQsoId"/> into a
+    /// callsign/grid, and <see cref="SearchAsync"/> has no by-ID lookup (it's callsign/date-range
+    /// only). Returns <see langword="null"/> when no row has that <see cref="QsoRecord.Id"/> --
+    /// same "absent, not an exception" contract as <see cref="DeleteAsync"/>'s own bool return. Do
+    /// NOT client-side-filter <see cref="SearchAsync"/>'s results by ID instead of adding this -- an
+    /// ID lookup is a real, direct query the store should answer, not something to fake at the call
+    /// site.</summary>
+    Task<QsoRecord?> GetByIdAsync(string id, CancellationToken ct = default);
+
     /// <summary>ui_transition_plan.md step 15 -- returns whether a row was actually deleted
     /// (<c>sqlite3_changes()</c>), same "false means no-longer-exists, not an exception" contract
     /// as <see cref="Abstractions.Imaging.IReceiveHistoryStore.SetNoteAsync"/> and friends.</summary>

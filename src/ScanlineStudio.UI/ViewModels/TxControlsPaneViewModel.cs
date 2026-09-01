@@ -1029,7 +1029,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        await OpenEditorForSourceAsync(path, Path.GetFileName(path));
+        await OpenEditorForSourceAsync(path, Path.GetFileName(path), BuildCurrentContactVariables());
     }
 
     [RelayCommand]
@@ -1037,7 +1037,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         Log.SelectStockImageInvoked(_logger, entry.FileName);
         ErrorMessage = null;
-        await OpenEditorForSourceAsync(entry, entry.FileName);
+        await OpenEditorForSourceAsync(entry, entry.FileName, BuildCurrentContactVariables());
     }
 
     /// <summary>ui_transition_plan.md step 5 (T1-6). Deliberately a settable delegate PROPERTY, not
@@ -1176,12 +1176,29 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// first blank auto-open -- there was no way to ever load a real photo. Relaxed the same way
     /// mode-select already is: a BLANK/untouched editor gets closed (without its own auto-reopen
     /// side effect, see <see cref="CloseBlankEditorForReplacement"/>) and replaced by the real
-    /// pick; a genuinely in-progress edit still refuses, exactly as before.</para></summary>
-    private async Task OpenEditorForSourceAsync(object source, string fileName)
+    /// pick; a genuinely in-progress edit still refuses, exactly as before.</para>
+    /// <para>RX/TX pipeline fix plan (2026-09-01), item 3, auditor round 2's blocker B:
+    /// <paramref name="contactVariables"/> is REQUIRED, not an optional parameter defaulting to
+    /// <see cref="BuildCurrentContactVariables"/> -- an optional default can't distinguish "caller
+    /// explicitly wants no contact seeded" from "caller didn't specify," which would silently leak
+    /// the live RX pane's contact onto a source that has nothing to do with it (e.g. a Gallery entry
+    /// with no linked QSO). Every caller passes its own explicit value: Browse/Stock (below) pass
+    /// <see cref="BuildCurrentContactVariables"/> themselves, exactly as this method used to do
+    /// internally; <see cref="OpenEditorForExternalFileAsync"/> passes its own looked-up value, or
+    /// <see langword="null"/> meaning truly nothing.
+    /// <para>Returns <see langword="false"/> when <see cref="TryClaimEditorSlotForNewSource"/>
+    /// refuses (no target mode selected, or a genuinely in-progress edit) -- nothing else happened,
+    /// same "silent no-op" contract that method's own doc comment states. Returns
+    /// <see langword="true"/> once the slot is claimed, even if the load itself subsequently fails
+    /// (that failure surfaces via <see cref="ErrorMessage"/>/<see cref="EditorClosed"/> already, a
+    /// caller doesn't need a second signal for it) -- <see cref="OpenEditorForExternalFileAsync"/>
+    /// uses this to distinguish "should I switch the operator to the Transmit tab" from "should I
+    /// surface a refusal on my own caller's error surface instead."</para></summary>
+    private async Task<bool> OpenEditorForSourceAsync(object source, string fileName, IReadOnlyDictionary<string, string>? contactVariables)
     {
         if (!TryClaimEditorSlotForNewSource())
         {
-            return;
+            return false;
         }
 
         IImageSource original;
@@ -1207,10 +1224,36 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
-            return;
+            return true;
         }
 
-        await OpenEditorWithLoadedSourceAsync(original, fileName, BuildCurrentContactVariables());
+        await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables);
+        return true;
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: public entry point for the RX Gallery's
+    /// "Send to TX" -- the only other caller of <see cref="OpenEditorForSourceAsync"/> outside this
+    /// class. Reuses that method rather than duplicating its slot-claim/4-failure-path logic (it
+    /// would be ~95% a copy). <paramref name="contactVariables"/> is the caller's own explicit value
+    /// (typically looked up from a linked QSO, or <see langword="null"/> when the RX-history entry
+    /// has none) -- see <see cref="OpenEditorForSourceAsync"/>'s own doc comment for why this can't
+    /// default to <see cref="BuildCurrentContactVariables"/> here.
+    /// <para>Unlike <see cref="CopyReceivedImageToTxAsync"/>, this doesn't share a call path with
+    /// Copy-to-TX (that one passes an already-loaded <see cref="IImageSource"/>, this one passes a
+    /// file path) -- <see cref="RequestTransmitTabFocus"/> is invoked here too, not assumed to come
+    /// free from a shared method. Returns whether the slot claim succeeded, so the Gallery pane can
+    /// surface a refusal on its own <c>ErrorMessage</c> (it has no view of
+    /// <see cref="CanChangeSourceOrMode"/> to gate an <c>IsEnabled</c> binding on the way Copy-to-TX's
+    /// button does).</para></summary>
+    public async Task<bool> OpenEditorForExternalFileAsync(string filePath, IReadOnlyDictionary<string, string>? contactVariables)
+    {
+        var opened = await OpenEditorForSourceAsync(filePath, Path.GetFileName(filePath), contactVariables);
+        if (opened)
+        {
+            RequestTransmitTabFocus?.Invoke();
+        }
+
+        return opened;
     }
 
     /// <summary>Backlog fix (user request, 2026-08-17): "don't leave the TX window completely empty

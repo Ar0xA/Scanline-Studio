@@ -231,6 +231,8 @@
   "Panes.RxHistory.Error.SaveFlagFailed": "Could not update the flag.",
   "Panes.RxHistory.Error.ExportFrameFailed": "Could not export the frame.",
   "Panes.RxHistory.Error.DeleteFailed": "Could not delete this entry.",
+  "Panes.RxHistory.Error.SendToTxRefused": "Could not open this frame in the TX editor -- select a TX mode, or finish the edit already in progress.",
+  "Panes.RxHistory.SendToTx": "Send to TX",
   "Panes.RxHistory.Status.Exported": "Exported to {0}.",
   "Panes.RxHistory.OpenInLog": "Open in log",
   "Panes.RxHistory.ExportFrame": "Export",

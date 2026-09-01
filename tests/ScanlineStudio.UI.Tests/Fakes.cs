@@ -1988,6 +1988,18 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         return Task.CompletedTask;
     }
 
+    public Exception? ThrowOnGetById { get; set; }
+
+    public Task<QsoRecord?> GetQsoByIdAsync(string id, CancellationToken ct = default)
+    {
+        if (ThrowOnGetById is not null)
+        {
+            throw ThrowOnGetById;
+        }
+
+        return Task.FromResult(Records.FirstOrDefault(r => r.Id == id));
+    }
+
     public LogbookQuery? LastExportQuery { get; private set; }
 
     public Task ExportAdifFileAsync(string filePath, LogbookQuery query, CancellationToken ct = default)
