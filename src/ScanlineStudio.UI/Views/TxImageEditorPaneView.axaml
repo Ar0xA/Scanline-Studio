@@ -531,7 +531,7 @@
                                  AddBoxElement, not built yet; add it once that lands. -->
                             <Canvas.ContextMenu>
                                 <ContextMenu Classes="Industry">
-                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteElementCommand}" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteElementCommand}" />
                                     <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitSafeArea}" Click="OnFitSafeAreaClick" />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitWidth}" Click="OnFitWidthClick" />
@@ -763,11 +763,11 @@
                                                              already-existing element clipboard (Ctrl+C/X/V in
                                                              TxImageEditorPaneView.axaml.cs) — the commands were shipped
                                                              2026-08-17 but never reachable from these menus until now. -->
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" Command="{Binding CopyStyleCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" Command="{Binding PasteStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" InputGesture="Ctrl+X" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" InputGesture="Ctrl+C" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" InputGesture="Ctrl+Shift+C" Command="{Binding CopyStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" InputGesture="Ctrl+Shift+V" Command="{Binding PasteStyleCommand}" />
                                                         <Separator />
                                                         <!-- EditWindow redesign Phase 6 (mockups/Editwindow): Insert Field/Align to Crop
                                                              submenus. Both reuse the SAME parent-pushed/toolbar-shared commands the
@@ -837,7 +837,7 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
                                                         </MenuItem>
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" InputGesture="Ctrl+D" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddPlate}" Command="{Binding AddPlateCommand}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
@@ -848,7 +848,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <!-- TX workflow modernization plan, Phase 1 — Quick Style Flyout content, shown
@@ -1033,11 +1033,11 @@
                                                              already-existing element clipboard (Ctrl+C/X/V in
                                                              TxImageEditorPaneView.axaml.cs) — the commands were shipped
                                                              2026-08-17 but never reachable from these menus until now. -->
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" Command="{Binding CopyStyleCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" Command="{Binding PasteStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" InputGesture="Ctrl+X" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" InputGesture="Ctrl+C" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.CopyStyle}" InputGesture="Ctrl+Shift+C" Command="{Binding CopyStyleCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PasteStyle}" InputGesture="Ctrl+Shift+V" Command="{Binding PasteStyleCommand}" />
                                                         <Separator />
                                                         <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
                                                              element's own ContextMenu doc comment for the full reasoning
@@ -1058,7 +1058,7 @@
                                                              comment has the full reasoning). -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FillBorderMenu}" Click="OnOpenElementQuickStyleFlyout" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" InputGesture="Ctrl+D" Command="{Binding DuplicateCommand}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" Command="{Binding BringToFrontCommand}" CommandParameter="{Binding}" />
@@ -1068,7 +1068,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <FlyoutBase.AttachedFlyout>
@@ -1196,9 +1196,9 @@
                                                              already-existing element clipboard (Ctrl+C/X/V in
                                                              TxImageEditorPaneView.axaml.cs) — the commands were shipped
                                                              2026-08-17 but never reachable from these menus until now. -->
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" Command="{Binding CutCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" Command="{Binding CopyCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" Command="{Binding PasteCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Cut}" InputGesture="Ctrl+X" Command="{Binding CutCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Copy}" InputGesture="Ctrl+C" Command="{Binding CopyCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteCommand}" />
                                                         <Separator />
                                                         <!-- EditWindow redesign Phase 6: Align to Crop submenu — see the text
                                                              element's own ContextMenu doc comment for the full reasoning. -->
@@ -1211,7 +1211,7 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
                                                         </MenuItem>
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" InputGesture="Ctrl+D" Command="{Binding DuplicateCommand}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackground}" Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.ResetToOriginalSize}" Command="{Binding ResetToOriginalSizeCommand}" CommandParameter="{Binding}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitMenu}">
@@ -1228,7 +1228,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <Image Source="{Binding CanvasBitmap}"
