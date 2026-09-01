@@ -23,6 +23,46 @@ public static class TransmitImageLimits
     public const double MaxElementResizeDimensionPx = 4096;
 }
 
+/// <summary>TX editor gap-items plan, line element (2026-09-01) -- shared ink-inflation math both
+/// `TemplateStore` (Application layer, its own thumbnail-render reconstruction path,
+/// `ToTemplateElementAsync`) and the TX editor VM (UI layer, `BuildTemplateElement`) need to compute
+/// IDENTICALLY. Declared here rather than duplicated as two independently-maintained formulas -- the
+/// exact drift class this project has been bitten by before (`TransmitImageLimits`'s own doc comment
+/// above states the same reasoning; see also `PersistedBoxElement`'s own gradient-thumbnail-drop
+/// precedent, where a SECOND reconstruction site silently missed a field the first one had).</summary>
+public static class TemplateLineGeometry
+{
+    /// <summary>The line's endpoint bounding box, INFLATED by half the stroke's own ink extent per
+    /// axis -- what keeps <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s shared degenerate-bbox
+    /// skip rule (<see cref="TemplateElement"/>'s own doc comment: zero/negative Width/Height is
+    /// skipped, not rendered) from dropping an axis-aligned line with a real, positive thickness.
+    /// <paramref name="thickness"/> is HEIGHT-relative (same convention as
+    /// <see cref="TemplateBoxElement.BorderThickness"/>), so the X-axis inflation converts through
+    /// <paramref name="imageWidthPx"/>/<paramref name="imageHeightPx"/>'s own ratio -- a bare
+    /// <c>thickness/2</c> applied to BOTH axes would over-inflate horizontally on any non-square
+    /// target (line-element plan-review round 2/3 finding). A zero/negative
+    /// <paramref name="imageWidthPx"/> OR <paramref name="imageHeightPx"/> falls back to the
+    /// un-converted (height-relative) half-thickness for the X axis too, rather than computing a
+    /// zero/negative conversion factor -- an unreachable input in practice (every real caller has
+    /// positive target dimensions), kept only so this stays a total function. A negative
+    /// <paramref name="thickness"/> clamps to 0 (code-review finding: matches
+    /// <see cref="TransmitImagePreparer"/>'s own <c>MathF.Max(0f, ...)</c> clamp on the SAME field --
+    /// the two must agree, or a negative thickness would inflate Bounds as if ink existed while the
+    /// pipeline itself draws nothing).</summary>
+    public static NormalizedRect ComputeInflatedBounds(double x1, double y1, double x2, double y2, double thickness, double imageWidthPx, double imageHeightPx)
+    {
+        var halfThicknessHeightRelative = Math.Max(0, thickness) / 2;
+        var halfThicknessWidthRelative = imageWidthPx > 0 && imageHeightPx > 0
+            ? halfThicknessHeightRelative * (imageHeightPx / imageWidthPx)
+            : halfThicknessHeightRelative;
+        var minX = Math.Min(x1, x2) - halfThicknessWidthRelative;
+        var maxX = Math.Max(x1, x2) + halfThicknessWidthRelative;
+        var minY = Math.Min(y1, y2) - halfThicknessHeightRelative;
+        var maxY = Math.Max(y1, y2) + halfThicknessHeightRelative;
+        return new NormalizedRect(minX, minY, maxX - minX, maxY - minY);
+    }
+}
+
 /// <summary>Anchor is the CENTER of the text (matches drag-to-position UX: the user grabs the
 /// visual center, not a corner). <see cref="FontSizeRelative"/> is relative to the image's
 /// HEIGHT (stable reference regardless of aspect/stretch, unlike width which varies more under a
@@ -234,6 +274,29 @@ public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSo
 public sealed record TemplateBoxElement(
     NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
     double CornerRadius = 0, TextGradient? Gradient = null)
+    : TemplateElement(Bounds, Z);
+
+/// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th element kind, a single
+/// straight stroke between two points. <paramref name="X1"/>/<paramref name="Y1"/>/
+/// <paramref name="X2"/>/<paramref name="Y2"/> are the endpoints in the SAME normalized space as
+/// <see cref="TemplateElement.Bounds"/> (X/X-extent width-relative, Y/Y-extent height-relative,
+/// per <c>NormalizedRect</c>'s own convention) -- deliberately NOT re-derived from
+/// <paramref name="Bounds"/> at render time, since a perfectly horizontal or vertical line's own
+/// bounding box collapses one axis to zero, which the endpoints alone don't. <paramref name="Bounds"/>
+/// itself must therefore be the endpoint bounding box INFLATED by half the stroke's own ink extent --
+/// every caller that constructs one of these MUST compute it via the shared
+/// <see cref="TemplateLineGeometry.ComputeInflatedBounds"/>, not its own re-derivation --
+/// <c>TemplateStore.ToTemplateElementAsync</c> is one real caller, and the TX editor VM's own
+/// template-building path is another, both required to agree. This is
+/// what keeps <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s shared degenerate-bbox skip rule
+/// (see <see cref="TemplateElement"/>'s own doc comment: zero/negative <c>Width</c>/<c>Height</c>
+/// is skipped, not rendered) from silently dropping an axis-aligned line with a real, positive
+/// thickness. <paramref name="Thickness"/> is relative to the target image's HEIGHT, same
+/// convention as <see cref="TemplateBoxElement.BorderThickness"/>. No fill, no gradient, no corner
+/// radius -- a line has nothing to fill.</summary>
+public sealed record TemplateLineElement(
+    NormalizedRect Bounds, int Z, double X1, double Y1, double X2, double Y2,
+    Rgb24 StrokeColor, double Thickness, double Opacity = 1.0)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Elements"/> in any order — <see cref="ITransmitImagePreparer.ApplyTemplate"/>

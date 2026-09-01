@@ -328,8 +328,10 @@ public sealed class TemplateStoreTests : IDisposable
         PersistedTemplateElement box = new PersistedBoxElement(0, 0, 0.1, 0.1, 0, false, new Rgb24(1, 2, 3), null, 0, 1);
         PersistedTemplateElement image = new PersistedImageElement(
             0, 0, 0.1, 0.1, 0, false, "a.png", ImageFitMode.Contain, PersistedImageSourceKind.File, null);
+        PersistedTemplateElement line = new PersistedLineElement(
+            0.5, 0.5, 0.4, 0, 0, false, 0.3, 0.5, 0.7, 0.5, new Rgb24(1, 2, 3), 0.01);
 
-        foreach (var (element, discriminator) in new[] { (text, "text"), (box, "box"), (image, "image") })
+        foreach (var (element, discriminator) in new[] { (text, "text"), (box, "box"), (image, "image"), (line, "line") })
         {
             var json = JsonSerializer.Serialize(element, PersistedTemplateJsonContext.Default.PersistedTemplateElement);
             Assert.Contains("\"$type\"", json);
@@ -350,23 +352,111 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(original, text);
     }
 
+    [Fact]
+    public void PersistedLineElement_RoundTripsThroughBaseTypeDeserialization_PreservesEndpointsAndStroke()
+    {
+        PersistedTemplateElement original = new PersistedLineElement(
+            0.5, 0.5, 0.4, 0, 3, true, 0.3, 0.5, 0.7, 0.5, new Rgb24(200, 10, 10), 0.015, 0.9);
+
+        var json = JsonSerializer.Serialize(original, PersistedTemplateJsonContext.Default.PersistedTemplateElement);
+        var roundTripped = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.PersistedTemplateElement);
+
+        var line = Assert.IsType<PersistedLineElement>(roundTripped);
+        Assert.Equal(original, line);
+    }
+
+    [Fact]
+    public async Task SaveThenLoad_RoundTripsLineElement()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Contest");
+        var document = new PersistedTemplateDocument([
+            new PersistedLineElement(
+                X: 0.5, Y: 0.5, Width: 0.4, Height: 0, Z: 2, Locked: false,
+                X1: 0.3, Y1: 0.5, X2: 0.7, Y2: 0.5, StrokeColor: new Rgb24(255, 0, 0), StrokeThickness: 0.02, Opacity: 0.75),
+        ]);
+
+        await store.SaveAsync(templateId, "Contest", document);
+        var loaded = await store.LoadAsync(templateId);
+
+        var line = Assert.IsType<PersistedLineElement>(Assert.Single(loaded.Elements));
+        Assert.Equal(0.3, line.X1);
+        Assert.Equal(0.5, line.Y1);
+        Assert.Equal(0.7, line.X2);
+        Assert.Equal(0.5, line.Y2);
+        Assert.Equal(new Rgb24(255, 0, 0), line.StrokeColor);
+        Assert.Equal(0.02, line.StrokeThickness);
+        Assert.Equal(0.75, line.Opacity);
+    }
+
+    /// <summary>Line-element plan-review, Amendment F -- pins the actual fix, not just the schema
+    /// mechanics: <c>TemplateStore.SaveAsync</c> must pass <c>CurrentSchemaVersion</c> EXPLICITLY at
+    /// its own <c>new TemplateManifest(...)</c> call site, since the constructor's own default is
+    /// deliberately the literal 1 (see <see cref="TemplateManifest"/>'s own doc comment), not
+    /// <see cref="TemplateManifest.CurrentSchemaVersion"/> -- a regression here (reverting to relying
+    /// on the constructor default) would silently write every NEW template as version 1 forever.</summary>
+    [Fact]
+    public async Task SaveAsync_WritesTheCurrentSchemaVersionOnEveryRealSave()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Contest");
+
+        await store.SaveAsync(templateId, "Contest", new PersistedTemplateDocument([]));
+
+        var manifestPath = Path.Combine(_root, templateId, "template.json");
+        var json = await File.ReadAllTextAsync(manifestPath);
+        var manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
+        Assert.NotNull(manifest);
+        Assert.Equal(TemplateManifest.CurrentSchemaVersion, manifest!.SchemaVersion);
+    }
+
+    /// <summary>Same bug class as <see cref="SaveAsync_GradientBox_PassesTheGradientToTheThumbnailRenderer"/>
+    /// immediately below (a second reconstruction site silently missing a field/using the wrong
+    /// bounds) -- <c>ToTemplateElementAsync</c>'s line case must use the ink-inflated bounds
+    /// (<c>TemplateLineGeometry.ComputeInflatedBounds</c>), not the shared base-X/Y/Width/Height
+    /// bounds every other case uses, or a horizontal/vertical line's own thumbnail would render as
+    /// nothing at all (dropped by <c>ApplyTemplate</c>'s own degenerate-bbox skip rule).</summary>
+    [Fact]
+    public async Task SaveAsync_HorizontalLine_PassesANonDegenerateBoundsToTheThumbnailRenderer()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Line thumbnail");
+        var document = new PersistedTemplateDocument([
+            new PersistedLineElement(
+                X: 0.5, Y: 0.5, Width: 0.4, Height: 0, Z: 0, Locked: false,
+                X1: 0.3, Y1: 0.5, X2: 0.7, Y2: 0.5, StrokeColor: new Rgb24(255, 0, 0), StrokeThickness: 0.02),
+        ]);
+
+        await store.SaveAsync(templateId, "Line thumbnail", document);
+
+        var thumbnailLine = Assert.IsType<TemplateLineElement>(Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements));
+        Assert.True(thumbnailLine.Bounds.Width > 0, "Expected a non-degenerate (ink-inflated) bounds width.");
+        Assert.True(thumbnailLine.Bounds.Height > 0, "Expected a non-degenerate (ink-inflated) bounds height.");
+        Assert.Equal(0.3, thumbnailLine.X1);
+        Assert.Equal(0.7, thumbnailLine.X2);
+    }
+
     // ui_transition_plan.md step 13 (native template bundle export/import) --------------------------
 
     [Fact]
-    public void TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToCurrentVersion()
+    public void TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToVersion1()
     {
         // Verifies the exact claim TemplateManifest's own doc comment makes: a record's POSITIONAL
         // constructor-parameter default (unlike an init-only property initializer -- see
         // AudioDeviceSettings.TxVolumePercent's own doc comment for the confirmed-broken case) IS
         // honored by System.Text.Json for a JSON member absent from the payload. Every real
         // template.json saved before this field existed lacks "SchemaVersion" entirely -- this is
-        // exactly that shape, not a hypothetical.
+        // exactly that shape, not a hypothetical. Asserts the LITERAL 1, not CurrentSchemaVersion
+        // (line-element plan-review, Amendment F): a pre-existing file that never had this field
+        // really IS version 1, and that must stay true even after CurrentSchemaVersion moves past 1
+        // -- an assertion against the constant itself would silently stop proving anything the moment
+        // the two values diverge.
         var json = """{"Id":"old_12345678","Name":"Old Template","SavedAt":"2026-01-01T00:00:00+00:00","Elements":[]}""";
 
         var manifest = JsonSerializer.Deserialize(json, PersistedTemplateJsonContext.Default.TemplateManifest);
 
         Assert.NotNull(manifest);
-        Assert.Equal(TemplateManifest.CurrentSchemaVersion, manifest!.SchemaVersion);
+        Assert.Equal(1, manifest!.SchemaVersion);
     }
 
     [Fact]
