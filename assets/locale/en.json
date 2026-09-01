@@ -447,6 +447,8 @@
   "Panes.TxImageEditor.FitModeLabel": "FIT MODE",
   "Panes.TxImageEditor.AlignToCropLabel": "ALIGN TO CROP",
   "Panes.TxImageEditor.AlignToCropMenu": "Align to crop",
+  "Panes.TxImageEditor.QuickStyleMenu": "Quick Style…",
+  "Panes.TxImageEditor.FillBorderMenu": "Fill & Border…",
   "Panes.TxImageEditor.InsertFieldMenu": "Insert field",
   "Panes.TxImageEditor.FontSizeMenu": "Font size",
   "Panes.TxImageEditor.FontSizeSmall": "Small",

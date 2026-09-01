@@ -1,8 +1,10 @@
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.LogicalTree;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -140,6 +142,29 @@ public partial class TxImageEditorPaneView : UserControl
     private void OnFitWidthClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitWidth(EditorScrollViewer.Bounds.Width);
 
     private void OnFitHeightClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitHeight(EditorScrollViewer.Bounds.Height);
+
+    /// <summary>TX workflow modernization plan, Phase 1 -- shared "open this row's Quick Style /
+    /// Fill &amp; Border flyout" handler for the "Quick Style…"/"Fill &amp; Border…" MenuItems in the
+    /// text/box ContextMenus. The clicked MenuItem is about to be removed from the visual tree once
+    /// its owning ContextMenu's Popup closes, so it can't itself be the flyout's anchor --
+    /// <see cref="ContextMenu.PlacementTarget"/> is Avalonia's own record of which control opened
+    /// this ContextMenu (the row's own Border, set automatically on right-click), and that control
+    /// stays alive in the tree after the menu closes. Deferred via
+    /// <see cref="Dispatcher.UIThread"/>.Post at Background priority -- MenuItem's own Click handler
+    /// runs BEFORE the owning Popup finishes closing (confirmed against Avalonia
+    /// 11.3.12's DefaultMenuInteractionHandler), so calling ShowAttachedFlyout synchronously here
+    /// races the ContextMenu's own close/focus-restore and can dismiss the flyout the instant it
+    /// opens.</summary>
+    private void OnOpenElementQuickStyleFlyout(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem menuItem
+            || menuItem.FindLogicalAncestorOfType<ContextMenu>() is not { PlacementTarget: Control target })
+        {
+            return;
+        }
+
+        Dispatcher.UIThread.Post(() => FlyoutBase.ShowAttachedFlyout(target), DispatcherPriority.Background);
+    }
 
     /// <summary>TX workflow modernization plan, Phase 3a -- "Add Text" toolbar button. Wired as
     /// <c>PointerPressed</c> (not <c>Click</c>/<c>Command</c>) specifically so <see cref="Shift"/>

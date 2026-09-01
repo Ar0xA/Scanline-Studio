@@ -1800,6 +1800,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
+            // Quick Style Flyout (TX workflow modernization plan, Phase 1) -- see its own doc
+            // comment; _targetMode is ctor-only/never reassigned, so this constant stays correct
+            // for the element's whole lifetime.
+            TargetModeHeightPx = _targetMode.ImageHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -1860,6 +1864,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
+            TargetModeHeightPx = _targetMode.ImageHeight,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -1874,6 +1879,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
+            // Set LAST, after FillColor/BorderColor/BorderThickness/Opacity/CornerRadius above --
+            // an object initializer assigns in listed order, so their own construction-time
+            // assignment fires On*Changing while this is still null, avoiding a spurious undo push
+            // from element creation itself (same ordering reasoning CreateOverlayElement's own
+            // PushUndoSnapshotForStyleChange comment gives).
+            PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("BoxStyle"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
         return element;
@@ -4152,7 +4163,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             or nameof(OverlayElementViewModel.HasStack)
             or nameof(OverlayElementViewModel.StackColorForPicker)
             or nameof(OverlayElementViewModel.CanvasStackStepXPixels)
-            or nameof(OverlayElementViewModel.CanvasStackStepYPixels))
+            or nameof(OverlayElementViewModel.CanvasStackStepYPixels)
+            // Quick Style Flyout / Fill & Border flyout (TX workflow modernization plan, Phase 1):
+            // *Px are pure px-unit views of FontSizeRelative/BorderThickness/CornerRadius, which
+            // already independently drive a recompute via their own (unfiltered) PropertyChanged --
+            // same "cascade, not a driver" reasoning as CanvasFontSize above.
+            or nameof(OverlayElementViewModel.FontSizePx)
+            or nameof(BoxElementViewModel.BorderThicknessPx)
+            or nameof(BoxElementViewModel.CornerRadiusPx))
         {
             return;
         }

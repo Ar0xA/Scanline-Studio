@@ -2088,6 +2088,74 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.5, box.Opacity);
     }
 
+    // TX workflow modernization plan, Phase 1: Quick Style Flyout / Fill & Border flyout.
+
+    [AvaloniaFact]
+    public void FontSizePx_GetSet_RoundTripsThroughFontSizeRelative()
+    {
+        // SmallMode.ImageHeight == 4, so TargetModeHeightPx == 4 -- picked so the round-trip math
+        // (relative = px / height) lands on clean, easily-checked values.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        AssertClose(0.4, element.FontSizePx); // default FontSizeRelative 0.1 * 4
+
+        element.FontSizePx = 2.0;
+
+        AssertClose(0.5, element.FontSizeRelative);
+    }
+
+    [AvaloniaFact]
+    public void BorderThicknessPxAndCornerRadiusPx_GetSet_RoundTripThroughUnderlyingRelativeProperties()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+
+        element.BorderThicknessPx = 1.0;
+        element.CornerRadiusPx = 2.0;
+
+        AssertClose(0.25, element.BorderThickness);
+        AssertClose(0.5, element.CornerRadius);
+        AssertClose(1.0, element.BorderThicknessPx);
+        AssertClose(2.0, element.CornerRadiusPx);
+    }
+
+    [AvaloniaFact]
+    public void BoxFillColorAndBorderThickness_ThenUndo_RevertsBothAsOneStep()
+    {
+        // Real pre-existing gap this closes (see PushUndoSnapshotForStyleChange's own doc comment):
+        // before this, NEITHER FillColor NOR BorderThickness pushed any undo step at all, on ANY
+        // entry point -- including the already-shipped sidebar Box Style block. Same
+        // one-coalesced-step-per-burst shape as OverlayElementXAndY_ThenUndo_RevertsBothAsOneStep
+        // above, under its own "BoxStyle" key so it can't fold into a concurrent geometry drag.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null); // its own push -- one level stays below the burst's
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+        var fillBefore = element.FillColor;
+        var thicknessBefore = element.BorderThickness;
+
+        element.FillColor = new Rgb24(200, 10, 10);
+        element.BorderThickness = 0.05;
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        // Re-read from vm.OverlayElements, not the captured `element` reference -- ApplyState
+        // (undo's own restore path) replaces elements wholesale from the snapshot, same reasoning
+        // OverlayElementXAndY_ThenUndo_RevertsBothAsOneStep's own re-reads follow.
+        var restored = (BoxElementViewModel)Assert.Single(vm.OverlayElements);
+        Assert.Equal(fillBefore, restored.FillColor);
+        AssertClose(thicknessBefore, restored.BorderThickness);
+        // Exactly ONE step for the fill+thickness burst -- AddBoxElement's own earlier push is the
+        // one level still remaining, not a second style-burst step.
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Empty(vm.OverlayElements);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
     // Phase 2 (spec/15-template-designer.md): image elements + set-as-background. 3 sources (file /
     // last-RX / RX-history), all real precedent reuse -- see the plan's own scope-cut reasoning.
 

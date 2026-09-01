@@ -818,6 +818,16 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorGreen}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Green" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorBlue}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Blue" />
                                                         </MenuItem>
+                                                        <!-- TX workflow modernization plan, Phase 1 — Quick Style Flyout. The two preset
+                                                             submenus above stay curated/discrete; this opens the SAME continuous font-size/
+                                                             color pickers the TEXT STYLE tab already has, without leaving the canvas. One
+                                                             combined flyout, not two — FlyoutBase.AttachedFlyout is single-valued, so a
+                                                             "More Sizes…" flyout and a "More Colors…" flyout can't both live on this row's
+                                                             Border at once. OnOpenElementQuickStyleFlyout resolves the anchor via this
+                                                             MenuItem's owning ContextMenu.PlacementTarget (see that handler's own doc
+                                                             comment) — top-level, not nested, so the anchor lookup doesn't depend on
+                                                             Avalonia's logical-tree parenting through an intermediate submenu MenuItem. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.QuickStyleMenu}" Click="OnOpenElementQuickStyleFlyout" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
@@ -841,6 +851,25 @@
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
+                                                <!-- TX workflow modernization plan, Phase 1 — Quick Style Flyout content, shown
+                                                     via OnOpenElementQuickStyleFlyout (code-behind). Same "declared inline, not a
+                                                     shared resource" reasoning as Border.ContextMenu's own doc comment just above
+                                                     — DataContext inheritance must resolve against THIS element. ColorView (not
+                                                     ColorPicker) so the picker is immediately interactive with no second click —
+                                                     ColorPicker is itself just a button that opens one of these. -->
+                                                <FlyoutBase.AttachedFlyout>
+                                                    <Flyout Placement="Right">
+                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="200">
+                                                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
+                                                                <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                                                         Text="{Binding FontSizePx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </Grid></Border>
+                                                            <ColorView Color="{Binding Color, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
+                                                                       IsAlphaEnabled="False" IsAccentColorsVisible="False" />
+                                                        </StackPanel>
+                                                    </Flyout>
+                                                </FlyoutBase.AttachedFlyout>
                                                 <!-- Phase 8 canvas-preview amendment: shadow copy,
                                                      drawn BEHIND the real text (declared first, same
                                                      draw-order convention as the real pipeline's own
@@ -1021,6 +1050,13 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignMiddle}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Middle" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignBottom}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Bottom" />
                                                         </MenuItem>
+                                                        <!-- TX workflow modernization plan, Phase 1 — Fill & Border flyout. Before this,
+                                                             a box element's fill/border/opacity/corner-radius had NO entry point outside
+                                                             the sidebar GEOMETRY tab's Box Style block — this is its first. Same
+                                                             single-combined-flyout, PlacementTarget-anchored mechanism as the text
+                                                             element's Quick Style Flyout above (OnOpenElementQuickStyleFlyout's own doc
+                                                             comment has the full reasoning). -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.FillBorderMenu}" Click="OnOpenElementQuickStyleFlyout" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" Command="{Binding DuplicateCommand}" />
                                                         <Separator />
@@ -1035,6 +1071,34 @@
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
+                                                <FlyoutBase.AttachedFlyout>
+                                                    <Flyout Placement="Right">
+                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="220">
+                                                            <ColorView Color="{Binding FillColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
+                                                                       IsAlphaEnabled="False" IsAccentColorsVisible="False" />
+                                                            <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.BorderLabel}"
+                                                                      IsChecked="{Binding HasBorder}" />
+                                                            <ColorView IsEnabled="{Binding HasBorder}"
+                                                                       Color="{Binding BorderColorForPicker, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
+                                                                       IsAlphaEnabled="False" IsAccentColorsVisible="False" />
+                                                            <Border Classes="IndustryRow" IsEnabled="{Binding HasBorder}"><Grid ColumnDefinitions="Auto,*">
+                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.BorderThicknessLabel}" />
+                                                                <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                                                         Text="{Binding BorderThicknessPx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </Grid></Border>
+                                                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.CornerRadiusLabel}" />
+                                                                <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                                                         Text="{Binding CornerRadiusPx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </Grid></Border>
+                                                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.OpacityLabel}" />
+                                                                <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
+                                                                        Minimum="0" Maximum="1" Value="{Binding Opacity}" VerticalAlignment="Center" />
+                                                            </Grid></Border>
+                                                        </StackPanel>
+                                                    </Flyout>
+                                                </FlyoutBase.AttachedFlyout>
                                             </Border>
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
