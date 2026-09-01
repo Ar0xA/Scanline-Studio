@@ -178,6 +178,54 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(new Rgb24(40, 50, 60), gradient.Stops[1].Color);
     }
 
+    /// <summary>TX editor gap-items plan, item 4b (picture fill, 2026-09-01) -- plan-review's own
+    /// finding: <c>ToTemplateElementAsync</c> is the SECOND hand-maintained switch (the first being
+    /// <c>TxImageEditorPaneViewModel.BuildTemplateElement</c>) that a new text-fill field must reach,
+    /// same bug class the Gradient thumbnail test immediately above already pins for box.</summary>
+    [Fact]
+    public async Task SaveAsync_TextWithBitmapFill_PassesTheLoadedBitmapToTheThumbnailRenderer()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Picture fill thumbnail");
+        var assetPath = store.GetAssetPath(templateId, "fill.png");
+        var fillSource = new FakeImageSource(4, 4, new Rgb24(9, 9, 9));
+        _imageFileLoader.Sources[assetPath] = fillSource;
+        var document = new PersistedTemplateDocument([
+            new PersistedTextElement(
+                0.5, 0.5, 0.4, 0.2, 0, false, "W1AW", 0.2, new Rgb24(0, 0, 0), "DejaVu Sans Mono", null, 0,
+                BitmapFillEnabled: true, BitmapFillAssetFileName: "fill.png"),
+        ]);
+
+        await store.SaveAsync(templateId, "Picture fill thumbnail", document);
+
+        var thumbnailText = Assert.IsType<TemplateTextElement>(Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements));
+        Assert.Same(fillSource, thumbnailText.BitmapFill);
+    }
+
+    /// <summary>Plan-review's own explicit decision: a missing/corrupt picture-fill asset must
+    /// DEGRADE (log + render without the fill), never throw and abort the whole save/thumbnail
+    /// render over one decorative field -- unlike <see cref="PersistedImageElement"/>'s own asset
+    /// load, whose throw IS allowed to abort (an image element's picture is its core content, not
+    /// decoration).</summary>
+    [Fact]
+    public async Task SaveAsync_TextWithBitmapFillButTheAssetIsMissing_DegradesInsteadOfThrowing()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Picture fill missing asset");
+        // Deliberately NOT registered in _imageFileLoader.Sources -- LoadOriginalAsync throws
+        // FileNotFoundException, same as a real missing file on disk.
+        var document = new PersistedTemplateDocument([
+            new PersistedTextElement(
+                0.5, 0.5, 0.4, 0.2, 0, false, "W1AW", 0.2, new Rgb24(0, 0, 0), "DejaVu Sans Mono", null, 0,
+                BitmapFillEnabled: true, BitmapFillAssetFileName: "missing.png"),
+        ]);
+
+        await store.SaveAsync(templateId, "Picture fill missing asset", document);
+
+        var thumbnailText = Assert.IsType<TemplateTextElement>(Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements));
+        Assert.Null(thumbnailText.BitmapFill);
+    }
+
     [Fact]
     public async Task ListAsync_ReEnumeratesDirectoryEveryCall_SeesATemplateSavedAfterFirstList()
     {

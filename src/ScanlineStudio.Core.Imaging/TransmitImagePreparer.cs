@@ -521,9 +521,24 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // boundsHeightPx) space when rotated, so the gradient rotates WITH the text (Phase 8 plan's
         // own stated decision, not left implicit).
         var gradientBounds = isUnrotated ? bounds : new PixelBounds(0, 0, boundsWidthPx, boundsHeightPx);
-        Brush? fillBrush = element.Gradient is { } gradient
-            ? BuildGradientBrush(gradient, gradientBounds, element.Color)
-            : element.StrokeColor is { } ? Brushes.Solid(ToRgba32(element.Color)) : null;
+
+        // Picture fill (TX editor gap-items plan, item 4b) -- takes priority over Gradient when both
+        // are somehow set (deserialized hand-edited template, see TemplateTextElement.BitmapFill's
+        // own doc comment for why this precedence is stated once and enforced at every composition
+        // site, not left to whichever field a caller happens to check first). ImageBrush is a
+        // TEXTURE brush (tiles from an offset), not a stretch-to-region brush -- resizing the source
+        // to EXACTLY boundsWidthPx/boundsHeightPx first (same GetOrCreateResizedImage cache
+        // DrawTemplateImage already uses, so this doesn't re-resize every frame) means exactly one
+        // tile covers the whole gradientBounds when offset to its own origin, achieving the intended
+        // stretch-to-fill without needing a different brush type.
+        using var bitmapFillImage = element.BitmapFill is { } bitmapSource
+            ? ToImageSharp(GetOrCreateResizedImage(bitmapSource, boundsWidthPx, boundsHeightPx, ImageFitMode.Stretch))
+            : null;
+        Brush? fillBrush = bitmapFillImage is not null
+            ? new ImageBrush(bitmapFillImage, new Point((int)MathF.Round(gradientBounds.X), (int)MathF.Round(gradientBounds.Y)))
+            : element.Gradient is { } gradient
+                ? BuildGradientBrush(gradient, gradientBounds, element.Color)
+                : element.StrokeColor is { } ? Brushes.Solid(ToRgba32(element.Color)) : null;
 
         if (isUnrotated)
         {

@@ -31,12 +31,25 @@ public abstract record PersistedTemplateElement(double X, double Y, double Width
 /// 2 stops, there is no variable-length list to serialize, and <see cref="Rgb24"/> already round-trips
 /// correctly (proven by <paramref name="StrokeColor"/>/<paramref name="Color"/> above) — so this
 /// sidesteps the "silent missing-registration" failure mode entirely rather than needing a dedicated
-/// discriminator test for it. No mask-related fields — bitmap-mask fill's persistence side was
-/// explicitly re-costed as a real outlier during Phase 8 plan-review and deferred out of this
-/// pass.
+/// discriminator test for it.
 /// <para><paramref name="StackColor"/>/<paramref name="StackStepX"/>/<paramref name="StackStepY"/>
 /// (auditor usability review follow-up, 2026-08-18) are the same kind of trailing, defaulted,
-/// missing-property-deserializes-to-default addition as everything else in this record.</para></summary>
+/// missing-property-deserializes-to-default addition as everything else in this record.</para>
+/// <para>TX editor gap-items plan, item 4b (picture fill, 2026-09-01): <paramref name="BitmapFillEnabled"/>/
+/// <paramref name="BitmapFillAssetFileName"/> -- the picture-fill persistence side Phase 8's own doc
+/// comment (see above) explicitly deferred as "a real outlier." Reuses <see cref="PersistedImageElement"/>'s
+/// existing GUID-named-file-under-the-template's-own-flat-<c>assets/</c>-folder pattern verbatim (no
+/// new folder, no per-kind asset namespace) -- <paramref name="BitmapFillAssetFileName"/> is a bare
+/// filename, resolved the same way <see cref="PersistedImageElement.AssetFileName"/> is. Deliberately
+/// NO natural-pixel-size fields (unlike <see cref="PersistedImageElement"/>'s own
+/// <c>NaturalPixelWidth</c>/<c>Height</c>) -- v1 always stretches the picture to the text element's
+/// own bounding box, no separate fit-mode UI, so there is no consumer for a natural size yet; add
+/// only if a real fit-mode feature is later built on top of this. <see cref="BitmapFillEnabled"/> and
+/// <see cref="GradientEnabled"/> are independent scalars, not a single 3-way discriminator (refactoring
+/// the already-shipped <see cref="GradientEnabled"/> shape into an enum was rejected as unnecessary
+/// churn on tested code) -- see <see cref="TemplateTextElement.BitmapFill"/>'s own doc comment for the
+/// stated precedence rule when both are true (BitmapFill wins) and the sites that must enforce
+/// it.</para></summary>
 public sealed record PersistedTextElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     string Text, double FontSizeRelative, Rgb24 Color,
@@ -45,7 +58,8 @@ public sealed record PersistedTextElement(
     bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
     Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
     bool Bold = false, bool Italic = false,
-    Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02)
+    Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02,
+    bool BitmapFillEnabled = false, string? BitmapFillAssetFileName = null)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary><paramref name="CornerRadius"/> (auditor usability review follow-up, 2026-08-18) is a

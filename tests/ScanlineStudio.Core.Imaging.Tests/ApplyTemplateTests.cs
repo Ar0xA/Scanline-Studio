@@ -1270,6 +1270,165 @@ public sealed class ApplyTemplateTests
         }
     }
 
+    // TX editor gap-items plan, item 4b (picture fill, 2026-09-01).
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithBitmapFill_LeftInkIsReddishRightInkIsBluish_NoInkOutsideBounds()
+    {
+        // Same directional/relative-check shape as the Horizontal gradient test immediately above
+        // (see that test's own doc comment for why an exact-color match is unreliable) -- proves
+        // DrawTemplateText's ImageBrush branch actually stretches the source picture across the
+        // glyph run's own bounding box rather than silently falling back to solid Color.
+        var fillPath = await WriteFixturePngAsync(20, 4, (x, _) => x < 10 ? new ImageSharpRgb24(255, 0, 0) : new ImageSharpRgb24(0, 0, 255));
+        var path = await WriteFixturePngAsync(160, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var fillSource = await new ImageFileLoader().LoadAsync(fillPath, 20, 4);
+            var source = await new ImageFileLoader().LoadAsync(path, 160, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.15, 0.3, 0.7, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "WWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0), BitmapFill: fillSource),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertLeftmostInkPixelIsRedderThanRightmostInkPixel(result, bounds, background: (255, 255, 255));
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(fillPath);
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Round-1 code-review finding: the sibling test immediately above proves the ImageBrush
+    /// branch is direction-correlated (not falling back to solid), but CANNOT tell "anchored at
+    /// Bounds' own origin" (correct) apart from "anchored at the glyph bounding-box's own origin, with
+    /// Bounds' offset then ALSO added on top" (a real historical ImageBrush behavior in some ImageSharp
+    /// versions, per the review's own arithmetic against that test's exact numbers) -- both hypotheses
+    /// pass that test's left-redder/right-bluer check for THOSE specific bounds. This test is the
+    /// review's own suggested decisive check: render the IDENTICAL element (same Y/Width/Height/font/
+    /// text/fill texture) twice, varying ONLY Bounds.X, and confirm the rendered pattern translates
+    /// WITH Bounds -- i.e. is anchored at Bounds' own origin, not at some fixed image-space point or a
+    /// double-counted offset. Bounds.X values (0.0 and 0.25 on a 160px-wide image = 0px and exactly
+    /// 40px) are both whole-pixel to eliminate subpixel/AA rounding as a confound. The fill texture is
+    /// 8 STRICTLY DISTINCT (non-repeating) color bands, not alternating stripes -- mutation-tested
+    /// (deliberately corrupting the render code's own offset to double-count Bounds.X, then reverting)
+    /// confirmed an earlier alternating red/green draft was VACUOUS: a 2x-scaled offset error landed
+    /// on an exact multiple of the alternating pattern's own 20px repeat period for these specific
+    /// bounds, wrapping back to a visually-identical result and passing regardless of correctness.
+    /// Distinct, non-repeating bands have no such period for ANY integer pixel error to hide behind.</summary>
+    [Fact]
+    public async Task ApplyTemplate_TextWithBitmapFill_PatternTranslatesWithBoundsNotWithImageOrigin()
+    {
+        const int stripeCount = 8;
+        var fillPath = await WriteFixturePngAsync(80, 4, (x, _) => new ImageSharpRgb24((byte)(x / (80 / stripeCount) * 30), 0, 0));
+        var path = await WriteFixturePngAsync(160, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var fillSource = await new ImageFileLoader().LoadAsync(fillPath, 80, 4);
+            var source = await new ImageFileLoader().LoadAsync(path, 160, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var boundsAtOrigin = new NormalizedRect(0.0, 0.3, 0.5, 0.4); // left edge at pixel 0
+            var boundsShifted = new NormalizedRect(0.25, 0.3, 0.5, 0.4); // left edge at pixel 40 (0.25 * 160)
+            var documentAtOrigin = new TemplateDocument(null, [
+                new TemplateTextElement(boundsAtOrigin, Z: 0, "WWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0), BitmapFill: fillSource),
+            ]);
+            var documentShifted = new TemplateDocument(null, [
+                new TemplateTextElement(boundsShifted, Z: 0, "WWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0), BitmapFill: fillSource),
+            ]);
+
+            var resultAtOrigin = preparer.ApplyTemplate(source, documentAtOrigin);
+            var resultShifted = preparer.ApplyTemplate(source, documentShifted);
+
+            AssertInkPatternTranslatesByExactly(resultAtOrigin, resultShifted, shiftPx: 40, boundsAtOrigin, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(fillPath);
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Compares every ink (non-background) pixel in <paramref name="reference"/>'s own
+    /// <paramref name="referenceBounds"/> against the pixel <paramref name="shiftPx"/> to its right in
+    /// <paramref name="shifted"/> -- correct Bounds-relative anchoring makes these identical (the
+    /// second render is the first one, translated). Requires the majority (not literally every pixel,
+    /// to tolerate a handful of incidental single-pixel AA edge differences from glyph hinting) to
+    /// match exactly, and fails loudly with the actual match rate if anchoring is broken.</summary>
+    private static void AssertInkPatternTranslatesByExactly(IImageSource reference, IImageSource shifted, int shiftPx, NormalizedRect referenceBounds, (byte R, byte G, byte B) background)
+    {
+        var minX = Math.Clamp((int)Math.Floor(referenceBounds.X * reference.Width), 0, reference.Width - 1);
+        var minY = Math.Clamp((int)Math.Floor(referenceBounds.Y * reference.Height), 0, reference.Height - 1);
+        var maxX = Math.Clamp((int)Math.Ceiling((referenceBounds.X + referenceBounds.Width) * reference.Width), 0, reference.Width);
+        var maxY = Math.Clamp((int)Math.Ceiling((referenceBounds.Y + referenceBounds.Height) * reference.Height), 0, reference.Height);
+
+        var inkPixelsChecked = 0;
+        var matches = 0;
+        for (var y = minY; y < maxY; y++)
+        {
+            var referenceRow = reference.GetScanline(y);
+            var shiftedRow = shifted.GetScanline(y);
+            for (var x = minX; x < maxX; x++)
+            {
+                var referencePixel = referenceRow[x];
+                if (referencePixel.R == background.R && referencePixel.G == background.G && referencePixel.B == background.B)
+                {
+                    continue;
+                }
+
+                inkPixelsChecked++;
+                var shiftedPixel = shiftedRow[x + shiftPx];
+                if (referencePixel.R == shiftedPixel.R && referencePixel.G == shiftedPixel.G && referencePixel.B == shiftedPixel.B)
+                {
+                    matches++;
+                }
+            }
+        }
+
+        Assert.True(inkPixelsChecked > 0, "Expected at least one non-background (ink) pixel inside Bounds; found none.");
+        var matchRate = (double)matches / inkPixelsChecked;
+        Assert.True(matchRate >= 0.9, $"Expected the shifted render's fill pattern to match the reference render translated by {shiftPx}px in at least 90% of {inkPixelsChecked} ink pixels; only {matches} ({matchRate:P0}) matched -- the fill pattern is not correctly anchored to Bounds.");
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithBothBitmapFillAndGradient_BitmapFillWins()
+    {
+        // TemplateTextElement.BitmapFill's own doc comment: BitmapFill takes precedence when both
+        // are somehow non-null (representable via a hand-edited/shared template file, since nothing
+        // in the data model enforces mutual exclusivity) -- this pins that precedence at the actual
+        // render call site, not just in a comment. Gradient is Vertical (top redder than bottom) and
+        // BitmapFill is horizontal-red-then-blue -- if Gradient won instead, the LEFT/RIGHT ink check
+        // below would fail (a vertical gradient doesn't redden the left vs. the right at all).
+        var fillPath = await WriteFixturePngAsync(20, 4, (x, _) => x < 10 ? new ImageSharpRgb24(255, 0, 0) : new ImageSharpRgb24(0, 0, 255));
+        var path = await WriteFixturePngAsync(160, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var fillSource = await new ImageFileLoader().LoadAsync(fillPath, 20, 4);
+            var source = await new ImageFileLoader().LoadAsync(path, 160, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0.15, 0.3, 0.7, 0.4);
+            var gradient = new TextGradient(TextGradientKind.Vertical, [new GradientColorStop(0f, new Rgb24(255, 0, 0)), new GradientColorStop(1f, new Rgb24(0, 255, 0))]);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(
+                    bounds, Z: 0, "WWWWWW", new FontSpec("DejaVu Sans Mono", 0.25), new Rgb24(0, 0, 0),
+                    Gradient: gradient, BitmapFill: fillSource),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertLeftmostInkPixelIsRedderThanRightmostInkPixel(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(fillPath);
+            File.Delete(path);
+        }
+    }
+
     // Auditor usability review follow-up (2026-08-18): "bitmap mask" text fill -- legacy YONIQ's real
     // RGGrade radio-group option (TextIn.cpp/BitMask.cpp), a tiled 2-color pattern brush for text
     // fill, NOT a glyph-shaped stencil mask despite the name -- same TextGradient/GradientKind slot

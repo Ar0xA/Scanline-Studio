@@ -57,7 +57,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// (YONIQ-style text-effects follow-up) additions, same trailing/optional treatment -- mirror
     /// <see cref="OverlayElementViewModel"/>'s own simplified 2-stop-gradient VM shape exactly (see
     /// that class's own doc comment for why the gradient isn't stored as a raw
-    /// <see cref="TextGradient"/> here).</summary>
+    /// <see cref="TextGradient"/> here).
+    /// <para>TX editor gap-items plan, item 4b (picture fill, 2026-09-01):
+    /// <paramref name="BitmapFillEnabled"/>/<paramref name="BitmapFillSource"/> mirror
+    /// <see cref="RawImageElementSnapshot.Source"/>'s own already-resolved-handle convention --
+    /// carries the actual loaded <see cref="IImageSource"/>, not a path, so Undo/Copy-Paste-Style
+    /// never re-decode it.</para></summary>
     public sealed record RawTextElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
         string Text, double FontSizeRelative, Rgb24 Color,
@@ -66,7 +71,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
         Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
         bool Bold = false, bool Italic = false,
-        Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02)
+        Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02,
+        bool BitmapFillEnabled = false, IImageSource? BitmapFillSource = null)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary><paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
@@ -1233,7 +1239,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
             text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
             text.Bold, text.Italic,
-            text.StackColor, text.StackStepX, text.StackStepY),
+            text.StackColor, text.StackStepX, text.StackStepY,
+            text.BitmapFillEnabled, text.BitmapFillSource),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
             box.CornerRadius,
@@ -1841,6 +1848,134 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
     }
 
+    /// <summary>TX editor gap-items plan, item 4b (picture fill) -- picker call -> loader call ->
+    /// assign onto the SELECTED text element's own BitmapFillSource/Enabled, same shape as
+    /// <see cref="AddImageFromFileAsync"/> immediately above, but assigning onto an EXISTING
+    /// element's property instead of inserting a new one (this fills the text's own glyphs, it
+    /// doesn't add a separate image element). Gated on a text element actually being selected --
+    /// same <see cref="CanInsertField"/>-style guard.</summary>
+    private bool CanSetTextBitmapFill() => SelectedTextElement is not null;
+
+    [RelayCommand(CanExecute = nameof(CanSetTextBitmapFill))]
+    private async Task PickTextBitmapFillFromFileAsync()
+    {
+        if (SelectedTextElement is not { } text)
+        {
+            return;
+        }
+
+        string? path;
+        try
+        {
+            path = await _filePickerService.PickImageFileAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromFileFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
+            return;
+        }
+
+        if (path is null)
+        {
+            return;
+        }
+
+        IImageSource source;
+        try
+        {
+            source = await _imageFileLoader.LoadOriginalAsync(path);
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromFileFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
+            return;
+        }
+
+        StatusMessage = null;
+        // Source assigned before Enabled -- matches PasteSelectedElementStyle's own convention (see
+        // that switch case's own doc comment).
+        text.BitmapFillSource = source;
+        text.BitmapFillEnabled = true;
+    }
+
+    /// <summary>Same shape as <see cref="AddImageFromClipboardAsync"/> immediately above --
+    /// <see cref="PickTextBitmapFillFromFileAsync"/>'s own doc comment covers the "assigns onto the
+    /// selected element" difference from the image-ELEMENT-adding commands this mirrors.</summary>
+    [RelayCommand(CanExecute = nameof(CanSetTextBitmapFill))]
+    private async Task PickTextBitmapFillFromClipboardAsync()
+    {
+        if (SelectedTextElement is not { } text)
+        {
+            return;
+        }
+
+        string? tempPath;
+        try
+        {
+            tempPath = await _filePickerService.PickClipboardImageAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.AddImageFromClipboardFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
+            return;
+        }
+
+        if (tempPath is null)
+        {
+            return;
+        }
+
+        try
+        {
+            IImageSource source;
+            try
+            {
+                source = await _imageFileLoader.LoadOriginalAsync(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Log.AddImageFromClipboardFailed(_logger, ex);
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
+                return;
+            }
+
+            StatusMessage = null;
+            text.BitmapFillSource = source;
+            text.BitmapFillEnabled = true;
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (Exception ex)
+            {
+                Log.ClipboardTempFileCleanupFailed(_logger, tempPath, ex);
+            }
+        }
+    }
+
+    /// <summary>Turns the fill mode back to solid (matching the GRADIENT checkbox's own
+    /// "unchecking just clears the flag" shape) -- deliberately does NOT clear
+    /// <see cref="OverlayElementViewModel.BitmapFillSource"/> itself, so re-checking PICTURE without
+    /// re-picking a file restores the last picture, same "flag gates whether the resolved value is
+    /// USED, the value itself persists" convention <see cref="OverlayElementViewModel.StrokeColor"/>/
+    /// <see cref="OverlayElementViewModel.ShadowColor"/> already establish (those go null<->set
+    /// instead of a separate enabled flag, but the "toggling off doesn't destroy data" spirit is the
+    /// same).</summary>
+    [RelayCommand(CanExecute = nameof(CanSetTextBitmapFill))]
+    private void ClearTextBitmapFill()
+    {
+        if (SelectedTextElement is { } text)
+        {
+            text.BitmapFillEnabled = false;
+        }
+    }
+
     private const int RxHistoryPickerMaxEntries = 20;
     private const int RxHistoryPickerThumbnailMaxDimension = 96;
 
@@ -2209,7 +2344,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
         Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
         bool bold = false, bool italic = false,
-        Rgb24? stackColor = null, double stackStepX = 0.02, double stackStepY = 0.02)
+        Rgb24? stackColor = null, double stackStepX = 0.02, double stackStepY = 0.02,
+        bool bitmapFillEnabled = false, IImageSource? bitmapFillSource = null)
     {
         var element = new OverlayElementViewModel
         {
@@ -2243,6 +2379,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             StackColor = stackColor,
             StackStepX = stackStepX,
             StackStepY = stackStepY,
+            // TX editor gap-items plan, item 4b -- Source before Enabled (round-1 code-review
+            // finding, matches every other write-both-together assignment in this file). Both
+            // assigned AFTER Gradient* above -- if a hand-edited/imported template somehow has both
+            // enabled, BitmapFillEnabled's own mutual-exclusion setter clears the GradientEnabled
+            // that was just set, so the VM's post-construction state self-heals to the documented
+            // precedence winner (BitmapFill) rather than staying ambiguous; the Source/Enabled
+            // ordering between THEMSELVES doesn't affect that, Source's own setter never touches
+            // Gradient.
+            BitmapFillSource = bitmapFillSource,
+            BitmapFillEnabled = bitmapFillEnabled,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -2448,7 +2594,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
             text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
             text.Bold, text.Italic,
-            text.StackColor, text.StackStepX, text.StackStepY),
+            text.StackColor, text.StackStepX, text.StackStepY,
+            text.BitmapFillEnabled, text.BitmapFillSource),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
             box.CornerRadius,
@@ -2571,13 +2718,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         switch (raw)
         {
             case RawTextElementSnapshot text:
+                // TX editor gap-items plan, item 4b -- same GUID-based, never-index-derived asset
+                // naming as the image case below, into the SAME shared assets/ folder (no new
+                // per-kind subfolder). Degrades BitmapFillEnabled to false (rather than persisting a
+                // dangling Enabled=true with no asset) when Enabled is set but Source is somehow null
+                // -- shouldn't be reachable from the UI (picking a picture always sets both together),
+                // defensive only.
+                string? bitmapFillAssetFileName = null;
+                if (text.BitmapFillEnabled && text.BitmapFillSource is { } bitmapFillSource)
+                {
+                    bitmapFillAssetFileName = $"{Guid.NewGuid():N}.png";
+                    var bitmapFillAssetPath = _templateStore.GetAssetPath(templateId, bitmapFillAssetFileName);
+                    await _imageSourceWriter.WritePngAsync(bitmapFillSource, bitmapFillAssetPath);
+                }
+
                 return new PersistedTextElement(
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
                     text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
                     text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
                     text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
                     text.Bold, text.Italic,
-                    text.StackColor, text.StackStepX, text.StackStepY);
+                    text.StackColor, text.StackStepX, text.StackStepY,
+                    bitmapFillAssetFileName is not null, bitmapFillAssetFileName);
             case RawBoxElementSnapshot box:
                 return new PersistedBoxElement(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
@@ -2660,13 +2822,34 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         switch (element)
         {
             case PersistedTextElement text:
+                // TX editor gap-items plan, item 4b -- same degrade-to-null-and-log, never-throw
+                // shape as TemplateStore.LoadTextBitmapFillAsync's own thumbnail-path counterpart
+                // (see that method's own doc comment for why): a missing/corrupt picture-fill asset
+                // must not abort the WHOLE template load over one decorative field.
+                IImageSource? bitmapFillSource = null;
+                if (text.BitmapFillEnabled && !string.IsNullOrEmpty(text.BitmapFillAssetFileName))
+                {
+                    try
+                    {
+                        var bitmapFillAssetPath = _templateStore.GetAssetPath(templateId, text.BitmapFillAssetFileName);
+                        bitmapFillSource = await _imageFileLoader.LoadOriginalAsync(bitmapFillAssetPath);
+                    }
+                    // Round-1 code-review finding: must not swallow OperationCanceledException --
+                    // matches TemplateStore.LoadTextBitmapFillAsync's own identical fix.
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log.BitmapFillAssetLoadFailed(_logger, templateId, text.BitmapFillAssetFileName, ex);
+                    }
+                }
+
                 return new RawTextElementSnapshot(
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
                     text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
                     text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
                     text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
                     text.Bold, text.Italic,
-                    text.StackColor, text.StackStepX, text.StackStepY);
+                    text.StackColor, text.StackStepX, text.StackStepY,
+                    bitmapFillSource is not null, bitmapFillSource);
             case PersistedBoxElement box:
                 return new RawBoxElementSnapshot(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
@@ -2727,10 +2910,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // WriteableBitmap nothing else disposes -- this whole-collection discard is
                 // separate from ImageElementViewModel.OnSourceChanged's own dispose-on-reassign
                 // (that only covers a SURVIVING element's Source changing, not the element itself
-                // being dropped).
-                if (element is ImageElementViewModel imageElement)
+                // being dropped). Widened to a generic IDisposable check (TX editor gap-items plan,
+                // item 4b) -- OverlayElementViewModel now owns the same kind of WriteableBitmap when
+                // a text element's own picture fill is set, for the same reason.
+                if (element is IDisposable disposableElement)
                 {
-                    imageElement.Dispose();
+                    disposableElement.Dispose();
                 }
             }
 
@@ -2850,6 +3035,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         CutSelectedElementCommand.NotifyCanExecuteChanged();
         CopySelectedElementStyleCommand.NotifyCanExecuteChanged();
         PasteSelectedElementStyleCommand.NotifyCanExecuteChanged();
+        // TX editor gap-items plan, item 4b -- same "gated on a text element being selected" shape
+        // as InsertFieldCommand above, needs the same refresh.
+        PickTextBitmapFillFromFileCommand.NotifyCanExecuteChanged();
+        PickTextBitmapFillFromClipboardCommand.NotifyCanExecuteChanged();
+        ClearTextBitmapFillCommand.NotifyCanExecuteChanged();
         // Code-review finding: FontFamilyPickerItems/IsFontUnavailable MUST raise BEFORE
         // SelectedTextElement -- the Font ComboBox's ItemsSource is bound to
         // FontFamilyPickerItems and its SelectedItem (two-way) to SelectedTextElement.FontFamily.
@@ -3586,9 +3776,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             element.PropertyChanged -= OnOverlayElementPropertyChanged;
             OverlayElements.Remove(element);
-            if (element is ImageElementViewModel imageElement)
+            // Widened to a generic IDisposable check (TX editor gap-items plan, item 4b) -- see
+            // LoadTemplateIntoLiveEditor's own identical comment.
+            if (element is IDisposable disposableElement)
             {
-                imageElement.Dispose();
+                disposableElement.Dispose();
             }
 
             if (ReferenceEquals(SelectedOverlayElement, element))
@@ -3937,6 +4129,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     text.StackColor = style.StackColor;
                     text.StackStepX = style.StackStepX;
                     text.StackStepY = style.StackStepY;
+                    // TX editor gap-items plan, item 4b -- same "add every current field to THIS
+                    // switch case or it silently drops" bug class the box-gradient case above already
+                    // documents finding once. Source assigned BEFORE Enabled (round-2 code-review
+                    // convention, matches every other write-both-together assignment in this file) --
+                    // copies the resolved IImageSource handle directly, no re-upload/re-encode. Both
+                    // unconditional (not gated on style.BitmapFillEnabled) so pasting a solid/gradient
+                    // style onto a picture-filled text element correctly clears it, same as the
+                    // Gradient fields immediately above already do for a solid-onto-gradient paste.
+                    text.BitmapFillSource = style.BitmapFillSource;
+                    text.BitmapFillEnabled = style.BitmapFillEnabled;
                     break;
                 case (RawBoxElementSnapshot style, BoxElementViewModel box):
                     box.FillColor = style.FillColor;
@@ -4183,9 +4385,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         PushUndoSnapshot();
         element.PropertyChanged -= OnOverlayElementPropertyChanged;
         OverlayElements.Remove(element);
-        if (element is ImageElementViewModel imageElement)
+        // Widened to a generic IDisposable check (TX editor gap-items plan, item 4b) -- see
+        // LoadTemplateIntoLiveEditor's own identical comment.
+        if (element is IDisposable disposableElement)
         {
-            imageElement.Dispose();
+            disposableElement.Dispose();
         }
 
         if (ReferenceEquals(SelectedOverlayElement, element))
@@ -4751,6 +4955,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             or nameof(BoxElementViewModel.CanvasBorderThicknessPixels)
             or nameof(BoxElementViewModel.CanvasCornerRadiusPixels)
             or nameof(ImageElementViewModel.CanvasBitmap)
+            // Round-1 code-review finding (TX editor gap-items plan, item 4b): CanvasBitmapFill is
+            // the SAME cascade-of-an-already-unfiltered-driver shape as CanvasBitmap immediately
+            // above (driven by BitmapFillSource, itself unfiltered) -- omitting it fired an extra
+            // full Crop->Resize->ApplyTemplate pass on every picture pick.
+            or nameof(OverlayElementViewModel.CanvasBitmapFill)
             or nameof(ITemplateElementViewModel.Locked)
             // Phase 6: pure interaction state (which/whether an element blocks canvas hit-testing),
             // never affects pipeline output -- same tier as Locked itself just above.
@@ -5330,10 +5539,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 element.PropertyChanged -= OnOverlayElementPropertyChanged;
                 // T0-11 (production_audit.md): see LoadTemplateIntoLiveEditor's own identical
                 // comment -- every discarded ImageElementViewModel owns a WriteableBitmap nothing
-                // else disposes.
-                if (element is ImageElementViewModel imageElement)
+                // else disposes. Widened to a generic IDisposable check (TX editor gap-items plan,
+                // item 4b) -- OverlayElementViewModel owns the same kind when a text picture fill is set.
+                if (element is IDisposable disposableElement)
                 {
-                    imageElement.Dispose();
+                    disposableElement.Dispose();
                 }
             }
 
@@ -5445,7 +5655,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 text.GradientEnabled
                     ? new TextGradient(text.GradientKind, [new GradientColorStop(0f, text.GradientStartColor), new GradientColorStop(1f, text.GradientEndColor)])
                     : null,
-                text.StackColor, text.StackStepX, text.StackStepY),
+                text.StackColor, text.StackStepX, text.StackStepY,
+                // TX editor gap-items plan, item 4b -- composed only when actually enabled, same
+                // shape as Gradient above. Precedence when both are somehow true (see
+                // TemplateTextElement.BitmapFill's own doc comment): the render pipeline's own
+                // DrawTemplateText checks BitmapFill first, so composing both fields here is safe
+                // regardless -- this switch doesn't need its own precedence logic.
+                text.BitmapFillEnabled ? text.BitmapFillSource : null),
             BoxElementViewModel box => new TemplateBoxElement(
                 bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                 // Same composition as text's own Gradient above -- the VM's simplified 2-stop shape,
@@ -5755,6 +5971,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "Apply invoked: targetMode={TargetMode}")]
         public static partial void ApplyInvoked(ILogger logger, string targetMode);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Template '{TemplateId}' text picture-fill asset '{AssetFileName}' could not be loaded; loading that element without its picture fill")]
+        public static partial void BitmapFillAssetLoadFailed(ILogger logger, string templateId, string assetFileName, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Apply & Transmit invoked: targetMode={TargetMode}")]
         public static partial void ApplyAndTransmitInvoked(ILogger logger, string targetMode);
