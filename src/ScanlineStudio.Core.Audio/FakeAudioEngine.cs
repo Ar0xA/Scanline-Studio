@@ -128,6 +128,12 @@ public sealed class FakeAudioEngine : IAudioEngine
 
     public bool? LastRequestedStereoTx { get; private set; }
 
+    /// <summary>Same shape as <see cref="LastRequestedCaptureDevice"/> -- lets a test assert WHICH
+    /// playback device was actually opened for a given TX, e.g. to prove the playback path already
+    /// resolves the device fresh from settings on every call (unlike capture, which holds a
+    /// long-lived open stream and needs an explicit live-apply request to pick up a change).</summary>
+    public AudioDeviceInfo? LastRequestedPlaybackDevice { get; private set; }
+
     public Task StartPlaybackAsync(
         AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
         bool stereoTx = false, CancellationToken ct = default)
@@ -141,6 +147,7 @@ public sealed class FakeAudioEngine : IAudioEngine
         LastRequestedPeriodSizeInFrames = periodSizeInFrames;
         LastRequestedPeriods = periods;
         LastRequestedStereoTx = stereoTx;
+        LastRequestedPlaybackDevice = device;
         IsPlaying = true;
         return Task.CompletedTask;
     }
