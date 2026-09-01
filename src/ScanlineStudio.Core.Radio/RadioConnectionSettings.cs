@@ -16,9 +16,31 @@ public sealed record RadioConnectionSettings
 
     public string BackendId { get; init; } = "none";
 
+    /// <summary>Deliberately no property initializer here (STJ trap — see
+    /// <c>OperatorSettings.DefaultRst</c>'s own doc comment: an init-only auto-property's initializer
+    /// is NOT applied when the JSON key is absent, unlike a positional record's constructor default).
+    /// A settings.json that never had a rigctld section (e.g. the operator only ever used Hamlib or
+    /// flrig before) deserializes this as <see langword="null"/> regardless of any initializer written
+    /// here — callers must resolve with <c>?? RigctldHostFallback</c>, matching <see cref="FlrigHost"/>'s
+    /// own already-fixed "?? default" resolution at its read sites (<c>OptionsSettingsService</c>).</summary>
     public string? Host { get; init; }
 
+    /// <inheritdoc cref="Host"/>
     public int? Port { get; init; }
+
+    /// <summary>NOT rigctld's own default bind address — verified against a local Hamlib source
+    /// clone, <c>hamlib/tests/rigctld.c:139</c>: rigctld's own <c>src_addr</c> defaults to
+    /// <see langword="null"/> (<c>INADDR_ANY</c>, all interfaces), not loopback. This is the CLIENT-side
+    /// default this app connects to, matching <see cref="FlrigHost"/>'s own identical "typically runs
+    /// on the same machine" reasoning for a single-computer shack setup — still the right value, a
+    /// different justification (code-review correction, 2026-09-01).</summary>
+    public const string RigctldHostFallback = "127.0.0.1";
+
+    /// <summary>rigctld's own real default TCP port — verified against a local Hamlib source clone,
+    /// <c>hamlib/tests/rigctld.c:138</c> (<c>const char *portno = "4532";</c>), same "verified against
+    /// a local source clone" discipline <see cref="FlrigPort"/>'s own doc comment already
+    /// establishes.</summary>
+    public const int RigctldPortFallback = 4532;
 
     /// <summary>Defaults to the loopback address -- flrig conventionally runs on the same machine as
     /// its XML-RPC client in a typical single-computer shack setup.</summary>

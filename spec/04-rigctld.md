@@ -81,9 +81,11 @@ valid token maps to `RadioMode.Unknown`, never throws.
 Transport is a plain `TcpTransport : IRadioTransport` (host/port), owned internally by
 `RigctldClientProtocol` (see [[02-radio-layer]] — `IRadioProtocol` no longer takes a transport
 parameter, each protocol owns its own). `RigctldConnectionSpec(string Host, int Port)` has no
-built-in default — Hamlib's own `rigctld` binary defaults to `localhost:4532` when a user starts it
-without arguments, but Scanline Studio's own settings (`RadioConnectionSettings.Host`/`.Port`) start
-`null` and the user must supply both values in the Options window before connecting.
+built-in default itself, but `RadioConnectionSettings.Host`/`.Port` (2026-09-01, bug fix) now resolve
+to Hamlib's own real `rigctld` defaults (`127.0.0.1:4532`, verified against a local Hamlib source
+clone — `RadioConnectionSettings.RigctldHostFallback`/`RigctldPortFallback`'s own doc comments) at
+every read site instead of staying `null` — an operator who switches the Options backend picker to
+rigctld for the first time now sees a usable starting point, not blank fields to fill in by hand.
 
 ## Server mode (dropped — kept here only as a record of what was speced)
 

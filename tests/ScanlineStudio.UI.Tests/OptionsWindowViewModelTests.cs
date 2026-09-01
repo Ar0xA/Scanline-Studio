@@ -2119,8 +2119,15 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public void ResetRadioToDefaultCommand_RestoresNoneBackendAndClearsHostPort()
+    public void ResetRadioToDefaultCommand_RestoresNoneBackendAndRigctldHostPortFallbacks()
     {
+        // Bug report (2026-09-01): switching the backend picker to rigctld with no prior rigctld
+        // section in settings.json showed blank Host/Port fields instead of rigctld's own real
+        // defaults -- same root cause this "Reset to Default" case had too (RadioConnectionSettings.
+        // Host/Port carry no property initializer of their own, see that property's own doc comment).
+        // Fixed at both the real LoadAsync path and this Defaults snapshot, so Reset now genuinely
+        // shows rigctld's real default (127.0.0.1:4532), not a blank the operator has to fill in by
+        // hand before rigctld is even usable.
         var settingsStore = new FakeSettingsStore
         {
             Settings = new AppSettings().WithSection(RadioConnectionSettings.SectionKey, new RadioConnectionSettings { BackendId = "rigctld", Host = "x", Port = 1 }, RadioSettingsJsonContext.Default.RadioConnectionSettings),
@@ -2133,8 +2140,52 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal("none", vm.RadioBackendId);
         Assert.False(vm.IsRigctldSelected);
-        Assert.Null(vm.RigctldHost);
-        Assert.Null(vm.RigctldPort);
+        Assert.Equal(RadioConnectionSettings.RigctldHostFallback, vm.RigctldHost);
+        Assert.Equal(RadioConnectionSettings.RigctldPortFallback, vm.RigctldPort);
+    }
+
+    /// <summary>Bug report (2026-09-01): the exact real-world scenario -- an operator who has only
+    /// ever used linked Hamlib (so settings.json's Radio section has BackendId="hamlib" and Host/Port
+    /// genuinely absent/null, never persisted) switches the backend picker to rigctld and finds the
+    /// Host/Port fields blank. Loading such a settings file must resolve rigctld's own real defaults,
+    /// not leave the fields null for the operator to guess at before rigctld is even usable.</summary>
+    [AvaloniaFact]
+    public void Load_HamlibBackendWithNoRigctldSectionEverPersisted_RigctldHostPortResolveToFallbacks()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "hamlib", HamlibModel = 3073 },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RadioConnectionSettings.RigctldHostFallback, vm.RigctldHost);
+        Assert.Equal(RadioConnectionSettings.RigctldPortFallback, vm.RigctldPort);
+    }
+
+    /// <summary>Code-review finding (2026-09-01): the user's own report said "missing OR wrong" -- a
+    /// persisted empty/whitespace-only Host (e.g. an operator cleared the TextBox and it round-tripped
+    /// as "" rather than null) hits the identical blank-field symptom a bare "?? fallback" wouldn't
+    /// catch. An empty host is never a legitimate value here regardless (RadioConnectionSettings.
+    /// ToConnectionSpec's own `{ Length: > 0 }` guard already rejects it), so there's no real user
+    /// intent to preserve by leaving a blank string alone.</summary>
+    [AvaloniaFact]
+    public void Load_PersistedEmptyStringRigctldHost_ResolvesToFallback()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RadioConnectionSettings.SectionKey,
+                new RadioConnectionSettings { BackendId = "rigctld", Host = "", Port = 4532 },
+                RadioSettingsJsonContext.Default.RadioConnectionSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(RadioConnectionSettings.RigctldHostFallback, vm.RigctldHost);
     }
 
     [AvaloniaFact]
