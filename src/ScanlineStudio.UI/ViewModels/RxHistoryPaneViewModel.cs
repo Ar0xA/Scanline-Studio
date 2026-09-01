@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
@@ -114,6 +115,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // for LoadFramesTodayCountAsync -- see that method's own comment.
     private int _framesTodayGeneration;
 
+    // Gallery log-entry-summary plan (2026-09-01): same "discard a superseded async result" pattern
+    // as _previewGeneration -- for LoadLinkedQsoSummaryAsync, see that method's own comment.
+    private int _linkedQsoGeneration;
+
+    // Tracks which (entryId, LinkedQsoId) pair LinkedQsoSummary was last loaded for. Deliberately
+    // keyed on LinkedQsoId too, not just entry Id: OpenInLog's Linked handler reassigns SelectedEntry
+    // to a NEW RxHistoryEntryViewModel instance with the SAME Entry.Id but a freshly-set LinkedQsoId
+    // (see UpdateEntryInPlace), which the _previewedEntryId early-return below would otherwise treat
+    // as "nothing changed" and skip entirely -- this pair check runs BEFORE that early return so a
+    // link made from the currently-selected row still resolves without requiring a reselect.
+    private string? _linkedQsoSummaryEntryId;
+    private string? _linkedQsoSummaryQsoId;
+
     /// <summary>Guards <see cref="OnSelectedEntryNoteChanged"/>/<see cref="OnSelectedEntryIsFlaggedChanged"/>
     /// while <see cref="OnSelectedEntryChanged"/> is itself assigning <see cref="SelectedEntryNote"/>/
     /// <see cref="SelectedEntryIsFlagged"/> from the newly-selected entry -- same "suppress the
@@ -128,6 +142,21 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     [ObservableProperty]
     private Bitmap? _previewImage;
+
+    /// <summary>Resolved "callsign · date" text for the selected entry's linked QSO, populated by
+    /// <see cref="LoadLinkedQsoSummaryAsync"/>. Null while unresolved (no link, still loading, or the
+    /// lookup failed) -- <see cref="LinkedQsoDisplay"/> is what the Gallery's "Log entry" row actually
+    /// binds, falling back to the plain "Logged" text for that null case rather than showing nothing.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(LinkedQsoDisplay))]
+    private string? _linkedQsoSummary;
+
+    /// <summary>Gallery log-entry-summary plan (2026-09-01): the "Log entry" row's logged-state text.
+    /// Falls back to the plain <c>LogEntryLoggedValue</c> ("Logged") wording rather than showing
+    /// nothing while <see cref="LinkedQsoSummary"/> is still resolving or its lookup failed -- the row
+    /// is already gated visible-only-when-linked by the AXAML's own IsNotNull converter, so this
+    /// fallback is reachable, not dead.</summary>
+    public string LinkedQsoDisplay => LinkedQsoSummary ?? _localization.GetString("Panes.RxHistory.LogEntryLoggedValue");
 
     // T0-11 (production_audit.md): disposes the OLD bitmap on every reassignment (including the
     // `= null` clear sites, not just the ToBitmap-call ones) -- CommunityToolkit's generated
@@ -826,6 +855,17 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             _previewGeneration++;
         }
 
+        // Same reconcile, same reasoning, for the linked-QSO summary fields -- OnSelectedEntryChanged
+        // was prevented from touching them by the _isRepopulating guard above when the previously-
+        // selected entry didn't survive this refresh.
+        if (SelectedEntry is null && _linkedQsoSummaryEntryId is not null)
+        {
+            _linkedQsoSummaryEntryId = null;
+            _linkedQsoSummaryQsoId = null;
+            LinkedQsoSummary = null;
+            _linkedQsoGeneration++;
+        }
+
         if (SelectedEntry is null && _loadedEditsEntryId is not null)
         {
             _loadedEditsEntryId = null;
@@ -1197,6 +1237,21 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             ExportStatusMessage = null;
         }
 
+        // Gallery log-entry-summary plan: deliberately BEFORE the _previewedEntryId early-return
+        // below -- OpenInLog's Linked handler reassigns SelectedEntry to a same-Id, different-
+        // LinkedQsoId instance (see this field pair's own comment), which that early-return would
+        // otherwise treat as a no-op re-select and skip.
+        if (value?.Entry.Id != _linkedQsoSummaryEntryId || value?.Entry.LinkedQsoId != _linkedQsoSummaryQsoId)
+        {
+            _linkedQsoSummaryEntryId = value?.Entry.Id;
+            _linkedQsoSummaryQsoId = value?.Entry.LinkedQsoId;
+            LinkedQsoSummary = null;
+            if (value?.Entry.LinkedQsoId is { } linkedQsoId)
+            {
+                _ = LoadLinkedQsoSummaryAsync(linkedQsoId);
+            }
+        }
+
         if (value?.Entry.Id == _previewedEntryId)
         {
             // Auditor-caught (batch 7): a live-refresh-triggered re-select lands here with a
@@ -1251,6 +1306,46 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // later hits the skip above and the preview stays blank forever instead of retrying.
             _previewedEntryId = null;
         }
+    }
+
+    /// <summary>Gallery log-entry-summary plan (2026-09-01): resolves the Gallery's "Log entry" row
+    /// from a plain logged/not-logged boolean into "callsign · date" -- reuses
+    /// <see cref="ILogbookSessionService.GetQsoByIdAsync"/>, already built for
+    /// <see cref="SendSelectedEntryToTxAsync"/>'s own contact-seed lookup. A lookup failure (or a
+    /// vanished row -- <see langword="null"/> return) leaves <see cref="LinkedQsoSummary"/>
+    /// <see langword="null"/>, same as <see cref="SendSelectedEntryToTxAsync"/>'s own "seed nothing,
+    /// don't block" handling -- <see cref="LinkedQsoDisplay"/> falls back to the plain "Logged" text
+    /// for that case, matching the pre-existing behavior this row had before this lookup existed.
+    /// </summary>
+    private async Task LoadLinkedQsoSummaryAsync(string qsoId)
+    {
+        var generation = ++_linkedQsoGeneration;
+        string? summary = null;
+        try
+        {
+            var qso = await _logbookSession.GetQsoByIdAsync(qsoId);
+            if (qso is not null)
+            {
+                summary = _localization.GetString(
+                    "Panes.RxHistory.LogEntryLoggedWithSummaryFormat",
+                    qso.Callsign,
+                    qso.StartUtc.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LoadLinkedQsoSummaryFailed(_logger, qsoId, ex);
+        }
+
+        if (generation != _linkedQsoGeneration)
+        {
+            // A newer selection (or a reconcile clearing the selection entirely) has already
+            // superseded this one since it began -- applying this result now would show a summary
+            // for a row the user is no longer looking at.
+            return;
+        }
+
+        LinkedQsoSummary = summary;
     }
 
     partial void OnSelectedEntryNoteChanged(string? value)
@@ -1492,6 +1587,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading preview image failed")]
         public static partial void LoadPreviewFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading linked QSO summary failed for {QsoId}")]
+        public static partial void LoadLinkedQsoSummaryFailed(ILogger logger, string qsoId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync failed for entry {EntryId}")]
         public static partial void SetNoteFailed(ILogger logger, string entryId, Exception ex);

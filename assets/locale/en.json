@@ -223,6 +223,7 @@
   "Panes.RxHistory.LogEntryLabel": "Log entry",
   "Panes.RxHistory.LogEntryValue": "Not logged",
   "Panes.RxHistory.LogEntryLoggedValue": "Logged",
+  "Panes.RxHistory.LogEntryLoggedWithSummaryFormat": "{0} · {1}",
   "Panes.RxHistory.NoteLabel": "Note",
   "Panes.RxHistory.NoteWatermark": "Add a note...",
   "Panes.RxHistory.FlagLabel": "Flagged",
