@@ -1823,7 +1823,10 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
         return Task.FromResult(true);
     }
 
-    public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) => Task.FromResult(ImagesDirectory);
+    public bool ThrowOnGetImagesDirectory { get; set; }
+
+    public Task<string> GetImagesDirectoryAsync(CancellationToken ct = default) =>
+        ThrowOnGetImagesDirectory ? throw new IOException("Simulated storage-locations load failure.") : Task.FromResult(ImagesDirectory);
 
     public List<string?> SetImagesDirectoryCalls { get; } = [];
 

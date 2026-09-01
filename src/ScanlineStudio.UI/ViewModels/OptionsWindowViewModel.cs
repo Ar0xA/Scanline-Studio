@@ -300,9 +300,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// from the former standalone "Configurations &gt; Storage" dialog (Images) plus 3 new rows.
     /// Deliberately NOT part of <see cref="OptionsSnapshot"/>/staged-until-Save like every field
     /// above -- each row commits (Images/Config/Log) or stages (Database only, restart-required by
-    /// standing user decision) immediately on its own Apply, and <see cref="SaveCommand"/>/<see cref="CancelCommand"/>/
-    /// <see cref="ResetGeneralToDefaultCommand"/> must never touch any of them (see those methods'
-    /// own bodies -- none reference these fields at all, by omission, not a guard).</summary>
+    /// standing user decision) immediately on its own Apply. User-reported bug (2026-09-01):
+    /// <see cref="SaveCommand"/>/<see cref="ApplyCommand"/> used to never touch any of these 5 rows
+    /// at all, so a value edited here only took effect via its own row's Apply button -- both now
+    /// call each row's own Apply*Async method from <see cref="SaveCoreUnguardedAsync"/>, gated on
+    /// that row's input actually having something to apply (see that call site's own doc comment).
+    /// <see cref="CancelCommand"/>/<see cref="ResetGeneralToDefaultCommand"/> still never reference
+    /// these fields at all (by omission, not a guard) -- Cancel must not apply an unconfirmed edit,
+    /// and resetting a user's real data folder locations to app defaults was never asked for.</summary>
     [ObservableProperty]
     private string _imagesDirectory = string.Empty;
 
@@ -2548,6 +2553,30 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Gates <see cref="SaveCommand"/> -- see <see cref="CanSave"/>.</summary>
     private bool _loadSucceeded;
 
+    /// <summary>Code-review finding: <see cref="LoadStorageLocationsSafeAsync"/> is a SEPARATE
+    /// fire-and-forget from <see cref="LoadSafeAsync"/> (whose own success is what
+    /// <see cref="_loadSucceeded"/>/<see cref="CanSave"/> track) -- <see cref="CanSave"/> could
+    /// already return true (enabling Save) while this dialog's own Storage rows are still their
+    /// zeroed/default construction values, if the storage load is unusually slow or throws. Gates
+    /// <see cref="SaveCoreUnguardedAsync"/>'s own Storage-section apply block so a Save that races
+    /// ahead of (or outlives a failed) storage load can never write those still-default/blank values
+    /// out as if they were the user's real, current settings -- a blank <see cref="ImagesDirectory"/>/
+    /// <see cref="AudioDirectory"/>/<see cref="LogDirectory"/> is NOT a no-op downstream (each
+    /// resolves to "reset to app default"), unlike every OTHER field this dialog owns.</summary>
+    private bool _storageLocationsLoaded;
+
+    /// <summary>Code-review finding: the value of <see cref="PendingDatabaseDirectory"/> the last
+    /// time this dialog itself (this load, or a prior explicit <see cref="ApplyDatabaseDirectoryAsync"/>
+    /// this session) actually staged it -- lets <see cref="SaveCoreUnguardedAsync"/> tell "the user
+    /// typed a genuinely NEW target since the last stage" apart from "nothing changed, this is just
+    /// what's already pending." Without this, a general Save/Apply/Connect re-calls
+    /// <see cref="ApplyDatabaseDirectoryAsync"/> on EVERY call while anything is pending (even a
+    /// relocation staged in an earlier session the user never touched this time), which re-sets
+    /// <see cref="IsConfirmingDatabaseRestart"/> to true unconditionally -- undoing an explicit
+    /// "Not Now" dismissal on the very next unrelated Save, and re-running a real directory-exists
+    /// check against the staged target every time.</summary>
+    private string? _lastStagedDatabaseDirectory;
+
     /// <summary>Code-review finding (step 7): also excludes Save/Apply while Connect's own implicit
     /// save is in flight -- see <see cref="IsConnectingRadio"/>'s own doc comment for why an
     /// interleaved Save/Apply must not resume and clear shared save-result fields before Connect's
@@ -2660,6 +2689,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             DatabaseDirectory = await _appLocationsService.GetDatabaseDirectoryAsync();
             PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
             LogDirectory = await _appLocationsService.GetLogDirectoryAsync();
+
+            // Whatever's pending as of THIS load is the baseline "already staged" state -- a general
+            // Save that fires before the user ever touches this row must not treat it as a fresh
+            // target to re-stage. See _lastStagedDatabaseDirectory's own doc comment.
+            _lastStagedDatabaseDirectory = PendingDatabaseDirectory;
+            _storageLocationsLoaded = true;
         }
         catch (Exception ex)
         {
@@ -2799,6 +2834,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             await _appLocationsService.SetDatabaseDirectoryAsync(PendingDatabaseDirectory);
             PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
             IsConfirmingDatabaseRestart = PendingDatabaseDirectory is not null;
+            // This stage just succeeded -- refresh the baseline so a general Save that follows
+            // (including RestartNowAsync's own SaveCoreAsync call right before restarting) doesn't
+            // treat this same, already-just-staged value as a fresh target to re-apply.
+            _lastStagedDatabaseDirectory = PendingDatabaseDirectory;
         }
         catch (Exception ex)
         {
@@ -3176,6 +3215,54 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         try
         {
             await _optionsSettingsService.SaveAsync(snapshot);
+
+            // Storage section (Images/Audio/Config/Database/Log directories, user-reported
+            // 2026-09-01: "Auto save RX audio" only took effect via its OWN row Apply button, not
+            // this window's general Apply/Save). All 5 rows were deliberately excluded from
+            // OptionsSnapshot above -- see that field group's own doc comment -- because each has a
+            // real side effect an accidental blank/incidental value must not trigger: Config/Log
+            // physically MOVE a file on disk, Database only STAGES a pending change behind its own
+            // restart-confirmation UI. Reusing each row's own Apply*Async method here (not
+            // duplicating its logic) keeps a general Save's SUCCESS-path behavior equivalent to
+            // clicking that row's own button -- same validation, same normalization, same live-apply.
+            // NOT equivalent on the FAILURE path though: none of these five ever throws out to this
+            // method (an internal try/catch sets that row's own ErrorMessage instead), but a general
+            // Save still closes the dialog on success overall (SaveCommand) where the row's own Apply
+            // would have left the window open with that error visible -- a genuine, if narrow, gap
+            // (needs a real I/O failure, e.g. an unwritable target) accepted as a strict improvement
+            // over "didn't apply at all," not fixed here.
+            //
+            // Gated on _storageLocationsLoaded (code-review finding): LoadStorageLocationsSafeAsync
+            // is its OWN fire-and-forget, separate from the one _loadSucceeded/CanSave track -- a
+            // Save that races ahead of (or outlives a failed) storage load must not write this
+            // dialog's still-default/blank construction values out as if they were the user's real
+            // current settings (blank is NOT a no-op downstream: it resolves to "reset to app
+            // default" for Images/Audio/Log, unlike every other field this dialog owns).
+            if (_storageLocationsLoaded)
+            {
+                await ApplyImagesDirectoryAsync();
+                await ApplyAudioDirectoryAsync();
+                if (!string.IsNullOrWhiteSpace(ConfigDirectoryInput))
+                {
+                    await ApplyConfigDirectoryAsync();
+                }
+
+                // Gated on the value having actually changed since the last stage (code-review
+                // finding), not just non-blank -- PendingDatabaseDirectory can be non-blank simply
+                // because a relocation was already staged in an EARLIER session and the user never
+                // touched this row this time. An unconditional non-blank gate would re-stage that
+                // same value (a real directory-exists check against it) and re-set
+                // IsConfirmingDatabaseRestart = true on every unrelated Save -- undoing an explicit
+                // "Not Now" dismissal the moment the user saves anything else. See
+                // _lastStagedDatabaseDirectory's own doc comment.
+                if (!string.IsNullOrWhiteSpace(PendingDatabaseDirectory) &&
+                    !string.Equals(PendingDatabaseDirectory, _lastStagedDatabaseDirectory, StringComparison.Ordinal))
+                {
+                    await ApplyDatabaseDirectoryAsync();
+                }
+
+                await ApplyLogDirectoryAsync();
+            }
 
             // Squelch level (user-reported 2026-08-27, "Squelch level" live control): unlike every
             // OTHER SstvDecoderSettings field this dialog owns, SenseLevel is now genuinely live --
