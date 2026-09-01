@@ -738,8 +738,10 @@
                                      Rebound 2026-08-26 (user decision) from RxHistoryPaneViewModel.
                                      Entries (DB-backed, filtered by the Gallery tab's own
                                      ShowTodayOnly toggle) to RxImagePaneViewModel.PreviousFrames
-                                     (session-only, capped at 2, independent of any Gallery UI state
-                                     — see that property's own doc comment). Mode-pill badge overlay
+                                     (session-only, capped at PreviousFramesCapacity — 6 as of
+                                     2026-09-01, Fable operator-perspective punch list — independent
+                                     of any Gallery UI state, see that property's own doc comment).
+                                     Mode-pill badge overlay
                                      is real (Entry.ModeId); the literal callsign caption line
                                      (ReceiveHistoryEntry has no callsign field) was dropped
                                      ui_transition_plan.md step 3 (T2-7) — same fix the Gallery grid's

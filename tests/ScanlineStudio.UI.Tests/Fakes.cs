@@ -816,10 +816,23 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public List<(double FrequencyHz, TimeSpan Duration, bool LeaveKeyedAfterTune)> TuneCalls { get; } = [];
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
+    /// <summary>When set, <see cref="TuneAsync"/> suspends on this instead of completing immediately
+    /// -- a dedicated gate for this one operation (this project's own "deterministic gates, not a
+    /// shared race" convention), letting a test hold a tune "in flight" long enough to prove
+    /// <c>RadioStatusViewModel.TuneCommand</c>'s Stop path is actually reachable through
+    /// <c>CanExecute</c>, not just via a direct <c>ExecuteAsync</c> call that bypasses it.</summary>
+    public TaskCompletionSource? TuneGate { get; set; }
+
+    public async Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
     {
         TuneCalls.Add((frequencyHz, duration, leaveKeyedAfterTune));
-        return Task.CompletedTask;
+        if (TuneGate is not null)
+        {
+            using (ct.Register(() => TuneGate.TrySetCanceled(ct)))
+            {
+                await TuneGate.Task;
+            }
+        }
     }
 
     public int TxVolumePercent { get; set; } = 100;

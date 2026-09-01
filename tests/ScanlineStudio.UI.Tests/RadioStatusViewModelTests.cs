@@ -607,6 +607,38 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal("RadioStatus.Tune", vm.TuneButtonLabel);
     }
 
+    /// <summary>TX-pane Tune button plan (2026-09-01), auditor code-review finding: proves the Stop
+    /// path is reachable through a REAL UI click (`CanExecute` + `Execute`), not just via a direct
+    /// `ExecuteAsync` call that bypasses `CanExecute` entirely -- the shape every other Tune test in
+    /// this file uses, which would stay green even if `AllowConcurrentExecutions` regressed back to
+    /// its CommunityToolkit default (`false`), the exact bug this test exists to catch (already found
+    /// once on the sibling `OptionsWindowViewModel.TestPttCommand`, see that command's own doc
+    /// comment). Without `AllowConcurrentExecutions = true`, `CanExecute` would be `false` while
+    /// `IsTuning`, so the second (Stop) click below would never reach the `IsTuning` branch at all.</summary>
+    [AvaloniaFact]
+    public async Task TuneCommand_ClickedWhileTuning_CanExecuteStaysTrue_AndStopsTheTone()
+    {
+        var sstvSession = new FakeSstvSessionService { TuneGate = new TaskCompletionSource() };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TuneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsTuning);
+
+        // The real bug this guards against: without AllowConcurrentExecutions = true, this would be
+        // false, and the button a real click drives through would already be disabled/unreachable.
+        Assert.True(vm.TuneCommand.CanExecute(null));
+
+        vm.TuneCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsTuning);
+        Assert.Equal("RadioStatus.Tune", vm.TuneButtonLabel);
+    }
+
     [AvaloniaFact]
     public void StopTuneIfActive_NothingCurrentlyTuning_IsASafeNoOp()
     {

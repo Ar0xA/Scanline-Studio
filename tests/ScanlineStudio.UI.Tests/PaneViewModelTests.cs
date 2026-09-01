@@ -777,9 +777,9 @@ public sealed class PaneViewModelTests
         Assert.False(vm.CanEditFrameMetadata);
     }
 
-    // Previous-frames strip (user decision, 2026-08-26): a session-only rolling list of the last 2
-    // COMPLETED receptions, independent of RxHistoryPaneViewModel.Entries/the Gallery tab's own
-    // ShowTodayOnly toggle.
+    // Previous-frames strip (user decision, 2026-08-26): a session-only rolling list of the last
+    // PreviousFramesCapacity COMPLETED receptions, independent of RxHistoryPaneViewModel.Entries/the
+    // Gallery tab's own ShowTodayOnly toggle.
 
     [AvaloniaFact]
     public void PreviousFrames_CompletedEntryRecorded_IsAdded()
@@ -948,23 +948,26 @@ public sealed class PaneViewModelTests
         Assert.Empty(vm.PreviousFrames);
     }
 
+    /// <summary>Fable operator-perspective punch list (2026-09-01), priority #3: capacity raised
+    /// 2 -> 6, so operators comparing the last 4-6 receptions during a net/pileup no longer need a
+    /// Gallery tab switch. Adds ONE more entry than the new capacity (7 total), not just enough to
+    /// prove eviction happens at all -- pins the exact new boundary, not just "some eviction."</summary>
     [AvaloniaFact]
-    public void PreviousFrames_MoreThanCapacityRecorded_KeepsOnlyTheNewestTwo()
+    public void PreviousFrames_MoreThanCapacityRecorded_KeepsOnlyTheNewestSix()
     {
         var sstvSession = new FakeSstvSessionService();
         var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
         var now = DateTimeOffset.UtcNow;
 
-        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry1", now, "sc1", "/tmp/frame1.png", null, ReceiveDecodeState.Completed));
-        Dispatcher.UIThread.RunJobs();
-        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry2", now.AddSeconds(1), "sc1", "/tmp/frame2.png", null, ReceiveDecodeState.Completed));
-        Dispatcher.UIThread.RunJobs();
-        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry3", now.AddSeconds(2), "sc1", "/tmp/frame3.png", null, ReceiveDecodeState.Completed));
-        Dispatcher.UIThread.RunJobs();
+        for (var i = 1; i <= 7; i++)
+        {
+            historyStore.RaiseRecorded(new ReceiveHistoryEntry($"entry{i}", now.AddSeconds(i), "sc1", $"/tmp/frame{i}.png", null, ReceiveDecodeState.Completed));
+            Dispatcher.UIThread.RunJobs();
+        }
 
-        Assert.Equal(2, vm.PreviousFrames.Count);
-        Assert.Equal(["entry3", "entry2"], vm.PreviousFrames.Select(f => f.Entry.Id));
+        Assert.Equal(6, vm.PreviousFrames.Count);
+        Assert.Equal(["entry7", "entry6", "entry5", "entry4", "entry3", "entry2"], vm.PreviousFrames.Select(f => f.Entry.Id));
     }
 
     [AvaloniaFact]
