@@ -93,6 +93,18 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
+    /// <summary>TX workflow modernization plan, Phase 1 (Fill &amp; Border flyout) -- box's own
+    /// counterpart to <see cref="OverlayElementViewModel.PushUndoSnapshotForStyleChange"/>. Real
+    /// pre-existing gap closed here, not new scope: before this, NONE of FillColor/BorderColor/
+    /// BorderThickness/Opacity/CornerRadius had any undo hook at all, on ANY entry point --
+    /// including the already-shipped BOX STYLE sidebar block, which has silently produced zero undo
+    /// steps since it shipped. Discovered only because the flyout adds a second entry point onto
+    /// these same properties; fixed at the source instead of shipping a second silently-broken-undo
+    /// instance of the identical bug class <see cref="OverlayElementViewModel.FontSizeRelative"/>/
+    /// <see cref="OverlayElementViewModel.Color"/> already hit once (see that field's own doc
+    /// comment).</summary>
+    public Action? PushUndoSnapshotForStyleChange { get; init; }
+
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;
 
     public double TopPixels => (Y - (Height / 2)) * ImageHeight;
@@ -118,6 +130,43 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// originally) -- the canvas binding uses a new, analogous
     /// <see cref="Converters.DoubleToCornerRadiusConverter"/>, not a bare binding.</summary>
     public double CanvasCornerRadiusPixels => CornerRadius * ImageHeight;
+
+    /// <summary>TX workflow modernization plan, Phase 1 (Fill &amp; Border flyout) -- same
+    /// element-level px-conversion pattern as <see cref="OverlayElementViewModel.TargetModeHeightPx"/>/
+    /// <see cref="OverlayElementViewModel.FontSizePx"/>, see that pair's own doc comments for why
+    /// this needs to live on the element itself rather than the parent VM's existing
+    /// <c>SelectedBoxElementBorderThicknessPx</c>/<c>SelectedBoxElementCornerRadiusPx</c>.</summary>
+    public double TargetModeHeightPx { get; init; }
+
+    /// <inheritdoc cref="OverlayElementViewModel.FontSizePx"/>
+    public double BorderThicknessPx
+    {
+        get => BorderThickness * TargetModeHeightPx;
+        set
+        {
+            if (TargetModeHeightPx <= 0)
+            {
+                return;
+            }
+
+            BorderThickness = value / TargetModeHeightPx;
+        }
+    }
+
+    /// <inheritdoc cref="OverlayElementViewModel.FontSizePx"/>
+    public double CornerRadiusPx
+    {
+        get => CornerRadius * TargetModeHeightPx;
+        set
+        {
+            if (TargetModeHeightPx <= 0)
+            {
+                return;
+            }
+
+            CornerRadius = value / TargetModeHeightPx;
+        }
+    }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17) -- same nullable-color/checkbox
     /// bridge as <see cref="OverlayElementViewModel.HasStroke"/>, so the new BOX STYLE inspector
@@ -181,13 +230,33 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
     }
 
-    partial void OnBorderThicknessChanged(double value) => OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+    partial void OnBorderThicknessChanged(double value)
+    {
+        OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+        OnPropertyChanged(nameof(BorderThicknessPx));
+    }
 
-    partial void OnCornerRadiusChanged(double value) => OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
+    partial void OnCornerRadiusChanged(double value)
+    {
+        OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
+        OnPropertyChanged(nameof(CornerRadiusPx));
+    }
 
     partial void OnBorderColorChanged(Rgb24? value)
     {
         OnPropertyChanged(nameof(HasBorder));
         OnPropertyChanged(nameof(BorderColorForPicker));
     }
+
+    // Fill & Border flyout undo wiring -- see PushUndoSnapshotForStyleChange's own doc comment for
+    // why these five didn't have one before this change.
+    partial void OnFillColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnBorderColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnBorderThicknessChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnOpacityChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnCornerRadiusChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
 }
