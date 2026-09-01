@@ -1167,9 +1167,36 @@
         <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
     </Style>
 
+    <!-- Bug fix (found via an automated silent-failure sweep, not a real click): ToggleButton is a
+         separate type from Button (same "confirmed by this codebase's own Cards.axaml" reasoning as
+         ToggleButton.Industry.IndustryBtn26's own comment above), so the Button-typed
+         IndustryBtnSecondary rules above never matched the TX transmit toggle below despite its own
+         call site carrying that exact class and a comment claiming it worked — the class name was
+         valid (defined, just for the wrong element type), so nothing built or ran wrong, the toggle
+         just silently rendered FluentTheme's default chrome at rest instead of this design system's
+         secondary look. Mirrors Button.IndustryBtnSecondary's own 4 states exactly. -->
+    <Style Selector="ToggleButton.IndustryBtnSecondary /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryControlFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryText}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnSecondary:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryHoverFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryHoverBorder}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnSecondary:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryPressFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryPressBorder}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnSecondary:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+    </Style>
+
     <!-- TX transmit toggle (Phase 7): ported 1:1 from the old design's ScanlineStudioTxToggleButtonTheme
-         (Tokens.axaml) - plain/secondary look at rest, solid red fill only while actually
-         transmitting (IsChecked). Call sites pair this with the plain
+         (Tokens.axaml) - plain/secondary look at rest (now real, see the fix just above), solid red
+         fill only while actually transmitting (IsChecked). Call sites pair this with the plain
          "Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" classes for the rest-state look,
          same base as any other secondary toggle; this adds only the :checked override. -->
     <Style Selector="ToggleButton.IndustryTxToggle:checked /template/ ContentPresenter">
