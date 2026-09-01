@@ -1207,14 +1207,16 @@
                         </DockPanel>
                     </HeaderedContentControl>
 
-                    <!-- Right: selected-frame inspector (File/Mode/ReceivedAt only; no OCR/QRZ/
-                         Log-entry fields exist — GridDistValue/LogEntryValue deliberately show
-                         an honest em-dash placeholder / "Not logged", not mock2's own fake
-                         "IM76 · 1,842 km"/"linked #4412" literal data, since this row has a REAL
-                         selected entry with
-                         some real fields mixed with genuinely-absent ones; showing fabricated data
-                         next to real data would be misleading, unlike the TX tab's now-removed
-                         Queue/TX-log cards, which had no real data mixed in at all) + Storage card
+                    <!-- Right: selected-frame inspector (File/Mode/ReceivedAt only; no OCR/QRZ
+                         field exists — GridDistValue deliberately shows an honest em-dash
+                         placeholder, not mock2's own fake "IM76 · 1,842 km" literal data, since
+                         this row has a REAL selected entry with some real fields mixed with
+                         genuinely-absent ones; showing fabricated data next to real data would be
+                         misleading, unlike the TX tab's now-removed Queue/TX-log cards, which had
+                         no real data mixed in at all. LogEntryValue keeps the same "Not logged"
+                         placeholder for an unlinked entry, but LinkedQsoDisplay (Gallery log-entry-
+                         summary plan, 2026-09-01) now shows the linked QSO's real callsign/date
+                         once resolved, replacing the old plain "Logged" boolean) + Storage card
                          (real ImagesDirectory, resolved via
                          IReceiveHistoryStore.GetImagesDirectoryAsync). Disk-free is now real too
                          (RxHistory.DiskFreeDisplay, DriveInfo-based, stub sweep 2026-08-26). The
@@ -1293,7 +1295,7 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.LogEntryLabel}" />
                                         <Panel Grid.Column="1">
                                             <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryValue}" IsVisible="{Binding SelectedEntry.Entry.LinkedQsoId, Converter={x:Static ObjectConverters.IsNull}}" />
-                                            <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxHistory.LogEntryLoggedValue}" IsVisible="{Binding SelectedEntry.Entry.LinkedQsoId, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                            <TextBlock Classes="IndustryRowValue" Text="{Binding LinkedQsoDisplay}" IsVisible="{Binding SelectedEntry.Entry.LinkedQsoId, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         </Panel>
                                     </Grid></Border>
                                 </StackPanel>

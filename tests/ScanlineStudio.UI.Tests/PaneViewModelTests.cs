@@ -18,6 +18,7 @@ using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
+using System.Globalization;
 using System.IO;
 
 namespace ScanlineStudio.UI.Tests;
@@ -5932,6 +5933,153 @@ public sealed class PaneViewModelTests
         Assert.Null(vm.ErrorMessage);
     }
 
+    // Gallery log-entry-summary plan (2026-09-01): "Log entry" row shows the linked QSO's
+    // callsign/date instead of a plain logged/not-logged boolean. FakeLocalizationService.GetString
+    // returns the raw KEY, not a formatted string (see its own doc comment) -- so asserting the
+    // exact key below genuinely distinguishes "resolved from the QSO lookup" from "fell back to the
+    // plain Logged text", not just "something non-null happened".
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SelectingEntryWithLinkedQso_ResolvesLinkedQsoDisplayFromTheQsoLookup()
+    {
+        var qsoStart = DateTimeOffset.UtcNow;
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed)],
+        };
+        var logbookSession = new FakeLogbookSessionService
+        {
+            Records = { new QsoRecord("qso-1", "W1AW", qsoStart, null, null, null, null, null, null, null, null, "FN31pr", null, null, null, false, false) },
+        };
+        var localization = new FakeLocalizationService();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession, localization: localization);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedWithSummaryFormat", vm.LinkedQsoDisplay);
+        // Auditor-caught: a key-only assertion can't tell "W1AW" from a swapped-in wrong field (e.g.
+        // GridSquare) or a dropped arg -- LastArgs proves the CALLER passed the actual QSO's own
+        // callsign/date, not just that the right loc key was chosen.
+        Assert.Equal(["W1AW", qsoStart.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)], localization.LastArgs);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SelectingEntryWithLinkedQsoLookupFailure_FallsBackToThePlainLoggedText()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed)],
+        };
+        var logbookSession = new FakeLogbookSessionService { ThrowOnGetById = new InvalidOperationException("db locked") };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedValue", vm.LinkedQsoDisplay);
+        Assert.Null(vm.LinkedQsoSummary);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SelectingEntryWithNoLinkedQso_LinkedQsoDisplayIsThePlainLoggedFallback()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedValue", vm.LinkedQsoDisplay);
+        Assert.Null(vm.LinkedQsoSummary);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SwitchingBetweenTwoLinkedEntries_ResolvesEachOnesOwnQso()
+    {
+        var firstStart = DateTimeOffset.UtcNow;
+        var secondStart = firstStart.AddDays(-3);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow.AddMinutes(1), "robot36", "/tmp/b.png", "qso-2", ReceiveDecodeState.Completed),
+            ],
+        };
+        var logbookSession = new FakeLogbookSessionService
+        {
+            Records =
+            {
+                new QsoRecord("qso-1", "W1AW", firstStart, null, null, null, null, null, null, null, null, "FN31pr", null, null, null, false, false),
+                new QsoRecord("qso-2", "K1ABC", secondStart, null, null, null, null, null, null, null, null, null, null, null, null, false, false),
+            },
+        };
+        var localization = new FakeLocalizationService();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession, localization: localization);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var first = vm.Entries.Single(e => e.Entry.Id == "1");
+        var second = vm.Entries.Single(e => e.Entry.Id == "2");
+
+        vm.SelectedEntry = first;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedWithSummaryFormat", vm.LinkedQsoDisplay);
+        Assert.Equal(["W1AW", firstStart.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)], localization.LastArgs);
+
+        vm.SelectedEntry = second;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedWithSummaryFormat", vm.LinkedQsoDisplay);
+        Assert.Equal(["K1ABC", secondStart.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)], localization.LastArgs);
+    }
+
+    /// <summary>OpenInLog's Linked handler reassigns SelectedEntry to a NEW instance with the SAME
+    /// Entry.Id but a freshly-set LinkedQsoId (UpdateEntryInPlace) -- without the (entryId,
+    /// LinkedQsoId) pair check in OnSelectedEntryChanged (keyed on Id ALONE it would look like a
+    /// no-op re-select), this row would keep showing the plain "Logged" fallback until the operator
+    /// reselects it, exactly the earlier boolean-only behavior this feature exists to fix.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_LinkingTheCurrentlySelectedEntry_ResolvesLinkedQsoDisplayWithoutAReselect()
+    {
+        var qsoStart = DateTimeOffset.UtcNow;
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var logbookSession = new FakeLogbookSessionService
+        {
+            Records = { new QsoRecord("qso-42", "K1ABC", qsoStart, null, null, null, null, null, null, null, null, null, null, null, null, false, false) },
+        };
+        var localization = new FakeLocalizationService();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession, localization: localization);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedValue", vm.LinkedQsoDisplay);
+
+        QsoLinkWindowViewModel? qsoLinkVm = null;
+        vm.QsoLinkRequested += requested => qsoLinkVm = requested;
+        vm.OpenInLogCommand.Execute(null);
+        RaiseLinkedViaReflection(qsoLinkVm!, "qso-42");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxHistory.LogEntryLoggedWithSummaryFormat", vm.LinkedQsoDisplay);
+        Assert.Equal(["K1ABC", qsoStart.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)], localization.LastArgs);
+    }
+
     // ui_transition_plan.md step 4 (T1-4, reframed): per-item manual delete.
 
     [AvaloniaFact]
@@ -6688,10 +6836,11 @@ public sealed class PaneViewModelTests
         FakeUrlLauncher? urlLauncher = null,
         FakeClipboardImageService? clipboardImageService = null,
         FakeRxAudioAutoSaver? audioAutoSaver = null,
-        FakeLogbookSessionService? logbookSession = null) =>
+        FakeLogbookSessionService? logbookSession = null,
+        FakeLocalizationService? localization = null) =>
         new(
             historyStore,
-            new FakeLocalizationService(),
+            localization ?? new FakeLocalizationService(),
             NullLogger<RxHistoryPaneViewModel>.Instance,
             logbookSession ?? new FakeLogbookSessionService(),
             NullLogger<QsoLinkWindowViewModel>.Instance,
