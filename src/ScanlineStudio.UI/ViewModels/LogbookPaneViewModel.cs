@@ -408,10 +408,17 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// (code-review finding, rx-log-qso.md) from a QRZ lookup the RX pane already performed
     /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>); dropping them
     /// would silently discard a lookup the user already did and make them repeat it on this tab.
+    ///
+    /// <paramref name="defaultRst"/> (RST default plan, 2026-09-01): seeds BOTH
+    /// <see cref="FormRstSent"/> and <see cref="FormRstReceived"/> from this one value -- SSTV's
+    /// real-world convention doesn't distinguish direction, see <c>OperatorSettings.DefaultRst</c>'s
+    /// own doc comment for why "595", not ham radio's classic "599". Deliberately NOT seeded from
+    /// <c>RxImagePaneViewModel.DecodedNrRst</c> -- that field is "595" plus a hardcoded 3-digit
+    /// picture number, never an actually-decoded RST, so it would be wrong-shaped here.
     /// </summary>
     public void PrefillForNewEntry(
         string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare,
-        long? frequencyHz = null, RadioMode? radioMode = null, string? receivedImageId = null)
+        long? frequencyHz = null, RadioMode? radioMode = null, string? receivedImageId = null, string? defaultRst = null)
     {
         Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
         _formGeneration++;
@@ -425,6 +432,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormGridSquare = gridSquare;
         FormFrequencyHz = frequencyHz;
         FormMode = radioMode;
+        FormRstSent = defaultRst;
+        FormRstReceived = defaultRst;
         // Fable UX-review finding, 2026-08-30: set AFTER ResetForm() above (which clears this to
         // null) -- LogAsync's BuildRecordFromForm call reads it, so a QSO logged from this prefill
         // now links back to the frame it came from, the same way an edited existing entry already

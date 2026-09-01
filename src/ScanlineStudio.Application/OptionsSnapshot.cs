@@ -53,6 +53,9 @@ public sealed record OptionsSnapshot(
     string? Callsign,
     string? OperatorName,
     string? OperatorGrid,
+    // RST default plan (2026-09-01) -- see OperatorSettings.DefaultRst's own doc comment for why
+    // "595", not "599".
+    string? DefaultRst,
     bool AutoSyncEnabled,
     bool AutoSlantEnabled,
     bool QrzLookupEnabled,

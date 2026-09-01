@@ -6138,7 +6138,8 @@ detail is `_postScheduled = false` being set INSIDE the lock, BEFORE `LatestFram
 throwing `PropertyChanged` subscriber can't wedge the flag), cross-thread `[ObservableProperty]`
 mutation (clean everywhere -- both off-UI-thread entry points across all three files correctly
 marshal via `Dispatcher.UIThread.Post` before touching an observable), and
-`MainViewModel`'s two constructor fire-and-forget async calls (`LoadCallsignAsync` already has its
+`MainViewModel`'s two constructor fire-and-forget async calls (`LoadOperatorSettingsAsync`, named
+`LoadCallsignAsync` at the time of this finding, already has its
 own try/catch; `OpenBlankEditorCommand.ExecuteAsync(null)` did not, and the risky block it reaches
 in `TxControlsPaneViewModel` isn't fully covered by that command's own try/catch -- an exception
 there would surface only as a nondeterministic, context-free "unobserved task exception" log at GC
@@ -6146,7 +6147,7 @@ time, not a crash, but with no diagnostic pointing at what actually failed).
 
 Two risk-tier findings, both fixed as trivial same-round hardening per standing practice: (1) the
 missing try/catch on `OpenBlankEditorCommand.ExecuteAsync(null)`, wrapped to match
-`LoadCallsignAsync`'s own pattern with a new targeted log message; (2) a first-run-only ordering
+`LoadOperatorSettingsAsync`'s own pattern with a new targeted log message; (2) a first-run-only ordering
 hazard -- on a fresh install with no `settings.json` yet, `JsonSettingsStore.LoadAsync` returns an
 already-completed task, so the whole auto-open-blank-editor chain used to run synchronously INLINE
 in the constructor, before `RadioStatus` was assigned two lines later (harmless today since nothing

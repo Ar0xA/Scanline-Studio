@@ -7274,6 +7274,34 @@ public sealed class PaneViewModelTests
         Assert.Equal("14.230000", vm.FormFrequencyMhzText);
     }
 
+    /// <summary>RST default plan (2026-09-01): both fields seed from the ONE passed value -- SSTV's
+    /// real-world convention doesn't distinguish direction.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_WithDefaultRst_SetsBothRstFields()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null, defaultRst: "595");
+
+        Assert.Equal("595", vm.FormRstSent);
+        Assert.Equal("595", vm.FormRstReceived);
+    }
+
+    /// <summary>No default configured (an operator who cleared the Options field) must prefill
+    /// nothing, not a fabricated value.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_WithNullDefaultRst_LeavesRstFieldsNull()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null);
+
+        Assert.Null(vm.FormRstSent);
+        Assert.Null(vm.FormRstReceived);
+    }
+
     /// <summary>ui_transition_plan.md step 5 (T2-8): FormFrequencyHz stays the stored/ADIF unit;
     /// FormFrequencyMhzText is the MHz-facing edit surface the form actually binds to.</summary>
     [AvaloniaFact]

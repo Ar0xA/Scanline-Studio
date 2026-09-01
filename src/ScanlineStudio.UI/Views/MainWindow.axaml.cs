@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
@@ -251,14 +252,14 @@ public partial class MainWindow : Window
                         // loaded its callsign once, from MainViewModel's own constructor -- typing a
                         // new callsign in Options and hitting Save persisted it correctly, but the
                         // chip kept showing the old value (or "N0CALL") until the next full app
-                        // restart. Re-running LoadCallsignAsync unconditionally on close (Save AND
+                        // restart. Re-running LoadOperatorSettingsAsync unconditionally on close (Save AND
                         // Cancel) is safe -- Cancel never touched disk, so this is a no-op reload of
                         // the same value in that case, same as re-running it costs nothing extra.
                         // Same bug, same fix, for the Transmit tab's Output-device and Identification
                         // fields (TxControlsPaneViewModel.LoadOutputDeviceNameAsync/LoadIdentificationSummaryAsync).
                         window.Closed += (_, _) =>
                         {
-                            _ = vm.LoadCallsignAsync();
+                            _ = vm.LoadOperatorSettingsAsync();
                             _ = vm.TxControls.LoadOutputDeviceNameAsync();
                             _ = vm.TxControls.LoadIdentificationSummaryAsync();
                             // Storage section moved in from the former standalone "Configurations >
@@ -400,6 +401,10 @@ public partial class MainWindow : Window
                     // Fable UX-review finding, 2026-08-30: vm.RxImage.CurrentEntryId links the
                     // resulting QSO back to this frame's own ReceiveHistory entry -- previously
                     // omitted, so this path never linked (unlike Gallery's "Open in log").
+                    // RST default plan (2026-09-01): vm.DefaultRst is MainViewModel's own cache
+                    // (LoadOperatorSettingsAsync), refreshed at startup/Options-close/Configurations-
+                    // switch like Callsign already is -- "?? OperatorSettings.DefaultRstFallback" only
+                    // covers the narrow window before that first load completes.
                     vm.Logbook.PrefillForNewEntry(
                         vm.RxImage.OverrideCallsign,
                         vm.RxImage.DetectedMode?.Id,
@@ -409,7 +414,8 @@ public partial class MainWindow : Window
                         vm.RxImage.LookupGrid,
                         vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
                         vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull,
-                        vm.RxImage.CurrentEntryId);
+                        vm.RxImage.CurrentEntryId,
+                        vm.DefaultRst ?? OperatorSettings.DefaultRstFallback);
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 
@@ -535,7 +541,7 @@ public partial class MainWindow : Window
                 // quick-switch menu's post-switch handler further down.
                 void RefreshAfterConfigurationChange()
                 {
-                    _ = vm.LoadCallsignAsync();
+                    _ = vm.LoadOperatorSettingsAsync();
                     _ = vm.TxControls.LoadOutputDeviceNameAsync();
                     _ = vm.TxControls.LoadIdentificationSummaryAsync();
                     _ = vm.RxHistory.LoadImagesDirectoryAsync();

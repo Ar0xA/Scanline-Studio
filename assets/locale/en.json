@@ -706,6 +706,8 @@
   "Options.Tx.Callsign.Help": "Your own callsign. Used in the TX overlay editor's %m macro token (\"MY CALL\" insert-field chip), CW-ID text, FSK station ID, and QSO log export.",
   "Options.Tx.OperatorName": "Your name",
   "Options.Tx.OperatorGrid": "Your grid square",
+  "Options.Tx.DefaultRst": "Default RST",
+  "Options.Tx.DefaultRst.Help": "Prefills the RST Sent/Received fields when you log a new QSO. SSTV operators exchange R-S-V (Readability/Strength/Video) and near-universally report 595, not ham radio's classic 599 -- clear this field to prefill nothing instead.",
   "Options.NotImplemented.Help": "Not yet implemented -- tracked on the roadmap. This control is disabled and has no effect yet.",
   "Options.General.RememberWindow": "Remember window position and size",
   "Options.General.JpegQuality": "Export quality (JPEG)",

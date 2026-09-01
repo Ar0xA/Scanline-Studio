@@ -61,6 +61,10 @@ public sealed partial class OptionsSettingsService
         Callsign: new OperatorSettings().Callsign,
         OperatorName: new OperatorSettings().Name,
         OperatorGrid: new OperatorSettings().Grid,
+        // Null means unset -- same "?? Default" resolution CwText/DefaultCwText uses (see
+        // OperatorSettings.DefaultRst's own doc comment for the confirmed STJ initializer trap this
+        // avoids).
+        DefaultRst: new OperatorSettings().DefaultRst ?? OperatorSettings.DefaultRstFallback,
         // Same `?? true` resolution as ScanlineStudio.Host.Program's ISstvDecoder registration --
         // SstvDecoderSettings itself deliberately never hardcodes a non-null default (see that
         // record's own doc comment), so both read sites apply it identically.
@@ -166,6 +170,7 @@ public sealed partial class OptionsSettingsService
             Callsign: operatorSettings.Callsign,
             OperatorName: operatorSettings.Name,
             OperatorGrid: operatorSettings.Grid,
+            DefaultRst: operatorSettings.DefaultRst ?? OperatorSettings.DefaultRstFallback,
             AutoSyncEnabled: decoder.AutoSyncEnabled ?? true,
             AutoSlantEnabled: decoder.AutoSlantEnabled ?? true,
             AutoStopEnabled: decoder.AutoStopEnabled ?? false,
@@ -310,7 +315,12 @@ public sealed partial class OptionsSettingsService
                 RadioSettingsJsonContext.Default.RadioConnectionSettings)
             .WithSection(
                 OperatorSettings.SectionKey,
-                previousOperator with { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid },
+                // "?? string.Empty", not the raw snapshot value: a cleared TextBox must persist as an
+                // explicit empty string, not null -- null round-trips back through LoadAsync's
+                // "?? DefaultRstFallback" fallback as "595" again, silently undoing the user's clear
+                // on next load/save (same CwText/DefaultCwText trap, see OperatorSettings.DefaultRst's
+                // own doc comment).
+                previousOperator with { Callsign = snapshot.Callsign, Name = snapshot.OperatorName, Grid = snapshot.OperatorGrid, DefaultRst = snapshot.DefaultRst ?? string.Empty },
                 OperatorSettingsJsonContext.Default.OperatorSettings)
             .WithSection(
                 SstvDecoderSettings.SectionKey,

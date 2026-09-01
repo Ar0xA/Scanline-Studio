@@ -377,7 +377,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// the service method itself has -- this is a passive display field, not something that should
     /// surface an error banner). Loaded at construction and re-loaded whenever the Options dialog
     /// closes (<c>MainWindow.axaml.cs</c>'s <c>OptionsRequested</c> handler, same fix as
-    /// <c>MainViewModel.LoadCallsignAsync</c>'s own header-callsign-chip bug) -- <see cref="LoadOutputDeviceNameAsync"/>
+    /// <c>MainViewModel.LoadOperatorSettingsAsync</c>'s own header-callsign-chip bug) -- <see cref="LoadOutputDeviceNameAsync"/>
     /// is <see langword="public"/> for exactly that call site.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(OutputDeviceNameDisplay))]

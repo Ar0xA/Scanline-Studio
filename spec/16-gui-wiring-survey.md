@@ -275,7 +275,7 @@ All three reflect the current effective Options configuration via
 once at construction and never re-read while the pane stayed open (changing Identification
 settings in Options and returning here showed stale values until restart); now also re-loaded when
 the Options dialog closes (`MainWindow.axaml.cs`'s `OptionsRequested` handler, same fix as the
-header callsign chip's own `LoadCallsignAsync`). Same fix applied to the Output card's Device row
+header callsign chip's own `LoadOperatorSettingsAsync`). Same fix applied to the Output card's Device row
 below (`OutputDeviceName`).
 
 **Output card** (`:177-265`)
