@@ -263,6 +263,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 case TemplateBoxElement box:
                     DrawTemplateBox(image, box, bounds, image.Height);
                     break;
+                case TemplateLineElement line:
+                    DrawTemplateLine(image, line, image.Height);
+                    break;
                 default:
                     // TemplateElement is a public abstract record -- an unrecognized subtype means
                     // this switch fell out of sync with the real hierarchy. Throw, don't silently
@@ -725,6 +728,49 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 }
             }
         });
+    }
+
+    /// <summary>Round 1/3 plan-review finding (line element design): the shared degenerate-bbox skip
+    /// in <c>ApplyTemplateInto</c> only catches an AXIS-ALIGNED zero-thickness line -- its own
+    /// un-inflated bbox collapses one axis to zero area, which the skip rule already drops. A
+    /// DIAGONAL line's bbox stays non-degenerate even at zero thickness (both axes have real
+    /// extent), so this method needs its own guard, mirroring <see cref="DrawTemplateBox"/>'s own
+    /// <c>element.BorderThickness &gt; 0</c> gate. Ignores <c>bounds</c> entirely for geometry --
+    /// unlike every other element kind, a line's actual shape comes from its own endpoints, not its
+    /// (already ink-inflated, see <see cref="TemplateLineElement"/>'s own doc comment) bounding
+    /// box.</summary>
+    private static void DrawTemplateLine(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateLineElement element, int imageHeightPx)
+    {
+        var thicknessPx = MathF.Max(0f, (float)(element.Thickness * imageHeightPx));
+        if (thicknessPx <= 0)
+        {
+            return;
+        }
+
+        var pointA = new PointF((float)(element.X1 * image.Width), (float)(element.Y1 * imageHeightPx));
+        var pointB = new PointF((float)(element.X2 * image.Width), (float)(element.Y2 * imageHeightPx));
+        // Exact PointF equality alone only catches a TRUE zero-length line -- a future endpoint-drag
+        // gesture will routinely produce a sub-pixel non-equal segment mid-drag. Squared-length
+        // epsilon check catches both cases the same way -- "genuinely invisible" reasoning as the
+        // thickness guard above.
+        var dx = pointB.X - pointA.X;
+        var dy = pointB.Y - pointA.Y;
+        if ((dx * dx) + (dy * dy) < 1e-6f)
+        {
+            return;
+        }
+
+        var pb = new SixLabors.ImageSharp.Drawing.PathBuilder();
+        pb.AddLine(pointA, pointB);
+        var path = pb.Build();
+
+        var opacity = Math.Clamp((float)element.Opacity, 0f, 1f);
+        var options = new DrawingOptions { GraphicsOptions = new GraphicsOptions { BlendPercentage = opacity } };
+        var strokeColor = new Rgba32(element.StrokeColor.R, element.StrokeColor.G, element.StrokeColor.B, 255);
+        // ctx.Draw(pen, path) CENTERS the stroke on the path (see DrawTemplateBox's own doc comment
+        // -- verified empirically, not assumed from the API shape) -- exactly the expected behavior
+        // for a line's own centerline, no inset needed the way the box border case required.
+        image.Mutate(ctx => ctx.Draw(options, strokeColor, thicknessPx, path));
     }
 
     /// <summary>Plain axis-aligned rect when <paramref name="cornerRadiusPx"/> is 0 (the byte-for-byte

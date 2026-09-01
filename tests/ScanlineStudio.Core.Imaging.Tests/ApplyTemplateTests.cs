@@ -314,6 +314,179 @@ public sealed class ApplyTemplateTests
         }
     }
 
+    /// <summary>TX editor gap-items plan, line element (2026-09-01). Bounds is deliberately already
+    /// ink-inflated here (per <see cref="TemplateLineElement"/>'s own doc comment -- an un-inflated
+    /// horizontal line's bbox has zero height, which <c>ApplyTemplateInto</c>'s shared skip rule
+    /// would drop before the switch even runs), matching what
+    /// <c>TxImageEditorPaneViewModel.BuildTemplateElement</c> is responsible for computing -- this
+    /// test proves <c>DrawTemplateLine</c> itself renders correctly given proper input, not the
+    /// VM's own inflation math (covered separately once that layer exists).</summary>
+    [Fact]
+    public async Task ApplyTemplate_HorizontalLine_DrawsAStrokeAtTheCorrectY()
+    {
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            // Thickness 0.2 * 20px height = 4px -- comfortably thick enough to sample confidently.
+            var document = new TemplateDocument(null, [
+                new TemplateLineElement(new NormalizedRect(0.1, 0.4, 0.8, 0.2), Z: 0,
+                    X1: 0.1, Y1: 0.5, X2: 0.9, Y2: 0.5, new Rgb24(0, 200, 0), Thickness: 0.2),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 10, 10, 0, 200, 0); // midpoint, y=0.5*20=10 -- on the stroke
+            AssertPixel(result, 10, 2, 255, 255, 255); // well above the stroke -- untouched background
+            AssertPixel(result, 10, 17, 255, 255, 255); // well below the stroke -- untouched background
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Every other line render test samples a pixel that sits inside BOTH the stroke and
+    /// the element's own (already ink-inflated) Bounds rectangle -- all would still pass if
+    /// DrawTemplateLine were implemented as "just fill Bounds," a real self-consistent-but-wrong
+    /// failure shape this project has been bitten by before (the Scottie TX-channel-order incident,
+    /// CLAUDE.md §4). This test samples a point INSIDE Bounds but off the ANTI-diagonal itself,
+    /// proving the render genuinely follows the endpoints, not the bounding box -- deliberately the
+    /// anti-diagonal (top-right to bottom-left), not the main diagonal: the main diagonal's own
+    /// endpoints happen to coincide exactly with two of the (square) Bounds' own corners on this
+    /// target, so it can't distinguish "drawn from X1/Y1/X2/Y2" from "drawn from Bounds' own
+    /// corners" -- a real, different bug the main-diagonal version of this test couldn't have
+    /// caught.</summary>
+    [Fact]
+    public async Task ApplyTemplate_DiagonalLine_DrawsAlongTheEndpointsNotTheBoundsRectangle()
+    {
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            // A 3px-thick anti-diagonal from (17,2) to (2,17) -- its own Bounds covers the whole
+            // (2,2)-(17,17) square (same as the main diagonal would), but the actual stroke only
+            // occupies pixels near THIS diagonal, not Bounds' own corners. Thick enough
+            // (0.15*20=3px) that the sampled on-diagonal pixel gets solid, not anti-aliased partial,
+            // coverage.
+            var document = new TemplateDocument(null, [
+                new TemplateLineElement(new NormalizedRect(0.1, 0.1, 0.75, 0.75), Z: 0,
+                    X1: 0.85, Y1: 0.1, X2: 0.1, Y2: 0.85, new Rgb24(0, 200, 0), Thickness: 0.15),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 9, 9, 0, 200, 0); // the anti-diagonal's own midpoint -- solidly on the stroke
+            // (3,3) sits well inside Bounds ([2,17]x[2,17]) and lands almost exactly ON the MAIN
+            // diagonal (Bounds' own top-left-to-bottom-right corners) -- a "fill Bounds" implementation
+            // OR one that reads Bounds' own corners instead of X1/Y1/X2/Y2 would both wrongly paint
+            // this pixel; the real anti-diagonal actually drawn passes ~11px away from it.
+            AssertPixel(result, 3, 3, 255, 255, 255);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_DiagonalLineWithZeroThickness_IsSkipped()
+    {
+        // Round 1/3 plan-review finding: a DIAGONAL line's own bbox is non-degenerate even at zero
+        // thickness (unlike an axis-aligned one), so the shared ApplyTemplateInto skip rule alone
+        // would NOT catch this -- DrawTemplateLine needs its own guard, verified here directly.
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var document = new TemplateDocument(null, [
+                new TemplateLineElement(new NormalizedRect(0.1, 0.1, 0.8, 0.8), Z: 0,
+                    X1: 0.1, Y1: 0.1, X2: 0.9, Y2: 0.9, new Rgb24(0, 200, 0), Thickness: 0),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertImagesAreIdentical(source, result);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_ZeroLengthLine_IsSkipped()
+    {
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var document = new TemplateDocument(null, [
+                new TemplateLineElement(new NormalizedRect(0.4, 0.4, 0.2, 0.2), Z: 0,
+                    X1: 0.5, Y1: 0.5, X2: 0.5, Y2: 0.5, new Rgb24(0, 200, 0), Thickness: 0.2),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertImagesAreIdentical(source, result);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_LineOpacity_BlendsStrokeWithTheBaseRatherThanFullyReplacingIt()
+    {
+        var path = await WriteFixturePngAsync(4, 4, (_, _) => new ImageSharpRgb24(0, 0, 0));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 4, 4);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var document = new TemplateDocument(null, [
+                new TemplateLineElement(new NormalizedRect(0, 0, 1, 1), Z: 0,
+                    X1: 0, Y1: 0.5, X2: 1, Y2: 0.5, new Rgb24(255, 255, 255), Thickness: 1, Opacity: 0.5),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Code-review nit: full-coverage stroke pixel (thickness spans the whole 4px image
+            // height), so a tighter assertion than "strictly between 0 and 255" is available -- this
+            // catches "opacity applied at the wrong factor," not just "opacity ignored entirely."
+            var pixel = result.GetScanline(2)[2];
+            Assert.True(pixel.R is > 110 and < 145, $"Expected ~50%-blend white-on-black (~127), got {pixel.R}.");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    /// <summary>Code-review finding (round 1): the only existing coverage for
+    /// <see cref="TemplateLineGeometry.ComputeInflatedBounds"/> was an indirect Width/Height-greater-
+    /// than-zero check, which still passes even with a bare <c>thickness/2</c> applied to BOTH axes
+    /// (the exact over-inflation bug plan-review round 2 caught) or with the width/height arguments
+    /// swapped. A NON-SQUARE target (200x100, 2:1) makes the two axes' inflation amounts genuinely
+    /// different, so this pins the actual per-axis conversion: thickness 0.1 (height-relative) means
+    /// 5px of ink either side in pixel terms -- 0.05 normalized-height (5/100), but only 0.025
+    /// normalized-width (5/200, since width pixels cover twice the normalized range per pixel).</summary>
+    [Fact]
+    public void ComputeInflatedBounds_NonSquareTarget_ConvertsThicknessPerAxisCorrectly()
+    {
+        var bounds = TemplateLineGeometry.ComputeInflatedBounds(
+            x1: 0.3, y1: 0.5, x2: 0.7, y2: 0.5, thickness: 0.1, imageWidthPx: 200, imageHeightPx: 100);
+
+        Assert.Equal(0.3 - 0.025, bounds.X, precision: 10);
+        Assert.Equal(0.5 - 0.05, bounds.Y, precision: 10);
+        Assert.Equal(0.4 + 0.05, bounds.Width, precision: 10); // (0.7-0.3) + 2*0.025
+        Assert.Equal(0.1, bounds.Height, precision: 10); // 0 + 2*0.05
+    }
+
     [Fact]
     public async Task ApplyTemplate_Image_DrawsTheResizedSourceInsideItsOwnBounds()
     {
