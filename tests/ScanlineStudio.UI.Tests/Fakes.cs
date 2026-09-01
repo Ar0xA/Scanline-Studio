@@ -801,9 +801,21 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     /// instead of the call completing instantly before any cutoff check could ever run.</summary>
     public bool BlockUntilCancelled { get; set; }
 
+    /// <summary>TX history plan (2026-09-01): a general-purpose gate, set/completed directly by the
+    /// test (success, cancel, OR fault) -- lets a test interleave a <see cref="RaiseTransmitProgress"/>
+    /// call between TX start and completion for ANY outcome, unlike <see cref="BlockUntilCancelled"/>,
+    /// which only supports the cancel case. Checked before <see cref="BlockUntilCancelled"/>; that
+    /// field is untouched so existing callers keep working unchanged.</summary>
+    public TaskCompletionSource? TransmitGate { get; set; }
+
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         TransmitCalls.Add((mode, image));
+        if (TransmitGate is not null)
+        {
+            return TransmitGate.Task;
+        }
+
         if (BlockUntilCancelled)
         {
             var tcs = new TaskCompletionSource();
@@ -1406,6 +1418,16 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
         LastSuggestedImageFileName = suggestedFileName;
         return Task.FromResult(SaveImagePathToReturn);
+    }
+
+    public string? SavePngPathToReturn { get; set; } = "/tmp/fake-sent-frame.png";
+
+    public string? LastSuggestedPngFileName { get; private set; }
+
+    public Task<string?> PickSavePngFileAsync(string suggestedFileName)
+    {
+        LastSuggestedPngFileName = suggestedFileName;
+        return Task.FromResult(SavePngPathToReturn);
     }
 
     public Task<string?> PickHamlibLibraryFileAsync() =>

@@ -211,6 +211,24 @@ public sealed partial class FilePickerService : IFilePickerService
         return ResolveDestination(path, result.SelectedFileType);
     }
 
+    public async Task<string?> PickSavePngFileAsync(string suggestedFileName)
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var file = await mainWindow.StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            SuggestedFileName = suggestedFileName,
+            DefaultExtension = "png",
+            FileTypeChoices = [PngFileType],
+        });
+
+        return file?.TryGetLocalPath();
+    }
+
     /// <summary>Code-review finding: extracted from <see cref="PickSaveImageFileAsync"/> so this
     /// branching logic (the only real logic in that method) is independently unit-testable -- the
     /// rest of that method needs a live <c>Application.Current</c>/<c>MainWindow</c> and can't be.

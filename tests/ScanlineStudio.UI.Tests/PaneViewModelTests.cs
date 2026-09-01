@@ -3635,6 +3635,274 @@ public sealed class PaneViewModelTests
         Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
     }
 
+    // TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX history") -- went
+    // through 2 rounds of plan-review (4 blockers round 1, 1 more round 2: ResendSentFrame must also
+    // gate on IsEditorOpen, not just the busy check). These tests target exactly what those rounds
+    // found, not exhaustive coverage of every CanExecute predicate already well-tested elsewhere in
+    // this file.
+
+    private static (TxControlsPaneViewModel Vm, FakeSstvSessionService SstvSession, FakeFilePickerService FilePicker, FakeImageSourceWriter ImageSourceWriter) CreateTxHistoryTestSetup()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var filePicker = new FakeFilePickerService();
+        var imageSourceWriter = new FakeImageSourceWriter();
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), imageSourceWriter, NullLogger<ReadyRackViewModel>.Instance);
+        return (vm, sstvSession, filePicker, imageSourceWriter);
+    }
+
+    private static async Task TransmitOnceAsync(TxControlsPaneViewModel vm)
+    {
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        await vm.TransmitCommand.ExecuteAsync(null);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TransmitCompletes_RecordsSentFrameWithTheActuallyTransmittedImage()
+    {
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+
+        await TransmitOnceAsync(vm);
+
+        var entry = Assert.Single(vm.SentFrames);
+        Assert.Equal(TxHistoryOutcome.Completed, entry.Outcome);
+        Assert.Equal(TestMode, entry.Mode);
+        // Reference-equal to what was actually handed to TransmitAsync -- not some other snapshot.
+        Assert.Same(sstvSession.TransmitCalls[0].Image, entry.Image);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TransmitStoppedManuallyAfterProgress_RecordsStoppedOutcome()
+    {
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        var gate = new TaskCompletionSource();
+        sstvSession.TransmitGate = gate;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+
+        sstvSession.RaiseTransmitProgress(new TransmitProgressInfo(0.5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)));
+        Dispatcher.UIThread.RunJobs();
+        gate.SetCanceled();
+        await transmitTask;
+
+        var entry = Assert.Single(vm.SentFrames);
+        Assert.Equal(TxHistoryOutcome.Stopped, entry.Outcome);
+    }
+
+    /// <summary>Plan-review finding: recording all 3 outcomes unconditionally would let a zero-RF
+    /// cancel/failure (SWR cutoff before audio starts, a device-open failure during radio setup)
+    /// evict a real sent frame from the bounded strip. Gated on _anyProgressReported -- no progress,
+    /// no entry at all, not even a Stopped one.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TransmitStoppedBeforeAnyProgress_RecordsNothing()
+    {
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        var gate = new TaskCompletionSource();
+        sstvSession.TransmitGate = gate;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+
+        gate.SetCanceled();
+        await transmitTask;
+
+        Assert.Empty(vm.SentFrames);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SentFrames_EvictsOldestFirst_KeepsNewestFirstOrder()
+    {
+        // Code-review finding: a Count==6-only assertion survives a mutation swapping
+        // RemoveAt(SentFrames.Count - 1) for RemoveAt(0) (evict newest, keep the 6 oldest forever
+        // instead). A first attempt at fixing this used only 2 ALTERNATING modes -- mutation-tested
+        // and found still vacuous: with Insert(0, ...) always fronting the newest entry, evicting
+        // from the front instead of the back happens to keep the same period-2 alternating PATTERN
+        // either way, just shifted -- the two outcomes were indistinguishable by mode alone. Each
+        // iteration now gets its OWN uniquely-Id'd mode so the two eviction behaviors produce
+        // genuinely different, non-coincidentally-matching sequences.
+        var modes = Enumerable.Range(0, 8)
+            .Select(i => new SstvModeDefinition(Id: $"mode{i}", DisplayName: $"Mode {i}", VisCode: i, ImageWidth: 1, ImageHeight: 1, ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []))
+            .ToList();
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        sstvSession.AvailableModes = modes;
+
+        foreach (var mode in modes)
+        {
+            vm.SelectedMode = mode;
+            await TransmitOnceAsync(vm);
+        }
+
+        Assert.Equal(6, vm.SentFrames.Count);
+        // The oldest 2 (mode0, mode1) were evicted; the remaining 6 (mode2..mode7) survive, newest first.
+        var expectedNewestFirst = modes.Skip(2).Reverse();
+        Assert.Equal(expectedNewestFirst, vm.SentFrames.Select(e => e.Mode));
+    }
+
+    /// <summary>2-round plan-review finding, blockers 1+2: a naive ResendSentFrame either rebakes
+    /// from a stale _editState (sending the WRONG image) or fails to update SelectedMode (sending a
+    /// wrong-sized image or silently no-op-ing). This proves the actual mechanism reaches
+    /// TransmitAsync with the resent entry's own image and mode, unmodified.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ResendSentFrame_TransmitsTheExactRecordedImageAndMode()
+    {
+        // NOT the plain CreateTxHistoryTestSetup fixture -- with no overlay/macro content at all,
+        // RefreshTransmitImageIfMacrosChangedAsync's own "changed" check never finds anything to
+        // rebake regardless of _editState's nullness (its loop is over edit.Document.Elements,
+        // empty here), so a version of ResendSentFrame that forgot to null _editState would pass
+        // this test for the wrong reason. Mirrors
+        // TxControlsPaneViewModel_Transmit_FrequencyMacroChangedSinceApply_RebakesWithFreshValue's
+        // own {freq}-overlay/radio-state-change recipe specifically to give a stale _editState
+        // something real to rebake from.
+        var otherMode = new SstvModeDefinition(
+            Id: "other", DisplayName: "Other", VisCode: 1, ImageWidth: 2, ImageHeight: 2,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        var preparer = new FakeTransmitImagePreparer();
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode, otherMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "{freq}";
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.TransmitCommand.ExecuteAsync(null);
+        var entry = vm.SentFrames[0];
+
+        // Changed AFTER the first send, before resend -- a stale _editState would rebake against
+        // THIS new frequency at TestMode's dimensions before the mode change below, producing an
+        // image that is neither entry.Image nor anything this test controls, but definitely not
+        // reference-equal to entry.Image.
+        radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 7_045_000 };
+        vm.SelectedMode = otherMode;
+
+        vm.ResendSentFrameCommand.Execute(entry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, sstvSession.TransmitCalls.Count);
+        Assert.Equal(TestMode, sstvSession.TransmitCalls[1].Mode);
+        Assert.Same(entry.Image, sstvSession.TransmitCalls[1].Image);
+        Assert.Equal(TestMode, vm.SelectedMode);
+    }
+
+    /// <summary>Round-2 plan-review finding: ResendSentFrame changes SelectedMode, so it needs the
+    /// SAME "!IsEditorOpen || IsCurrentEditorBlankAndUntouched()" re-check QuickSelectMode already
+    /// uses (CanTransmit's own doc comment: "_loadedImage's dimensions can never diverge from
+    /// SelectedMode's while an editor is open" is load-bearing). A real, non-blank editor open at a
+    /// DIFFERENT mode than the resent entry must refuse, not silently freeze that invariant.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ResendSentFrame_RealEditorOpenAtDifferentMode_Refuses()
+    {
+        var otherMode = new SstvModeDefinition(
+            Id: "other", DisplayName: "Other", VisCode: 1, ImageWidth: 2, ImageHeight: 2,
+            ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        sstvSession.AvailableModes = [TestMode, otherMode];
+        await TransmitOnceAsync(vm);
+        var entry = vm.SentFrames[0];
+        vm.SelectedMode = otherMode;
+        await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.False(vm.ResendSentFrameCommand.CanExecute(entry));
+        vm.ResendSentFrameCommand.Execute(entry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(sstvSession.TransmitCalls);
+        Assert.Equal(otherMode, vm.SelectedMode);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ResendSentFrame_BlankUntouchedEditorOpen_StillWorks()
+    {
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        await TransmitOnceAsync(vm);
+        var entry = vm.SentFrames[0];
+        await vm.OpenBlankEditorCommand.ExecuteAsync(null);
+
+        Assert.True(vm.ResendSentFrameCommand.CanExecute(entry));
+        vm.ResendSentFrameCommand.Execute(entry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, sstvSession.TransmitCalls.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SaveSentFrame_WritesThroughToTheChosenPath()
+    {
+        var (vm, _, filePicker, imageSourceWriter) = CreateTxHistoryTestSetup();
+        filePicker.SavePngPathToReturn = "/tmp/chosen-sent-frame.png";
+        await TransmitOnceAsync(vm);
+        var entry = vm.SentFrames[0];
+
+        await vm.SaveSentFrameCommand.ExecuteAsync(entry);
+
+        var call = Assert.Single(imageSourceWriter.Calls);
+        Assert.Same(entry.Image, call.Source);
+        Assert.Equal("/tmp/chosen-sent-frame.png", call.Path);
+        // Code-review finding: NOT entry.SourceFileName's own extension (a Browse-sourced photo's
+        // real filename, e.g. "vacation.jpg") -- always a fresh ".png" name, matching
+        // RxImagePaneViewModel.SaveFrameAsync's own "{timestamp}_{mode}.png" shape.
+        Assert.EndsWith($"_{entry.Mode.Id}.png", filePicker.LastSuggestedPngFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SaveSentFrame_PickerCancelled_DoesNotWrite()
+    {
+        var (vm, _, filePicker, imageSourceWriter) = CreateTxHistoryTestSetup();
+        filePicker.SavePngPathToReturn = null;
+        await TransmitOnceAsync(vm);
+        var entry = vm.SentFrames[0];
+
+        await vm.SaveSentFrameCommand.ExecuteAsync(entry);
+
+        Assert.Empty(imageSourceWriter.Calls);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Dispose_DisposesEverySentFrameThumbnail()
+    {
+        var (vm, _, _, _) = CreateTxHistoryTestSetup();
+        await TransmitOnceAsync(vm);
+        await TransmitOnceAsync(vm);
+        var thumbnails = vm.SentFrames.Select(e => (WriteableBitmap)e.Thumbnail).ToList();
+
+        vm.Dispose();
+
+        Assert.All(thumbnails, t => Assert.True(IsWriteableBitmapDisposed(t)));
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TransmitFailsAfterProgress_RecordsFailedOutcome()
+    {
+        var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
+        var gate = new TaskCompletionSource();
+        sstvSession.TransmitGate = gate;
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+
+        sstvSession.RaiseTransmitProgress(new TransmitProgressInfo(0.5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)));
+        Dispatcher.UIThread.RunJobs();
+        gate.SetException(new InvalidOperationException("device failed mid-transmit"));
+        await transmitTask;
+
+        var entry = Assert.Single(vm.SentFrames);
+        Assert.Equal(TxHistoryOutcome.Failed, entry.Outcome);
+    }
+
     /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2: a template referencing {freq} must send
     /// the frequency at the moment of TRANSMIT, not the frequency frozen at Apply time.</summary>
     [AvaloniaFact]

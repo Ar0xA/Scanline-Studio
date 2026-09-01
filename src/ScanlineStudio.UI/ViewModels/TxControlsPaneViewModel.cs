@@ -237,6 +237,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _selectedFileName;
 
+    /// <summary>TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX
+    /// history"): the last <see cref="SentFramesCapacity"/> transmissions, newest first --
+    /// session-only, no persistence, direct mirror of <see cref="RxImagePaneViewModel.PreviousFrames"/>.
+    /// Recorded by <see cref="TransmitAsync"/>'s own <c>finally</c> block for EVERY outcome
+    /// (Completed/Stopped/Failed), not just successful sends -- gated on <see cref="_anyProgressReported"/>
+    /// so a cancel/failure before any real audio played produces no entry at all.</summary>
+    public ObservableCollection<TransmittedFrameViewModel> SentFrames { get; } = [];
+
+    private const int SentFramesCapacity = 6;
+
+    /// <summary>Gates whether a non-Completed <see cref="TransmitAsync"/> outcome gets recorded into
+    /// <see cref="SentFrames"/> -- reset <see langword="false"/> at that method's own start, set
+    /// <see langword="true"/> by <see cref="OnTransmitProgressChanged"/> the first time a real
+    /// progress report lands. Without this, every SWR-cutoff/manual-stop/device-open-failure during
+    /// radio setup or tuning (zero RF ever produced) would push a real sent frame out of the bounded
+    /// strip -- see the recording block's own comment for the plan-review finding this fixes.</summary>
+    private bool _anyProgressReported;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TxClockText))]
     private bool _isTransmitting;
@@ -727,6 +745,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _transmitRemaining = remaining < TimeSpan.Zero ? TimeSpan.Zero : remaining;
             _transmitElapsed = info.Elapsed;
             TransmitProgress = info.Fraction;
+            _anyProgressReported = true;
         });
     }
 
@@ -1504,10 +1523,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // Backlog item (user request, 2026-08-17): "should ALWAYS open the editor by default" --
         // backing out via Cancel would otherwise leave the center column empty again, reintroducing
         // the exact friction this whole item was about. Re-open blank immediately, but ONLY when
-        // nothing has ever been applied yet (SelectedFileName is set exclusively by
-        // OnEditorApplied) -- this must NOT fire after cancelling a re-edit of an ALREADY applied
-        // image (EditCurrentImageCommand), which would silently discard the applied state the
-        // operator is still meant to see/transmit.
+        // nothing has ever been applied yet -- this must NOT fire after cancelling a re-edit of an
+        // ALREADY applied image (EditCurrentImageCommand), which would silently discard the applied
+        // state the operator is still meant to see/transmit. SelectedFileName is set by
+        // OnEditorApplied AND by ResendSentFrame (TX history plan, 2026-09-01) -- both cases still
+        // correctly represent "something is currently loaded," so this check is unaffected by the
+        // second writer.
         if (SelectedFileName is null)
         {
             _ = OpenBlankEditorAsync();
@@ -1600,9 +1621,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
                 currentContactProvider: currentContactProvider);
-            // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
-            // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
-            // this point (the guard above) guarantees SelectedFileName was set at the same time.
+            // SelectedFileName! is safe here: OnEditorApplied always writes it in the same
+            // assignment that sets _editState. ResendSentFrame (TX history plan, 2026-09-01) is the
+            // only other writer, and it always nulls _editState in that same assignment too -- so
+            // _editState being non-null at this point (the guard above) still guarantees
+            // SelectedFileName was set by an OnEditorApplied, never left stale by a resend.
             var fileName = SelectedFileName!;
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
@@ -1645,7 +1668,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// for its whole lifetime -- so <c>_loadedImage</c>'s dimensions can never diverge from
     /// <c>SelectedMode</c>'s while an editor is open, even mid-edit. This invariant is load-bearing:
     /// don't let <see cref="SelectedMode"/> become mutable again while <see cref="IsEditorOpen"/>
-    /// without re-checking it.</summary>
+    /// without re-checking it -- <see cref="ResendSentFrame"/> (TX history plan, 2026-09-01) is the
+    /// one other writer of <see cref="SelectedMode"/> besides the mode picker/quick-grid, and its own
+    /// <see cref="CanResendSentFrame"/> gate does exactly that re-check (2-round plan-review finding:
+    /// the first draft omitted it, which broke this exact invariant the moment a real, non-blank
+    /// editor was open targeting a different mode than the resent entry).</summary>
     // Code-review round-1 finding: must also check !IsRunningLoopbackSelfTest -- a self-test's
     // encode+decode is real CPU work competing with a live PTT-keyed playback pump, and its own
     // result dialog is MODAL, so letting a transmit start while one is running risked a dialog
@@ -1673,10 +1700,25 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _transmitRemaining = TimeSpan.Zero;
         _transmitElapsed = TimeSpan.Zero;
         TransmitProgress = 0;
+        _anyProgressReported = false;
         TransmitCommand.NotifyCanExecuteChanged();
         StopTransmitCommand.NotifyCanExecuteChanged();
         RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         _currentEditor?.NotifyTransmitAvailabilityChanged();
+
+        // TX history plan: snapshotted HERE, before the try, not read from SelectedFileName/
+        // RadioStatus inside finally -- plan-review finding. The editor stays usable and the rig
+        // keeps reporting for the whole duration of a transmission that can run minutes; reading
+        // these in finally would record whatever an Apply mid-transmit or the rig's post-transmit
+        // frequency happened to be, not what was actually true when THIS transmission started.
+        var sentFrameOutcome = TxHistoryOutcome.Completed;
+        var sentFrameSourceFileName = SelectedFileName;
+        var sentFrameFrequencyHz = RadioStatus?.CurrentFrequencyHz;
+        // Local, not UTC -- code-review finding: the AXAML renders this with a bare HH:mm:ss (no
+        // "Z"/UTC marker), same as RxImagePaneViewModel.PreviousFrames' own local-time stamp this
+        // strip otherwise mirrors exactly. A UTC stamp rendered with no marker is the exact mislabel
+        // class ImageViewerWindowView.axaml:91-97 was already fixed for once in this codebase.
+        var sentFrameStartedAt = DateTimeOffset.Now;
 
         // Code-review finding: _transmitCts must exist BEFORE the (potentially awaiting) macro
         // re-resolution below, not just before the encode call -- otherwise a Stop TX click during
@@ -1709,11 +1751,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 Log.TransmitStoppedManually(_logger, mode.Id);
                 ErrorMessage = null;
             }
+
+            sentFrameOutcome = TxHistoryOutcome.Stopped;
         }
         catch (Exception ex)
         {
             Log.TransmitFailed(_logger, mode.Id, ex);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.TransmitFailed");
+            sentFrameOutcome = TxHistoryOutcome.Failed;
         }
         finally
         {
@@ -1728,6 +1773,144 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             StopTransmitCommand.NotifyCanExecuteChanged();
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             _currentEditor?.NotifyTransmitAvailabilityChanged();
+
+            // TX history plan: recording is best-effort and must never affect TransmitAsync's own
+            // completion -- plan-review finding. ImageSourceBitmapConverter.ToBitmap allocates a
+            // WriteableBitmap and can throw (OOM/graphics-backend failure); an uncaught throw here
+            // would escape into AsyncRelayCommand and crash right after every transmission that hits
+            // it. Strictly synchronous (no await) -- an await here would defer this command's own
+            // completion/IsTransmitting reset, which every caller (TransmitCommand.CanExecute,
+            // OnEditorAppliedAndTransmit, etc.) depends on completing promptly.
+            if (sentFrameOutcome == TxHistoryOutcome.Completed || _anyProgressReported)
+            {
+                try
+                {
+                    RecordSentFrame(image, mode, sentFrameStartedAt, sentFrameOutcome, sentFrameFrequencyHz, sentFrameSourceFileName);
+                }
+                catch (Exception ex)
+                {
+                    Log.RecordSentFrameFailed(_logger, mode.Id, ex);
+                }
+            }
+        }
+    }
+
+    /// <summary>Appends to <see cref="SentFrames"/>, newest first, evicting past
+    /// <see cref="SentFramesCapacity"/> -- direct mirror of <c>RxImagePaneViewModel.AddPreviousFrameAsync</c>'s
+    /// own insert/evict shape. <paramref name="image"/> is the post-macro-rebake frame actually
+    /// handed to <see cref="ISstvSessionService.TransmitAsync"/> (or, on a cancel/failure before the
+    /// rebake completed, the pre-rebake frame that was about to be sent) -- never re-read from
+    /// <see cref="_loadedImage"/>, which the operator may have already replaced by the time this
+    /// runs. <see cref="TransmittedFrameViewModel.Thumbnail"/> is a FRESH conversion, never
+    /// <see cref="PreviewImage"/> itself (disposed on every reassignment, see
+    /// <see cref="OnPreviewImageChanged"/>). Not disposed on eviction here -- see <see cref="Dispose"/>
+    /// and <c>RxImagePaneViewModel.PreviousFrames</c>' own identical non-disposing precedent.</summary>
+    private void RecordSentFrame(IImageSource image, SstvModeDefinition mode, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, long? frequencyHz, string? sourceFileName)
+    {
+        var outcomeLabel = _localization.GetString(outcome switch
+        {
+            TxHistoryOutcome.Stopped => "Panes.TxControls.SentFrames.Outcome.Stopped",
+            TxHistoryOutcome.Failed => "Panes.TxControls.SentFrames.Outcome.Failed",
+            _ => "Panes.TxControls.SentFrames.Outcome.Completed",
+        });
+
+        SentFrames.Insert(0, new TransmittedFrameViewModel(
+            image, ImageSourceBitmapConverter.ToBitmap(image), mode, transmittedAt, outcome, outcomeLabel, frequencyHz, sourceFileName));
+        while (SentFrames.Count > SentFramesCapacity)
+        {
+            SentFrames.RemoveAt(SentFrames.Count - 1);
+        }
+    }
+
+    /// <summary>Plan-review finding: same "not just CanTransmit" gate <see cref="CanTransmit"/>'s
+    /// own doc comment documents -- <see cref="_loadedImage"/>'s dimensions can only ever diverge
+    /// from <see cref="SelectedMode"/>'s while NO editor is open (an open editor freezes
+    /// <see cref="SelectedMode"/> for its own lifetime). <see cref="ResendSentFrame"/> changes
+    /// <see cref="SelectedMode"/> to <paramref name="entry"/>'s own mode, so it needs the identical
+    /// re-check <see cref="QuickSelectMode"/> already uses, not just the busy check.</summary>
+    private bool CanResendSentFrame() => (!IsEditorOpen || IsCurrentEditorBlankAndUntouched()) && !IsTransmitting && !IsRunningLoopbackSelfTest;
+
+    /// <summary>TX history plan (2026-09-01): re-transmits a <see cref="SentFrames"/> entry exactly
+    /// as it went out originally.
+    /// <para><b>Order is load-bearing</b> (2-round plan-review finding): <see cref="_editState"/> is
+    /// cleared BEFORE <see cref="SelectedMode"/> changes, not after -- <see cref="OnSelectedModeChanged"/>
+    /// runs synchronously off the <see cref="SelectedMode"/> setter, and with <see cref="_editState"/>
+    /// still set it would reflow <see cref="_loadedImage"/>/<see cref="PreviewImage"/> from the STALE
+    /// edit state (a real, expensive Crop/Resize/Adjust/Template chain run only to be thrown away) at
+    /// <paramref name="entry"/>'s own mode's dimensions, and any throw inside that chain would abort
+    /// this method before the correct values below are set. Clearing <see cref="_editState"/> first
+    /// makes that setter take its cheap null-editState branch instead.</para>
+    /// <para>Nulling <see cref="_editState"/> also disables <see cref="EditCurrentImageCommand"/>
+    /// until the next Apply, and discards whatever the operator had prepared-but-not-yet-sent --
+    /// deliberate, not an oversight: this is the SAME "loading a different source replaces whatever
+    /// was applied, no confirm prompt" behavior Browse/Stock/Blank/Copy-to-TX already have. Resend is
+    /// one more way to load a different source, not a special case that needs its own undo/confirm
+    /// machinery.</para>
+    /// <para>Skips <see cref="RefreshTransmitImageIfMacrosChangedAsync"/>'s rebake entirely (a null
+    /// <see cref="_editState"/> is that method's own no-op branch) -- a resent card carries whatever
+    /// <c>%T</c>/<c>{freq}</c> macro values were baked in at the ORIGINAL send, not refreshed ones.
+    /// Intentional: "re-send this exact frame" means exactly that, not "re-run it with today's
+    /// clock/frequency."</para></summary>
+    [RelayCommand(CanExecute = nameof(CanResendSentFrame))]
+    private void ResendSentFrame(TransmittedFrameViewModel entry)
+    {
+        if (IsEditorOpen && !IsCurrentEditorBlankAndUntouched())
+        {
+            return;
+        }
+
+        if (IsTransmitting || IsRunningLoopbackSelfTest)
+        {
+            return;
+        }
+
+        Log.ResendSentFrameInvoked(_logger, entry.Mode.Id);
+        _editState = null;
+        SelectedMode = entry.Mode;
+        _loadedImage = entry.Image;
+        PreviewImage = ImageSourceBitmapConverter.ToBitmap(entry.Image);
+        SelectedFileName = entry.SourceFileName;
+        TransmitCommand.NotifyCanExecuteChanged();
+        EditCurrentImageCommand.NotifyCanExecuteChanged();
+        if (TransmitCommand.CanExecute(null))
+        {
+            TransmitCommand.Execute(null);
+        }
+    }
+
+    /// <summary>TX history plan (2026-09-01): saves a <see cref="SentFrames"/> entry's exact
+    /// transmitted pixels to a PNG file, via the same <see cref="IImageSourceWriter"/> Phase 5
+    /// template persistence already uses. Uses <see cref="IFilePickerService.PickSavePngFileAsync"/>,
+    /// NOT <see cref="IFilePickerService.PickSaveImageFileAsync"/> -- that method's own doc comment
+    /// documents its Format return value as "the source of truth," and this app has no JPEG encoder
+    /// reachable from an in-memory <see cref="IImageSource"/> (unlike <c>IReceivedFrameExporter</c>,
+    /// which needs a source FILE PATH on disk); silently overriding a JPEG pick to <c>.png</c> would
+    /// violate that documented contract, so the dialog itself never offers JPEG here (plan-review
+    /// finding).</summary>
+    [RelayCommand]
+    private async Task SaveSentFrameAsync(TransmittedFrameViewModel entry)
+    {
+        Log.SaveSentFrameInvoked(_logger, entry.Mode.Id);
+        ErrorMessage = null;
+        try
+        {
+            // Code-review finding: NOT entry.SourceFileName's own extension -- that's the ORIGINAL
+            // photo's filename (e.g. a Browse-sourced "vacation.jpg"), and DefaultExtension doesn't
+            // rewrite an extension that's already present, so the dialog would pre-fill "vacation.jpg"
+            // while WritePngAsync writes PNG bytes under it. Same "{timestamp}_{mode}.png" shape as
+            // RxImagePaneViewModel.SaveFrameAsync's own suggested name.
+            var suggestedFileName = $"{DateTime.Now:yyyyMMdd-HHmmss}_{entry.Mode.Id}.png";
+            if (await _filePickerService.PickSavePngFileAsync(suggestedFileName) is not { } path)
+            {
+                return;
+            }
+
+            await _imageSourceWriter.WritePngAsync(entry.Image, path);
+        }
+        catch (Exception ex)
+        {
+            Log.SaveSentFrameFailed(_logger, entry.Mode.Id, ex);
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.SaveSentFrameFailed");
         }
     }
 
@@ -1967,8 +2150,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>Cancels and disposes an in-flight transmit's <see cref="_transmitCts"/> if the pane
     /// is torn down mid-transmission -- otherwise that transmit (and the rig's PTT) would run to
-    /// completion on its own with nothing left to stop it early.</summary>
-    public void Dispose() => _transmitCts?.Cancel();
+    /// completion on its own with nothing left to stop it early. Also disposes every
+    /// <see cref="SentFrames"/> thumbnail -- unlike <c>RxImagePaneViewModel.PreviousFrames</c>,
+    /// which never disposes at all (backed by a persisted store, so a leaked thumbnail bitmap is
+    /// bounded by that pane's own lifetime either way), <see cref="SentFrames"/> is this pane's
+    /// only reference to those bitmaps; not disposing here would leak them for good past teardown.
+    /// Deliberately NOT disposed on eviction (<see cref="RecordSentFrame"/>'s own doc comment) --
+    /// only here, at the pane's own end of life.</summary>
+    public void Dispose()
+    {
+        _transmitCts?.Cancel();
+        foreach (var entry in SentFrames)
+        {
+            entry.Thumbnail.Dispose();
+        }
+    }
 
     private static partial class Log
     {
@@ -2053,6 +2249,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Error, Message = "Transmit failed: mode={ModeId}")]
         public static partial void TransmitFailed(ILogger logger, string modeId, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Recording sent frame into TX history failed: mode={ModeId}")]
+        public static partial void RecordSentFrameFailed(ILogger logger, string modeId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ResendSentFrame invoked: mode={ModeId}")]
+        public static partial void ResendSentFrameInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SaveSentFrame invoked: mode={ModeId}")]
+        public static partial void SaveSentFrameInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Saving sent frame failed: mode={ModeId}")]
+        public static partial void SaveSentFrameFailed(ILogger logger, string modeId, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "StopTransmit invoked")]
         public static partial void StopTransmitInvoked(ILogger logger);
 
@@ -2075,3 +2283,66 @@ public sealed record StockEntryViewModel(StockImageEntry Entry, Bitmap? Thumbnai
 /// <summary>One appended sample of <see cref="TxControlsPaneViewModel.TelemetryHistory"/> -- see that
 /// property's own doc comment.</summary>
 public sealed record TxTelemetrySample(DateTimeOffset Timestamp, float? SwrRatio, float? AlcLevel, float? PowerPercent);
+
+/// <summary>TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX history").
+/// Matches <c>ReceiveHistoryEntry</c>'s own <c>Completed</c>/two-other-outcomes shape, not a straight
+/// success/failure boolean -- an SWR cutoff or a manual Stop TX is neither a clean send nor a genuine
+/// failure, and <see cref="TxControlsPaneViewModel"/>'s own recording logic needs to tell all three
+/// apart (see <c>_anyProgressReported</c>'s own doc comment for why <c>Stopped</c>/<c>Failed</c> are
+/// gated separately from <c>Completed</c>).</summary>
+public enum TxHistoryOutcome
+{
+    Completed,
+    Stopped,
+    Failed,
+}
+
+/// <summary>One entry in <see cref="TxControlsPaneViewModel.SentFrames"/> -- see that property's own
+/// doc comment. A plain class, not a record (auditor plan-review nit): record value-equality over a
+/// <see cref="Bitmap"/>/<see cref="IImageSource"/> payload would make any future <c>IndexOf</c>/
+/// <c>Remove</c> against this collection compare pixel-object identity, not entry identity, which is
+/// surprising and unnecessary here.
+/// <para><see cref="Thumbnail"/> is ALWAYS a fresh <c>ImageSourceBitmapConverter.ToBitmap</c>
+/// conversion of <see cref="Image"/>, never a reference to <see cref="TxControlsPaneViewModel.PreviewImage"/>
+/// itself -- that property is disposed on every reassignment (its own <c>OnPreviewImageChanged</c>
+/// hook), so aliasing it here would show a disposed bitmap the moment anything else sets it.
+/// Deliberately full-resolution, not downscaled like <c>RxImagePaneViewModel.PreviousFrames</c>' own
+/// 96px thumbnails -- full-res is required anyway for <c>ResendSentFrame</c>/<c>SaveSentFrame</c>,
+/// and at this app's SSTV frame sizes (max ~640x496) the bounded
+/// <see cref="TxControlsPaneViewModel.SentFrames"/> strip costs roughly 12MB total, which doesn't
+/// justify a second resize pass RX's own store-backed thumbnail load doesn't need here (no backing
+/// file on disk to reload a downscaled copy from later).</para></summary>
+public sealed class TransmittedFrameViewModel
+{
+    public TransmittedFrameViewModel(IImageSource image, Bitmap thumbnail, SstvModeDefinition mode, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, string outcomeLabel, long? frequencyHz, string? sourceFileName)
+    {
+        Image = image;
+        Thumbnail = thumbnail;
+        Mode = mode;
+        TransmittedAt = transmittedAt;
+        Outcome = outcome;
+        OutcomeLabel = outcomeLabel;
+        FrequencyHz = frequencyHz;
+        SourceFileName = sourceFileName;
+    }
+
+    public IImageSource Image { get; }
+
+    public Bitmap Thumbnail { get; }
+
+    public SstvModeDefinition Mode { get; }
+
+    public DateTimeOffset TransmittedAt { get; }
+
+    public TxHistoryOutcome Outcome { get; }
+
+    /// <summary>Pre-resolved at record time, not re-resolved on read -- same "language change is
+    /// restart-gated anyway" precedent <c>RxHistoryPaneViewModel.LinkedQsoDisplay</c>'s own doc
+    /// comment establishes; <see cref="TransmittedFrameViewModel"/> carries no
+    /// <c>ILocalizationService</c> reference of its own to re-resolve with regardless.</summary>
+    public string OutcomeLabel { get; }
+
+    public long? FrequencyHz { get; }
+
+    public string? SourceFileName { get; }
+}
