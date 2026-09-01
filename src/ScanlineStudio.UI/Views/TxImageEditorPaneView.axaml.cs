@@ -4,7 +4,6 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.LogicalTree;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -77,6 +76,14 @@ public partial class TxImageEditorPaneView : UserControl
     private ITemplateElementViewModel? _draggedElement;
     private ResizeHandle _resizeHandle = ResizeHandle.BottomRight;
 
+    /// <summary>See <see cref="OnOpenElementQuickStyleFlyout"/>'s own doc comment for why this
+    /// exists -- <see cref="ContextMenu.PlacementTarget"/> is never populated by Avalonia itself, so
+    /// this records the most recently pressed element's own <see cref="Border"/> instead, captured
+    /// in <see cref="OnOverlayElementPointerPressed"/>. The image element's own ContextMenu has no
+    /// Quick Style/Fill &amp; Border flyout, so a press on it capturing this too is harmless -- the
+    /// value is simply never read for that element type.</summary>
+    private Border? _lastContextMenuAnchor;
+
     // Undo/redo sub-piece: a gesture pushes ONE undo step, on the first real move, not on press
     // (a bare click that never moves shouldn't push a no-op step) -- reset in StartDrag, consumed
     // in OnCanvasPointerMoved.
@@ -144,22 +151,42 @@ public partial class TxImageEditorPaneView : UserControl
 
     private void OnFitHeightClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitHeight(EditorScrollViewer.Bounds.Height);
 
-    /// <summary>TX workflow modernization plan, Phase 1 -- shared "open this row's Quick Style /
-    /// Fill &amp; Border flyout" handler for the "Quick Style…"/"Fill &amp; Border…" MenuItems in the
-    /// text/box ContextMenus. The clicked MenuItem is about to be removed from the visual tree once
-    /// its owning ContextMenu's Popup closes, so it can't itself be the flyout's anchor --
-    /// <see cref="ContextMenu.PlacementTarget"/> is Avalonia's own record of which control opened
-    /// this ContextMenu (the row's own Border, set automatically on right-click), and that control
-    /// stays alive in the tree after the menu closes. Deferred via
-    /// <see cref="Dispatcher.UIThread"/>.Post at Background priority -- MenuItem's own Click handler
-    /// runs BEFORE the owning Popup finishes closing (confirmed against Avalonia
-    /// 11.3.12's DefaultMenuInteractionHandler), so calling ShowAttachedFlyout synchronously here
-    /// races the ContextMenu's own close/focus-restore and can dismiss the flyout the instant it
-    /// opens.</summary>
+    /// <summary>Macros help plan session, real-UI-smoke-test finding (2026-09-01): the ORIGINAL
+    /// version of this handler read <c>menuItem.FindLogicalAncestorOfType&lt;ContextMenu&gt;().PlacementTarget</c>
+    /// on the (incorrect) assumption that Avalonia sets it automatically on right-click. Confirmed
+    /// FALSE by reading Avalonia 11.3.12's actual <c>ContextMenu.cs</c> source directly: a real
+    /// right-click is handled by <c>ControlContextRequested</c>, which calls the PRIVATE 3-arg
+    /// <c>Open(Control, Control, PlacementMode)</c> overload -- that overload only ever sets the
+    /// underlying <c>Popup</c>'s OWN <c>PlacementTarget</c> (<c>_popup.PlacementTarget = placementTarget</c>),
+    /// never <c>ContextMenu.PlacementTarget</c> itself (the public property this handler used to
+    /// read). <c>ContextMenu.PlacementTarget</c> is NEVER populated by opening the menu, on any
+    /// platform -- this is plain, platform-agnostic C# logic, not a headless-only artifact,
+    /// independently reproduced via a real simulated right-click in
+    /// <c>TxImageEditorQuickStyleFlyoutRealClickTests.RealRightClick_DoesNotAutomaticallyPopulateContextMenuPlacementTarget</c>.
+    /// The practical consequence: this handler's old guard ALWAYS failed on a real click, so the
+    /// Quick Style/Fill &amp; Border flyouts were silently non-functional (permanently disabled, not
+    /// occasionally) since they shipped -- PROJECT_BRIEF.md's own "confirm these actually open on a
+    /// real right-click" item, never actually confirmed until now.
+    /// <para>Fixed by reading <see cref="_lastContextMenuAnchor"/>, captured in
+    /// <see cref="OnOverlayElementPointerPressed"/> on PRESS (see that field's own doc comment).
+    /// <b>Auditor code-review finding, round 1:</b> an earlier version of this fix captured the
+    /// anchor via a SEPARATE <c>ContextRequested</c> handler subscribed on the same Border --
+    /// correct in isolation, but a real headless test proved its correctness in PRODUCTION depended
+    /// on an unverified assumption about whether XAML's compiler subscribes that handler before or
+    /// after <c>Border.ContextMenu</c> is assigned (which is what wires Avalonia's own internal
+    /// <c>ControlContextRequested</c> handler on the SAME event). Reversing that order in a test
+    /// broke capture entirely -- confirming the risk was real, not hypothetical. Capturing on
+    /// <c>PointerPressed</c> instead sidesteps the question altogether: press always precedes the
+    /// release that opens a context menu, so there is no competing-subscription-order to reason
+    /// about.</para>
+    /// <para>Deferred via <see cref="Dispatcher.UIThread"/>.Post at Background priority (unchanged
+    /// from the original design) -- MenuItem's own Click handler runs BEFORE the owning Popup
+    /// finishes closing (confirmed against Avalonia 11.3.12's DefaultMenuInteractionHandler), so
+    /// calling ShowAttachedFlyout synchronously here races the ContextMenu's own close/focus-restore
+    /// and can dismiss the flyout the instant it opens.</para></summary>
     private void OnOpenElementQuickStyleFlyout(object? sender, RoutedEventArgs e)
     {
-        if (sender is not MenuItem menuItem
-            || menuItem.FindLogicalAncestorOfType<ContextMenu>() is not { PlacementTarget: Control target })
+        if (_lastContextMenuAnchor is not { } target)
         {
             return;
         }
@@ -516,6 +543,16 @@ public partial class TxImageEditorPaneView : UserControl
         {
             return;
         }
+
+        // Macros help plan session, real-UI-smoke-test finding (2026-09-01): captures the Quick
+        // Style/Fill & Border flyout anchor here, on PRESS, unconditionally (any button) -- see
+        // OnOpenElementQuickStyleFlyout's own doc comment for why. An earlier version of this fix
+        // captured via a SEPARATE ContextRequested handler subscribed on the same Border -- that
+        // shape turned out to empirically depend on whether ContextMenu was assigned before or
+        // after AddHandler ran (confirmed by a real headless test: reversing that order broke
+        // capture entirely). PointerPressed always fires before the subsequent pointer release
+        // that opens a context menu, for any button, so capturing here has no such ordering risk.
+        _lastContextMenuAnchor = sender as Border;
 
         vm.SelectedOverlayElement = element;
 
