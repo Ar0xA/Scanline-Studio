@@ -806,6 +806,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(CropHeightPixels));
         OnPropertyChanged(nameof(CropRightPixels));
         OnPropertyChanged(nameof(CropBottomPixels));
+        // Follow-up visual-polish pass: these 6 also derive from CanvasDisplayWidth/Height, same as
+        // every other pixel-space property re-raised above -- in practice they're almost always null
+        // here (a working-copy/zoom change mid-drag is an edge case, not the normal path), but
+        // include them anyway rather than leave a one-frame stale window if it ever does happen.
+        OnPropertyChanged(nameof(PlacementPreviewLeftPixels));
+        OnPropertyChanged(nameof(PlacementPreviewTopPixels));
+        OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
+        OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
+        OnPropertyChanged(nameof(GuideLineXPixels));
+        OnPropertyChanged(nameof(GuideLineYPixels));
         RefreshOverlayElementZoomedImageSize();
         RefreshOverlayElementCanvasFontSizes();
     }
@@ -932,6 +942,66 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public double CropRightPixels => (CropRect.X + CropRect.Width) * CanvasDisplayWidth;
 
     public double CropBottomPixels => (CropRect.Y + CropRect.Height) * CanvasDisplayHeight;
+
+    /// <summary>Follow-up visual-polish pass to the TX workflow modernization plan -- live rubber-
+    /// band preview during draw-to-place (<c>TxImageEditorPaneView.OnCanvasPointerMoved</c>'s own
+    /// <c>DragMode.Placing</c> branch sets this on every frame; <c>OnCanvasPointerReleased</c>/
+    /// <c>DisarmPlacement</c>/<c>CancelActiveDrag</c>/<c>OnEditorCanvasPointerCaptureLost</c> all
+    /// clear it, every path that can end a placement drag/arm). Top-level, not per-element, like
+    /// <see cref="CropRect"/> above -- this has no element to belong to until the drag actually
+    /// completes and creates one. Null at rest (nothing shown).</summary>
+    [ObservableProperty]
+    private NormalizedRect? _placementPreviewRect;
+
+    public double PlacementPreviewLeftPixels => (PlacementPreviewRect?.X ?? 0) * CanvasDisplayWidth;
+
+    public double PlacementPreviewTopPixels => (PlacementPreviewRect?.Y ?? 0) * CanvasDisplayHeight;
+
+    public double PlacementPreviewWidthPixels => (PlacementPreviewRect?.Width ?? 0) * CanvasDisplayWidth;
+
+    public double PlacementPreviewHeightPixels => (PlacementPreviewRect?.Height ?? 0) * CanvasDisplayHeight;
+
+    public bool IsPlacementPreviewVisible => PlacementPreviewRect is not null;
+
+    partial void OnPlacementPreviewRectChanged(NormalizedRect? value)
+    {
+        OnPropertyChanged(nameof(PlacementPreviewLeftPixels));
+        OnPropertyChanged(nameof(PlacementPreviewTopPixels));
+        OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
+        OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
+        OnPropertyChanged(nameof(IsPlacementPreviewVisible));
+    }
+
+    /// <summary>Same follow-up pass, the alignment-guide-line half --
+    /// <c>TxImageEditorPaneView.OnCanvasPointerMoved</c>'s own <c>DragMode.Overlay</c> branch sets
+    /// these from <c>ComputeAlignmentGuideLines</c> (display-only: the drop-time snap itself stays
+    /// exactly the existing <c>ComputeAlignmentSnap</c>-driven behavior, unchanged by this).
+    /// Independent per axis, same as the underlying alignment match itself.</summary>
+    [ObservableProperty]
+    private double? _guideLineXNormalized;
+
+    [ObservableProperty]
+    private double? _guideLineYNormalized;
+
+    public double GuideLineXPixels => (GuideLineXNormalized ?? 0) * CanvasDisplayWidth;
+
+    public double GuideLineYPixels => (GuideLineYNormalized ?? 0) * CanvasDisplayHeight;
+
+    public bool IsGuideLineXVisible => GuideLineXNormalized is not null;
+
+    public bool IsGuideLineYVisible => GuideLineYNormalized is not null;
+
+    partial void OnGuideLineXNormalizedChanged(double? value)
+    {
+        OnPropertyChanged(nameof(GuideLineXPixels));
+        OnPropertyChanged(nameof(IsGuideLineXVisible));
+    }
+
+    partial void OnGuideLineYNormalizedChanged(double? value)
+    {
+        OnPropertyChanged(nameof(GuideLineYPixels));
+        OnPropertyChanged(nameof(IsGuideLineYVisible));
+    }
 
     /// <summary>Snapshot of the current canvas elements as the immutable <see cref="TemplateDocument"/>
     /// the pipeline actually consumes (Phase 1 -- supersedes the pre-Phase-1 <c>Overlay</c>/
@@ -3957,6 +4027,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(CanvasDisplayHeight));
         OnPropertyChanged(nameof(SafeAreaWidthPixels));
         OnPropertyChanged(nameof(SafeAreaHeightPixels));
+        // Same reasoning as OnZoomFactorChanged's own identical addition -- see that method's comment.
+        OnPropertyChanged(nameof(PlacementPreviewLeftPixels));
+        OnPropertyChanged(nameof(PlacementPreviewTopPixels));
+        OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
+        OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
+        OnPropertyChanged(nameof(GuideLineXPixels));
+        OnPropertyChanged(nameof(GuideLineYPixels));
 
         foreach (var element in OverlayElements)
         {

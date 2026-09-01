@@ -4995,6 +4995,68 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Null(y);
     }
 
+    // Follow-up visual-polish pass: ComputeAlignmentGuideLines is ComputeAlignmentSnap's
+    // guide-LINE counterpart -- same match, different number out. Plan-review blocker this pins:
+    // for an EDGE match, the two differ by the dragged element's own half-width/height (only a
+    // center-to-center match has them coincide) -- an earlier draft bound ComputeAlignmentSnap's
+    // own snapped-CENTER return straight into the rendered guide line, which would have drawn it
+    // off the edge it claimed to align with for every edge case. These tests use the exact same
+    // fixtures as ComputeAlignmentSnap's own tests immediately above, asserting the DIFFERENT
+    // (correct) number each one returns.
+
+    [Fact]
+    public void ComputeAlignmentGuideLines_LeftEdgeCloseToOtherElementsLeftEdge_ReturnsTheSharedEdgeItself()
+    {
+        var dragged = (X: 0.433, Y: 0.5, Width: 0.06, Height: 0.1);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.5, 0.99, 0.2, 0.1) }; // left edge = 0.4
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentGuideLines(dragged, others, cropCenter: (0.99, 0.99));
+
+        Assert.NotNull(x);
+        // The guide line sits AT the shared edge (0.4) -- NOT at ComputeAlignmentSnap's own 0.43
+        // (0.4 + dragged.Width/2), which is the dragged element's snapped CENTER, not the line.
+        AssertClose(0.4, x!.Value);
+        Assert.Null(y);
+    }
+
+    [Fact]
+    public void ComputeAlignmentGuideLines_CentersClose_ReturnsExactCenterMatch()
+    {
+        // Center-to-center is the ONE case where ComputeAlignmentSnap and ComputeAlignmentGuideLines
+        // agree (CenterOffset == 0), pinning that the two functions share one search, not two that
+        // could silently disagree on which match won.
+        var dragged = (X: 0.503, Y: 0.301, Width: 0.06, Height: 0.06);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.5, 0.99, 0.3, 0.02) };
+
+        var (x, _) = TxImageEditorPaneView.ComputeAlignmentGuideLines(dragged, others, cropCenter: (0.01, 0.01));
+
+        AssertClose(0.5, x!.Value);
+    }
+
+    [Fact]
+    public void ComputeAlignmentGuideLines_NearCropCenter_ReturnsCropCenterWithNoOtherElements()
+    {
+        var dragged = (X: 0.503, Y: 0.5, Width: 0.1, Height: 0.1);
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentGuideLines(
+            dragged, others: [], cropCenter: (0.5, 0.5));
+
+        AssertClose(0.5, x!.Value);
+        AssertClose(0.5, y!.Value);
+    }
+
+    [Fact]
+    public void ComputeAlignmentGuideLines_NothingWithinThreshold_ReturnsNullForBothAxes()
+    {
+        var dragged = (X: 0.1, Y: 0.1, Width: 0.05, Height: 0.05);
+        var others = new List<(double X, double Y, double Width, double Height)> { (0.9, 0.9, 0.05, 0.05) };
+
+        var (x, y) = TxImageEditorPaneView.ComputeAlignmentGuideLines(dragged, others, cropCenter: (0.5, 0.5));
+
+        Assert.Null(x);
+        Assert.Null(y);
+    }
+
     [Fact]
     public void SnapElementBoundsToGrid_AlreadyOnGridLines_IsUnchanged()
     {
@@ -6288,6 +6350,43 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.RemoveOverlayElementCommand.Execute(element);
 
         Assert.False(vm.FlattenElementCommand.CanExecute(element));
+    }
+
+    // Follow-up visual-polish pass: PlacementPreviewRect/GuideLineXNormalized/GuideLineYNormalized
+    // are set by TxImageEditorPaneView's own pointer-move code-behind, which this VM-only test file
+    // can't drive directly (no real Avalonia pointer events here) -- this instead pins the VM-side
+    // wiring those code-behind writes depend on: the pixel-space cascade and IsVisible derivation,
+    // the one piece of this feature that IS unit-testable without a real drag.
+    [AvaloniaFact]
+    public void PlacementPreviewAndGuideLineState_SetAndClear_CascadeToTheirPixelSpaceAndVisibilityProperties()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.False(vm.IsPlacementPreviewVisible);
+        Assert.False(vm.IsGuideLineXVisible);
+        Assert.False(vm.IsGuideLineYVisible);
+
+        vm.PlacementPreviewRect = new NormalizedRect(0.25, 0.25, 0.5, 0.25);
+        vm.GuideLineXNormalized = 0.5;
+        vm.GuideLineYNormalized = 0.75;
+
+        Assert.True(vm.IsPlacementPreviewVisible);
+        AssertClose(0.25 * vm.CanvasDisplayWidth, vm.PlacementPreviewLeftPixels);
+        AssertClose(0.25 * vm.CanvasDisplayHeight, vm.PlacementPreviewTopPixels);
+        AssertClose(0.5 * vm.CanvasDisplayWidth, vm.PlacementPreviewWidthPixels);
+        AssertClose(0.25 * vm.CanvasDisplayHeight, vm.PlacementPreviewHeightPixels);
+        Assert.True(vm.IsGuideLineXVisible);
+        AssertClose(0.5 * vm.CanvasDisplayWidth, vm.GuideLineXPixels);
+        Assert.True(vm.IsGuideLineYVisible);
+        AssertClose(0.75 * vm.CanvasDisplayHeight, vm.GuideLineYPixels);
+
+        vm.PlacementPreviewRect = null;
+        vm.GuideLineXNormalized = null;
+        vm.GuideLineYNormalized = null;
+
+        Assert.False(vm.IsPlacementPreviewVisible);
+        Assert.False(vm.IsGuideLineXVisible);
+        Assert.False(vm.IsGuideLineYVisible);
     }
 
     // Auditor-specified tolerance rule (PROJECT_BRIEF.md flatten test debt), tight-bound half: a

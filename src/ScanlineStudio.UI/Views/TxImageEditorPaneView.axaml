@@ -519,7 +519,8 @@
                                 Focusable="True"
                                 Background="Transparent"
                                 PointerMoved="OnCanvasPointerMoved"
-                                PointerReleased="OnCanvasPointerReleased">
+                                PointerReleased="OnCanvasPointerReleased"
+                                PointerCaptureLost="OnEditorCanvasPointerCaptureLost">
                             <!-- TX workflow modernization plan, Phase 5: right-click on empty canvas
                                  previously did nothing (no ContextMenu existed at this level, only
                                  per-element ones). Avalonia's normal hit-testing means a right-click
@@ -1304,6 +1305,40 @@
                                     IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
                                 <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10" Foreground="{StaticResource IndustryBg}" />
                             </Border>
+
+                            <!-- Follow-up visual-polish pass: live rubber-band preview (draw-to-place)
+                                 and alignment guide lines, the two known gaps Phase 3a/3c's own doc
+                                 comments tracked. Declared LAST (topmost Z-order on a Canvas) so they
+                                 render over every element/crop-rect/grid/safe-area guide already
+                                 above. IsHitTestVisible="False" on all three — transient display only,
+                                 must never intercept a pointer event meant for the crop/element/
+                                 resize-handle hit-testing underneath.
+                                 Differentiated from the existing IndustryAccent overlays already on
+                                 this canvas (grid: solid 1px @0.3, safe-area: dashed 1px @0.55) by
+                                 full opacity + 2px, so a live guide/preview always reads as the
+                                 brightest thing on screen, not a coincidental grid line. Dashed for
+                                 the rubber band (distinguishes it from the crop rect's own solid 2px
+                                 border, the only other IndustryAccent RECTANGLE on this canvas); solid
+                                 for the guide lines (matches every mainstream design tool's own smart-
+                                 guide convention, and there's no other full-span LINE on this canvas
+                                 to be confused with). -->
+                            <Rectangle IsHitTestVisible="False"
+                                       Canvas.Left="{Binding PlacementPreviewLeftPixels}"
+                                       Canvas.Top="{Binding PlacementPreviewTopPixels}"
+                                       Width="{Binding PlacementPreviewWidthPixels}"
+                                       Height="{Binding PlacementPreviewHeightPixels}"
+                                       IsVisible="{Binding IsPlacementPreviewVisible}"
+                                       Stroke="{StaticResource IndustryAccent}" StrokeThickness="2" StrokeDashArray="4,2" />
+                            <Rectangle IsHitTestVisible="False"
+                                       Canvas.Left="{Binding GuideLineXPixels}" Canvas.Top="0"
+                                       Width="2" Height="{Binding CanvasDisplayHeight}"
+                                       IsVisible="{Binding IsGuideLineXVisible}"
+                                       Fill="{StaticResource IndustryAccent}" />
+                            <Rectangle IsHitTestVisible="False"
+                                       Canvas.Left="0" Canvas.Top="{Binding GuideLineYPixels}"
+                                       Width="{Binding CanvasDisplayWidth}" Height="2"
+                                       IsVisible="{Binding IsGuideLineYVisible}"
+                                       Fill="{StaticResource IndustryAccent}" />
 
                         </Canvas>
 
