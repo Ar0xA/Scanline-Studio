@@ -69,9 +69,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
+    /// <summary><paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
+    /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> (TX editor gap-items
+    /// plan, 2026-09-01) mirror <see cref="RawTextElementSnapshot"/>'s own identical fields exactly
+    /// -- same trailing/optional treatment, same simplified 2-stop VM shape.</summary>
     public sealed record RawBoxElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0)
+        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0,
+        bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
+        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Which source an image element was resolved from, plus enough to re-resolve it later
@@ -1188,7 +1194,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.StackColor, text.StackStepX, text.StackStepY),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
-            box.CornerRadius),
+            box.CornerRadius,
+            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor),
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight),
@@ -2078,7 +2085,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// CanvasFontSize (boxes don't shrink-to-fit).</summary>
     private BoxElementViewModel CreateBoxElement(
         double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked,
-        double cornerRadius = 0)
+        double cornerRadius = 0,
+        bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
+        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null)
     {
         var element = new BoxElementViewModel
         {
@@ -2091,6 +2100,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             BorderThickness = borderThickness,
             Opacity = opacity,
             CornerRadius = cornerRadius,
+            GradientEnabled = gradientEnabled,
+            GradientKind = gradientKind,
+            // Same null-means-"use the VM's own default" fallback CreateOverlayElement's identical
+            // Gradient*Color params already use -- a caller who never touches gradients at all
+            // (every non-Phase-8 site) never has to know or care what these defaults are.
+            GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
+            GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -2176,7 +2192,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.StackColor, text.StackStepX, text.StackStepY),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
-            box.CornerRadius),
+            box.CornerRadius,
+            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor),
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight),
@@ -2300,7 +2317,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             case RawBoxElementSnapshot box:
                 return new PersistedBoxElement(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
-                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor);
             case RawImageElementSnapshot image:
                 // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
                 // own doc comment): safe against any reordering/filtering between here and the manifest
@@ -2384,7 +2402,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             case PersistedBoxElement box:
                 return new RawBoxElementSnapshot(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
-                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
+                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -3527,8 +3546,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// picks out only the style-relevant fields when applying, so nothing new needs to track "which
     /// fields count as style" in two places. Gated to same-element-kind-only paste (text style onto
     /// text, box style onto box) -- deliberately, to avoid an ambiguous partial application if the
-    /// two kinds' style fields don't line up (they don't: text has font/shadow/gradient/stack, box
-    /// has fill/border/corner-radius, nothing overlaps). Image elements have no copyable "style"
+    /// two kinds' style fields don't line up (text has font/shadow/stack that box doesn't, box has
+    /// fill/border/corner-radius that text doesn't -- both also carry gradient, box gradient fill
+    /// added 2026-09-01). Image elements have no copyable "style"
     /// distinct from Fit (which already has its own quick-access submenu), so neither command is
     /// reachable for them.</summary>
     private RawElementSnapshot? _styleClipboardSnapshot;
@@ -3598,6 +3618,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.BorderThickness = style.BorderThickness;
                     box.Opacity = style.Opacity;
                     box.CornerRadius = style.CornerRadius;
+                    // Code-review finding (2026-09-01, box gradient fill): this case was missing
+                    // Gradient entirely -- Copy Style on a gradient box then Paste Style silently
+                    // produced a solid box, and pasting a solid box's style onto a gradient box left
+                    // the gradient on. Same fallback convention as text's own case above.
+                    box.GradientEnabled = style.GradientEnabled;
+                    box.GradientKind = style.GradientKind;
+                    box.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
+                    box.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
                     break;
             }
         }
@@ -4404,6 +4432,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             or nameof(OverlayElementViewModel.RotationTransform)
             or nameof(OverlayElementViewModel.ShadowRenderTransform)
             or nameof(OverlayElementViewModel.ForegroundBrush)
+            // Code-review finding (2026-09-01, box gradient fill): FillBrush is the SAME pure-canvas-
+            // chrome-derived-from-FillColor/GradientEnabled/GradientKind/GradientStartColor/
+            // GradientEndColor shape as ForegroundBrush above, same fix -- without this, every fill-
+            // color/gradient edit fired two full recompute passes instead of one.
+            or nameof(BoxElementViewModel.FillBrush)
             // Auditor usability review follow-up (2026-08-18): CanvasFontWeight/CanvasFontStyle are
             // the SAME pure-canvas-chrome-derived-from-a-real-property shape as RotationTransform
             // above (derived from Bold/Italic, which already independently drive a recompute).
@@ -5029,7 +5062,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     : null,
                 text.StackColor, text.StackStepX, text.StackStepY),
             BoxElementViewModel box => new TemplateBoxElement(
-                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius),
+                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                // Same composition as text's own Gradient above -- the VM's simplified 2-stop shape,
+                // folded into a real TextGradient only when actually enabled.
+                box.GradientEnabled
+                    ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
+                    : null),
             ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
