@@ -178,6 +178,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// allowed" (see the constructor's own optional-parameter comment) for the many test call
     /// sites that construct this class directly and don't exercise Apply &amp; Transmit.</summary>
     private readonly Func<bool> _canTransmitNow;
+    /// <summary>Macros help plan (2026-09-01), item B -- opens the same Macros reference window
+    /// `Tools ▸ Macros` does, reached via <see cref="OpenMacrosReferenceCommand"/>. Set only from
+    /// TxControlsPaneViewModel's real construction call sites; test call sites leave this null, which
+    /// <see cref="OpenMacrosReference"/> silently no-ops on -- same "unwired = harmless no-op"
+    /// convention as this codebase's other cross-VM request delegates.</summary>
+    private readonly Action? _macrosReferenceRequested;
     private readonly OperatorSettings _operatorSettings;
     private readonly IRadioSessionService _radioSessionService;
     private readonly ILocalizationService _localization;
@@ -445,7 +451,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // ui_transition_plan.md step 5 (T1-6): "Copy to TX"'s own HIS CALL/HIS GRID seed -- see this
         // constructor's own application of it, below, for why it's independent of initialState
         // (Copy-to-TX opens a brand-new editor with no prior edit session to restore).
-        IReadOnlyDictionary<string, string>? currentContactVariables = null)
+        IReadOnlyDictionary<string, string>? currentContactVariables = null,
+        // Macros help plan (2026-09-01), item B: same trailing-optional shape as canTransmitNow above,
+        // same reasoning -- only the 2 real production call sites (TxControlsPaneViewModel) pass a
+        // real delegate. Must be a CLOSURE at those call sites, not a captured property value (plan-
+        // review finding) -- TxControlsPaneViewModel.RequestMacrosReference is a settable property
+        // assigned later by MainWindow.axaml.cs, so passing its value directly would snapshot null
+        // permanently if this editor is constructed before that assignment runs.
+        Action? macrosReferenceRequested = null)
     {
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
@@ -454,6 +467,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);
+        _macrosReferenceRequested = macrosReferenceRequested;
         _operatorSettings = operatorSettings;
         _radioSessionService = radioSessionService;
         _localization = localization;
@@ -3629,6 +3643,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RefreshOverlayElementCanvasFontSizes();
         RecomputePreview();
     }
+
+    /// <summary>Macros help plan (2026-09-01), item B -- opens the same Macros reference window
+    /// `Tools ▸ Macros` does, from the QSO FILL bar header, so an operator mid-template-edit doesn't
+    /// have to remember a completely different menu exists. See <see cref="_macrosReferenceRequested"/>'s
+    /// own doc comment for the unwired-in-tests contract.</summary>
+    [RelayCommand]
+    private void OpenMacrosReference() => _macrosReferenceRequested?.Invoke();
 
     [RelayCommand]
     private void RemoveOverlayElement(ITemplateElementViewModel? element)

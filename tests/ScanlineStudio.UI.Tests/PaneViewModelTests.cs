@@ -3225,6 +3225,31 @@ public sealed class PaneViewModelTests
         Assert.Same(firstEditor, ExtractCurrentEditor(vm));
     }
 
+    /// <summary>Macros help plan (2026-09-01), item B, plan-review's own blocker finding: the
+    /// editor's macrosReferenceRequested parameter MUST be threaded through as a closure over
+    /// <see cref="TxControlsPaneViewModel.RequestMacrosReference"/>, not that property's captured
+    /// value at construction time -- otherwise setting it AFTER an editor is already open (a real,
+    /// reachable ordering in production: MainViewModel can construct an initial blank editor before
+    /// MainWindow.axaml.cs's DataContextChanged handler finishes wiring cross-VM delegates,
+    /// TxControlsPaneViewModel.cs's own EditorOpened doc comment) would leave that editor's button
+    /// permanently dead. This test constructs the editor FIRST, wires the delegate SECOND -- the
+    /// order a captured-value bug would fail against.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RequestMacrosReference_SetAfterEditorAlreadyOpen_StillReachesTheEditorsCommand()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null)); // RequestMacrosReference still unset here
+
+        var invokedCount = 0;
+        vm.RequestMacrosReference = () => invokedCount++; // wired only AFTER the editor already exists
+
+        editor.OpenMacrosReferenceCommand.Execute(null);
+
+        Assert.Equal(1, invokedCount);
+    }
+
     /// <summary>ui_transition_plan.md step 5 (T1-6): "Copy to TX" seeds the new editor's HIS
     /// CALL/HIS GRID template variables from CurrentContactRequested, so a reply-card template
     /// comes up pre-filled with the received station's own callsign/grid.</summary>
