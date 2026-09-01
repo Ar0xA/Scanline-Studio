@@ -717,4 +717,101 @@ public sealed class LogbookSessionServiceTests
         Assert.NotEqual("before", matchNotBefore?.Id);
         Assert.NotEqual("after", matchNotBefore?.Id);
     }
+
+    [Fact]
+    public async Task GetWorkedBeforeAsync_NoPriorContact_ReturnsNotFound()
+    {
+        var service = CreateService(new FakeLogbookRepository());
+
+        var lookup = await service.GetWorkedBeforeAsync("N0CALL");
+
+        Assert.Equal(WorkedBeforeOutcome.NotFound, lookup.Outcome);
+        Assert.Null(lookup.Info);
+    }
+
+    [Fact]
+    public async Task GetWorkedBeforeAsync_OnePriorContact_ReturnsFoundWithRealBandAndCount1()
+    {
+        var repository = new FakeLogbookRepository();
+        var startUtc = new DateTimeOffset(2026, 8, 12, 10, 0, 0, TimeSpan.Zero);
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", startUtc, 14_230_000)); // 20m
+        var service = CreateService(repository);
+
+        var lookup = await service.GetWorkedBeforeAsync("N0CALL");
+
+        Assert.Equal(WorkedBeforeOutcome.Found, lookup.Outcome);
+        Assert.Equal(1, lookup.Info!.Count);
+        Assert.Equal(startUtc, lookup.Info.LastStartUtc);
+        Assert.Equal("20m", lookup.Info.LastBand);
+    }
+
+    [Fact]
+    public async Task GetWorkedBeforeAsync_CaseInsensitiveCallsignMatch()
+    {
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", DateTimeOffset.UtcNow, 14_230_000));
+        var service = CreateService(repository);
+
+        var lookup = await service.GetWorkedBeforeAsync("n0call");
+
+        Assert.Equal(WorkedBeforeOutcome.Found, lookup.Outcome);
+    }
+
+    /// <summary>Code-review finding: an earlier version of this test used
+    /// <c>FakeLogbookRepository</c>'s then-CHRONOLOGICAL ordering, which could never disagree with
+    /// <c>MaxBy(r =&gt; r.StartUtc)</c> -- it stayed green even against a naive, unfixed
+    /// <c>candidates[0]</c> implementation. <see cref="FakeLogbookRepository"/> now sorts on the same
+    /// "O"-format STRING the real <c>SqliteLogbookRepository</c> does (see that fake's own comment),
+    /// and this fixture is chosen so the two orderings genuinely disagree: lexically,
+    /// <c>"...T22:00:00...+05:00"</c> sorts AHEAD of <c>"...T20:00:00...+00:00"</c> (comparing the
+    /// hour digit '2' vs '0'), even though 22:00+05:00 is 17:00 UTC -- chronologically EARLIER than
+    /// 20:00+00:00. A <c>candidates[0]</c> implementation would report the WRONG record (17:00 UTC,
+    /// 20m) as the latest; only <c>MaxBy</c> correctly picks the real latest (20:00 UTC, 40m).</summary>
+    [Fact]
+    public async Task GetWorkedBeforeAsync_MultipleContacts_CountsAllAndSummarizesTheMostRecentByRealInstant()
+    {
+        var repository = new FakeLogbookRepository();
+        var lexicallyFirstButChronologicallyEarlier = new DateTimeOffset(2026, 8, 12, 22, 0, 0, TimeSpan.FromHours(5)); // 17:00 UTC
+        var reallyLatest = new DateTimeOffset(2026, 8, 12, 20, 0, 0, TimeSpan.Zero); // 20:00 UTC
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", lexicallyFirstButChronologicallyEarlier, 14_230_000)); // 20m
+        await repository.AddAsync(DuplicateCandidate("2", "N0CALL", reallyLatest, 7_070_000)); // 40m
+        var service = CreateService(repository);
+
+        var lookup = await service.GetWorkedBeforeAsync("N0CALL");
+
+        Assert.Equal(WorkedBeforeOutcome.Found, lookup.Outcome);
+        Assert.Equal(2, lookup.Info!.Count);
+        Assert.Equal(reallyLatest, lookup.Info.LastStartUtc);
+        Assert.Equal("40m", lookup.Info.LastBand);
+    }
+
+    [Fact]
+    public async Task GetWorkedBeforeAsync_UnknownFrequency_ReturnsNullBandNotAnException()
+    {
+        var repository = new FakeLogbookRepository();
+        await repository.AddAsync(DuplicateCandidate("1", "N0CALL", DateTimeOffset.UtcNow, null));
+        var service = CreateService(repository);
+
+        var lookup = await service.GetWorkedBeforeAsync("N0CALL");
+
+        Assert.Equal(WorkedBeforeOutcome.Found, lookup.Outcome);
+        Assert.Null(lookup.Info!.LastBand);
+    }
+
+    /// <summary>Worked-before plan (2026-09-01), confirming auditor round finding: deliberately
+    /// distinct from <see cref="GetWorkedBeforeAsync_NoPriorContact_ReturnsNotFound"/> -- collapsing
+    /// "no prior contact" and "lookup failed" into one value (as <see cref="FindLikelyDuplicateAsync"/>'s
+    /// fail-open-to-null contract does) would render a transient DB error as a false "New station"
+    /// for a dupe-avoidance indicator, the harmful direction.</summary>
+    [Fact]
+    public async Task GetWorkedBeforeAsync_RepositoryThrows_ReturnsFailedNotNotFound()
+    {
+        var repository = new FakeLogbookRepository { ThrowOnSearch = new InvalidOperationException("DB locked") };
+        var service = CreateService(repository);
+
+        var lookup = await service.GetWorkedBeforeAsync("N0CALL");
+
+        Assert.Equal(WorkedBeforeOutcome.Failed, lookup.Outcome);
+        Assert.Null(lookup.Info);
+    }
 }

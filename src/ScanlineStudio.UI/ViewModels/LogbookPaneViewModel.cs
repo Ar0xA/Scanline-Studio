@@ -562,6 +562,18 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
             }
         }
 
+        // Worked-before plan (2026-09-01): best-effort, same reasoning as SetLinkedQsoIdAsync above --
+        // the QSO is already persisted; a subscriber failure must never be reported to the operator as
+        // a failed log (a retry would create a real duplicate row).
+        try
+        {
+            QsoLogged?.Invoke(record.Callsign);
+        }
+        catch (Exception ex)
+        {
+            Log.QsoLoggedNotifyFailed(_logger, ex);
+        }
+
         // ResetForm() (not New()) -- New() would null the status line this just set.
         var statusMessage = BuildLogStatusMessage(result);
         if (formGeneration == _formGeneration)
@@ -698,6 +710,15 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// <c>MainWindow.axaml.cs</c>. Returns <see langword="false"/> (decline) when unwired -- the
     /// safe default for a destructive action.</summary>
     public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
+
+    /// <summary>Worked-before plan (2026-09-01): parent-pushed delegate, same shape as
+    /// <c>TxControlsPaneViewModel.RequestTransmitTabFocus</c>/<c>RxHistoryPaneViewModel.SendToTxRequested</c>
+    /// (plain assignment, not <c>+=</c> -- the assigning side, <c>MainWindow.axaml.cs</c>, is the
+    /// initiator). Invoked with the just-logged callsign so <c>RxImagePaneViewModel</c>'s own
+    /// worked-before indicator can refresh -- the ONLY trigger that indicator otherwise has is
+    /// <c>OverrideCallsign</c> changing, so without this it would keep showing "New station" for a
+    /// station just logged, until the next decode.</summary>
+    public Action<string>? QsoLogged { get; set; }
 
     // Code-review finding: keyed off _editingId (the FORM's identity), not SelectedEntry -- a
     // RefreshAsync/RefreshInternalAsync in between (e.g. the operator clicks Refresh while a row is
@@ -956,6 +977,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetLinkedQsoIdAsync failed for entry {EntryId} -> qso {QsoId}")]
         public static partial void LinkReceivedImageFailed(ILogger logger, string entryId, string qsoId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QsoLogged subscriber threw; the RX pane's worked-before indicator may go stale until the next decode")]
+        public static partial void QsoLoggedNotifyFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "UpdateQsoAsync failed")]
         public static partial void UpdateFailed(ILogger logger, Exception ex);

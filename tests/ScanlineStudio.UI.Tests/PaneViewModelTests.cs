@@ -2678,6 +2678,143 @@ public sealed class PaneViewModelTests
         Assert.Equal("Hiram Maxim", vm.LookupName);
     }
 
+    /// <summary>Worked-before plan (2026-09-01): auto-fires on a real callsign change, no manual
+    /// button. Real wall-clock wait, same established pattern as this file's
+    /// RxHistoryPaneViewModel note-persist debounce tests -- 400ms comfortably clears the 250ms
+    /// WorkedBeforeDebounce.</summary>
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_OverrideCallsignChanged_PriorContactFound_ShowsSummary()
+    {
+        var logbookSession = new FakeLogbookSessionService { WorkedBeforeBandToReturn = "20m" };
+        logbookSession.Records.Add(new QsoRecord("1", "N0CALL", new DateTimeOffset(2026, 8, 12, 0, 0, 0, TimeSpan.Zero), null, 14_230_000, null, null, null, null, null, null, null, null, null, null, false, false));
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.OverrideCallsign = "N0CALL";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(WorkedBeforeStatus.Found, vm.WorkedBeforeStatus);
+        Assert.Equal("20m · 2026-08-12", vm.WorkedBeforeDisplay);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_OverrideCallsignChanged_NoPriorContact_ShowsNewStation()
+    {
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.OverrideCallsign = "N0CALL";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(WorkedBeforeStatus.None, vm.WorkedBeforeStatus);
+        // FakeLocalizationService.GetString returns the raw key -- asserting it (not just NotNull)
+        // proves the "New station" loc key was actually used, not a hardcoded string.
+        Assert.Equal("Panes.RxFrameMeta.WorkedBefore.None", vm.WorkedBeforeDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_OverrideCallsignCleared_ShowsDashImmediately_NoQuery()
+    {
+        var logbookSession = new FakeLogbookSessionService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.OverrideCallsign = "N0CALL";
+        vm.OverrideCallsign = null;
+
+        // No debounce wait -- clearing the callsign must show Unknown/"—" immediately, not "New
+        // station" (which would require a query the empty branch deliberately skips).
+        Assert.Equal(WorkedBeforeStatus.Unknown, vm.WorkedBeforeStatus);
+        Assert.Equal("—", vm.WorkedBeforeDisplay);
+        Assert.Empty(logbookSession.GetWorkedBeforeCalls);
+    }
+
+    /// <summary>Confirming auditor round finding: the CancellationTokenSource cancel-and-replace
+    /// must actually suppress superseded queries, not just fire one alongside another -- rapid
+    /// retyping (5 synchronous changes, no delay between them) must result in exactly ONE real
+    /// query, for the FINAL callsign only.</summary>
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_RapidRetyping_OnlyTheFinalCallsignIsQueried()
+    {
+        var logbookSession = new FakeLogbookSessionService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.OverrideCallsign = "P";
+        vm.OverrideCallsign = "PA";
+        vm.OverrideCallsign = "PA3";
+        vm.OverrideCallsign = "PA3B";
+        vm.OverrideCallsign = "PA3BX";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        var call = Assert.Single(logbookSession.GetWorkedBeforeCalls);
+        Assert.Equal("PA3BX", call);
+    }
+
+    /// <summary>Deliberately distinct from the "no prior contact" test above -- a failed check must
+    /// never render as "confirmed new," the harmful direction for a dupe-avoidance indicator. Uses
+    /// <see cref="FakeLogbookSessionService.WorkedBeforeOutcomeOverride"/>, NOT a thrown exception --
+    /// code-review finding: the real <see cref="ILogbookSessionService.GetWorkedBeforeAsync"/>
+    /// contract never throws (Failed is a returned outcome value), and
+    /// <c>RxImagePaneViewModel.RefreshWorkedBeforeCoreAsync</c>'s own catch only handles
+    /// <see cref="OperationCanceledException"/> -- an earlier version of this test threw a plain
+    /// exception, which escaped uncaught as an unobserved task fault and left
+    /// <see cref="RxImagePaneViewModel.WorkedBeforeStatus"/> at its untouched <c>Unknown</c>
+    /// initializer, passing vacuously without ever exercising the real Failed-branch mapping.</summary>
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_GetWorkedBeforeFails_ShowsUnknownDash_NotNewStation()
+    {
+        var logbookSession = new FakeLogbookSessionService { WorkedBeforeOutcomeOverride = WorkedBeforeOutcome.Failed };
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        vm.OverrideCallsign = "N0CALL";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(WorkedBeforeStatus.Unknown, vm.WorkedBeforeStatus);
+        Assert.Equal("—", vm.WorkedBeforeDisplay);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_NotifyQsoLogged_MatchingCallsignCaseInsensitive_RefreshesIndicator()
+    {
+        var logbookSession = new FakeLogbookSessionService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "N0CALL";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(WorkedBeforeStatus.None, vm.WorkedBeforeStatus);
+
+        // The QSO was just logged (real callsign case may differ from what this pane holds -- the
+        // database itself is case-insensitive) -- simulate the record now existing and notify with
+        // a DIFFERENT case than OverrideCallsign currently holds.
+        logbookSession.Records.Add(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, 14_230_000, null, null, null, null, null, null, null, null, null, null, false, false));
+        vm.NotifyQsoLogged("n0call");
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(WorkedBeforeStatus.Found, vm.WorkedBeforeStatus);
+    }
+
+    [AvaloniaFact]
+    public async Task RxImagePaneViewModel_NotifyQsoLogged_DifferentCallsign_DoesNotOverwriteIndicator()
+    {
+        var logbookSession = new FakeLogbookSessionService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "N0CALL";
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+        var callCountBefore = logbookSession.GetWorkedBeforeCalls.Count;
+
+        // A QSO logged for a DIFFERENT callsign than whatever this pane currently shows must not
+        // touch this indicator at all.
+        vm.NotifyQsoLogged("W1AW");
+        await Task.Delay(400);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(callCountBefore, logbookSession.GetWorkedBeforeCalls.Count);
+        Assert.Equal(WorkedBeforeStatus.None, vm.WorkedBeforeStatus);
+    }
+
     [AvaloniaFact]
     public void RxImagePaneViewModel_NoLookupYet_AllDisplaysShowPlaceholders()
     {
@@ -6563,6 +6700,43 @@ public sealed class PaneViewModelTests
         // Regression: ResetForm() (not New()) must run here, or the status line set from
         // BuildLogStatusMessage would be immediately nulled back out before the UI ever shows it.
         Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_InvokesQsoLoggedWithTheLoggedCallsign()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        string? notified = null;
+        vm.QsoLogged = callsign => notified = callsign;
+
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("N0CALL", notified);
+    }
+
+    /// <summary>Confirming auditor round finding: a throwing subscriber must never report an
+    /// already-persisted QSO as failed -- a retry would create a real duplicate row, the exact
+    /// failure class LogbookSessionService.cs's own PostPersistError already exists to prevent one
+    /// layer down. The record must still be there, and StatusMessage must still read success, not
+    /// the LogFailed text.</summary>
+    [AvaloniaFact]
+    public async Task LogbookPaneViewModel_LogAsync_QsoLoggedSubscriberThrows_StillReportsSuccess()
+    {
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateLogbookPaneViewModel(logbook);
+        Dispatcher.UIThread.RunJobs();
+        vm.QsoLogged = _ => throw new InvalidOperationException("subscriber exploded");
+
+        vm.FormCallsign = "N0CALL";
+        await vm.LogCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(logbook.Records);
+        Assert.NotEqual("Panes.Logbook.Error.LogFailed", vm.StatusMessage);
     }
 
     // Fable UX-review finding, 2026-08-30: a QSO logged via "Log QSO" from a decoded RX frame
