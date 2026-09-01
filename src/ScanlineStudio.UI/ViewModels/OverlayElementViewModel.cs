@@ -1,9 +1,9 @@
 using AvaloniaColor = Avalonia.Media.Color;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Avalonia;
 using Avalonia.Media;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.UI.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -487,95 +487,9 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// (<c>TransmitImagePreparer.BuildGradientBrush</c>), which has to compute real destination-image
     /// pixel coordinates by hand because ImageSharp's own gradient brushes have no relative-coordinate
     /// mode at all.</summary>
-    public IBrush ForegroundBrush => GradientEnabled ? BuildForegroundGradientBrush() : new SolidColorBrush(ToAvaloniaColor(Color));
-
-    private IBrush BuildForegroundGradientBrush()
-    {
-        var stops = new GradientStops
-        {
-            new GradientStop(ToAvaloniaColor(GradientStartColor), 0),
-            new GradientStop(ToAvaloniaColor(GradientEndColor), 1),
-        };
-
-        return GradientKind switch
-        {
-            TextGradientKind.Horizontal => new LinearGradientBrush
-            {
-                StartPoint = new RelativePoint(0, 0.5, RelativeUnit.Relative),
-                EndPoint = new RelativePoint(1, 0.5, RelativeUnit.Relative),
-                GradientStops = stops,
-            },
-            TextGradientKind.Vertical => new LinearGradientBrush
-            {
-                StartPoint = new RelativePoint(0.5, 0, RelativeUnit.Relative),
-                EndPoint = new RelativePoint(0.5, 1, RelativeUnit.Relative),
-                GradientStops = stops,
-            },
-            // RadiusX/RadiusY (not the obsolete Radius) -- both already relative regardless (0.5 =
-            // 50%), matching this brush's own Center/GradientOrigin RelativeUnit.Relative usage.
-            TextGradientKind.Radial => new RadialGradientBrush
-            {
-                Center = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
-                GradientOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
-                RadiusX = new RelativeScalar(0.5, RelativeUnit.Relative),
-                RadiusY = new RelativeScalar(0.5, RelativeUnit.Relative),
-                GradientStops = stops,
-            },
-            // Auditor usability review follow-up (2026-08-18): reuses GradientStartColor/EndColor as
-            // the pattern's fore/back colors (same param order as TransmitImagePreparer.
-            // BuildGradientBrush's real Brushes.Percent20(stops[0], stops[^1]) call) -- see
-            // TextGradientKind.BitmapPattern's own doc comment for why there's no separate color
-            // pair. BitmapPatternGrid is the EXACT 4x4 bool pattern ImageSharp.Drawing's own
-            // Brushes.Percent20 uses internally (confirmed via reflection against the pinned 2.1.7
-            // package before hardcoding it here, not assumed) -- Avalonia has no built-in tiled
-            // pattern brush equivalent, so this reproduces the identical bit layout via a tiled
-            // DrawingBrush instead of an approximate stand-in shape.
-            TextGradientKind.BitmapPattern => BuildPatternBrush(),
-            _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {GradientKind}."),
-        };
-    }
-
-    /// <summary>ImageSharp.Drawing's <c>Brushes.Percent20</c> own internal 4x4 tile (reflected off a
-    /// real <c>PatternBrush</c> instance against the pinned 2.1.7 package -- see
-    /// <see cref="BuildForegroundGradientBrush"/>'s own doc comment). <see langword="true"/> = fore
-    /// color cell, <see langword="false"/> = back color cell.</summary>
-    private static readonly bool[,] BitmapPatternGrid =
-    {
-        { true, false, false, false },
-        { false, false, true, false },
-        { true, false, false, false },
-        { false, false, true, false },
-    };
-
-    private DrawingBrush BuildPatternBrush()
-    {
-        var foreBrush = new SolidColorBrush(ToAvaloniaColor(GradientStartColor));
-        var backBrush = new SolidColorBrush(ToAvaloniaColor(GradientEndColor));
-        var tile = new Rect(0, 0, 4, 4);
-        var drawingGroup = new DrawingGroup
-        {
-            Children = { new GeometryDrawing { Brush = backBrush, Geometry = new RectangleGeometry(tile) } },
-        };
-
-        for (var y = 0; y < BitmapPatternGrid.GetLength(0); y++)
-        {
-            for (var x = 0; x < BitmapPatternGrid.GetLength(1); x++)
-            {
-                if (BitmapPatternGrid[y, x])
-                {
-                    drawingGroup.Children.Add(new GeometryDrawing { Brush = foreBrush, Geometry = new RectangleGeometry(new Rect(x, y, 1, 1)) });
-                }
-            }
-        }
-
-        return new DrawingBrush
-        {
-            Drawing = drawingGroup,
-            TileMode = TileMode.Tile,
-            DestinationRect = new RelativeRect(tile, RelativeUnit.Absolute),
-            Stretch = Stretch.None,
-        };
-    }
+    public IBrush ForegroundBrush => GradientEnabled
+        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
+        : new SolidColorBrush(ToAvaloniaColor(Color));
 
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 

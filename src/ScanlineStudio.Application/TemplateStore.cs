@@ -518,7 +518,15 @@ public sealed partial class TemplateStore : ITemplateStore
                         : null,
                     text.StackColor, text.StackStepX, text.StackStepY);
             case PersistedBoxElement box:
-                return new TemplateBoxElement(bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius);
+                // Code-review finding (2026-09-01, box gradient fill): same thumbnail-render gap
+                // PersistedTextElement's own case above was already fixed for once -- this path
+                // silently dropped Gradient, rendering the Ready Rack/Template Library thumbnail
+                // flat solid while the real template rendered the gradient correctly.
+                return new TemplateBoxElement(
+                    bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                    box.GradientEnabled
+                        ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor ?? box.FillColor), new GradientColorStop(1f, box.GradientEndColor ?? box.FillColor)])
+                        : null);
             case PersistedImageElement image:
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);

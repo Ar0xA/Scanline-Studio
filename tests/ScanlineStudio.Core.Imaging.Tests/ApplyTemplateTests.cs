@@ -167,6 +167,38 @@ public sealed class ApplyTemplateTests
         }
     }
 
+    /// <summary>TX editor gap-items plan (2026-09-01, box gradient fill) -- proves
+    /// <see cref="TransmitImagePreparer.DrawTemplateBox"/> actually applies the gradient brush (not
+    /// silently falling back to solid FillColor). A box's own fill has no glyph gap to worry about
+    /// (unlike text's identical test, which needs a leftmost/rightmost-INK-pixel search) -- every
+    /// pixel in Bounds is fill, so a direct two-sample directional check is enough.</summary>
+    [Fact]
+    public async Task ApplyTemplate_BoxWithHorizontalGradient_LeftIsRedderThanRight_RightIsBluerThanLeft()
+    {
+        var path = await WriteFixturePngAsync(100, 20, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 100, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var bounds = new NormalizedRect(0, 0, 1, 1);
+            var gradient = new TextGradient(TextGradientKind.Horizontal, [new GradientColorStop(0f, new Rgb24(255, 0, 0)), new GradientColorStop(1f, new Rgb24(0, 0, 255))]);
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(bounds, Z: 0, FillColor: new Rgb24(0, 0, 0), BorderColor: null, BorderThickness: 0, Gradient: gradient),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            var leftPixel = result.GetScanline(10)[5];
+            var rightPixel = result.GetScanline(10)[94];
+            Assert.True(leftPixel.R > rightPixel.R, $"Expected left ({leftPixel.R},{leftPixel.G},{leftPixel.B}) redder than right ({rightPixel.R},{rightPixel.G},{rightPixel.B}).");
+            Assert.True(rightPixel.B > leftPixel.B, $"Expected right ({rightPixel.R},{rightPixel.G},{rightPixel.B}) bluer than left ({leftPixel.R},{leftPixel.G},{leftPixel.B}).");
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task ApplyTemplate_BoxCornerRadius_RoundsTheCornersWhileKeepingCenterAndEdgeMidpointsFilled()
     {

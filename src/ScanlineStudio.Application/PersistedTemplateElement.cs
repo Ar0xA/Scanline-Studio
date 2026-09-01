@@ -50,10 +50,17 @@ public sealed record PersistedTextElement(
 /// <summary><paramref name="CornerRadius"/> (auditor usability review follow-up, 2026-08-18) is a
 /// trailing, defaulted scalar -- same "missing JSON property on an older saved template
 /// deserializes to the default, no migration needed" convention as <see cref="PersistedTextElement"/>'s
-/// own Phase 8 additions above.</summary>
+/// own Phase 8 additions above. <paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
+/// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> (TX editor gap-items
+/// plan, 2026-09-01) are the SAME 4 trailing scalar fields <see cref="PersistedTextElement"/> already
+/// persists its own gradient this exact way -- see that record's own doc comment for why this sidesteps
+/// the "silent missing-registration" failure mode a separate <c>PersistedGradientColorStop</c> record
+/// would risk.</summary>
 public sealed record PersistedBoxElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
-    Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0)
+    Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0,
+    bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
+    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>Persistence-layer counterpart to <c>TxImageEditorPaneViewModel.ImageSourceKind</c> (a

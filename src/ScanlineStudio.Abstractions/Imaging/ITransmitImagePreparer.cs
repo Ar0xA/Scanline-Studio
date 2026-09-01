@@ -127,8 +127,33 @@ public readonly record struct GradientColorStop(float Offset, Rgb24 Color);
 /// gradient rotates WITH the text (a deliberate choice, stated here rather than left implicit).
 /// <paramref name="Stops"/> empty falls back to the element's own solid <see cref="TemplateTextElement.Color"/>
 /// as a single stop — a gradient with no stops configured isn't a distinct error case, just a
-/// degenerate one-color gradient.</summary>
-public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientColorStop> Stops);
+/// degenerate one-color gradient.
+/// <para>Code-review finding (2026-09-01, box gradient fill): custom <see cref="Equals(TextGradient?)"/>/
+/// <see cref="GetHashCode"/> are REQUIRED, not cosmetic -- a record's auto-generated equality compares
+/// an <see cref="IReadOnlyList{T}"/>-typed property via <c>EqualityComparer&lt;T&gt;.Default</c>, which
+/// for an interface type falls back to REFERENCE equality (the interface itself declares no
+/// <c>Equals</c> override). <c>BuildTemplateElement</c>'s own gradient composition mints a fresh
+/// <see cref="Stops"/> array on every call (a C# collection expression, never the same instance
+/// twice), so without this override, two structurally-identical <see cref="TextGradient"/>s built a
+/// moment apart from the SAME element never compare equal -- <c>Flatten</c>'s own stale-generation
+/// check (<c>!BuildTemplateElement(element).Equals(request.Element)</c>) always sees them as
+/// "changed," discarding every flatten on a gradient text or box element as stale, unconditionally.</para></summary>
+public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientColorStop> Stops)
+{
+    public bool Equals(TextGradient? other) => other is not null && Kind == other.Kind && Stops.SequenceEqual(other.Stops);
+
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Kind);
+        foreach (var stop in Stops)
+        {
+            hash.Add(stop);
+        }
+
+        return hash.ToHashCode();
+    }
+}
 
 /// <summary><paramref name="Content"/> may contain macro/variable tokens (spec/15's fill-bar
 /// mechanism, Phase 3) — resolution happens above this layer, same as
@@ -198,9 +223,17 @@ public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSo
 /// package dependency, works against the ALREADY-installed 2.1.7. 0 (the default) renders identically
 /// to the old plain-<see cref="SixLabors.ImageSharp.Drawing.RectangularPolygon"/> path, byte-for-byte
 /// unchanged for every existing template.</summary>
+/// <summary><paramref name="Gradient"/> (TX editor gap-items plan, box gradient fill, 2026-09-01)
+/// -- reuses <see cref="TextGradient"/>/<see cref="TextGradientKind"/> verbatim rather than a
+/// separate box-specific gradient type: the shape (Kind + 2-stop-or-empty color list) is already
+/// generic, and <see cref="ITransmitImagePreparer"/>'s own <c>BuildGradientBrush</c> implementation
+/// already takes wherever-it's-drawn bounds + a fallback color, with no text-specific assumption --
+/// confirmed by reading it before reusing it, not assumed from the type name alone. Null means a
+/// plain solid <see cref="FillColor"/> fill (today's existing behavior, unchanged) -- same
+/// null-means-none convention <see cref="TemplateTextElement.Gradient"/> already established.</summary>
 public sealed record TemplateBoxElement(
     NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
-    double CornerRadius = 0)
+    double CornerRadius = 0, TextGradient? Gradient = null)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Elements"/> in any order — <see cref="ITransmitImagePreparer.ApplyTemplate"/>
