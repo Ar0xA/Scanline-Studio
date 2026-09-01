@@ -585,6 +585,51 @@ public sealed class SstvSessionServiceTests
     }
 
     [Fact]
+    public async Task TransmitAsync_PlaybackDeviceChangedInSettingsBetweenTwoTransmissions_UsesTheNewDeviceOnEveryCall()
+    {
+        // User bug report (2026-09-01): "changing the audio input/output required a restart to
+        // actually work." Investigation found the OUTPUT half was never actually broken -- unlike
+        // capture (a long-lived open stream, needs ISstvSessionService.RequestCaptureDeviceAsync to
+        // pick up a change), playback opens a FRESH native stream per TransmitAsync call and re-reads
+        // AudioDeviceSettings.PlaybackDeviceId straight from the settings store every time (see
+        // ResolveDeviceAsync's own callers, near line 3373). 2nd-round auditor finding: an earlier
+        // version of this test only mutated settings once, before the FIRST TransmitAsync call --
+        // that proves "not cached/resolved at construction," not "re-read on EVERY call," which is
+        // the actual claim OptionsWindowViewModel's own comment relies on. Two full TransmitAsync
+        // calls, settings mutated between them (simulating a SECOND Options Save landing on disk
+        // mid-session, with the service instance still alive and never told about either change) --
+        // no RequestPlaybackDeviceAsync-equivalent call exists or is needed either time.
+        var audioEngine = new FakeAudioEngine();
+        var deviceA = new AudioDeviceInfo("playback-a", "Playback A", 0, 1, [11025]);
+        var deviceB = new AudioDeviceInfo("playback-b", "Playback B", 0, 1, [11025]);
+        var deviceEnumerator = new FakeAudioDeviceEnumerator
+        {
+            InputDevices = [new AudioDeviceInfo("capture-1", "Capture", 1, 0, [8000])],
+            OutputDevices = [deviceA, deviceB],
+        };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-a", SampleRate = 8000 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings),
+        };
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+
+        await service.TransmitAsync(TestMode, TestImage);
+        Assert.Equal("playback-a", audioEngine.LastRequestedPlaybackDevice?.Id);
+
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            AudioDeviceSettings.SectionKey,
+            new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-b", SampleRate = 8000 },
+            AudioSettingsJsonContext.Default.AudioDeviceSettings);
+
+        await service.TransmitAsync(TestMode, TestImage);
+
+        Assert.Equal("playback-b", audioEngine.LastRequestedPlaybackDevice?.Id);
+    }
+
+    [Fact]
     public async Task TransmitAsync_ConfiguredPlaybackDeviceMissing_FallsBackToDefault()
     {
         // User-reported fix, round 3 (2026-08-23), explicit product decision overriding this test's

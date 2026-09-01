@@ -3257,6 +3257,59 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 Log.SampleRateChangeFailed(_logger, SampleRate, ex);
             }
 
+            // Capture (RX input) device (2026-09-01, user-reported "requires restart to actually
+            // work" bug): genuinely live now too, same shape as sample rate immediately above --
+            // ISstvSessionService.RequestCaptureDeviceAsync already existed (built for the
+            // configuration-preset apply path, ConfigurationPresetService.cs) but this dialog's own
+            // Save never called it, so a device picked here only took effect on the next app restart.
+            // Called unconditionally, not gated on a local "did the selection change" check -- the
+            // session's own no-op guard (compares against its in-memory _activeCaptureDeviceId, see
+            // CaptureDeviceApplyResult.NoChange's own doc comment) already makes an unrelated Save a
+            // cheap no-op ONCE that latch has been set by a prior apply/RX start this run (before
+            // that, it's null and every Save -- even an unrelated one -- takes the idle-apply path;
+            // still harmless, since no capture is touched while RX isn't running, see
+            // ApplyCaptureDeviceLockedAsync's own wasReceiving check), matching RequestSampleRateAsync's
+            // own unconditional-call convention above. Playback (TX output) device needed NO
+            // equivalent fix -- unlike capture, TX opens a fresh native playback stream per
+            // transmission and already re-reads AudioDeviceSettings.PlaybackDeviceId from the settings
+            // store on every single transmission, proven empirically by
+            // TransmitAsync_PlaybackDeviceChangedInSettingsBetweenTwoTransmissions_UsesTheNewDeviceOnEveryCall
+            // in SstvSessionServiceTests.cs (two transmissions, settings mutated in between, both
+            // resolve their own current value) -- so the whole-dialog snapshot save above was already
+            // sufficient for it. 2nd-round auditor finding, not yet addressed: neither the Rejected
+            // nor the thrown-exception outcome below gets a user-facing notice or VM reconciliation --
+            // same scope-limited treatment RequestSampleRateAsync's own Rejected case gets above,
+            // tracked as a follow-up rather than blocking this fix (which already resolves the
+            // reported "requires restart" bug for the overwhelmingly common case).
+            try
+            {
+                var captureDeviceResult = await _sstvSession.RequestCaptureDeviceAsync(SelectedCaptureDevice?.Id, SelectedCaptureDevice?.Name);
+                if (captureDeviceResult == CaptureDeviceApplyResult.DeferredRecordingInProgress)
+                {
+                    Log.CaptureDeviceChangeDeferred(_logger, SelectedCaptureDevice?.Id);
+                }
+                else if (captureDeviceResult == CaptureDeviceApplyResult.Rejected)
+                {
+                    // Rejected is only returned when ApplyCaptureDeviceLockedAsync's OWN restart
+                    // attempt on the rolled-back device SUCCEEDED (see its own doc comment) -- RX
+                    // capture is still running here, just on whatever fallback device that restart
+                    // resolved, not the one the user just picked. It's the CATCH block below (a
+                    // thrown exception, meaning even that restart attempt failed) that actually
+                    // leaves RX capture stopped -- these two log messages describe different outcomes
+                    // on purpose, not swapped.
+                    Log.CaptureDeviceChangeRejected(_logger, SelectedCaptureDevice?.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                // Both real callers persist the NEW device before calling RequestCaptureDeviceAsync
+                // (the whole-dialog snapshot save above, for this caller), so a THROW here (unlike
+                // Rejected immediately above) means ApplyCaptureDeviceLockedAsync's own rollback
+                // restart attempt ALSO failed on that same already-persisted device -- RX capture is
+                // left stopped, and the unopenable device stays persisted across a future restart too.
+                Log.CaptureDeviceChangeFailed(_logger, SelectedCaptureDevice?.Id, ex);
+            }
+
             // Hamlib library path (2026-08-28, restart-required-settings backlog item 5 -- the LAST
             // item of this backlog): genuinely live now too. Different in kind from every other
             // Request* call above -- it performs a real, uncancellable native library load, so it
@@ -3697,6 +3750,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Sample rate change to {SampleRate}Hz failed after a successful settings save")]
         public static partial void SampleRateChangeFailed(ILogger logger, int sampleRate, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture device change to {DeviceId} deferred -- a recording is in progress")]
+        public static partial void CaptureDeviceChangeDeferred(ILogger logger, string? deviceId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Capture device change to {DeviceId} rejected -- RX capture is still running, but on a fallback device, not the one requested")]
+        public static partial void CaptureDeviceChangeRejected(ILogger logger, string? deviceId);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Capture device change to {DeviceId} failed after a successful settings save -- RX capture may now be stopped, and the unopenable device stays persisted")]
+        public static partial void CaptureDeviceChangeFailed(ILogger logger, string? deviceId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Hamlib library path applied live: {ResolvedPath}")]
         public static partial void HamlibLibraryPathApplied(ILogger logger, string resolvedPath);
