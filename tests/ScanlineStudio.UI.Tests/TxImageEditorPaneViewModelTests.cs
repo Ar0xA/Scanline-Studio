@@ -4770,6 +4770,267 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(new Rgb24(4, 5, 6), reloadedBox.GradientEndColor);
     }
 
+    // TX editor gap-items plan, item 4b (picture fill, 2026-09-01) -- text elements filled with a
+    // real picture instead of solid color or gradient. Plan-review's own settled design: a sibling
+    // bool to GradientEnabled (not a shared 3-way discriminator), mutually exclusive at the setter
+    // level, real precedence enforced at every composition site when both are somehow true.
+
+    [AvaloniaFact]
+    public void BitmapFillEnabled_SetTrue_ClearsGradientEnabled()
+    {
+        var text = new OverlayElementViewModel { GradientEnabled = true };
+
+        text.BitmapFillEnabled = true;
+
+        Assert.False(text.GradientEnabled);
+        Assert.True(text.BitmapFillEnabled);
+    }
+
+    [AvaloniaFact]
+    public void GradientEnabled_SetTrue_ClearsBitmapFillEnabled()
+    {
+        var text = new OverlayElementViewModel { BitmapFillEnabled = true };
+
+        text.GradientEnabled = true;
+
+        Assert.False(text.BitmapFillEnabled);
+        Assert.True(text.GradientEnabled);
+    }
+
+    [AvaloniaFact]
+    public void ForegroundBrush_BitmapFillEnabledWithSource_ReturnsAnImageBrush()
+    {
+        var text = new OverlayElementViewModel
+        {
+            BitmapFillEnabled = true,
+            BitmapFillSource = CreateSource(2, 2),
+        };
+
+        Assert.IsType<Avalonia.Media.ImageBrush>(text.ForegroundBrush);
+    }
+
+    [AvaloniaFact]
+    public void ForegroundBrush_BitmapFillEnabledButNoSourceYet_FallsBackToSolidColor()
+    {
+        // Reachable in practice: BitmapFillEnabled flips true the instant a picture-pick command
+        // starts (see PickTextBitmapFillFromFileAsync's own body), but BitmapFillSource isn't
+        // assigned until the async load actually completes -- ForegroundBrush must not crash or
+        // return a broken brush for that in-between window.
+        var text = new OverlayElementViewModel { BitmapFillEnabled = true };
+
+        Assert.IsType<Avalonia.Media.SolidColorBrush>(text.ForegroundBrush);
+    }
+
+    [AvaloniaFact]
+    public async Task PickTextBitmapFillFromFileCommand_LoadsThePickedFileAndSetsSourceAndEnabled()
+    {
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/fill.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+
+        await vm.PickTextBitmapFillFromFileCommand.ExecuteAsync(null);
+
+        Assert.True(text.BitmapFillEnabled);
+        Assert.Same(loader.ResultToReturn, text.BitmapFillSource);
+    }
+
+    [AvaloniaFact]
+    public async Task PickTextBitmapFillFromFileCommand_PickerReturnsNull_IsANoOp()
+    {
+        var picker = new FakeFilePickerService { PathToReturn = null };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = text;
+
+        await vm.PickTextBitmapFillFromFileCommand.ExecuteAsync(null);
+
+        Assert.False(text.BitmapFillEnabled);
+        Assert.Null(text.BitmapFillSource);
+    }
+
+    [AvaloniaFact]
+    public void PickTextBitmapFillFromFileCommand_NoTextElementSelected_CanExecuteIsFalse()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+
+        Assert.False(vm.PickTextBitmapFillFromFileCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void ClearTextBitmapFillCommand_SetsEnabledFalseButPreservesTheLastPickedSource()
+    {
+        // Same "the flag gates whether the resolved value is USED, not whether it's kept" shape as
+        // toggling GRADIENT off -- re-checking PICTURE FILL later without re-picking a file must
+        // still show the last picture (ClearTextBitmapFillCommand's own doc comment).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        var source = CreateSource(2, 2);
+        text.BitmapFillSource = source;
+        text.BitmapFillEnabled = true;
+        vm.SelectedOverlayElement = text;
+
+        vm.ClearTextBitmapFillCommand.Execute(null);
+
+        Assert.False(text.BitmapFillEnabled);
+        Assert.Same(source, text.BitmapFillSource);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsTextBitmapFill()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.BitmapFillSource = CreateSource(2, 2);
+        text.BitmapFillEnabled = true;
+        vm.NewTemplateName = "Picture-filled text";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedText = Assert.IsType<PersistedTextElement>(Assert.Single(document.Elements));
+
+        Assert.True(persistedText.BitmapFillEnabled);
+        Assert.NotNull(persistedText.BitmapFillAssetFileName);
+    }
+
+    /// <summary>Same "genuinely wired end-to-end, not just persisted" proof as
+    /// <see cref="LoadTemplate_BoxGradientFill_RehydratesIntoALiveElementWithMatchingValues"/> --
+    /// unlike that test's box gradient (no image dependency), this path DOES call
+    /// <see cref="IImageFileLoader.LoadOriginalAsync"/> for the fill asset, so this needs a fully
+    /// hand-wired VM (no single <c>CreateEditor</c> overload exposes both a configurable
+    /// <see cref="IImageFileLoader"/> AND <see cref="ITemplateStore"/>/<see cref="ReadyRackViewModel"/>
+    /// together).</summary>
+    [AvaloniaFact]
+    public async Task LoadTemplate_TextBitmapFill_RehydratesIntoALiveElementWithMatchingSource()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var fillSource = CreateSource(2, 2);
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = fillSource };
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), imageFileLoader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, new FakeImageSourceWriter(), readyRack);
+
+        var templateId = templateStore.CreateTemplateId("Reloaded picture-filled text");
+        await templateStore.SaveAsync(templateId, "Reloaded picture-filled text", new PersistedTemplateDocument([
+            new PersistedTextElement(
+                X: 0.5, Y: 0.5, Width: 0.4, Height: 0.2, Z: 0, Locked: false,
+                Text: "W1AW", FontSizeRelative: 0.2, Color: new Rgb24(0, 0, 0), FontFamily: "DejaVu Sans Mono", StrokeColor: null, StrokeThickness: 0,
+                BitmapFillEnabled: true, BitmapFillAssetFileName: "fill.png"),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+
+        var reloadedText = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.True(reloadedText.BitmapFillEnabled);
+        Assert.Same(fillSource, reloadedText.BitmapFillSource);
+    }
+
+    /// <summary>Same "second hand-maintained switch" bug class the box-gradient feature already
+    /// shipped once (Copy Style then Paste Style silently dropping the gradient) -- pins that the
+    /// new bitmap-fill fields are in <c>PasteSelectedElementStyle</c>'s text case.</summary>
+    [AvaloniaFact]
+    public void PasteSelectedElementStyle_CopiesBitmapFillFields()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        var source = (OverlayElementViewModel)vm.OverlayElements[0];
+        var target = (OverlayElementViewModel)vm.OverlayElements[1];
+        var fillSource = CreateSource(2, 2);
+        source.BitmapFillSource = fillSource;
+        source.BitmapFillEnabled = true;
+        vm.SelectedOverlayElement = source;
+        vm.CopySelectedElementStyleCommand.Execute(null);
+        vm.SelectedOverlayElement = target;
+
+        vm.PasteSelectedElementStyleCommand.Execute(null);
+
+        Assert.True(target.BitmapFillEnabled);
+        Assert.Same(fillSource, target.BitmapFillSource);
+    }
+
+    [AvaloniaFact]
+    public void PasteSelectedElementStyle_SolidStyleOntoAPictureFilledElement_ClearsThePictureFill()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        var source = (OverlayElementViewModel)vm.OverlayElements[0];
+        var target = (OverlayElementViewModel)vm.OverlayElements[1];
+        target.BitmapFillSource = CreateSource(2, 2);
+        target.BitmapFillEnabled = true;
+        vm.SelectedOverlayElement = source;
+        vm.CopySelectedElementStyleCommand.Execute(null);
+        vm.SelectedOverlayElement = target;
+
+        vm.PasteSelectedElementStyleCommand.Execute(null);
+
+        Assert.False(target.BitmapFillEnabled);
+    }
+
+    /// <summary>Same equality-trap coverage as <see cref="FlattenElementAsync_GradientTextElement_SucceedsRatherThanDiscardingAsStale"/>
+    /// -- <see cref="TemplateTextElement.BitmapFill"/>'s own doc comment states the stable-instance
+    /// invariant this test pins: <see cref="BitmapFillSource"/> stays the SAME cached reference across
+    /// Flatten's own two <c>BuildTemplateElement</c> calls (the bake, and the stale-result guard's
+    /// comparison), so record equality on that interface-typed member -- reference equality, same
+    /// trap <see cref="TextGradient"/>'s own <c>Stops</c> list already hit -- correctly matches
+    /// instead of spuriously discarding the flatten as stale.</summary>
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_BitmapFillTextElement_SucceedsRatherThanDiscardingAsStale()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
+        element.BitmapFillSource = CreateSource(4, 4);
+        element.BitmapFillEnabled = true;
+        var sourceBefore = vm.CurrentSource;
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.NotSame(sourceBefore, vm.CurrentSource);
+        Assert.NotEqual("Panes.TxImageEditor.FlattenDiscardedStale", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public void RemoveOverlayElement_BitmapFillTextElement_DisposesItsCanvasBitmapFill_DeferredViaDispatcherPost()
+    {
+        // Same T0-11 disposal shape as Undo_AfterAddLastRxImage_DisposesTheRemovedImageElementsBitmap
+        // above, widened this session to a generic `is IDisposable` discard check -- pins that
+        // OverlayElementViewModel's own CanvasBitmapFill actually gets caught by that widened check.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        text.BitmapFillSource = CreateSource(2, 2);
+        text.BitmapFillEnabled = true;
+        var bitmap = text.CanvasBitmapFill!;
+
+        vm.RemoveOverlayElementCommand.Execute(text);
+
+        Assert.False(IsWriteableBitmapDisposed(bitmap), "must not be disposed before the deferred post runs");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(IsWriteableBitmapDisposed(bitmap));
+    }
+
     // Backlog item (auditor usability review, 2026-08-17): "ELEMENTS rows don't select or highlight
     // on click." IsSelected is set by OnSelectedOverlayElementChanged's own loop over every element.
 

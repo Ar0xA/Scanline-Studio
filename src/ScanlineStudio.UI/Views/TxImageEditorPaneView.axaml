@@ -2039,6 +2039,36 @@
                                                  Color="{Binding SelectedTextElement.GradientEndColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
                                 </Grid></Border>
 
+                                <!-- TX editor gap-items plan, item 4b (picture fill, 2026-09-01) —
+                                     a THIRD fill mode, a sibling of GRADIENT above, not a shared
+                                     3-way selector (OverlayElementViewModel.BitmapFillEnabled's own
+                                     doc comment: enforced mutually exclusive at the setter level, no
+                                     shared UI toggle needed). No CheckBox — FROM FILE/FROM CLIPBOARD
+                                     enable it directly (picking a picture always turns it on), CLEAR
+                                     turns it back off without discarding the last-picked picture
+                                     (ClearTextBitmapFillCommand's own doc comment). Labeled "PICTURE
+                                     FILL", deliberately not "Bitmap" — GradientKindLabel's own
+                                     ComboBox already renders the raw TextGradientKind.BitmapPattern
+                                     enum name unstyled in this same panel; a second, differently-
+                                     meaning "Bitmap" label here would collide with it. -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.PictureFillLabel}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow">
+                                    <WrapPanel>
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,3"
+                                                Content="{loc:Translate Panes.TxImageEditor.PictureFillFromFile}"
+                                                Command="{Binding PickTextBitmapFillFromFileCommand}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,4,3"
+                                                Content="{loc:Translate Panes.TxImageEditor.PictureFillFromClipboard}"
+                                                Command="{Binding PickTextBitmapFillFromClipboardCommand}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Margin="0,0,0,3"
+                                                Content="{loc:Translate Panes.TxImageEditor.PictureFillClear}"
+                                                Command="{Binding ClearTextBitmapFillCommand}"
+                                                IsEnabled="{Binding SelectedTextElement.BitmapFillEnabled}" />
+                                    </WrapPanel>
+                                </Border>
+
                                 <!-- EditWindow redesign Phase 4 (mockups/Editwindow): insert-field
                                      chips relocated INTO the TEXT STYLE tab (mock's own placement —
                                      "INSERT FIELD → CARET" sits inside the text-style inspector, not

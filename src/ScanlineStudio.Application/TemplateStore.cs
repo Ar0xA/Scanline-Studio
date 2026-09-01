@@ -513,6 +513,7 @@ public sealed partial class TemplateStore : ITemplateStore
                 // the live editor) rendered the effect correctly. TxImageEditorPaneViewModel's own
                 // BuildPersistedElementAsync/BuildTemplateDocument already forwarded all of these
                 // correctly; only this one reconstruction path was missing them.
+                var bitmapFill = await LoadTextBitmapFillAsync(templateId, text, ct).ConfigureAwait(false);
                 return new TemplateTextElement(
                     bounds, text.Z, text.Text, new FontSpec(text.FontFamily, text.FontSizeRelative, text.Bold, text.Italic), text.Color,
                     text.StrokeColor, text.StrokeThickness,
@@ -520,7 +521,8 @@ public sealed partial class TemplateStore : ITemplateStore
                     text.GradientEnabled
                         ? new TextGradient(text.GradientKind, [new GradientColorStop(0f, text.GradientStartColor ?? text.Color), new GradientColorStop(1f, text.GradientEndColor ?? text.Color)])
                         : null,
-                    text.StackColor, text.StackStepX, text.StackStepY);
+                    text.StackColor, text.StackStepX, text.StackStepY,
+                    bitmapFill);
             case PersistedBoxElement box:
                 // Code-review finding (2026-09-01, box gradient fill): same thumbnail-render gap
                 // PersistedTextElement's own case above was already fixed for once -- this path
@@ -551,6 +553,41 @@ public sealed partial class TemplateStore : ITemplateStore
                 return new TemplateLineElement(lineBounds, line.Z, line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
+        }
+    }
+
+    /// <summary>TX editor gap-items plan, item 4b (picture fill) -- deliberately degrades to "no
+    /// picture fill" (null, same as the element's own <c>BitmapFillEnabled: false</c> shape) and
+    /// LOGS rather than throwing, unlike <see cref="PersistedImageElement"/>'s own asset load two
+    /// cases up (whose throw is allowed to abort this whole reconstruction, an accepted existing
+    /// behavior this method doesn't change). A picture fill is a decorative text effect, not the
+    /// element's own core content the way an image element's picture IS its content -- a missing or
+    /// corrupt fill asset (a copied-but-not-fully-synced template folder, a manually edited
+    /// template.json referencing a filename that was never written) should render the text with its
+    /// Gradient/solid fallback instead of taking down the ENTIRE Ready Rack/Template Library
+    /// thumbnail render (or, via <see cref="RenderThumbnailAsync"/>'s own throw-aborts-SaveAsync
+    /// behavior, the whole template save) over one cosmetic field. <see cref="GetAssetPath"/> itself
+    /// can throw synchronously (its own traversal guard) -- covered by the same try, not a second
+    /// one.</summary>
+    private async Task<IImageSource?> LoadTextBitmapFillAsync(string templateId, PersistedTextElement text, CancellationToken ct)
+    {
+        if (!text.BitmapFillEnabled || string.IsNullOrEmpty(text.BitmapFillAssetFileName))
+        {
+            return null;
+        }
+
+        try
+        {
+            var assetPath = GetAssetPath(templateId, text.BitmapFillAssetFileName);
+            return await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);
+        }
+        // Round-1 code-review finding: must not swallow OperationCanceledException -- see
+        // ListAsync's own doc comment two rows up in this file for why a real cancellation must
+        // still abort the whole call, not be treated as "one bad asset."
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.BitmapFillAssetLoadFailed(_logger, templateId, text.BitmapFillAssetFileName, ex);
+            return null;
         }
     }
 
@@ -608,5 +645,8 @@ public sealed partial class TemplateStore : ITemplateStore
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Cleanup of partially-imported template '{TemplateId}' failed")]
         public static partial void ImportCleanupFailed(ILogger logger, string templateId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Template '{TemplateId}' text picture-fill asset '{AssetFileName}' could not be loaded; rendering that element without its picture fill")]
+        public static partial void BitmapFillAssetLoadFailed(ILogger logger, string templateId, string assetFileName, Exception ex);
     }
 }

@@ -2,6 +2,8 @@ using AvaloniaColor = Avalonia.Media.Color;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.UI.Imaging;
 
@@ -17,7 +19,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// 1, but its MEANING changed: it's now the STARTING/MAXIMUM size for
 /// <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s shrink-to-fit search against this element's
 /// own <see cref="Width"/> x <see cref="Height"/> box, not a fixed rendered size.</summary>
-public sealed partial class OverlayElementViewModel : ObservableObject, ITemplateElementViewModel
+public sealed partial class OverlayElementViewModel : ObservableObject, ITemplateElementViewModel, IDisposable
 {
     [ObservableProperty]
     private string _text = "Text";
@@ -188,6 +190,38 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     [ObservableProperty]
     private Rgb24 _gradientEndColor = new(0, 0, 255);
+
+    /// <summary>TX editor gap-items plan, item 4b (picture fill, 2026-09-01): a THIRD fill mode,
+    /// independent of <see cref="GradientEnabled"/> above (a sibling scalar, not a shared 3-way
+    /// discriminator -- refactoring the already-shipped Gradient shape into an enum was rejected as
+    /// unnecessary churn on tested code; see <see cref="Abstractions.Imaging.TemplateTextElement.BitmapFill"/>'s
+    /// own doc comment for the full precedence-invariant reasoning). Enforced mutually exclusive with
+    /// <see cref="GradientEnabled"/> at the setter level below (turning one on turns the other off) --
+    /// a UI-input-time convenience only, NOT the sole enforcement: the real precedence rule (BitmapFill
+    /// wins if both are somehow true, e.g. a hand-edited template file bypassing these setters
+    /// entirely) is enforced again at every COMPOSITION site downstream (this class's own
+    /// <see cref="ForegroundBrush"/>, <c>TxImageEditorPaneViewModel.BuildTemplateElement</c>, and
+    /// <c>TemplateStore.ToTemplateElementAsync</c>). Deliberately NO <c>On...Changing</c> undo-push
+    /// hook, matching <see cref="GradientEnabled"/>'s own shape exactly (same symmetry reasoning: an
+    /// asymmetric undo hook on only one of a mutually-exclusive pair would push an undo step for one
+    /// fill-mode toggle but not the other).</summary>
+    [ObservableProperty]
+    private bool _bitmapFillEnabled;
+
+    /// <summary>Resolved bitmap, same "already-loaded, never re-decoded here" convention as
+    /// <see cref="ImageElementViewModel.Source"/> -- MUST stay a stable cached instance across a
+    /// template's own edit session (see <see cref="Abstractions.Imaging.TemplateTextElement.BitmapFill"/>'s
+    /// own doc comment for why: record equality on that interface-typed member falls back to
+    /// reference equality, the same trap <see cref="Abstractions.Imaging.TextGradient"/>'s own
+    /// <c>Stops</c> list already documents).</summary>
+    [ObservableProperty]
+    private IImageSource? _bitmapFillSource;
+
+    /// <summary>Cached conversion of <see cref="BitmapFillSource"/> for canvas display -- same
+    /// "rebuilt only when the source itself changes, not on every property-changed pass" reasoning
+    /// as <see cref="ImageElementViewModel.CanvasBitmap"/>. Unlike that property, legitimately null
+    /// most of the time -- picture fill is opt-in, not every text element's core content.</summary>
+    public WriteableBitmap? CanvasBitmapFill { get; private set; }
 
     /// <summary>Set by the owning <see cref="TxImageEditorPaneViewModel"/> at creation time -- lets
     /// this element compute its own on-screen position without the View needing a
@@ -487,9 +521,11 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// (<c>TransmitImagePreparer.BuildGradientBrush</c>), which has to compute real destination-image
     /// pixel coordinates by hand because ImageSharp's own gradient brushes have no relative-coordinate
     /// mode at all.</summary>
-    public IBrush ForegroundBrush => GradientEnabled
-        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
-        : new SolidColorBrush(ToAvaloniaColor(Color));
+    public IBrush ForegroundBrush => BitmapFillEnabled && CanvasBitmapFill is { } bitmapFill
+        ? new Avalonia.Media.ImageBrush(bitmapFill) { Stretch = Stretch.Fill }
+        : GradientEnabled
+            ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
+            : new SolidColorBrush(ToAvaloniaColor(Color));
 
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 
@@ -604,11 +640,71 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     partial void OnColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
 
-    partial void OnGradientEnabledChanged(bool value) => OnPropertyChanged(nameof(ForegroundBrush));
+    partial void OnGradientEnabledChanged(bool value)
+    {
+        // TX editor gap-items plan, item 4b -- mutual-exclusion half; see BitmapFillEnabled's own
+        // doc comment for why this is setter-level convenience, not the real precedence rule.
+        if (value)
+        {
+            BitmapFillEnabled = false;
+        }
+
+        OnPropertyChanged(nameof(ForegroundBrush));
+    }
 
     partial void OnGradientKindChanged(TextGradientKind value) => OnPropertyChanged(nameof(ForegroundBrush));
 
     partial void OnGradientStartColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
 
     partial void OnGradientEndColorChanged(Rgb24 value) => OnPropertyChanged(nameof(ForegroundBrush));
+
+    partial void OnBitmapFillEnabledChanged(bool value)
+    {
+        if (value)
+        {
+            GradientEnabled = false;
+        }
+
+        OnPropertyChanged(nameof(ForegroundBrush));
+    }
+
+    partial void OnBitmapFillSourceChanged(IImageSource? value)
+    {
+        // Same deferred-dispose-of-the-OLD-bitmap pattern as ImageElementViewModel.OnSourceChanged
+        // -- a WriteableBitmap holds a native/unmanaged resource nothing else disposes. Never fires
+        // at construction (the generated setter isn't invoked by the field initializer), so `old`
+        // here is always either null (first real assignment) or a previously-displayed bitmap.
+        var old = CanvasBitmapFill;
+        CanvasBitmapFill = value is not null ? ImageSourceBitmapConverter.ToBitmap(value) : null;
+        OnPropertyChanged(nameof(CanvasBitmapFill));
+        OnPropertyChanged(nameof(ForegroundBrush));
+        if (old is not null)
+        {
+            Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+        }
+    }
+
+    private bool _disposed;
+
+    /// <summary>Disposes <see cref="CanvasBitmapFill"/> when this element is discarded wholesale
+    /// (template reload, undo/redo ApplyState, single-element Remove/Flatten -- see
+    /// <c>TxImageEditorPaneViewModel</c>'s own <c>is IDisposable</c> discard-loop call sites, widened
+    /// from an <c>ImageElementViewModel</c>-only check to cover this class too) rather than reassigned
+    /// in place (<see cref="OnBitmapFillSourceChanged"/> above already handles that case). Deferred,
+    /// same reasoning as that method -- the corresponding canvas control's own detach from the visual
+    /// tree is not guaranteed synchronous with this call. Guarded against a second call (IDisposable's
+    /// own contract).</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (CanvasBitmapFill is { } bitmap)
+        {
+            Dispatcher.UIThread.Post(bitmap.Dispose, DispatcherPriority.Background);
+        }
+    }
 }

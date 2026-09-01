@@ -632,3 +632,28 @@ and its resolution, verified directly against current source, not inferred from 
   request (2026-08-29), a `ui_transition_plan.md` Tier 3 scope decision recorded here per that
   document's own instruction (record explicit reject/defer if rejected), even though nothing is
   technically being "removed" from a port that never included it.
+
+## Interactive bitmap-mask paint/draw editor (TBitMaskDlg)
+
+- **Legacy**: `BitMask.h`'s `class TBitMaskDlg : public TForm` (line 39) and its implementation in
+  `BitMask.cpp` — an in-app modal dialog for hand-building the bitmap used to mask a text/box fill,
+  with a real freehand paint canvas (`PBoxPaint` line 68, `PBoxMouseDown`/`PBoxMouseMove`/`PBoxMouseUp`
+  lines 70/73/75, `CBSizeChange` line 85 for brush size, `PaintBtnClick` line 77), load-from-file
+  (`LoadBtnClick` line 69), clipboard copy/paste (`SBCopyClick`/`SBPasteClick` lines 89/88), a color
+  adjust action (`SBColAdjClick` line 90), and drag-drop compositing between the mask's own upper/lower
+  halves (`PBoxLDragDrop`/`PBoxUDragDrop` lines 96/102). Scoped deliberately narrow: `MakeBitmapPtn`
+  (`BitMask.h` line 37, `BitMask.cpp`), the SEPARATE procedural 2-color dithered-pattern generator
+  `TBitMaskDlg` also used, is NOT covered by this entry — it already shipped, under a different name,
+  as `TextGradientKind.BitmapPattern` (Auditor usability review follow-up, 2026-08-18).
+- **Replacement**: TX editor gap-items plan item 4b (picture fill, 2026-09-01) — text elements can now
+  be filled with a real picture, picked from a file or the clipboard (`Panes.TxImageEditor.PictureFillFromFile`/
+  `PictureFillFromClipboard`), reusing the SAME `IFilePickerService` picker commands the "+ IMAGE"
+  toolbar button already uses for adding a whole image element.
+- **Not fully replaced**: the freehand paint canvas (`PBoxPaint`/the 3 mouse handlers/`CBSizeChange`)
+  and the upper/lower-half drag-drop compositing (`PBoxLDragDrop`/`PBoxUDragDrop`) have no replacement
+  — real image editors already exist and cover this ground far better than an in-app mini paint tool
+  would (CLAUDE.md §2: "improved on, not replicated," not a literal legacy re-implementation).
+- **Impact**: an operator who used to hand-paint a mask bitmap directly inside YONIQ, or drag-compose
+  it from the mask's own upper/lower halves, must now draw or compose that picture in external
+  software and import the finished file (or paste it from the clipboard) instead — the load and paste
+  paths are covered, the interactive paint/compose paths are not.
