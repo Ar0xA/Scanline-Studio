@@ -80,6 +80,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
+    /// <summary>Line element (TX editor gap-items plan, 2026-09-01) -- base <paramref name="X"/>/
+    /// <paramref name="Y"/>/<paramref name="Width"/>/<paramref name="Height"/> are derived-from-
+    /// endpoints values written for uniformity with every other snapshot's own shape (e.g. code that
+    /// lists every snapshot's bounds without knowing about lines specifically); <paramref name="X1"/>/
+    /// <paramref name="Y1"/>/<paramref name="X2"/>/<paramref name="Y2"/> are the SOLE truth when
+    /// reconstructing a live <see cref="LineElementViewModel"/> from one of these (same "endpoints
+    /// are truth" rule <see cref="PersistedLineElement"/> states for its own base fields).</summary>
+    public sealed record RawLineElementSnapshot(
+        double X, double Y, double Width, double Height, int Z, bool Locked,
+        double X1, double Y1, double X2, double Y2, Rgb24 StrokeColor, double StrokeThickness, double Opacity)
+        : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
+
     /// <summary>Which source an image element was resolved from, plus enough to re-resolve it later
     /// (spec/15-template-designer.md, plan-review finding) -- a resolved <see cref="IImageSource"/>
     /// alone can't tell Phase 5's persisted-template format whether to serialize a file reference or
@@ -866,6 +878,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 OverlayElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeText"),
                 BoxElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeBox"),
                 ImageElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeImage"),
+                LineElementViewModel => _localization.GetString("Panes.TxImageEditor.TypeBadgeLine"),
                 _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
             };
 
@@ -1199,6 +1212,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight),
+        LineElementViewModel line => new RawLineElementSnapshot(
+            line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
+            line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity),
         _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
     };
 
@@ -1298,6 +1314,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
+        // TX editor gap-items plan, line element -- plan-review round 1/3 finding: a line has no
+        // 8-handle box-resize concept at all (2 endpoint handles only), so this keyboard shortcut has
+        // nothing to redefine, rather than something to fix -- a no-op, not a special-cased
+        // Width/Height MATH the way ApplySnappedElementBounds' own line branch needed. Same reasoning
+        // as that method's own doc comment, applied to the simpler "nothing to do" case here.
+        if (element is LineElementViewModel)
+        {
+            return;
+        }
+
         var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, 1);
         element.Width = Math.Max(element.Width + (dxPixels / WorkingCopyWidth), MinNormalizedElementResizeSize);
         element.Height = Math.Max(element.Height + (dyPixels / WorkingCopyHeight), MinNormalizedElementResizeSize);
@@ -1316,6 +1342,67 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// same <c>_suspendPreview</c> + single explicit push pattern this mirrors).</summary>
     public void ApplySnappedElementBounds(ITemplateElementViewModel element, double x, double y, double width, double height)
     {
+        if (element is LineElementViewModel line)
+        {
+            // TX editor gap-items plan, line element -- plan-review round 2/3 finding: the
+            // caller's own x/y/width/height were computed generically off DERIVED Width/Height
+            // (see SnapElementBoundsToGrid's own doc comment -- it floors both to
+            // MinNormalizedElementSize, then folds that floor back into a recomputed CENTER),
+            // which for a degenerate (axis-aligned) line silently produces a wrong center, not
+            // just a discardable Width/Height. Ignored entirely here, not partially applied --
+            // each ENDPOINT is snapped independently instead (matching every other element's own
+            // "snap by edges," not by center), gated on SnapToGrid since this method is ALSO
+            // reached by the separate alignment-guide-snap path (which runs regardless of
+            // SnapToGrid -- an ungated branch would grid-snap a line even with grid-snap off).
+            // Alignment-guide snapping itself is out of scope for a line in v1 (deliberate scope
+            // cut, not designed) -- when SnapToGrid is off, this is correctly a no-op.
+            if (!SnapToGrid)
+            {
+                return;
+            }
+
+            var (snappedX1, snappedY1, snappedX2, snappedY2) =
+                (SnapValueToGrid(line.X1), SnapValueToGrid(line.Y1), SnapValueToGrid(line.X2), SnapValueToGrid(line.Y2));
+
+            // Code-review finding: the CALLER's own "did anything change" guard (TxImageEditorPaneView.
+            // OnCanvasPointerReleased, `x != element.X || ...`) compares against the derived box, which
+            // this branch ignores entirely -- so it can spuriously fire for a line whose real endpoints
+            // were ALREADY grid-aligned (the exact case the doc comment above describes: a degenerate
+            // line's floored-then-refolded box never actually matches its own endpoints). Re-checked
+            // here, against what this branch actually would write, so a genuinely-unchanged snap
+            // doesn't push a dead undo step (the first Ctrl+Z after such a drop would otherwise
+            // silently do nothing -- the exact failure mode this method's own doc comment, further
+            // down, exists to prevent for every OTHER element kind). Tolerance-based, NOT exact `==`
+            // (own test-caught finding): SnapValueToGrid's own divide-then-multiply round-trip can
+            // land on a different bit pattern than the ORIGINAL value even when both represent the
+            // same already-aligned grid line -- e.g. 0.35 round-trips to 0.35000000000000003 -- so an
+            // exact-equality check would spuriously call this a "change" for exactly the already-
+            // aligned case this guard exists to catch.
+            const double epsilon = 1e-9;
+            if (Math.Abs(snappedX1 - line.X1) < epsilon && Math.Abs(snappedY1 - line.Y1) < epsilon
+                && Math.Abs(snappedX2 - line.X2) < epsilon && Math.Abs(snappedY2 - line.Y2) < epsilon)
+            {
+                return;
+            }
+
+            PushUndoSnapshot();
+            _suspendPreview = true;
+            try
+            {
+                line.X1 = snappedX1;
+                line.Y1 = snappedY1;
+                line.X2 = snappedX2;
+                line.Y2 = snappedY2;
+            }
+            finally
+            {
+                _suspendPreview = false;
+            }
+
+            RecomputePreview();
+            return;
+        }
+
         PushUndoSnapshot();
         _suspendPreview = true;
         try
@@ -1332,6 +1419,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         RecomputePreview();
     }
+
+    // Same rounding formula as TxImageEditorPaneView.SnapElementBoundsToGrid's own private `Round`
+    // local (View-side, not referenceable from this VM) -- deliberately duplicated, not shared, same
+    // "separate, deliberately identical constant" convention MinNormalizedElementResizeSize's own doc
+    // comment already establishes for its own View-side counterpart (MinNormalizedElementSize).
+    private static double SnapValueToGrid(double value, double gridSize = 0.05) =>
+        Math.Round(value / gridSize, MidpointRounding.AwayFromZero) * gridSize;
 
     /// <summary>Shift+arrow resizes the crop rect's bottom-right corner by 1px and auto-engages
     /// stretch mode (<see cref="PreserveAspect"/> = false) -- legacy's own real behavior
@@ -1449,6 +1543,45 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RecomputePreview();
     }
 
+    /// <summary>TX editor gap-items plan (2026-09-01) -- same delegation shape as
+    /// <see cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>, a fixed horizontal default seed
+    /// (matching the plan's own "horizontal, DefaultElementWidth long, centered" default) via the
+    /// endpoint-parameterized <see cref="AddLineElementAt"/> below.</summary>
+    [RelayCommand]
+    private void AddLineElement()
+    {
+        var centerX = CropRect.X + (CropRect.Width / 2);
+        var centerY = CropRect.Y + (CropRect.Height / 2);
+        var halfWidth = DefaultElementWidth / 2;
+        AddLineElementAt(centerX - halfWidth, centerY, centerX + halfWidth, centerY);
+    }
+
+    /// <summary>TX workflow modernization plan, Phase 3a's own delegation shape (see
+    /// <see cref="AddOverlayElementAt"/>'s doc comment), endpoint-parameterized instead of
+    /// center/width/height -- the draw-to-place gesture's own anchor/release points ARE a line's
+    /// endpoints directly, with no rect-normalization step in between (deliberately NOT run through
+    /// <c>ComputeRectFromDrag</c>, which would lose direction/order).</summary>
+    public void AddLineElementAt(double x1, double y1, double x2, double y2)
+    {
+        PushUndoSnapshot();
+        var element = CreateLineElement(
+            x1: x1,
+            y1: y1,
+            x2: x2,
+            y2: y2,
+            strokeColor: new Rgb24(255, 255, 255),
+            strokeThickness: DefaultLineStrokeThickness,
+            opacity: 1.0,
+            z: NextZ(),
+            locked: false);
+        OverlayElements.Add(element);
+        SelectedOverlayElement = element;
+        // Force-selected unconditionally -- see AddOverlayElement's own identical comment. Line's
+        // applicable tab is Geometry (no dedicated Line Style tab, same as box).
+        SelectGeometryTab();
+        RecomputePreview();
+    }
+
     // Phase 1 defaults. DefaultTextElementHeight is deliberately well above DefaultFontSizeRelative
     // (~1.8x), not flush to it -- plan-review finding: TextMeasurer's own line height (ascender +
     // descender + gap) exceeds a bare em size, so a box sized tight to the font fraction would
@@ -1461,6 +1594,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     internal const double DefaultTextElementHeight = 0.18;
     internal const double DefaultBoxElementHeight = 0.2;
     private const double DefaultFontSizeRelative = 0.1;
+    // TX editor gap-items plan (2026-09-01) -- image-height-relative, same convention as
+    // BoxElementViewModel.BorderThickness; ~2-3px at a typical SSTV mode's own render height.
+    internal const double DefaultLineStrokeThickness = 0.01;
 
     /// <summary>New elements default to drawing on top of everything already on the canvas --
     /// existing max Z + 1, or 0 for the first element.</summary>
@@ -2137,6 +2273,56 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         return element;
     }
 
+    /// <summary>Line counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
+    /// -- same wiring shape, TX editor gap-items plan (2026-09-01). Endpoint-parameterized (not
+    /// center/width/height, matching every other element's own creation-factory shape) since a
+    /// line's real geometry is the two endpoints. <b>Object initializer sets X1/Y1/X2/Y2 directly,
+    /// deliberately NOT X/Y/Width/Height</b> (plan-review risk finding) -- unlike
+    /// <see cref="BoxElementViewModel"/>, where X/Y/Width/Height ARE the real stored fields,
+    /// <see cref="LineElementViewModel"/>'s X/Y/Width/Height are DERIVED get/set properties; assigning
+    /// them here would run the derived setters against still-default/zero endpoints in
+    /// object-initializer-assignment order, an unnecessary and undefined-feeling detour when the
+    /// real fields are directly assignable.</summary>
+    private LineElementViewModel CreateLineElement(
+        double x1, double y1, double x2, double y2, Rgb24 strokeColor, double strokeThickness, double opacity, int z, bool locked)
+    {
+        var element = new LineElementViewModel
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            StrokeColor = strokeColor,
+            StrokeThickness = strokeThickness,
+            Opacity = opacity,
+            Z = z,
+            Locked = locked,
+            ImageWidth = CanvasDisplayWidth,
+            ImageHeight = CanvasDisplayHeight,
+            TargetModeHeightPx = _targetMode.ImageHeight,
+            RemoveCommand = RemoveOverlayElementCommand,
+            MoveUpCommand = MoveElementUpCommand,
+            MoveDownCommand = MoveElementDownCommand,
+            BringToFrontCommand = BringToFrontCommand,
+            SendToBackCommand = SendToBackCommand,
+            DuplicateCommand = DuplicateCommand,
+            AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
+            CopyCommand = CopySelectedElementCommand,
+            CutCommand = CutSelectedElementCommand,
+            PasteCommand = PasteElementCommand,
+            FlattenCommand = FlattenElementCommand,
+            CopyStyleCommand = CopySelectedElementStyleCommand,
+            PasteStyleCommand = PasteSelectedElementStyleCommand,
+            // Set LAST, after X1/Y1/X2/Y2/StrokeColor/StrokeThickness/Opacity above -- same
+            // "avoid a spurious undo push from element creation itself" ordering trick
+            // CreateBoxElement's own identical comment documents.
+            PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
+            PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("LineStyle"),
+        };
+        element.PropertyChanged += OnOverlayElementPropertyChanged;
+        return element;
+    }
+
     /// <summary>Image counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
     /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
     private ImageElementViewModel CreateImageElement(
@@ -2197,6 +2383,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight),
+        // Endpoints (X1/Y1/X2/Y2), NOT the base X/Y/Width/Height -- RawLineElementSnapshot's own
+        // doc comment: the base fields are derived-for-uniformity-on-write only, endpoints are the
+        // sole truth on read.
+        RawLineElementSnapshot line => CreateLineElement(
+            line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity, line.Z, line.Locked),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
 
@@ -2349,6 +2540,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     image.X, image.Y, image.Width, image.Height, image.Z, image.Locked,
                     assetFileName, image.Fit, originKind, originPayload, image.IsBackground,
                     image.NaturalPixelWidth, image.NaturalPixelHeight);
+            case RawLineElementSnapshot line:
+                return new PersistedLineElement(
+                    line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
+                    line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {raw.GetType()}.");
         }
@@ -2421,6 +2616,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     // describes.
                     image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
                     image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height);
+            case PersistedLineElement line:
+                return new RawLineElementSnapshot(
+                    line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
+                    line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
         }
@@ -2594,6 +2793,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(SelectedTextElement));
         OnPropertyChanged(nameof(SelectedImageElement));
         OnPropertyChanged(nameof(SelectedBoxElement));
+        // Code-review finding: the same "check every sibling on a notification set" bug class this
+        // project has hit repeatedly -- SelectedLineElement was added alongside SelectedBoxElement's
+        // own declaration but never wired into this raise list, leaving the GEOMETRY tab's future
+        // line-style block permanently stale on selection change.
+        OnPropertyChanged(nameof(SelectedLineElement));
         OnPropertyChanged(nameof(SelectionReadoutText));
         OnPropertyChanged(nameof(SelectedTextElementFontSizePx));
         OnPropertyChanged(nameof(SelectedTextElementStrokeThicknessPx));
@@ -2805,6 +3009,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// for the GEOMETRY tab's new box-only style block.</summary>
     public BoxElementViewModel? SelectedBoxElement => SelectedOverlayElement as BoxElementViewModel;
 
+    /// <summary>TX editor gap-items plan (2026-09-01) -- same narrowed-cast shape as
+    /// <see cref="SelectedBoxElement"/>, for the GEOMETRY tab's new line-only style block.</summary>
+    public LineElementViewModel? SelectedLineElement => SelectedOverlayElement as LineElementViewModel;
+
     /// <summary>Same target-mode-height px conversion as <see cref="SelectedTextElementStrokeThicknessPx"/>,
     /// for <see cref="BoxElementViewModel.BorderThickness"/> (same relative-to-image-height convention,
     /// see that property's own doc comment).</summary>
@@ -2953,6 +3161,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 SelectImageTab();
                 break;
             case BoxElementViewModel:
+            case LineElementViewModel:
                 SelectGeometryTab();
                 break;
         }
@@ -3455,6 +3664,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 Y = Math.Clamp(box.Y + offset, 0, 1),
                 Z = NextZ(),
             },
+            // Plan-review-flagged real trap: offsetting the base X/Y here (like every case above)
+            // would do NOTHING for a line -- CreateElementFromSnapshot's own line case reads ONLY
+            // X1/Y1/X2/Y2 (the sole truth, see RawLineElementSnapshot's own doc comment), never the
+            // base fields, so a clone/duplicate/paste would land EXACTLY on top of the original at
+            // the same position (though a new Z, so at least not perfectly indistinguishable) -- the
+            // `var other => other` fallthrough below would have hit this silently.
+            // Code-review finding: a bare `Math.Clamp` PER ENDPOINT (like every case above) is wrong
+            // here specifically -- an off-canvas line is legal (Rotate's own doc comment: elements
+            // may sit "free overflow" past [0,1], clipped only at render time), and clamping each
+            // endpoint independently can move one endpoint closer to the other than the other,
+            // distorting the line's own length/angle on duplicate. OffsetLineSnapshot computes ONE
+            // delta valid for BOTH endpoints on each axis, so the line's shape survives exactly (or
+            // the clone doesn't move on that axis at all, if the line already spans past what ANY
+            // single shared shift could keep in-bounds).
+            RawLineElementSnapshot line => OffsetLineSnapshot(line, offset),
             var other => other,
         };
 
@@ -3464,6 +3688,34 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         SelectedOverlayElement = copy;
         RecomputePreview();
         return copy;
+    }
+
+    /// <summary>Extracted (2nd-round code-review nit) so the shared-per-axis delta is computed ONCE
+    /// each, not twice via duplicated call sites in a switch-expression arm -- a future edit to one
+    /// of two copy-pasted calls and not its twin would silently reintroduce the exact distortion bug
+    /// <see cref="ClampSharedOffsetDelta"/> exists to prevent, with no compiler warning.</summary>
+    private RawLineElementSnapshot OffsetLineSnapshot(RawLineElementSnapshot line, double offset)
+    {
+        var dx = ClampSharedOffsetDelta(offset, line.X1, line.X2);
+        var dy = ClampSharedOffsetDelta(offset, line.Y1, line.Y2);
+        return line with { X1 = line.X1 + dx, X2 = line.X2 + dx, Y1 = line.Y1 + dy, Y2 = line.Y2 + dy, Z = NextZ() };
+    }
+
+    /// <summary>Clamps a single shift amount so BOTH <paramref name="a"/> and <paramref name="b"/>
+    /// (a line's two endpoint coordinates on one axis) stay inside <c>[0,1]</c> when shifted by the
+    /// SAME delta -- see <see cref="InsertClonedSnapshot"/>'s own line-case doc comment for why a
+    /// bare per-endpoint <c>Math.Clamp</c> is wrong here. Returns 0 (no shift) rather than throwing
+    /// if no single shared delta could keep both endpoints in range (only reachable when the line
+    /// already spans more than the whole canvas on this axis) -- a total function. Can return a
+    /// delta that INVERTS SIGN and/or EXCEEDS <paramref name="offset"/> in magnitude (2nd-round
+    /// code-review nit on this doc comment's own prior wording, which read as if the result were
+    /// always a mild trim) -- e.g. a line already past the canvas edge can need to shift the OPPOSITE
+    /// direction from the nominal +offset seed to land both endpoints back in range at all.</summary>
+    private static double ClampSharedOffsetDelta(double offset, double a, double b)
+    {
+        var min = Math.Max(-a, -b);
+        var max = Math.Min(1 - a, 1 - b);
+        return min <= max ? Math.Clamp(offset, min, max) : 0;
     }
 
     /// <summary>TX workflow modernization plan, Phase 3b -- Ctrl-drag-to-duplicate, called from
@@ -3553,12 +3805,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// reachable for them.</summary>
     private RawElementSnapshot? _styleClipboardSnapshot;
 
-    private bool CanCopySelectedElementStyle() => SelectedOverlayElement is OverlayElementViewModel or BoxElementViewModel;
+    private bool CanCopySelectedElementStyle() => SelectedOverlayElement is OverlayElementViewModel or BoxElementViewModel or LineElementViewModel;
 
     [RelayCommand(CanExecute = nameof(CanCopySelectedElementStyle))]
     private void CopySelectedElementStyle()
     {
-        if (SelectedOverlayElement is not (OverlayElementViewModel or BoxElementViewModel))
+        if (SelectedOverlayElement is not (OverlayElementViewModel or BoxElementViewModel or LineElementViewModel))
         {
             return;
         }
@@ -3571,6 +3823,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     {
         RawTextElementSnapshot => SelectedOverlayElement is OverlayElementViewModel,
         RawBoxElementSnapshot => SelectedOverlayElement is BoxElementViewModel,
+        RawLineElementSnapshot => SelectedOverlayElement is LineElementViewModel,
         _ => false,
     };
 
@@ -3626,6 +3879,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.GradientKind = style.GradientKind;
                     box.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
                     box.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
+                    break;
+                case (RawLineElementSnapshot style, LineElementViewModel line):
+                    line.StrokeColor = style.StrokeColor;
+                    line.StrokeThickness = style.StrokeThickness;
+                    line.Opacity = style.Opacity;
                     break;
             }
         }
@@ -4138,6 +4396,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // transform (Phase 1 addition) -- exactly the same swap TransformCropRectClockwise
                 // already applies to the crop rect's own Width/Height below, for the same reason (a
                 // 90° rotation of a box swaps which axis is "wide").
+                if (element is LineElementViewModel line)
+                {
+                    // TX editor gap-items plan, line element -- plan-review round 1/3 finding: the
+                    // generic X/Y/Width/Height transform below is a valid rotation for a BOX (whose
+                    // X/Y/Width/Height are independent, real fields), but for a line -- whose
+                    // Width/Height are DERIVED, unsigned magnitudes of the endpoints -- running the
+                    // SAME transform through those derived properties turns a 90° rotation into a
+                    // MIRROR (and collapses a horizontal line's Height to 0, then asks the Width
+                    // setter to grow a zero extent under an ambiguous rule). Rotating BOTH endpoints
+                    // directly with the identical per-point transform used below sidesteps the
+                    // derived-property ambiguity entirely -- verified (round 2 plan-review): 4
+                    // applications compose to the identity, same as the generic path's own
+                    // 4-clicks-returns-to-start property, for every starting orientation including a
+                    // degenerate point.
+                    var (x1, y1) = (line.X1, line.Y1);
+                    var (x2, y2) = (line.X2, line.Y2);
+                    line.X1 = 1 - y1;
+                    line.Y1 = x1;
+                    line.X2 = 1 - y2;
+                    line.Y2 = x2;
+                    continue;
+                }
+
                 var (x, y) = (element.X, element.Y);
                 element.X = 1 - y;
                 element.Y = x;
@@ -4456,7 +4737,36 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // same "cascade, not a driver" reasoning as CanvasFontSize above.
             or nameof(OverlayElementViewModel.FontSizePx)
             or nameof(BoxElementViewModel.BorderThicknessPx)
-            or nameof(BoxElementViewModel.CornerRadiusPx))
+            or nameof(BoxElementViewModel.CornerRadiusPx)
+            // TX editor gap-items plan (2026-09-01, line element) -- same "pure px-unit/canvas-chrome
+            // cascade of an already-unfiltered driver (StrokeThickness)" reasoning as
+            // BorderThicknessPx/CornerRadiusPx/CanvasBorderThicknessPixels above. Both names are
+            // unique to LineElementViewModel, so no sender-type check is needed here (unlike
+            // X/Y/Width/Height just below, whose SAME names are real, unfiltered drivers for every
+            // other element kind).
+            or nameof(LineElementViewModel.CanvasStrokeThicknessPixels)
+            or nameof(LineElementViewModel.StrokeThicknessPx)
+            or nameof(LineElementViewModel.CanvasStartPoint)
+            or nameof(LineElementViewModel.CanvasEndPoint))
+        {
+            return;
+        }
+
+        // TX editor gap-items plan (2026-09-01, line element), plan-review round 1 finding: for
+        // EVERY other element kind, X/Y/Width/Height ARE the real backing fields, so they're
+        // deliberately left OUT of the global filter above (they feed the pipeline directly). For a
+        // LineElementViewModel specifically, X1/Y1/X2/Y2 are the real backing fields instead --
+        // X/Y/Width/Height are DERIVED cascades of those (see LineElementViewModel.RaiseGeometryChanged's
+        // own doc comment), so leaving them unfiltered for a line sender would double-recompute every
+        // endpoint edit: once from the raw X1/Y1/X2/Y2 notification (still unfiltered, the real
+        // driver), once more from this cascade -- the exact "FillBrush" double-recompute bug class
+        // already fixed once for box gradient fill. Sender-typed, not name-only, since these same
+        // names must stay unfiltered for every OTHER element kind.
+        if (sender is LineElementViewModel
+            && e.PropertyName is nameof(ITemplateElementViewModel.X)
+                or nameof(ITemplateElementViewModel.Y)
+                or nameof(ITemplateElementViewModel.Width)
+                or nameof(ITemplateElementViewModel.Height))
         {
             return;
         }
@@ -5069,8 +5379,30 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
                     : null),
             ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
+            // Deliberately NOT `bounds` (computed above from element.X/Y/Width/Height, which for a
+            // line are DERIVED cascades of the endpoints, not independent geometry) -- each endpoint
+            // is projected individually via ProjectRectToCropRelative(x, y, 0, 0) (round-2 plan-review,
+            // confirmed correct: with width=height=0 the center-to-top-left conversion is a no-op in
+            // every branch, so .X/.Y of the result IS the projected point), then the pipeline's own
+            // Bounds is the ink-inflated box around those two projected points -- see
+            // TemplateLineElement's own doc comment for why an un-inflated axis-aligned line would be
+            // silently dropped by ApplyTemplate's shared skip rule. StrokeThickness passed straight
+            // through unscaled, matching TemplateBoxElement.BorderThickness's own established
+            // precedent just above (style-relative sizes are height-relative to the FINAL render, not
+            // reprojected through crop scaling the way geometry is).
+            LineElementViewModel line => BuildTemplateLineElement(line),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
+    }
+
+    private TemplateLineElement BuildTemplateLineElement(LineElementViewModel line)
+    {
+        var p1 = ProjectRectToCropRelative(line.X1, line.Y1, 0, 0);
+        var p2 = ProjectRectToCropRelative(line.X2, line.Y2, 0, 0);
+        var lineBounds = TemplateLineGeometry.ComputeInflatedBounds(
+            p1.X, p1.Y, p2.X, p2.Y, line.StrokeThickness,
+            imageWidthPx: _targetMode.ImageWidth, imageHeightPx: _targetMode.ImageHeight);
+        return new TemplateLineElement(lineBounds, line.Z, p1.X, p1.Y, p2.X, p2.Y, line.StrokeColor, line.StrokeThickness, line.Opacity);
     }
 
     /// <summary>Re-projects an element's CENTER-anchored X/Y/Width/Height from
