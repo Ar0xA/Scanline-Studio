@@ -55,6 +55,17 @@ public interface IFilePickerService
     /// format value here is the source of truth.</summary>
     Task<(string Path, ImageExportFormat Format)?> PickSaveImageFileAsync(string suggestedFileName);
 
+    /// <summary>TX history plan (2026-09-01) -- the "Save" action on a
+    /// <c>TxControlsPaneViewModel.SentFrames</c> entry. PNG-only (no JPEG choice offered at all,
+    /// unlike <see cref="PickSaveImageFileAsync"/>'s two-format dialog): this app has no JPEG
+    /// encoder reachable from an in-memory <c>IImageSource</c> (only <c>IImageSourceWriter.WritePngAsync</c>),
+    /// so silently forcing a JPEG pick's extension to <c>.png</c> would violate
+    /// <see cref="PickSaveImageFileAsync"/>'s own documented "the format value is the source of
+    /// truth" contract instead of just not offering the choice. Same single-format shape as
+    /// <see cref="PickSaveWavFileAsync"/>/<see cref="PickSaveAdifFileAsync"/>. Returns the chosen
+    /// local path, or <see langword="null"/> if the user cancelled.</summary>
+    Task<string?> PickSavePngFileAsync(string suggestedFileName);
+
     /// <summary>Piece C2 (RX tab Re-decode port): returns the picked WAV file's local path, or
     /// <c>null</c> if the user cancelled.</summary>
     Task<string?> PickOpenWavFileAsync();
