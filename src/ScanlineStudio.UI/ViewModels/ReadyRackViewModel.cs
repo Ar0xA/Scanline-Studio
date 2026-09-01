@@ -208,6 +208,12 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     /// once in its own constructor and calls its <c>LoadTemplateAsync</c>.</summary>
     public event Action<string>? TemplateSelected;
 
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): Ctrl+number's own signal, separate from
+    /// <see cref="TemplateSelected"/> -- plain-number recall stays load-only, unchanged; Ctrl+number
+    /// is an ADDITIVE sibling gesture routed through <c>TxImageEditorPaneViewModel.OnReadyRackDirectFireRequested</c>'s
+    /// own load + re-seed + bake + fire chain instead.</summary>
+    public event Action<string>? TemplateDirectFireRequested;
+
     /// <summary>Re-lists every saved template (<see cref="ITemplateStore.ListAsync"/> re-enumerates
     /// the directory every call -- a template folder copied in by hand shows up here without an app
     /// restart) and re-resolves the pin list against it. Real edge case, not ignored (plan-review):
@@ -291,6 +297,27 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         if (Slots[slotNumber - 1].Template is { } template)
         {
             TemplateSelected?.Invoke(template.Id);
+        }
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): Ctrl+number's own accelerator (`Key.D1`..
+    /// `Key.D9`/`Key.NumPad1`..`Key.NumPad9`, `OnRootKeyDown`'s `ctrlOrCmd`-gated digit branch) --
+    /// literal structural clone of <see cref="RecallSlot"/>, a no-op on an empty slot, but raises
+    /// <see cref="TemplateDirectFireRequested"/> instead of <see cref="TemplateSelected"/> so
+    /// <c>TxImageEditorPaneViewModel</c> can route it through its own separate arm/confirm +
+    /// load + re-seed + bake + fire chain (<c>OnReadyRackDirectFireRequested</c>) rather than the
+    /// plain load-only path.</summary>
+    [RelayCommand]
+    private void DirectFireSlot(int slotNumber)
+    {
+        if (slotNumber is < 1 or > SlotCount)
+        {
+            return;
+        }
+
+        if (Slots[slotNumber - 1].Template is { } template)
+        {
+            TemplateDirectFireRequested?.Invoke(template.Id);
         }
     }
 

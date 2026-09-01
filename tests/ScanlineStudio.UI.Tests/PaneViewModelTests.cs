@@ -3346,6 +3346,166 @@ public sealed class PaneViewModelTests
         Assert.Equal("DE {his_call}", element.ResolvedText);
     }
 
+    /// <summary>Ready Rack direct-fire plan (2026-09-01), auditor code-review round 2's finding:
+    /// the plan's FIRST draft would have reversed <see cref="TxControlsPaneViewModel_OpenEditorForExternalFileAsync_NullContactVariables_LeavesTokenUnresolved_EvenWithARxContactWired"/>'s
+    /// own decision by passing a live contact provider unconditionally at every construction call
+    /// site -- this proves the fix: a direct-fire on a Gallery-sourced editor (no linked QSO) still
+    /// does not leak the live RX contact, same as an ordinary load already didn't.
+    ///
+    /// Code-review round 3 finding: fires TWICE, not once -- a first draft asserted only the
+    /// post-fire-#1 state, which cannot distinguish "the reopen correctly inherited null" from "the
+    /// reopen unconditionally re-armed a live provider, and it just happens fire #1's own template
+    /// text never got re-baked with it." Firing again on the REOPENED editor and asserting it STILL
+    /// doesn't leak is what actually proves the inheritance (not just the construction-site
+    /// threading) holds across the whole pileup-fire chain, not just its first link.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_DirectFire_DoesNotLeakLiveContactEvenWithRxContactWired()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var templateStore = new FakeTemplateStore();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += e => opened = e;
+
+        await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", null);
+        Dispatcher.UIThread.RunJobs();
+        var editor = opened!;
+        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
+        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
+        ]));
+        await editor.ReadyRack.RefreshAsync();
+        var row = Assert.Single(editor.ReadyRack.AllTemplates);
+        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
+
+        editor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #1 -- no unsaved edits yet, one press
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        var reopenedAfterFirst = opened!; // EditorOpened fires again for the post-fire reopen
+        Assert.NotSame(editor, reopenedAfterFirst);
+        var firstElement = (OverlayElementViewModel)reopenedAfterFirst.OverlayElements[0];
+        Assert.Equal("DE {his_call}", firstElement.ResolvedText); // unresolved -- W1AW never leaked in
+
+        reopenedAfterFirst.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #2 -- still one press (no unsaved edits)
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        var reopenedAfterSecond = opened!;
+        Assert.NotSame(reopenedAfterFirst, reopenedAfterSecond);
+        var secondElement = (OverlayElementViewModel)reopenedAfterSecond.OverlayElements[0];
+        Assert.Equal("DE {his_call}", secondElement.ResolvedText); // STILL unresolved -- inheritance holds, not just fire #1
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): the actual pileup loop this whole feature
+    /// exists for -- confirmed auditor round-1 BLOCKER (the ordinary "close and leave empty"
+    /// behavior would strand the rack after exactly one fire) and its fix (reopen via
+    /// EditCurrentImageAsync's own real-photo-preserving path, not OpenBlankEditorCommand's
+    /// placeholder). Proves the reopened editor: (1) carries the REAL photo forward, not a blank
+    /// placeholder (round-1 blocker's own failure mode); (2) has no unsaved edits, so a SECOND
+    /// direct-fire succeeds on one press with no re-arm needed; (3) genuinely RE-SEEDS from the LIVE
+    /// contact on that second fire, not just the constructor's own one-shot value carried through --
+    /// code-review finding on an earlier draft of this test: it left CurrentContactRequested
+    /// returning the SAME callsign for both fires, so it could not distinguish a live re-seed from
+    /// EditorInitialState simply carrying the original constructor-seeded value forward unchanged.
+    /// This version switches the live contact to a DIFFERENT station between fire #1 and fire #2 and
+    /// asserts the NEW one, which only a genuine live re-seed on the reopened editor's own fire can
+    /// produce.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_DirectFire_ReopensWithRealPhoto_SecondFireSucceedsImmediatelyWithFreshContact()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var templateStore = new FakeTemplateStore();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
+        {
+            CurrentContactRequested = () => ("W1AW", "FN31pr"),
+        };
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var originalPhoto = firstEditor.CurrentSource;
+        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
+        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
+        ]));
+        await firstEditor.ReadyRack.RefreshAsync();
+        var row = Assert.Single(firstEditor.ReadyRack.AllTemplates);
+        await firstEditor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
+
+        TxImageEditorPaneViewModel? reopened = null;
+        vm.EditorOpened += e => reopened = e;
+        firstEditor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #1
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(reopened);
+        Assert.NotSame(firstEditor, reopened);
+        Assert.Same(originalPhoto, reopened!.CurrentSource); // the real photo, NOT a blank placeholder
+        Assert.False(reopened.HasUnsavedEdits); // ready for a one-press fire, no re-arm needed
+        Assert.Equal("W1AW", reopened.TemplateVariables["his_call"]); // carried forward from fire #1
+
+        vm.CurrentContactRequested = () => ("K1ABC", "FN20xx"); // a NEW station is now being worked
+        // Captured BEFORE firing -- vm.EditorOpened's subscription above reassigns `reopened` to a
+        // THIRD editor instance the moment fire #2 itself triggers ITS OWN reopen, so this local is
+        // what still refers to the editor that actually did fire #2's own re-seed.
+        var secondEditor = reopened;
+        var secondFired = false;
+        secondEditor.DirectFireRequested += _ => secondFired = true;
+        secondEditor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #2 -- SAME slot, still pinned (rack state persists)
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(secondFired); // one press, not two -- proves HasUnsavedEdits stayed false
+        Assert.Equal("K1ABC", secondEditor.TemplateVariables["his_call"]); // fresh live re-seed, not W1AW carried forward
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01), code-review round 3's own most significant
+    /// finding: the FIRST fix for the caller-intent leak derived live-tracking intent from whether
+    /// <c>BuildCurrentContactVariables()</c> happened to be non-null AT CONSTRUCTION time
+    /// (<c>currentContactVariables is not null ? BuildCurrentContactVariables : null</c>) -- that
+    /// value is null whenever no station has been decoded YET, the common cold-start case for
+    /// Browse/Stock/Blank/Copy-to-TX, so it would have left this feature's whole re-seed capability
+    /// silently dead for any editor opened before the first contact of a session. Mutation-verified:
+    /// reverting to that exact conditional does NOT make
+    /// <see cref="TxControlsPaneViewModel_DirectFire_ReopensWithRealPhoto_SecondFireSucceedsImmediatelyWithFreshContact"/>
+    /// fail, because that test already has a contact wired before opening -- THIS test is the one
+    /// that actually covers the cold-start case: no contact wired at open time, a real one wired
+    /// only afterward, before the first fire.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_DirectFire_NoContactAtOpenTime_StillReSeedsOnFirstFire()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var templateStore = new FakeTemplateStore();
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        // CurrentContactRequested is deliberately left UNWIRED here -- the cold-start case: opening
+        // the editor before any station has been decoded this session.
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
+        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
+        ]));
+        await editor.ReadyRack.RefreshAsync();
+        var row = Assert.Single(editor.ReadyRack.AllTemplates);
+        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
+
+        // A real station is now being worked -- wired AFTER the editor already exists.
+        vm.CurrentContactRequested = () => ("K1ABC", "FN20xx");
+        editor.ReadyRack.DirectFireSlotCommand.Execute(1); // no unsaved edits yet -- fires on one press
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("K1ABC", editor.TemplateVariables["his_call"]);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_ClaimRefused_ReturnsFalse_DoesNotRequestTransmitTabFocus()
     {
