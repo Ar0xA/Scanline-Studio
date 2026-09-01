@@ -4297,6 +4297,140 @@ public sealed class OptionsWindowViewModelTests
         Assert.False(vm.IsConfirmingDatabaseRestart);
     }
 
+    // User-reported bug (2026-09-01): "Auto save RX audio" only took effect via its own row's Apply
+    // button, not this window's general Apply/Save -- the whole Storage section was excluded from
+    // OptionsSnapshot. User chose (AskUserQuestion) full consistency: SaveCommand/ApplyCommand now
+    // reuse each row's own Apply*Async method directly, gated the same way that method's own
+    // "nothing typed" guard already is.
+
+    [AvaloniaFact]
+    public async Task SaveCommand_AlsoAppliesTheImagesDirectory_WithoutTheRowsOwnApplyButton()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = CreateViewModelForStorageTests(historyStore);
+        vm.ImagesDirectory = "/images/saved-via-general-save";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/images/saved-via-general-save", historyStore.ImagesDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_AlsoAppliesAudioEnabledAndDirectory_BothPersistedAndLiveApplied()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModelForStorageTests(historyStore, sstvSession: sstvSession);
+        vm.AudioSaveEnabled = true;
+        vm.AudioDirectory = "/audio/saved-via-general-save";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(historyStore.AutoSaveAudioEnabled);
+        Assert.Equal("/audio/saved-via-general-save", historyStore.AudioDirectory);
+        Assert.Equal(["/audio/saved-via-general-save"], sstvSession.SetAudioDirectoryCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_AlsoAppliesTheLogDirectory_WithoutTheRowsOwnApplyButton()
+    {
+        var appLocationsService = new FakeAppLocationsService();
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+        vm.LogDirectory = "/logs/saved-via-general-save";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/logs/saved-via-general-save", appLocationsService.LogDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_ConfigDirectoryInputTyped_AlsoAppliesTheConfigDirectory()
+    {
+        var appLocationsService = new FakeAppLocationsService();
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+        vm.ConfigDirectoryInput = "/config/saved-via-general-save";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/config/saved-via-general-save", appLocationsService.ConfigDirectory);
+        Assert.Equal("/config/saved-via-general-save", vm.ConfigDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_ConfigDirectoryInputNeverTouched_DoesNotCallApply_NoSpuriousError()
+    {
+        // ConfigDirectoryInput is empty-seeded (unlike ImagesDirectory/LogDirectory, which are
+        // pre-filled with the current value) -- a general Save meant for an unrelated tab must not
+        // call ApplyConfigDirectoryAsync at all here, or its own "blank means error" guard would
+        // paint a spurious "No folder chosen" error on this row every single time.
+        var appLocationsService = new FakeAppLocationsService { ConfigDirectory = "/config/unchanged" };
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/config/unchanged", appLocationsService.ConfigDirectory);
+        Assert.Null(vm.ConfigDirectoryErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PendingDatabaseDirectoryTyped_AlsoStagesIt_AndShowsTheRestartConfirm()
+    {
+        // Database only STAGES (Apply*Async never applies it live) -- the row's own existing
+        // restart-confirmation UI is the safety gate that stays; general Save must not bypass it,
+        // only reach the same staged state the row's own Apply button already produces.
+        var appLocationsService = new FakeAppLocationsService();
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+        vm.PendingDatabaseDirectory = "/db/saved-via-general-save";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/db/saved-via-general-save", appLocationsService.PendingDatabaseDirectory);
+        Assert.True(vm.IsConfirmingDatabaseRestart);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_PendingDatabaseDirectoryChangedSinceLoad_ReStagesTheNewTarget()
+    {
+        // Round-2 code-review finding: the other Database tests only cover baseline-null-then-typed
+        // -- this covers the gate's own dangerous failure mode (silently swallowing a REAL change) by
+        // starting with something ALREADY staged from load, then typing a genuinely different target.
+        var appLocationsService = new FakeAppLocationsService { PendingDatabaseDirectory = "/db/already-pending" };
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+        vm.PendingDatabaseDirectory = "/db/a-different-target";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/db/a-different-target", appLocationsService.PendingDatabaseDirectory);
+        Assert.True(vm.IsConfirmingDatabaseRestart);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_NothingPendingForDatabase_DoesNotCallApply_NoSpuriousError()
+    {
+        var appLocationsService = new FakeAppLocationsService { PendingDatabaseDirectory = null };
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.DatabaseDirectoryErrorMessage);
+        Assert.False(vm.IsConfirmingDatabaseRestart);
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyCommand_SameAsSaveCommand_AlsoAppliesTheStorageSection_WithoutClosingTheWindow()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = CreateViewModelForStorageTests(historyStore);
+        var closeRequested = false;
+        vm.RequestClose += () => closeRequested = true;
+        vm.ImagesDirectory = "/images/applied-not-saved";
+
+        await vm.ApplyCommand.ExecuteAsync(null);
+
+        Assert.Equal("/images/applied-not-saved", historyStore.ImagesDirectory);
+        Assert.False(closeRequested);
+    }
+
     [AvaloniaFact]
     public async Task ConfirmDatabaseRestartCommand_WhenTheDialogHasNoUnsavedEdits_SetsRestartRequestedAndRaisesTheEvent()
     {
@@ -4374,8 +4508,14 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task SaveCancelAndResetGeneralToDefault_LeaveAllFourStorageRowsAndAnyPendingStateUntouched()
+    public async Task SaveOfAnUntouchedDialog_ReSavesTheSameStorageValues_NeverRePopsTheDatabaseRestartConfirm()
     {
+        // A PRE-EXISTING pending Database relocation (staged in an earlier session, per
+        // PendingDatabaseDirectory being non-blank at LOAD time, not typed this session) must not
+        // make an UNRELATED general Save re-stage it and re-show the restart confirm -- code-review
+        // finding: an earlier version of this fix gated only on non-blank, which re-popped the
+        // confirm (and undid an explicit "Not Now") on every subsequent Save. CancelCommand/
+        // ResetGeneralToDefaultCommand still never reference the Storage rows at all (by omission).
         var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/images/current" };
         var appLocationsService = new FakeAppLocationsService
         {
@@ -4387,7 +4527,11 @@ public sealed class OptionsWindowViewModelTests
         var vm = CreateViewModelForStorageTests(historyStore, appLocationsService);
 
         await vm.SaveCommand.ExecuteAsync(null);
-        Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
+
+        Assert.Equal("/images/current", historyStore.ImagesDirectory); // re-saved, but unchanged
+        Assert.Equal("/logs/current", appLocationsService.LogDirectory); // re-saved, but unchanged
+        Assert.Equal("/db/pending", vm.PendingDatabaseDirectory); // still whatever was already staged
+        Assert.False(vm.IsConfirmingDatabaseRestart); // NOT re-popped -- the real bug this test pins
 
         vm.CancelCommand.Execute(null);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
@@ -4398,6 +4542,44 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("/db/current", vm.DatabaseDirectory);
         Assert.Equal("/db/pending", vm.PendingDatabaseDirectory);
         Assert.Equal("/logs/current", vm.LogDirectory);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_AfterNotNowDismissal_DoesNotRePopTheRestartConfirmOnANextUnrelatedSave()
+    {
+        // The exact scenario the reviewer flagged: user applies a Database relocation, dismisses the
+        // resulting confirm with "Not Now", then saves something unrelated -- the confirm must stay
+        // dismissed, not reappear.
+        var appLocationsService = new FakeAppLocationsService();
+        var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
+        vm.PendingDatabaseDirectory = "/db/new-target";
+        await vm.ApplyDatabaseDirectoryCommand.ExecuteAsync(null);
+        Assert.True(vm.IsConfirmingDatabaseRestart);
+
+        vm.CancelDatabaseRestartCommand.Execute(null);
+        Assert.False(vm.IsConfirmingDatabaseRestart);
+
+        vm.Callsign = "PD3AN"; // an edit on a totally unrelated tab
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsConfirmingDatabaseRestart);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_WhenTheStorageLocationsLoadFailed_SkipsTheWholeStorageBlock_NeverResetsToBlank()
+    {
+        // Code-review finding: LoadStorageLocationsSafeAsync is its OWN fire-and-forget, separate
+        // from the one CanSave/_loadSucceeded track -- if it throws, ImagesDirectory/AudioDirectory/
+        // LogDirectory are left at their blank construction default, and blank is NOT a no-op
+        // downstream for these three (each resolves to "reset to app default"). A general Save that
+        // still ran the Storage block here would silently reset real, already-persisted directories
+        // the user never touched, purely because an unrelated load happened to fail.
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/images/real-current-value", ThrowOnGetImagesDirectory = true };
+        var vm = CreateViewModelForStorageTests(historyStore);
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("/images/real-current-value", historyStore.ImagesDirectory);
     }
 
     /// <summary>Forces the real <see cref="OptionsSettingsService.SaveAsync"/>/
