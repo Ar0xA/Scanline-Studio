@@ -590,11 +590,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public CaptureDeviceApplyResult CaptureDeviceApplyResultToReturn { get; set; } = CaptureDeviceApplyResult.Applied;
 
+    /// <summary>When set, <see cref="RequestCaptureDeviceAsync"/> throws this instead of returning
+    /// -- same shape as <see cref="PersistSenseLevelException"/> below, for a test to simulate a real
+    /// failure (e.g. RequestCaptureDeviceAsync's own real _rxTransitionGate-timeout TimeoutException).</summary>
+    public Exception? RequestCaptureDeviceException { get; set; }
+
     public Task<CaptureDeviceApplyResult> RequestCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct = default)
     {
         RequestCaptureDeviceCallCount++;
         LastRequestedCaptureDevice = (deviceId, deviceName);
-        return Task.FromResult(CaptureDeviceApplyResultToReturn);
+        return RequestCaptureDeviceException is { } ex ? Task.FromException<CaptureDeviceApplyResult>(ex) : Task.FromResult(CaptureDeviceApplyResultToReturn);
     }
 
     public int PersistSenseLevelCallCount { get; private set; }

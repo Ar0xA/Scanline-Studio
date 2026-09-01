@@ -2580,6 +2580,117 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task SaveCommand_AppliesTheSelectedCaptureDeviceLive()
+    {
+        // User-reported bug (2026-09-01): "changing the audio input/output required a restart to
+        // actually work." Root cause: ISstvSessionService.RequestCaptureDeviceAsync already existed
+        // (built for ConfigurationPresetService's own apply path) but SaveCoreUnguardedAsync never
+        // called it, so a device picked here only took effect on the next app restart. This test
+        // locks down the fix -- Save must now call it with the newly-selected device.
+        var audioDeviceEnumerator = new FakeAudioDeviceEnumerator { InputDevices = [CaptureDevice], OutputDevices = [PlaybackDevice] };
+        var sstvSession = new FakeSstvSessionService();
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), audioDeviceEnumerator, new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedCaptureDevice = CaptureDevice;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, sstvSession.RequestCaptureDeviceCallCount);
+        Assert.Equal(("cap1", "Capture One"), sstvSession.LastRequestedCaptureDevice);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_CaptureDeviceChangeDeferred_StillPersistsAndCloses()
+    {
+        // 2nd-round auditor finding: only the happy path and the throw path were covered -- the
+        // DeferredRecordingInProgress branch (a recording is in progress when Save runs) was
+        // untested. Unlike sample rate's own equivalent, this branch has no user-facing dialog yet
+        // (tracked as a follow-up, see the block's own doc comment) -- this test locks down today's
+        // actual behavior (logged only, Save still succeeds and closes) so a future change to that
+        // behavior is a deliberate edit, not a silent regression.
+        var sstvSession = new FakeSstvSessionService { CaptureDeviceApplyResultToReturn = CaptureDeviceApplyResult.DeferredRecordingInProgress };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.Equal(1, sstvSession.RequestCaptureDeviceCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_CaptureDeviceChangeRejected_StillPersistsAndCloses()
+    {
+        // Same reasoning as the Deferred test immediately above, for the Rejected outcome (the
+        // requested device could not be opened).
+        var sstvSession = new FakeSstvSessionService { CaptureDeviceApplyResultToReturn = CaptureDeviceApplyResult.Rejected };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.Equal(1, sstvSession.RequestCaptureDeviceCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_NoCaptureDeviceSelected_StillCallsRequestCaptureDeviceWithNullAndCloses()
+    {
+        // Reachable state (auditor finding): SelectedCaptureDevice can genuinely be null, e.g. a
+        // configured device id churned with no name/default match to fall back to (see
+        // Constructor_ConfiguredIdChurnedAndNoNameOrDefaultMatch_LeavesSelectionBlank above). The
+        // unconditional call must pass (null, null) through rather than skip the call entirely --
+        // RequestCaptureDeviceAsync's own null handling (falls back to the backend default, and
+        // self-heals RX if it was running) is that method's own contract, not re-verified here.
+        var sstvSession = new FakeSstvSessionService();
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.Equal(1, sstvSession.RequestCaptureDeviceCallCount);
+        Assert.Equal(((string?)null, (string?)null), sstvSession.LastRequestedCaptureDevice);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveCommand_CaptureDeviceLiveApplyFailure_StillRunsTheRestOfSaveAndCloses()
+    {
+        // Mirrors RequestSampleRateAsync's own "own try/catch, must not abort the rest of Save"
+        // established shape -- a thrown exception from the live-apply call (e.g. a transition-gate
+        // timeout) must not prevent the whole-dialog snapshot (already persisted before this call)
+        // from taking effect on the next restart, must not block the dialog from closing, and must
+        // not skip the writes that come AFTER this block in SaveCoreUnguardedAsync. Asserts
+        // SafetySpec (SaveSafetySettingsAsync runs unconditionally, several statements after the
+        // capture-device block) rather than Callsign (2nd-round auditor finding: Callsign is part of
+        // the whole-dialog snapshot persisted BEFORE the capture-device call, so it would pass even
+        // if the try/catch below it were missing entirely).
+        var sstvSession = new FakeSstvSessionService { RequestCaptureDeviceException = new TimeoutException("gate timeout") };
+        var radioSession = new FakeRadioSessionService();
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, radioSession, new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var closeRaised = false;
+        vm.RequestClose += () => closeRaised = true;
+        vm.SwrCutoffEnabled = true;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(closeRaised);
+        Assert.True(radioSession.SafetySpec.SwrCutoffEnabled);
+    }
+
+    [AvaloniaFact]
     public async Task SaveCommand_PersistsFlrigFieldsWhenBackendIsFlrig()
     {
         var settingsStore = new FakeSettingsStore();
