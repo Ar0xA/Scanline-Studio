@@ -61,6 +61,38 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private double _fontSizeRelative = 0.1;
 
+    /// <summary>TX workflow modernization plan, Phase 1 (Quick Style Flyout) -- the target MODE's
+    /// own pixel height, pushed once by <see cref="TxImageEditorPaneViewModel.CreateOverlayElement"/>
+    /// from its own <c>_targetMode.ImageHeight</c> (ctor-assigned, never reassigned for the VM's
+    /// lifetime -- see <see cref="TxImageEditorPaneViewModel.SelectedTextElementFontSizePx"/>'s own
+    /// doc comment for why that's safe). Lets <see cref="FontSizePx"/> below do the exact same
+    /// px-conversion that property already does, reachable from THIS element directly rather than
+    /// through the parent VM's <c>SelectedTextElement</c>-keyed property -- a right-click's own
+    /// context menu binds against the element itself, not the parent VM (see
+    /// <see cref="RemoveCommand"/>'s own doc comment for why that binding path is a real, previously
+    /// hit crash, not a style preference).</summary>
+    public double TargetModeHeightPx { get; init; }
+
+    /// <summary>Two-way px view of <see cref="FontSizeRelative"/>, reusing
+    /// <see cref="TxImageEditorPaneViewModel.SelectedTextElementFontSizePx"/>'s own formula (not a
+    /// second re-derivation) against <see cref="TargetModeHeightPx"/> instead of a live
+    /// <c>_targetMode</c> field read. Setting <see cref="FontSizeRelative"/> already routes through
+    /// <see cref="OnFontSizeRelativeChanging"/>'s existing undo hook below, so this needs no undo
+    /// plumbing of its own.</summary>
+    public double FontSizePx
+    {
+        get => FontSizeRelative * TargetModeHeightPx;
+        set
+        {
+            if (TargetModeHeightPx <= 0)
+            {
+                return;
+            }
+
+            FontSizeRelative = value / TargetModeHeightPx;
+        }
+    }
+
     [ObservableProperty]
     private Rgb24 _color = new(255, 255, 255);
 
@@ -567,6 +599,10 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     public void NotifyResolvedTextChanged() => OnPropertyChanged(nameof(ResolvedText));
 
     partial void OnFontSizeRelativeChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    // Quick Style Flyout's own FontSizePx TextBox needs to stay in sync when FontSizeRelative
+    // changes via any OTHER path (Paste Style, the sidebar TEXT STYLE tab, a preset menu item).
+    partial void OnFontSizeRelativeChanged(double value) => OnPropertyChanged(nameof(FontSizePx));
 
     partial void OnColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
