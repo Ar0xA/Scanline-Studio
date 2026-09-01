@@ -1029,7 +1029,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        await OpenEditorForSourceAsync(path, Path.GetFileName(path), BuildCurrentContactVariables());
+        await OpenEditorForSourceAsync(path, Path.GetFileName(path), BuildCurrentContactVariables(), seedLiveContact: true);
     }
 
     [RelayCommand]
@@ -1037,7 +1037,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     {
         Log.SelectStockImageInvoked(_logger, entry.FileName);
         ErrorMessage = null;
-        await OpenEditorForSourceAsync(entry, entry.FileName, BuildCurrentContactVariables());
+        await OpenEditorForSourceAsync(entry, entry.FileName, BuildCurrentContactVariables(), seedLiveContact: true);
     }
 
     /// <summary>ui_transition_plan.md step 5 (T1-6). Deliberately a settable delegate PROPERTY, not
@@ -1114,7 +1114,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
 
         var fileName = _localization.GetString("Panes.TxControls.CopyToTx.FileName");
-        await OpenEditorWithLoadedSourceAsync(current, fileName, BuildCurrentContactVariables());
+        await OpenEditorWithLoadedSourceAsync(current, fileName, BuildCurrentContactVariables(), seedLiveContact: true);
     }
 
     /// <summary>Shared by every "open the editor" entry point (Copy-to-TX, Browse, Stock, Blank) --
@@ -1199,6 +1199,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="BuildCurrentContactVariables"/> themselves, exactly as this method used to do
     /// internally; <see cref="OpenEditorForExternalFileAsync"/> passes its own looked-up value, or
     /// <see langword="null"/> meaning truly nothing.
+    /// <para>Ready Rack direct-fire plan (2026-09-01), code-review finding: <paramref name="seedLiveContact"/>
+    /// is a SEPARATE required parameter, NOT derived from whether <paramref name="contactVariables"/>
+    /// happens to be non-null at this particular call. <see cref="BuildCurrentContactVariables"/>
+    /// returns <see langword="null"/> whenever no station has been decoded YET (the common cold-start
+    /// case for Browse/Stock/Blank/Copy-to-TX) -- deriving live-tracking intent from that one-shot
+    /// value's nullness would have left the direct-fire feature's whole re-seed capability dead for
+    /// any editor opened before the first contact of a session, exactly the same "can't distinguish
+    /// 'explicitly none' from 'happens to be none right now'" conflation the REQUIRED
+    /// <paramref name="contactVariables"/> parameter above already exists to avoid. Browse/Stock/
+    /// Blank/Copy-to-TX always pass <see langword="true"/> (they want ongoing live-tracking
+    /// regardless of whether a contact exists yet); <see cref="OpenEditorForExternalFileAsync"/>
+    /// always passes <see langword="false"/> (a Gallery-sourced image must never live-track the RX
+    /// pane, matching its own <paramref name="contactVariables"/> intent).</para>
     /// <para>Returns <see langword="false"/> when <see cref="TryClaimEditorSlotForNewSource"/>
     /// refuses (no target mode selected, or a genuinely in-progress edit) -- nothing else happened,
     /// same "silent no-op" contract that method's own doc comment states. Returns
@@ -1207,7 +1220,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// caller doesn't need a second signal for it) -- <see cref="OpenEditorForExternalFileAsync"/>
     /// uses this to distinguish "should I switch the operator to the Transmit tab" from "should I
     /// surface a refusal on my own caller's error surface instead."</para></summary>
-    private async Task<bool> OpenEditorForSourceAsync(object source, string fileName, IReadOnlyDictionary<string, string>? contactVariables)
+    private async Task<bool> OpenEditorForSourceAsync(object source, string fileName, IReadOnlyDictionary<string, string>? contactVariables, bool seedLiveContact)
     {
         if (!TryClaimEditorSlotForNewSource())
         {
@@ -1240,7 +1253,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return true;
         }
 
-        await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables);
+        await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables, seedLiveContact);
         return true;
     }
 
@@ -1250,7 +1263,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// would be ~95% a copy). <paramref name="contactVariables"/> is the caller's own explicit value
     /// (typically looked up from a linked QSO, or <see langword="null"/> when the RX-history entry
     /// has none) -- see <see cref="OpenEditorForSourceAsync"/>'s own doc comment for why this can't
-    /// default to <see cref="BuildCurrentContactVariables"/> here.
+    /// default to <see cref="BuildCurrentContactVariables"/> here. Always passes
+    /// <c>seedLiveContact: false</c> -- a Gallery-sourced image must never live-track the RX pane's
+    /// CURRENT contact regardless of what <paramref name="contactVariables"/> happened to snapshot at
+    /// open time (see <see cref="OpenEditorForSourceAsync"/>'s own doc comment for why this is a
+    /// separate signal from that one-shot value).
     /// <para>Unlike <see cref="CopyReceivedImageToTxAsync"/>, this doesn't share a call path with
     /// Copy-to-TX (that one passes an already-loaded <see cref="IImageSource"/>, this one passes a
     /// file path) -- <see cref="RequestTransmitTabFocus"/> is invoked here too, not assumed to come
@@ -1260,7 +1277,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// button does).</para></summary>
     public async Task<bool> OpenEditorForExternalFileAsync(string filePath, IReadOnlyDictionary<string, string>? contactVariables)
     {
-        var opened = await OpenEditorForSourceAsync(filePath, Path.GetFileName(filePath), contactVariables);
+        var opened = await OpenEditorForSourceAsync(filePath, Path.GetFileName(filePath), contactVariables, seedLiveContact: false);
         if (opened)
         {
             RequestTransmitTabFocus?.Invoke();
@@ -1306,7 +1323,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditorIsBlank = true;
         var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankPlaceholderColor);
         await OpenEditorWithLoadedSourceAsync(
-            placeholder, _localization.GetString("Panes.TxControls.BlankImageName"), BuildCurrentContactVariables());
+            placeholder, _localization.GetString("Panes.TxControls.BlankImageName"), BuildCurrentContactVariables(), seedLiveContact: true);
     }
 
     /// <summary>Light neutral gray (matches this app's own Industry design system's neutral-surface
@@ -1314,7 +1331,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// photo loaded yet" without being visually jarring against the rest of the chrome.</summary>
     private static readonly Rgb24 BlankPlaceholderColor = new(0xE9, 0xE9, 0xEA);
 
-    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables = null)
+    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables, bool seedLiveContact)
     {
         // SelectedMode may have changed while the original was loading -- always target whatever
         // mode is current NOW, not the one in effect when the pick started.
@@ -1344,9 +1361,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
                 currentContactVariables: currentContactVariables,
-                macrosReferenceRequested: () => RequestMacrosReference?.Invoke());
+                macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
+                // Ready Rack direct-fire plan (2026-09-01), code-review finding: thread the CALLER's
+                // own explicit seedLiveContact intent, NOT currentContactVariables' own null-ness --
+                // BuildCurrentContactVariables() returns null whenever no station has been decoded
+                // YET (the common cold-start case), so deriving live-tracking intent from that
+                // one-shot value's nullness would have left this feature's whole re-seed capability
+                // dead for any editor opened before the first contact of a session. seedLiveContact
+                // is threaded explicitly by every caller instead -- see OpenEditorForSourceAsync's
+                // own doc comment for the full reasoning.
+                currentContactProvider: seedLiveContact ? BuildCurrentContactVariables : null);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
+            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1414,6 +1441,34 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         {
             TransmitCommand.Execute(null);
         }
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): the SAME close+transmit steps
+    /// <see cref="OnEditorAppliedAndTransmit"/> does, PLUS an immediate reopen afterward -- the
+    /// editor (and the Ready Rack living inside it) closing with nothing reopening it would end the
+    /// pileup loop this whole feature exists for after exactly one fire (round-1 plan-review
+    /// blocker). The reopen goes through the SAME <see cref="ReopenEditorFromCurrentStateAsync"/>
+    /// path <see cref="EditCurrentImageAsync"/> uses (real photo + just-fired overlay both carry
+    /// forward -- a template load only ever replaces the OVERLAY, never the photo, so the NEXT
+    /// Ctrl+N correctly swaps only the overlay).
+    ///
+    /// Code-review finding: the reopen INHERITS <paramref name="editor"/>'s own
+    /// <see cref="TxImageEditorPaneViewModel.CurrentContactProvider"/> -- it does NOT unconditionally
+    /// pass <see cref="BuildCurrentContactVariables"/>. A Gallery-sourced editor (opened with a
+    /// <see langword="null"/> provider specifically so the live RX contact never leaks onto a source
+    /// with no linked QSO) must stay unseeded through every subsequent reopen in its own pileup-fire
+    /// chain, not just its first fire -- unconditionally re-arming a live provider on reopen would
+    /// reintroduce that exact leak, just delayed by one fire. An editor opened via Browse/Stock/
+    /// Blank/Copy-to-TX (which DO carry a live provider from construction, see
+    /// <see cref="OpenEditorWithLoadedSourceAsync"/>'s own doc comment) correctly keeps live-tracking
+    /// across every reopen too, by the same inheritance. A parallel sibling to the ordinary
+    /// Apply&amp;Transmit path, not a modification to it -- that path's own "close and leave empty"
+    /// behavior is completely unchanged.</summary>
+    private async void OnEditorDirectFire(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
+    {
+        var contactProvider = editor.CurrentContactProvider;
+        OnEditorAppliedAndTransmit(fileName, editor, final);
+        await ReopenEditorFromCurrentStateAsync(contactProvider);
     }
 
     /// <summary>Auditor-found regression (2026-08-17, usability-gap review): with the editor now
@@ -1488,7 +1543,33 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="SelectedMode"/>/quick-grid/RX auto-follow (see
     /// <see cref="IsEditorOpen"/>'s own doc comment).</summary>
     [RelayCommand(CanExecute = nameof(CanEditCurrentImage))]
-    private async Task EditCurrentImageAsync()
+    private async Task EditCurrentImageAsync() =>
+        // Ready Rack direct-fire plan (2026-09-01): thin wrapper -- passes no contact provider, same
+        // exact behavior as before this feature existed. See ReopenEditorFromCurrentStateAsync's own
+        // doc comment for why the ordinary manual "Edit Image" click must never leak the live RX
+        // contact into an unrelated re-edit.
+        await ReopenEditorFromCurrentStateAsync(currentContactProvider: null);
+
+    /// <summary>spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply -- no
+    /// fresh <see cref="IImageFileLoader"/>/<see cref="IStockImageLibrary"/> I/O needed, unlike
+    /// <see cref="OpenEditorForSourceAsync"/> (round-1 plan-review confirmed: <see cref="_editState"/>'s
+    /// own <c>Original</c> is already fully in memory, reflecting every prior Rotate too -- see
+    /// <see cref="OnEditorApplied"/>'s own doc comment on why it's captured from
+    /// <c>editor.CurrentSource</c>). Still async (operator-settings reload) and still wrapped in
+    /// the same construction try/catch <see cref="OpenEditorForSourceAsync"/> uses -- round-1
+    /// finding: <c>BuildWorkingCopy</c>/<c>ToBitmap</c> inside the editor's own constructor can
+    /// still throw, and an uncaught throw here would leave <see cref="IsEditorOpen"/> stuck
+    /// <see langword="true"/> forever with no editor to Cancel, permanently freezing
+    /// <see cref="SelectedMode"/>/quick-grid/RX auto-follow (see
+    /// <see cref="IsEditorOpen"/>'s own doc comment).
+    ///
+    /// Ready Rack direct-fire plan (2026-09-01): extracted from <see cref="EditCurrentImageAsync"/>'s
+    /// own former body (now a thin wrapper passing <see langword="null"/>) so
+    /// <see cref="OnEditorDirectFire"/>'s own post-fire reopen can reuse this EXACT construction
+    /// logic while ALSO passing a live <paramref name="currentContactProvider"/> -- the ordinary
+    /// manual "Edit Image" click keeps its precise prior behavior (no live-contact leak introduced by
+    /// this feature), only a direct-fire-triggered reopen gets the freshness capability.</summary>
+    private async Task ReopenEditorFromCurrentStateAsync(Func<IReadOnlyDictionary<string, string>?>? currentContactProvider)
     {
         // CanExecute alone isn't a hard gate -- CommunityToolkit's IAsyncRelayCommand.ExecuteAsync
         // doesn't consult it, only Avalonia's Button.OnClick does (code-review finding, same
@@ -1517,13 +1598,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables),
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
-                macrosReferenceRequested: () => RequestMacrosReference?.Invoke());
+                macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
+                currentContactProvider: currentContactProvider);
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
             // this point (the guard above) guarantees SelectedFileName was set at the same time.
             var fileName = SelectedFileName!;
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
+            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;

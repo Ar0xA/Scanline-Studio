@@ -184,6 +184,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="OpenMacrosReference"/> silently no-ops on -- same "unwired = harmless no-op"
     /// convention as this codebase's other cross-VM request delegates.</summary>
     private readonly Action? _macrosReferenceRequested;
+    /// <summary>Ready Rack direct-fire plan (2026-09-01) -- invoked FRESH at each direct-fire (unlike
+    /// the constructor's own one-shot <c>currentContactVariables</c> snapshot), so
+    /// <see cref="OnReadyRackDirectFireRequested"/> can re-seed <c>his_call</c>/<c>his_grid</c> from
+    /// whichever station is CURRENTLY being worked, not whichever was being worked when this editor
+    /// was first opened. Null on any route that doesn't already pass a real
+    /// <c>currentContactVariables</c> value either (thread caller intent -- see the constructor's own
+    /// parameter doc comment for why).</summary>
+    private readonly Func<IReadOnlyDictionary<string, string>?>? _currentContactProvider;
     private readonly OperatorSettings _operatorSettings;
     private readonly IRadioSessionService _radioSessionService;
     private readonly ILocalizationService _localization;
@@ -391,6 +399,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// event into <see cref="OnReadyRackTemplateSelected"/>, so one guard there covers both surfaces.</summary>
     private string? _pendingRecallTemplateId;
 
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): a SEPARATE arm/confirm token from
+    /// <see cref="_pendingRecallTemplateId"/> -- code-review finding on an earlier draft of this
+    /// feature: sharing one token would let a plain-recall's own "will discard your edits" arm
+    /// double as an unintended "yes, transmit" confirmation for a LATER Ctrl+N on the same slot,
+    /// since the operator would only ever have read a discard warning, never a transmit one. Cleared
+    /// at the SAME 4 points <see cref="_pendingRecallTemplateId"/> is (<see cref="PushUndoSnapshot"/>,
+    /// <see cref="PushUndoSnapshotCoalesced"/>, <see cref="ApplyState"/>, and its own consume-on-fire
+    /// point in <see cref="OnReadyRackDirectFireRequested"/>) -- same "any real edit disarms a stale
+    /// confirmation" rule, applied uniformly to both tokens.</summary>
+    private string? _pendingDirectFireTemplateId;
+
     /// <summary>Tier B audit finding: <see cref="ReadyRackViewModel"/>'s Load/RecallSlot commands are
     /// plain synchronous <c>[RelayCommand]</c>s that just raise <see cref="ReadyRackViewModel.TemplateSelected"/>
     /// into <see cref="OnReadyRackTemplateSelected"/> (an <c>async void</c>) -- CommunityToolkit's
@@ -458,7 +477,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // review finding) -- TxControlsPaneViewModel.RequestMacrosReference is a settable property
         // assigned later by MainWindow.axaml.cs, so passing its value directly would snapshot null
         // permanently if this editor is constructed before that assignment runs.
-        Action? macrosReferenceRequested = null)
+        Action? macrosReferenceRequested = null,
+        // Ready Rack direct-fire plan (2026-09-01): same trailing-optional/closure shape as
+        // macrosReferenceRequested above, same reasoning -- only routes that ALREADY pass a real
+        // (non-null) currentContactVariables above pass a real delegate here too (thread caller
+        // intent: TxControlsPaneViewModel.OpenEditorForExternalFileAsync's own "unseeded means
+        // unseeded" contract for a Gallery-sourced editor with no linked QSO must not be reversed by
+        // this new parameter). Invoked fresh at each direct-fire, unlike currentContactVariables
+        // above (a one-shot constructor snapshot) -- see OnReadyRackDirectFireRequested's own doc
+        // comment for why a live re-read is required, not a snapshot.
+        Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null)
     {
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
@@ -468,6 +496,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);
         _macrosReferenceRequested = macrosReferenceRequested;
+        _currentContactProvider = currentContactProvider;
         _operatorSettings = operatorSettings;
         _radioSessionService = radioSessionService;
         _localization = localization;
@@ -480,6 +509,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _imageSourceWriter = imageSourceWriter;
         ReadyRack = readyRack;
         ReadyRack.TemplateSelected += OnReadyRackTemplateSelected;
+        ReadyRack.TemplateDirectFireRequested += OnReadyRackDirectFireRequested;
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
@@ -605,6 +635,105 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Log.LoadTemplateFailed(_logger, templateId, ex);
             StatusMessage = _localization.GetString("Panes.TxImageEditor.LoadTemplateFailed");
         }
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): Ctrl+number's own handler -- load + re-seed
+    /// + bake + fire, all in one keystroke. Own arm/confirm token (<see cref="_pendingDirectFireTemplateId"/>),
+    /// separate from <see cref="_pendingRecallTemplateId"/>/<see cref="OnReadyRackTemplateSelected"/> --
+    /// code-review finding on an earlier draft: sharing one token would let a plain-recall's own
+    /// discard-only warning double as an unintended transmit confirmation for a later Ctrl+N on the
+    /// same slot.
+    ///
+    /// Order matters, each step closes a real reviewed-and-found gap:
+    /// 1. The blank-photo refusal runs FIRST, before touching the arm token or starting a load --
+    ///    <see cref="LoadTemplateIntoLiveEditor"/> clears <see cref="OverlayElements"/> unconditionally,
+    ///    so checking AFTER the load would wipe the operator's current overlay before refusing.
+    ///    Checks <see cref="_sourceBaseline"/>, NOT <see cref="_originalSource"/> (code-review
+    ///    finding on an earlier draft: <see cref="_originalSource"/> is NOT rotate-invariant --
+    ///    <see cref="RotateImageOnly"/> reassigns it to a real decoded image even when the underlying
+    ///    photo is still the placeholder, so blank-editor -&gt; Rotate -&gt; Ctrl+N would have bypassed
+    ///    this refusal and sent overlay text on a gray card). <see cref="_sourceBaseline"/> is exactly
+    ///    load-invariant AND rotate-invariant: untouched by <see cref="RotateImageOnly"/>, updated
+    ///    only on a real flatten, restored on undo/redo -- so this refuses through any number of
+    ///    rotates, allows once the operator actually flattens a real photo in, and correctly refuses
+    ///    again if that flatten is undone.
+    /// 2. Arm/confirm on <see cref="_pendingDirectFireTemplateId"/>, same shape as
+    ///    <see cref="OnReadyRackTemplateSelected"/> but its OWN loc key that names both halves
+    ///    ("will discard your edits AND transmit") -- never the discard-only
+    ///    <c>ConfirmRecallOverwrite</c> text.
+    /// 3. <see cref="LoadTemplateAsync"/> now returns <see langword="false"/> on a lost
+    ///    <see cref="_templateLoadGeneration"/> race -- abandoned silently (no error shown; a
+    ///    superseded fire during rapid slot-switching is expected pileup behavior, not a failure),
+    ///    never transmitted against the losing slot's stale canvas.
+    /// 4. The <see cref="_currentContactProvider"/> re-seed is invoked FRESH here (not the
+    ///    constructor's one-shot snapshot) -- overwrites <c>his_call</c>/<c>his_grid</c> in
+    ///    <see cref="_templateVariables"/> ONLY for keys the fresh result actually has a value for
+    ///    (an empty/null RX contact leaves whatever was already typed alone, same "never silently
+    ///    blank a field" rule the constructor seed follows). The RX contact bar
+    ///    (<c>OverrideCallsign</c>/<c>LookupGrid</c>) is the source of truth for who's being worked;
+    ///    this stamps the card with it. A mis-decoded callsign gets corrected THERE, not in this fill
+    ///    bar.
+    /// 5. <see cref="CanApplyAndTransmit"/> is checked EXPLICITLY here, before baking -- a raw
+    ///    <c>.Execute(null)</c>-shaped bypass would otherwise bake and (via <see cref="OnEditorDirectFire"/>)
+    ///    close the editor BEFORE the downstream <c>TransmitCommand.CanExecute</c> re-check silently
+    ///    swallows a busy fire. Refused visibly (<see cref="StatusMessage"/>), never a silent drop.
+    /// 6. Does NOT call the existing <see cref="ApplyAndTransmitCommand"/>/<see cref="ApplyAndTransmit"/>
+    ///    -- bakes directly and raises <see cref="DirectFireRequested"/> instead, so
+    ///    <see cref="TxControlsPaneViewModel"/> can tell a direct-fire-triggered fire apart from an
+    ///    ordinary manual one and chain the post-fire reopen only for this path.</summary>
+    private async void OnReadyRackDirectFireRequested(string templateId)
+    {
+        if (_sourceBaseline is BlankImageSource)
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DirectFireNoPhoto");
+            return;
+        }
+
+        if (HasUnsavedEdits && _pendingDirectFireTemplateId != templateId)
+        {
+            _pendingDirectFireTemplateId = templateId;
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ConfirmDirectFireOverwrite");
+            return;
+        }
+
+        _pendingDirectFireTemplateId = null;
+        StatusMessage = null;
+        var generation = ++_templateLoadGeneration;
+        bool loaded;
+        try
+        {
+            loaded = await LoadTemplateAsync(templateId, generation);
+        }
+        catch (Exception ex)
+        {
+            Log.LoadTemplateFailed(_logger, templateId, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.LoadTemplateFailed");
+            return;
+        }
+
+        if (!loaded)
+        {
+            // Superseded by a newer selection while loading -- expected pileup behavior, not a
+            // failure. That newer selection will apply/fire its own result; this one is abandoned.
+            return;
+        }
+
+        if (_currentContactProvider?.Invoke() is { } freshContact)
+        {
+            foreach (var (key, value) in freshContact)
+            {
+                _templateVariables[key] = value;
+            }
+        }
+
+        if (!CanApplyAndTransmit())
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DirectFireBusy");
+            return;
+        }
+
+        Log.DirectFireInvoked(_logger, _targetMode.Id);
+        DirectFireRequested?.Invoke(BuildFinalOutput());
     }
 
     public ObservableCollection<ITemplateElementViewModel> OverlayElements { get; } = [];
@@ -753,6 +882,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// from that stale reference (e.g. on a later mode change) -- see
     /// <c>TxControlsPaneViewModel.OpenEditorForSourceAsync</c>'s own use of this property.</summary>
     public IImageSource CurrentSource => _originalSource;
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01), code-review finding: lets
+    /// <see cref="TxControlsPaneViewModel.OnEditorDirectFire"/> INHERIT this editor's own live-
+    /// contact intent for the post-fire reopen, rather than hardcoding a live provider unconditionally
+    /// on every reopen. Without this, a Gallery-sourced editor (constructed with a
+    /// <see langword="null"/> provider specifically so the live RX contact never leaks onto an
+    /// unrelated source) would start leaking it anyway from fire #2 onward, the moment the reopen ran
+    /// -- the exact class of bug the constructor-time <c>null</c> exists to prevent, just delayed one
+    /// fire.</summary>
+    public Func<IReadOnlyDictionary<string, string>?>? CurrentContactProvider => _currentContactProvider;
 
     /// <summary>Pixel-space dimensions of the interactive canvas's background image -- the View
     /// binds crop-handle/overlay-element positions directly to these (rather than a converter doing
@@ -1063,6 +1202,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// too, one click instead of Apply-then-hunt-for-the-real-Transmit-button-in-the-sidebar. The
     /// parent (only owner of transmit state) still runs the actual TransmitCommand.</summary>
     public event Action<IImageSource>? AppliedAndTransmitRequested;
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): a SEPARATE event from
+    /// <see cref="AppliedAndTransmitRequested"/>, raised by <see cref="OnReadyRackDirectFireRequested"/>
+    /// -- lets <see cref="TxControlsPaneViewModel"/> tell a direct-fire-triggered Apply&amp;Transmit
+    /// apart from an ordinary manual one (the button click), so it can chain the post-fire reopen
+    /// (see <c>OnEditorDirectFire</c>'s own doc comment) ONLY for the former; ordinary Apply &amp;
+    /// Transmit's own "close and leave empty" behavior stays completely unchanged.</summary>
+    public event Action<IImageSource>? DirectFireRequested;
 
     public event Action? Cancelled;
 
@@ -2193,7 +2340,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// element's <see cref="IImageSource"/> via the EXISTING <see cref="IImageFileLoader.LoadOriginalAsync"/>
     /// (same loader Phase 2's file source already uses), maps back to <see cref="RawElementSnapshot"/>s,
     /// and feeds them into <see cref="LoadTemplateIntoLiveEditor"/>.</summary>
-    private async Task LoadTemplateAsync(string templateId, int generation)
+    /// <summary>Returns whether the template was actually applied -- <see langword="false"/> means a
+    /// newer selection superseded this one while it was loading (see the stale-generation branch
+    /// below). Ready Rack direct-fire plan (2026-09-01): the return value lets
+    /// <see cref="OnReadyRackDirectFireRequested"/> tell "loaded" from "discarded as stale" and
+    /// abandon a fire cleanly rather than transmitting the losing slot's stale canvas -- the ORIGINAL
+    /// caller (<see cref="OnReadyRackTemplateSelected"/>) still just awaits and ignores this, same as
+    /// before this change (source-compatible).</summary>
+    private async Task<bool> LoadTemplateAsync(string templateId, int generation)
     {
         var document = await _templateStore.LoadAsync(templateId);
         var snapshots = new List<RawElementSnapshot>(document.Elements.Count);
@@ -2208,10 +2362,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // this one began -- discard this stale load rather than clobber the canvas with an
             // out-of-date template.
             Log.TemplateLoadDiscardedAsStale(_logger, templateId);
-            return;
+            return false;
         }
 
         LoadTemplateIntoLiveEditor(snapshots);
+        return true;
     }
 
     private async Task<RawElementSnapshot> ToRawElementSnapshotAsync(string templateId, PersistedTemplateElement element)
@@ -4634,6 +4789,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // long before a later, unrelated Cancel click would otherwise silently skip its warning.
         IsCancelArmed = false;
         _pendingRecallTemplateId = null;
+        _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
         if (_undoStack.Count > MaxUndoDepth)
@@ -4680,6 +4836,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // Same disarm reasoning as PushUndoSnapshot's own -- see that method's own comment.
         IsCancelArmed = false;
         _pendingRecallTemplateId = null;
+        _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
         if (_undoStack.Count > MaxUndoDepth)
@@ -4744,6 +4901,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // HasUnsavedEdits reading false while the document was actually dirty.
         IsCancelArmed = false;
         _pendingRecallTemplateId = null;
+        _pendingDirectFireTemplateId = null;
         _pendingCoalesceProperty = null;
 
         _suspendPreview = true;
@@ -5155,6 +5313,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Apply & Transmit invoked: targetMode={TargetMode}")]
         public static partial void ApplyAndTransmitInvoked(ILogger logger, string targetMode);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Ready Rack direct-fire invoked: targetMode={TargetMode}")]
+        public static partial void DirectFireInvoked(ILogger logger, string targetMode);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
