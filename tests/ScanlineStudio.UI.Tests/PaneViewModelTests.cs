@@ -3078,6 +3078,59 @@ public sealed class PaneViewModelTests
         Assert.Same(firstEditor, ExtractCurrentEditor(vm));
     }
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 1: Copy-to-TX must switch the operator to
+    /// the Transmit tab on a successful open, not leave them stranded on the RX tab.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_Succeeds_RequestsTransmitTabFocus()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var focusRequestedCount = 0;
+        vm.RequestTransmitTabFocus = () => focusRequestedCount++;
+
+        await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
+
+        Assert.Equal(1, focusRequestedCount);
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 1: even when a genuine in-progress edit
+    /// refuses the claim (<see cref="TxControlsPaneViewModel_CopyReceivedImageToTx_WhileGenuineEditInProgress_Refuses"/>),
+    /// the operator should still land on the Transmit tab -- their in-progress edit is there.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_ClaimRefused_StillRequestsTransmitTabFocus()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var focusRequestedCount = 0;
+        vm.RequestTransmitTabFocus = () => focusRequestedCount++;
+
+        await vm.CopyReceivedImageToTxCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, focusRequestedCount);
+        Assert.Same(firstEditor, ExtractCurrentEditor(vm));
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 1: nothing received yet must not request
+    /// tab focus -- there's nothing to switch to look at.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CopyReceivedImageToTx_NothingReceivedYet_DoesNotRequestTransmitTabFocus()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var focusRequestedCount = 0;
+        vm.RequestTransmitTabFocus = () => focusRequestedCount++;
+
+        await vm.CopyReceivedImageToTxCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, focusRequestedCount);
+    }
+
     /// <summary>ui_transition_plan.md step 5 (T1-6): "Copy to TX" seeds the new editor's HIS
     /// CALL/HIS GRID template variables from CurrentContactRequested, so a reply-card template
     /// comes up pre-filled with the received station's own callsign/grid.</summary>
