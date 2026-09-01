@@ -986,6 +986,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(PlacementPreviewTopPixels));
         OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
         OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
+        // Line counterpart to the 4 PlacementPreview*Pixels raises above -- same "derives from
+        // CanvasDisplayWidth/Height, no notification of its own" reasoning.
+        OnPropertyChanged(nameof(PlacementPreviewLineStart));
+        OnPropertyChanged(nameof(PlacementPreviewLineEnd));
         OnPropertyChanged(nameof(GuideLineXPixels));
         OnPropertyChanged(nameof(GuideLineYPixels));
         RefreshOverlayElementZoomedImageSize();
@@ -1142,6 +1146,31 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
         OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
         OnPropertyChanged(nameof(IsPlacementPreviewVisible));
+    }
+
+    /// <summary>TX editor gap-items plan, line element (2026-09-01) -- the line counterpart to
+    /// <see cref="PlacementPreviewRect"/> immediately above, same "live rubber-band preview during
+    /// draw-to-place, cleared by every path that can end a placement drag/arm" contract. A rect
+    /// can't represent a line's own direction (a line drawn top-right to bottom-left must render
+    /// that way during the drag, not get normalized into a box), so this is a parallel field, not a
+    /// reuse of <see cref="PlacementPreviewRect"/> -- endpoints in normalized full-working-copy
+    /// space, same convention as <see cref="LineElementViewModel.X1"/>/etc.</summary>
+    [ObservableProperty]
+    private (double X1, double Y1, double X2, double Y2)? _placementPreviewLine;
+
+    public Avalonia.Point PlacementPreviewLineStart => new(
+        (PlacementPreviewLine?.X1 ?? 0) * CanvasDisplayWidth, (PlacementPreviewLine?.Y1 ?? 0) * CanvasDisplayHeight);
+
+    public Avalonia.Point PlacementPreviewLineEnd => new(
+        (PlacementPreviewLine?.X2 ?? 0) * CanvasDisplayWidth, (PlacementPreviewLine?.Y2 ?? 0) * CanvasDisplayHeight);
+
+    public bool IsPlacementPreviewLineVisible => PlacementPreviewLine is not null;
+
+    partial void OnPlacementPreviewLineChanged((double X1, double Y1, double X2, double Y2)? value)
+    {
+        OnPropertyChanged(nameof(PlacementPreviewLineStart));
+        OnPropertyChanged(nameof(PlacementPreviewLineEnd));
+        OnPropertyChanged(nameof(IsPlacementPreviewLineVisible));
     }
 
     /// <summary>Same follow-up pass, the alignment-guide-line half --
@@ -1426,6 +1455,50 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // comment already establishes for its own View-side counterpart (MinNormalizedElementSize).
     private static double SnapValueToGrid(double value, double gridSize = 0.05) =>
         Math.Round(value / gridSize, MidpointRounding.AwayFromZero) * gridSize;
+
+    /// <summary>TX editor gap-items plan, line element -- snap-on-drop for ONE endpoint after a
+    /// <see cref="DragMode.LineEndpoint"/>-equivalent drag (<c>TxImageEditorPaneView.OnCanvasPointerReleased</c>'s
+    /// own new branch), NOT <see cref="ApplySnappedElementBounds"/> -- that method's own line branch
+    /// snaps BOTH endpoints together (a whole-line move-drop); an endpoint drag only ever moves the
+    /// ONE endpoint the operator is dragging, the other must stay exactly where it was. Same
+    /// tolerance-based no-op guard as that method's own line branch (round-2 code-review finding
+    /// there: exact equality spuriously fires for an already-grid-aligned coordinate, since
+    /// <see cref="SnapValueToGrid"/>'s own divide-then-multiply round-trip can land on a different
+    /// bit pattern than the original value) -- deliberately reusing the identical epsilon, not a
+    /// re-derived one.</summary>
+    public void ApplySnappedLineEndpoint(LineElementViewModel line, bool isFirstEndpoint)
+    {
+        var (currentX, currentY) = isFirstEndpoint ? (line.X1, line.Y1) : (line.X2, line.Y2);
+        var (snappedX, snappedY) = (SnapValueToGrid(currentX), SnapValueToGrid(currentY));
+
+        const double epsilon = 1e-9;
+        if (Math.Abs(snappedX - currentX) < epsilon && Math.Abs(snappedY - currentY) < epsilon)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            if (isFirstEndpoint)
+            {
+                line.X1 = snappedX;
+                line.Y1 = snappedY;
+            }
+            else
+            {
+                line.X2 = snappedX;
+                line.Y2 = snappedY;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
 
     /// <summary>Shift+arrow resizes the crop rect's bottom-right corner by 1px and auto-engages
     /// stretch mode (<see cref="PreserveAspect"/> = false) -- legacy's own real behavior
@@ -4517,6 +4590,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(PlacementPreviewTopPixels));
         OnPropertyChanged(nameof(PlacementPreviewWidthPixels));
         OnPropertyChanged(nameof(PlacementPreviewHeightPixels));
+        OnPropertyChanged(nameof(PlacementPreviewLineStart));
+        OnPropertyChanged(nameof(PlacementPreviewLineEnd));
         OnPropertyChanged(nameof(GuideLineXPixels));
         OnPropertyChanged(nameof(GuideLineYPixels));
 

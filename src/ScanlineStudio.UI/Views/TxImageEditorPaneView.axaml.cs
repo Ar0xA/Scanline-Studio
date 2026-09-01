@@ -32,6 +32,21 @@ public partial class TxImageEditorPaneView : UserControl
         /// <see cref="OnCanvasPointerReleased"/>'s own Placing branch) -- unlike every other
         /// <see cref="DragMode"/>, nothing on the canvas exists yet while this is active.</summary>
         Placing,
+
+        /// <summary>TX editor gap-items plan, line element (2026-09-01) -- dragging ONE of a
+        /// selected line's 2 endpoint handles. Deliberately a NEW mode, not folded into
+        /// <see cref="ElementResize"/> -- that mode's own math (<see cref="ComputeElementResize"/>)
+        /// assumes a box's corner/edge semantics, not an arbitrary endpoint, and its own
+        /// mid-drag write (<see cref="OnCanvasPointerMoved"/>'s <c>ElementResize</c> case) writes
+        /// Width/Height directly, which for a line are DERIVED -- routing an endpoint drag through
+        /// that path would corrupt the OTHER endpoint via the degenerate-extent setter rule instead
+        /// of leaving it untouched. Excluded from BOTH the undo-push check right below (endpoint
+        /// drags push via the endpoint's own <c>On*Changing</c>-coalesced hook instead, same as
+        /// <see cref="Overlay"/>/<see cref="ElementResize"/>) and <see cref="OnCanvasPointerReleased"/>'s
+        /// own snap-on-drop condition (that method's own <see cref="TxImageEditorPaneViewModel.ApplySnappedElementBounds"/>
+        /// call snaps a WHOLE line's two endpoints together -- an endpoint drag needs its own
+        /// single-endpoint snap instead, see <see cref="TxImageEditorPaneViewModel.ApplySnappedLineEndpoint"/>).</summary>
+        LineEndpoint,
     }
 
     /// <summary>Which toolbar "Add" button armed the placement tool currently pending on the canvas
@@ -40,6 +55,9 @@ public partial class TxImageEditorPaneView : UserControl
     {
         Text,
         Box,
+
+        /// <summary>TX editor gap-items plan, line element (2026-09-01).</summary>
+        Line,
     }
 
     /// <summary>Which side(s) of the element the pressed handle drags -- public (not the private
@@ -75,6 +93,12 @@ public partial class TxImageEditorPaneView : UserControl
     private Point _lastPointerPosition;
     private ITemplateElementViewModel? _draggedElement;
     private ResizeHandle _resizeHandle = ResizeHandle.BottomRight;
+
+    /// <summary>Which of a dragged line's 2 endpoints <see cref="DragMode.LineEndpoint"/> is
+    /// currently moving -- true = X1/Y1, false = X2/Y2. Set from the pressed handle's own AXAML
+    /// <c>Tag</c> (<see cref="OnLineEndpointHandlePointerPressed"/>), same "read Tag, don't infer
+    /// from geometry" convention <see cref="_resizeHandle"/> already uses.</summary>
+    private bool _draggedIsFirstEndpoint;
 
     /// <summary>See <see cref="OnOpenElementQuickStyleFlyout"/>'s own doc comment for why this
     /// exists -- <see cref="ContextMenu.PlacementTarget"/> is never populated by Avalonia itself, so
@@ -205,6 +229,9 @@ public partial class TxImageEditorPaneView : UserControl
     /// <summary>Same reasoning as <see cref="OnArmTextPlacementPressed"/> right above, for "Add Box".</summary>
     private void OnArmBoxPlacementPressed(object? sender, PointerPressedEventArgs e) => TogglePlacementArm(PlacementKind.Box, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
 
+    /// <summary>Same reasoning as <see cref="OnArmTextPlacementPressed"/> right above, for "Add Line".</summary>
+    private void OnArmLinePlacementPressed(object? sender, PointerPressedEventArgs e) => TogglePlacementArm(PlacementKind.Line, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+
     private void TogglePlacementArm(PlacementKind kind, bool sticky)
     {
         if (_pendingPlacementKind == kind)
@@ -231,6 +258,7 @@ public partial class TxImageEditorPaneView : UserControl
         if (ViewModel is { } vm)
         {
             vm.PlacementPreviewRect = null;
+            vm.PlacementPreviewLine = null;
         }
     }
 
@@ -292,6 +320,40 @@ public partial class TxImageEditorPaneView : UserControl
         var height = Math.Max(Math.Abs(y2 - y1), minSize);
 
         return (left + (width / 2), top + (height / 2), width, height);
+    }
+
+    /// <summary>Line counterpart to <see cref="ComputeRectFromDrag"/> immediately above (TX editor
+    /// gap-items plan, line element) -- deliberately NOT built on that method (which normalizes
+    /// anchor/current into a min/max box, losing which point was the press and which was the
+    /// release). A line's own endpoints ARE the drag's anchor and release points directly, in that
+    /// order -- reversing the drag direction must draw the line in the reversed direction too, not
+    /// silently normalize to the same box regardless of drag direction the way a rect placement
+    /// does.</summary>
+    public static (double X1, double Y1, double X2, double Y2) ComputeLineFromDrag(
+        Point anchor, Point current, double canvasDisplayWidth, double canvasDisplayHeight)
+        => (anchor.X / canvasDisplayWidth, anchor.Y / canvasDisplayHeight, current.X / canvasDisplayWidth, current.Y / canvasDisplayHeight);
+
+    /// <summary>Shift-drag angle-snap (TX editor gap-items plan, line element) -- snaps
+    /// <paramref name="cursor"/>'s direction FROM <paramref name="fixedPoint"/> to the nearest
+    /// 45-degree increment (0/45/90/135/...), preserving the actual dragged DISTANCE exactly (only
+    /// the angle is quantized) -- used by both an endpoint drag and the initial line placement drag,
+    /// so a Shift-held line is always exactly horizontal/vertical/diagonal regardless of which end
+    /// the operator is dragging. A near-zero distance (cursor at or extremely close to
+    /// <paramref name="fixedPoint"/>) has no defined angle to snap to -- returns
+    /// <paramref name="cursor"/> unchanged rather than dividing by ~zero.</summary>
+    public static Point SnapPointToAngle(Point fixedPoint, Point cursor)
+    {
+        var dx = cursor.X - fixedPoint.X;
+        var dy = cursor.Y - fixedPoint.Y;
+        var distance = Math.Sqrt((dx * dx) + (dy * dy));
+        if (distance < 1e-6)
+        {
+            return cursor;
+        }
+
+        const double eighthTurn = Math.PI / 4;
+        var snappedAngle = Math.Round(Math.Atan2(dy, dx) / eighthTurn) * eighthTurn;
+        return new Point(fixedPoint.X + (distance * Math.Cos(snappedAngle)), fixedPoint.Y + (distance * Math.Sin(snappedAngle)));
     }
 
     /// <summary>Below this real-pixel distance (TX workflow modernization plan, Phase 3a), a
@@ -640,6 +702,28 @@ public partial class TxImageEditorPaneView : UserControl
         StartDrag(DragMode.ElementResize, e);
     }
 
+    /// <summary>TX editor gap-items plan, line element -- a line's 2 endpoint handles, NOT the 8
+    /// box-resize handles above (see <see cref="DragMode.LineEndpoint"/>'s own doc comment for why
+    /// this needs a genuinely separate handler/drag mode, not a reuse of
+    /// <see cref="OnElementResizeHandlePointerPressed"/>'s own box-shaped math). Same
+    /// Locked/left-button gates as that handler, same "read Tag" convention -- <c>Tag</c> is
+    /// <c>"Endpoint1"</c> or <c>"Endpoint2"</c> (set in the line's own DataTemplate), parsed here
+    /// into <see cref="_draggedIsFirstEndpoint"/> rather than a full enum (only 2 values, an enum
+    /// would be one member for one caller).</summary>
+    private void OnLineEndpointHandlePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { DataContext: LineElementViewModel line } control || line.Locked
+            || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed
+            || control.Tag is not string tagValue || tagValue is not ("Endpoint1" or "Endpoint2"))
+        {
+            return;
+        }
+
+        _draggedElement = line;
+        _draggedIsFirstEndpoint = tagValue == "Endpoint1";
+        StartDrag(DragMode.LineEndpoint, e);
+    }
+
     /// <summary>Captures on <see cref="EditorCanvas"/> itself (not the pressed sub-control) so every
     /// subsequent move/release during this drag routes through the canvas's own handlers below,
     /// regardless of which element (crop body, resize handle, a canvas element, an element's own
@@ -696,10 +780,16 @@ public partial class TxImageEditorPaneView : UserControl
         // Placing (TX workflow modernization plan, Phase 3a) excluded here too -- nothing exists on
         // the canvas yet during a placement drag, so there is nothing to push an undo step FOR; the
         // element is created (and its own single undo step pushed) once, at release, by
-        // AddOverlayElementAt/AddBoxElementAt.
+        // AddOverlayElementAt/AddBoxElementAt. LineEndpoint (TX editor gap-items plan, line element)
+        // excluded for the SAME "pushes via the element's own On*Changing-coalesced hook instead"
+        // reason as Overlay/ElementResize -- round-3 plan-review's own finding: an earlier draft
+        // omitted this and every endpoint drag double-pushed an undo step (this method's own
+        // unconditional PushUndoSnapshotForDragGesture() call here, PLUS the endpoint setter's own
+        // coalesced push), so the first Ctrl+Z after any endpoint drag silently did nothing -- the
+        // exact bug class already fixed once at AlignSelectedElementToCrop.
         if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
-            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing))
+            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing or DragMode.LineEndpoint))
             {
                 vm.PushUndoSnapshotForDragGesture();
             }
@@ -772,6 +862,19 @@ public partial class TxImageEditorPaneView : UserControl
                 if (Point.Distance(_placementAnchorPoint, current) < PlacementClickThresholdPixels)
                 {
                     vm.PlacementPreviewRect = null;
+                    vm.PlacementPreviewLine = null;
+                    break;
+                }
+
+                // TX editor gap-items plan, line element -- a parallel preview field, not
+                // PlacementPreviewRect (see that field's own doc comment: a rect can't represent a
+                // line's own direction). Shift-angle-snap applies to the placement drag too (not
+                // just an already-selected line's endpoint drag, see SnapPointToAngle's own doc
+                // comment), same Shift-modifier convention ElementResize's own preserve-aspect uses.
+                if (_pendingPlacementKind == PlacementKind.Line)
+                {
+                    var lineEnd = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? SnapPointToAngle(_placementAnchorPoint, current) : current;
+                    vm.PlacementPreviewLine = ComputeLineFromDrag(_placementAnchorPoint, lineEnd, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
                     break;
                 }
 
@@ -779,6 +882,32 @@ public partial class TxImageEditorPaneView : UserControl
                     ComputeRectFromDrag(_placementAnchorPoint, current, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
                 vm.PlacementPreviewRect = new NormalizedRect(
                     previewCenterX - (previewWidth / 2), previewCenterY - (previewHeight / 2), previewWidth, previewHeight);
+                break;
+            case DragMode.LineEndpoint when _draggedElement is LineElementViewModel line:
+                // TX editor gap-items plan, line element -- writes an ABSOLUTE position every frame
+                // (unlike Overlay/ElementResize's own incremental-delta writes), computed directly
+                // from the cursor's own current canvas position -- an endpoint drag has no
+                // "accumulate a delta from the last frame" need the way a whole-element move does,
+                // and an absolute write avoids any possible incremental-rounding drift over a long
+                // drag. Shift-angle-snap is relative to the OTHER (fixed) endpoint, not the drag's
+                // own anchor point (unlike the Placing case above, an endpoint drag has no separate
+                // "anchor" -- the line's other endpoint already IS the natural pivot).
+                var fixedX = (_draggedIsFirstEndpoint ? line.X2 : line.X1) * vm.CanvasDisplayWidth;
+                var fixedY = (_draggedIsFirstEndpoint ? line.Y2 : line.Y1) * vm.CanvasDisplayHeight;
+                var draggedPoint = e.KeyModifiers.HasFlag(KeyModifiers.Shift)
+                    ? SnapPointToAngle(new Point(fixedX, fixedY), current)
+                    : current;
+                if (_draggedIsFirstEndpoint)
+                {
+                    line.X1 = draggedPoint.X / vm.CanvasDisplayWidth;
+                    line.Y1 = draggedPoint.Y / vm.CanvasDisplayHeight;
+                }
+                else
+                {
+                    line.X2 = draggedPoint.X / vm.CanvasDisplayWidth;
+                    line.Y2 = draggedPoint.Y / vm.CanvasDisplayHeight;
+                }
+
                 break;
         }
     }
@@ -899,6 +1028,17 @@ public partial class TxImageEditorPaneView : UserControl
                 }
             }
 
+            // TX editor gap-items plan, line element -- a THIRD, separate case from the whole-element
+            // snap block above, not folded into it (see DragMode.LineEndpoint's own doc comment for
+            // why: that block's ApplySnappedElementBounds call snaps a whole line's two endpoints
+            // together, wrong for a drag that only ever moves ONE of them). No alignment-guide snap
+            // for an endpoint drag -- out of scope for a line in v1 (deliberate scope cut, matching
+            // ApplySnappedLineEndpoint's own doc comment).
+            if (_dragMode == DragMode.LineEndpoint && _draggedElement is LineElementViewModel { Locked: false } draggedLine && vm.SnapToGrid)
+            {
+                vm.ApplySnappedLineEndpoint(draggedLine, _draggedIsFirstEndpoint);
+            }
+
             // TX workflow modernization plan, Phase 3a -- the actual element creation. Below
             // PlacementClickThresholdPixels of real movement is a plain click (default size,
             // centered on the release point); above it is a drag (sized to the dragged rect).
@@ -907,29 +1047,57 @@ public partial class TxImageEditorPaneView : UserControl
                 var released = e.GetPosition(EditorCanvas);
                 var distance = Point.Distance(_placementAnchorPoint, released);
 
-                double centerX, centerY, width2, height2;
-                if (distance < PlacementClickThresholdPixels)
+                // TX editor gap-items plan, line element -- a genuinely different shape from
+                // text/box below (endpoints, not center/width/height), so branched out first rather
+                // than shoehorned into the same 4-double locals. Click ⇒ a default HORIZONTAL line
+                // centered on the click point (matching AddLineElementCommand's own toolbar-button
+                // default exactly, not a separate literal); drag ⇒ the endpoints ARE the drag's own
+                // anchor/release points directly (ComputeLineFromDrag, not ComputeRectFromDrag --
+                // see that method's own doc comment for why a line must not be run through the
+                // rect-normalizing helper). Shift-angle-snap applies here too, same as the live
+                // preview already showed during the drag.
+                if (kind == PlacementKind.Line)
                 {
-                    centerX = released.X / vm.CanvasDisplayWidth;
-                    centerY = released.Y / vm.CanvasDisplayHeight;
-                    width2 = TxImageEditorPaneViewModel.DefaultElementWidth;
-                    height2 = kind == PlacementKind.Text
-                        ? TxImageEditorPaneViewModel.DefaultTextElementHeight
-                        : TxImageEditorPaneViewModel.DefaultBoxElementHeight;
+                    if (distance < PlacementClickThresholdPixels)
+                    {
+                        var clickCenterX = released.X / vm.CanvasDisplayWidth;
+                        var clickCenterY = released.Y / vm.CanvasDisplayHeight;
+                        var halfWidth = TxImageEditorPaneViewModel.DefaultElementWidth / 2;
+                        vm.AddLineElementAt(clickCenterX - halfWidth, clickCenterY, clickCenterX + halfWidth, clickCenterY);
+                    }
+                    else
+                    {
+                        var lineEnd = e.KeyModifiers.HasFlag(KeyModifiers.Shift) ? SnapPointToAngle(_placementAnchorPoint, released) : released;
+                        var (lx1, ly1, lx2, ly2) = ComputeLineFromDrag(_placementAnchorPoint, lineEnd, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
+                        vm.AddLineElementAt(lx1, ly1, lx2, ly2);
+                    }
                 }
                 else
                 {
-                    (centerX, centerY, width2, height2) =
-                        ComputeRectFromDrag(_placementAnchorPoint, released, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
-                }
+                    double centerX, centerY, width2, height2;
+                    if (distance < PlacementClickThresholdPixels)
+                    {
+                        centerX = released.X / vm.CanvasDisplayWidth;
+                        centerY = released.Y / vm.CanvasDisplayHeight;
+                        width2 = TxImageEditorPaneViewModel.DefaultElementWidth;
+                        height2 = kind == PlacementKind.Text
+                            ? TxImageEditorPaneViewModel.DefaultTextElementHeight
+                            : TxImageEditorPaneViewModel.DefaultBoxElementHeight;
+                    }
+                    else
+                    {
+                        (centerX, centerY, width2, height2) =
+                            ComputeRectFromDrag(_placementAnchorPoint, released, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
+                    }
 
-                if (kind == PlacementKind.Text)
-                {
-                    vm.AddOverlayElementAt(centerX, centerY, width2, height2);
-                }
-                else
-                {
-                    vm.AddBoxElementAt(centerX, centerY, width2, height2);
+                    if (kind == PlacementKind.Text)
+                    {
+                        vm.AddOverlayElementAt(centerX, centerY, width2, height2);
+                    }
+                    else
+                    {
+                        vm.AddBoxElementAt(centerX, centerY, width2, height2);
+                    }
                 }
 
                 // One-shot by default; Shift-held-at-arm-time (TX workflow modernization plan, Phase
@@ -948,6 +1116,7 @@ public partial class TxImageEditorPaneView : UserControl
             // and a resize/crop drag never set the guide lines in the first place, so clearing them
             // here too is a harmless no-op rather than a mode-gated special case.
             vm.PlacementPreviewRect = null;
+            vm.PlacementPreviewLine = null;
             vm.GuideLineXNormalized = null;
             vm.GuideLineYNormalized = null;
         }
@@ -970,6 +1139,7 @@ public partial class TxImageEditorPaneView : UserControl
         if (ViewModel is { } vm)
         {
             vm.PlacementPreviewRect = null;
+            vm.PlacementPreviewLine = null;
             vm.GuideLineXNormalized = null;
             vm.GuideLineYNormalized = null;
         }
