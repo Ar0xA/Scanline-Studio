@@ -482,6 +482,11 @@ public partial class MainWindow : Window
                 // RX/TX pipeline fix plan (2026-09-01), item 1 -- same shape as CurrentContactRequested above.
                 vm.TxControls.RequestTransmitTabFocus = () => vm.SelectedTabIndex = MainViewModel.TransmitTabIndex;
 
+                // Macros help plan (2026-09-01), item B -- reuses OpenMacrosReferenceCommand's existing
+                // resolve-and-show logic as-is (see the MacrosReferenceRequested wiring further below);
+                // no extraction/duplication needed.
+                vm.TxControls.RequestMacrosReference = () => vm.OpenMacrosReferenceCommand.Execute(null);
+
                 // RX/TX pipeline fix plan (2026-09-01), item 3 -- a plain settable delegate PROPERTY
                 // assignment (not `+=`), matching CurrentContactRequested's own convention above; the
                 // Gallery is the INITIATOR here (unlike CurrentContactRequested, where TxControls

@@ -35,6 +35,32 @@
                         </ItemsControl>
                     </HeaderedContentControl>
 
+                    <!-- Macros help plan, item A: the 9 tokens above are only half the picture — ANY
+                         {word} not among them (the TX editor's own "INSERT FIELD" chips insert several,
+                         e.g. HIS CALL/HIS GRID/HIS RSV) resolves through a completely different
+                         mechanism, the TX editor's QSO FILL bar. Static content, no VM binding needed
+                         (fixed examples, not a dynamic list). -->
+                    <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
+                        <HeaderedContentControl.Header>
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Macros.VariablesHeader}" />
+                        </HeaderedContentControl.Header>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                            <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap" Text="{loc:Translate Macros.VariablesExplanation}" />
+                            <Grid ColumnDefinitions="70,*" Margin="0,0,0,3">
+                                <TextBlock Classes="IndustryTableCell" FontFamily="{StaticResource IndustryMonoFontFamily}" Text="{}{his_call}" />
+                                <TextBlock Grid.Column="1" Classes="IndustryTableCell" TextWrapping="Wrap" Text="{loc:Translate Macros.Variables.HisCall}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="70,*" Margin="0,0,0,3">
+                                <TextBlock Classes="IndustryTableCell" FontFamily="{StaticResource IndustryMonoFontFamily}" Text="{}{his_grid}" />
+                                <TextBlock Grid.Column="1" Classes="IndustryTableCell" TextWrapping="Wrap" Text="{loc:Translate Macros.Variables.HisGrid}" />
+                            </Grid>
+                            <Grid ColumnDefinitions="70,*" Margin="0,0,0,3">
+                                <TextBlock Classes="IndustryTableCell" FontFamily="{StaticResource IndustryMonoFontFamily}" Text="{}{rsv}" />
+                                <TextBlock Grid.Column="1" Classes="IndustryTableCell" TextWrapping="Wrap" Text="{loc:Translate Macros.Variables.Rsv}" />
+                            </Grid>
+                        </StackPanel>
+                    </HeaderedContentControl>
+
                     <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Macros.PreviewHeader}" />
