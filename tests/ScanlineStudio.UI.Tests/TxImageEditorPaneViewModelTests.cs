@@ -5788,6 +5788,65 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.02, height);
     }
 
+    // TX editor gap-items plan, line element: line-drag geometry math.
+
+    [Fact]
+    public void ComputeLineFromDrag_ReversedDragDirection_ProducesAReversedLine()
+    {
+        // Unlike ComputeRectFromDrag, a line must NOT normalize to the same result regardless of
+        // drag direction -- the endpoints ARE the anchor/current points, in that order.
+        var forward = TxImageEditorPaneView.ComputeLineFromDrag(
+            new Avalonia.Point(100, 100), new Avalonia.Point(300, 200), 1000, 1000);
+        var reversed = TxImageEditorPaneView.ComputeLineFromDrag(
+            new Avalonia.Point(300, 200), new Avalonia.Point(100, 100), 1000, 1000);
+
+        AssertClose(0.1, forward.X1);
+        AssertClose(0.1, forward.Y1);
+        AssertClose(0.3, forward.X2);
+        AssertClose(0.2, forward.Y2);
+        AssertClose(forward.X1, reversed.X2);
+        AssertClose(forward.Y1, reversed.Y2);
+        AssertClose(forward.X2, reversed.X1);
+        AssertClose(forward.Y2, reversed.Y1);
+    }
+
+    [Fact]
+    public void SnapPointToAngle_NearHorizontalDrag_SnapsToExactlyZeroDegreesPreservingDistance()
+    {
+        var fixedPoint = new Avalonia.Point(100, 100);
+        var cursor = new Avalonia.Point(300, 108); // ~2.3 degrees off horizontal
+
+        var snapped = TxImageEditorPaneView.SnapPointToAngle(fixedPoint, cursor);
+
+        var originalDistance = Math.Sqrt(Math.Pow(cursor.X - fixedPoint.X, 2) + Math.Pow(cursor.Y - fixedPoint.Y, 2));
+        var snappedDistance = Math.Sqrt(Math.Pow(snapped.X - fixedPoint.X, 2) + Math.Pow(snapped.Y - fixedPoint.Y, 2));
+        AssertClose(100, snapped.Y); // horizontal: Y unchanged from the fixed point
+        AssertClose(originalDistance, snappedDistance); // only the angle is quantized, not the length
+    }
+
+    [Fact]
+    public void SnapPointToAngle_DiagonalDrag_SnapsToExactly45Degrees()
+    {
+        var fixedPoint = new Avalonia.Point(0, 0);
+        var cursor = new Avalonia.Point(100, 80); // ~38.7 degrees, closer to 45 than 0
+
+        var snapped = TxImageEditorPaneView.SnapPointToAngle(fixedPoint, cursor);
+
+        AssertClose(snapped.X, snapped.Y); // 45 degrees means equal X/Y offset from the fixed point
+    }
+
+    [Fact]
+    public void SnapPointToAngle_CursorAtFixedPoint_ReturnsCursorUnchangedRatherThanDividingByZero()
+    {
+        var fixedPoint = new Avalonia.Point(50, 50);
+        var cursor = new Avalonia.Point(50, 50);
+
+        var snapped = TxImageEditorPaneView.SnapPointToAngle(fixedPoint, cursor);
+
+        AssertClose(cursor.X, snapped.X);
+        AssertClose(cursor.Y, snapped.Y);
+    }
+
     // TX workflow modernization plan, Phase 3c: alignment-guide snap math.
 
     [Fact]
@@ -7549,6 +7608,86 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(vm.IsPlacementPreviewVisible);
         Assert.False(vm.IsGuideLineXVisible);
         Assert.False(vm.IsGuideLineYVisible);
+    }
+
+    // TX editor gap-items plan, line element: same "set/clear cascades to pixel-space and
+    // visibility properties" contract as PlacementPreviewRect above, for the line-shaped preview
+    // TxImageEditorPaneView's own code-behind writes during a line placement drag.
+    [AvaloniaFact]
+    public void PlacementPreviewLine_SetAndClear_CascadeToItsPixelSpaceAndVisibilityProperties()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        Assert.False(vm.IsPlacementPreviewLineVisible);
+
+        vm.PlacementPreviewLine = (0.1, 0.2, 0.6, 0.8);
+
+        Assert.True(vm.IsPlacementPreviewLineVisible);
+        AssertClose(0.1 * vm.CanvasDisplayWidth, vm.PlacementPreviewLineStart.X);
+        AssertClose(0.2 * vm.CanvasDisplayHeight, vm.PlacementPreviewLineStart.Y);
+        AssertClose(0.6 * vm.CanvasDisplayWidth, vm.PlacementPreviewLineEnd.X);
+        AssertClose(0.8 * vm.CanvasDisplayHeight, vm.PlacementPreviewLineEnd.Y);
+
+        vm.PlacementPreviewLine = null;
+
+        Assert.False(vm.IsPlacementPreviewLineVisible);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedLineEndpoint_FirstEndpoint_SnapsOnlyThatEndpoint()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = true;
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        line.X1 = 0.313;
+        line.Y1 = 0.501;
+        line.X2 = 0.647;
+        line.Y2 = 0.499;
+
+        vm.ApplySnappedLineEndpoint(line, isFirstEndpoint: true);
+
+        AssertClose(0.3, line.X1);
+        AssertClose(0.5, line.Y1);
+        AssertClose(0.647, line.X2); // the OTHER endpoint must be untouched
+        AssertClose(0.499, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedLineEndpoint_SecondEndpoint_SnapsOnlyThatEndpoint()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = true;
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        line.X1 = 0.313;
+        line.Y1 = 0.501;
+        line.X2 = 0.647;
+        line.Y2 = 0.499;
+
+        vm.ApplySnappedLineEndpoint(line, isFirstEndpoint: false);
+
+        AssertClose(0.313, line.X1); // the OTHER endpoint must be untouched
+        AssertClose(0.501, line.Y1);
+        AssertClose(0.65, line.X2);
+        AssertClose(0.5, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedLineEndpoint_AlreadyGridAligned_DoesNotPushADeadUndoStep()
+    {
+        // Same class of bug already fixed once in ApplySnappedElementBounds's own line branch:
+        // SnapValueToGrid's divide-then-multiply round-trip can land on a different bit pattern than
+        // an already-aligned value, so the no-op guard needs a tolerance, not exact equality.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = true;
+        vm.AddLineElementCommand.Execute(null); // pushes exactly 1 undo step (the Add)
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+
+        vm.ApplySnappedLineEndpoint(line, isFirstEndpoint: true);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null), "a no-op endpoint snap must not leave a second, dead undo step on the stack");
     }
 
     // Auditor-specified tolerance rule (PROJECT_BRIEF.md flatten test debt), tight-bound half: a
