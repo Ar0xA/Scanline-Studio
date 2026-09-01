@@ -482,6 +482,12 @@ public partial class MainWindow : Window
                 // RX/TX pipeline fix plan (2026-09-01), item 1 -- same shape as CurrentContactRequested above.
                 vm.TxControls.RequestTransmitTabFocus = () => vm.SelectedTabIndex = MainViewModel.TransmitTabIndex;
 
+                // RX/TX pipeline fix plan (2026-09-01), item 3 -- a plain settable delegate PROPERTY
+                // assignment (not `+=`), matching CurrentContactRequested's own convention above; the
+                // Gallery is the INITIATOR here (unlike CurrentContactRequested, where TxControls
+                // pulls from RX), so the delegate lives on RxHistory instead.
+                vm.RxHistory.SendToTxRequested = request => vm.TxControls.OpenEditorForExternalFileAsync(request.FilePath, request.ContactVariables);
+
                 // Stub survey Tier 3 (2026-08-26). Same shape as OptionsRequested above --
                 // DI-resolved view-model. Storage's own former entry here (stub survey Tier 2) was
                 // removed once its one setting (the RX images folder) moved into Options > General

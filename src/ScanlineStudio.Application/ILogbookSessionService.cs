@@ -17,6 +17,12 @@ public interface ILogbookSessionService
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: pure pass-through of
+    /// <c>ILogbookRepository.GetByIdAsync</c> -- see that method's own doc comment for why this
+    /// exists (the Gallery's "Send to TX" resolving a <c>ReceiveHistoryEntry.LinkedQsoId</c>) and
+    /// why it's not just a client-filtered <see cref="SearchAsync"/> call.</summary>
+    Task<QsoRecord?> GetQsoByIdAsync(string id, CancellationToken ct = default);
+
     /// <summary>Edits an already-logged QSO in place. Deliberately does NOT re-push via ADIF-UDP
     /// or QRZ the way <see cref="LogQsoAsync"/> does -- see the implementation's own doc comment for
     /// why (QRZ's real upload API is INSERT-only; a re-push would file as a duplicate, not an
