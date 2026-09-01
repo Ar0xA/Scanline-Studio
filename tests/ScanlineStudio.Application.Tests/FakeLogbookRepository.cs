@@ -55,10 +55,18 @@ internal sealed class FakeLogbookRepository : ILogbookRepository
             results = results.Where(r => r.StartUtc <= query.To.Value);
         }
 
-        // Matches SqliteLogbookRepository.SearchAsync's own "ORDER BY StartUtc DESC" (code-review
-        // finding: the filter predicates above were made faithful to the real SQL, but this ordering
-        // was left out, an easy divergence to miss now that the rest looks real).
-        return Task.FromResult<IReadOnlyList<QsoRecord>>(results.OrderByDescending(r => r.StartUtc).ToList());
+        // Matches SqliteLogbookRepository.SearchAsync's own "ORDER BY StartUtc DESC" -- LEXICAL, not
+        // chronological (worked-before code-review finding: `OrderByDescending(r => r.StartUtc)` is
+        // NOT faithful to the real SQL despite the sibling finding above claiming so -- the real
+        // column is TEXT holding DateTimeOffset.ToString("O"), which SQLite's ORDER BY sorts as a
+        // STRING, and a string sort can disagree with a chronological one across different UTC
+        // offsets. Sorting on the same "O"-format string here, not the DateTimeOffset value itself,
+        // is required for any test that needs to prove a caller handles that real misordering (e.g.
+        // LogbookSessionServiceTests.GetWorkedBeforeAsync's own MaxBy-not-candidates[0] test) --
+        // using a chronological sort here made that test pass vacuously even against a naive,
+        // unfixed candidates[0] implementation.
+        return Task.FromResult<IReadOnlyList<QsoRecord>>(
+            results.OrderByDescending(r => r.StartUtc.ToString("O"), StringComparer.Ordinal).ToList());
     }
 
     public Exception? ThrowOnGetById { get; set; }

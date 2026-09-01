@@ -18,6 +18,21 @@ using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
+/// <summary>Worked-before plan (2026-09-01): tri-state, NOT a nullable string -- <see langword="null"/>
+/// would mean both "not checked yet" and "confirmed no prior contact," which is un-renderable (no way
+/// to show a "New station" state distinct from "nothing checked"). <see cref="Unknown"/> covers both
+/// "no callsign to check" and "the check itself failed" -- a failed check is not the same claim as
+/// "confirmed new," so it must never render as <see cref="None"/>. Top-level, not nested in
+/// <see cref="RxImagePaneViewModel"/> -- CommunityToolkit's <c>[ObservableProperty]</c> generator names
+/// the public property after the backing field (<c>WorkedBeforeStatus</c>), which collides with a
+/// same-named nested type.</summary>
+public enum WorkedBeforeStatus
+{
+    Unknown,
+    None,
+    Found,
+}
+
 /// <summary>The in-progress/completed decoded receive image, hosted in the fixed Receive tab's
 /// "Incoming frame" card (spec/09-ui.md).
 ///
@@ -50,6 +65,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// second UI surface for it (the Gallery tab's own Note field, on a user-SELECTED history entry,
     /// already used this debounce/persist shape first).</summary>
     private static readonly TimeSpan NotePersistDebounce = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>Worked-before plan (2026-09-01): absorbs per-keystroke manual typing into
+    /// <see cref="OverrideCallsign"/> (the auto-decode write is already a single event, so this only
+    /// matters on that path) -- imperceptible on both the auto-decode and log-just-happened
+    /// (<see cref="NotifyQsoLogged"/>) triggers, neither of which is latency-sensitive.</summary>
+    private static readonly TimeSpan WorkedBeforeDebounce = TimeSpan.FromMilliseconds(250);
 
     private readonly IReceivedImageBuffer _receivedImage;
     private readonly ISstvSessionService _sstvSession;
@@ -164,6 +185,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     private const int PreviousFramesThumbnailMaxDimension = 96;
 
     private CancellationTokenSource? _notePersistCts;
+
+    /// <summary>Worked-before plan (2026-09-01): cancel-and-replace debounce, same shape as
+    /// <see cref="_notePersistCts"/> -- guards both against per-keystroke manual-typing queries in
+    /// <see cref="OnOverrideCallsignChanged"/> AND against a stale in-flight query for a callsign the
+    /// operator has since cleared/changed latching a wrong result (cancelled unconditionally, before
+    /// any other branching, in both <see cref="OnOverrideCallsignChanged"/> and
+    /// <see cref="NotifyQsoLogged"/>).</summary>
+    private CancellationTokenSource? _workedBeforeCts;
 
     /// <summary>Same ordering-safety shape as <c>RxHistoryPaneViewModel._pendingFlagPersist</c> --
     /// chained onto whatever's currently pending rather than fired independently, so a rapid
@@ -413,6 +442,33 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// value instead of a hardcoded literal.</summary>
     public string CallsignDisplay => string.IsNullOrWhiteSpace(OverrideCallsign) ? "—" : OverrideCallsign;
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WorkedBeforeDisplay))]
+    private WorkedBeforeStatus _workedBeforeStatus = WorkedBeforeStatus.Unknown;
+
+    /// <summary>Populated only when <see cref="WorkedBeforeStatus"/> is <see cref="WorkedBeforeStatus.Found"/>
+    /// -- e.g. "20m · 2026-08-12", or "3× · 20m · 2026-08-12" when more than one prior contact
+    /// exists. Built by <see cref="RefreshWorkedBeforeCoreAsync"/>.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(WorkedBeforeDisplay))]
+    private string? _workedBeforeSummary;
+
+    /// <summary>The RxFrameMeta card's "Worked before" row binds this one string --
+    /// <see cref="WorkedBeforeStatus"/>/<see cref="WorkedBeforeSummary"/> are two source properties,
+    /// so BOTH carry <c>[NotifyPropertyChangedFor(nameof(WorkedBeforeDisplay))]</c> above (omitting it
+    /// on either one reproduces the "derived property with no notification never updates" bug
+    /// documented at <c>LogbookPaneViewModel.cs</c>'s own equivalent case). Same "—" empty-state
+    /// convention as <see cref="CallsignDisplay"/>/<see cref="DecodedNrRstDisplay"/> for the
+    /// not-checked-yet/failed state; the "New station" text for <see cref="WorkedBeforeStatus.None"/>
+    /// is localized (Fable design-review: silence there is indistinguishable from "feature broken,"
+    /// and a row that appears/disappears shifts layout mid-session).</summary>
+    public string WorkedBeforeDisplay => WorkedBeforeStatus switch
+    {
+        WorkedBeforeStatus.Found => WorkedBeforeSummary ?? "—",
+        WorkedBeforeStatus.None => _localization.GetString("Panes.RxFrameMeta.WorkedBefore.None"),
+        _ => "—",
+    };
+
     /// <summary>Legacy's real <c>MyRST</c> equivalent (<c>Main.cpp:3648</c>,
     /// <c>sprintf("595%s", pDem-&gt;m_fskNRS)</c>) -- the decoded NR/RST exchange from a station-ID's
     /// optional sub-packet, auto-filled by <see cref="OnStationIdDecoded"/>. Deliberately not named
@@ -612,6 +668,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         try
         {
             _imagePool.Dispose();
+            // Worked-before plan (2026-09-01): AFTER _imagePool.Dispose(), not before -- a throw from
+            // Cancel() ahead of it would skip pool disposal and mislog as ImagePoolDisposeFailed.
+            // Cancellation itself is thread-safe even though this whole block runs off the UI thread.
+            _workedBeforeCts?.Cancel();
         }
         catch (Exception ex)
         {
@@ -1989,6 +2049,123 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Fires automatically on every real callsign change -- unlike <see cref="LookupQrzAsync"/>,
+    /// no manual button: this is a local, indexed SQLite query (sub-millisecond), none of the
+    /// network-call friction the QRZ button's manual-click gate exists to avoid. Covers BOTH writers
+    /// of <see cref="OverrideCallsign"/> -- the once-per-decode auto-fill (already deduped by the
+    /// generated setter's no-op-on-equal-value behavior) AND the editable TextBox
+    /// (`MainWindow.axaml`'s <c>OverrideCallsign</c> binding), which updates per keystroke -- the
+    /// debounce inside <see cref="RefreshWorkedBeforeCoreAsync"/> absorbs that.</summary>
+    partial void OnOverrideCallsignChanged(string? oldValue, string? newValue)
+    {
+        // Cancelled FIRST, unconditionally, before any branching below -- clearing the callsign (or
+        // starting a new reception) must not let an in-flight query for the OLD callsign resolve and
+        // latch a stale Found/None onto the new, unrelated state.
+        _workedBeforeCts?.Cancel();
+
+        if (string.IsNullOrWhiteSpace(newValue))
+        {
+            WorkedBeforeStatus = WorkedBeforeStatus.Unknown;
+            WorkedBeforeSummary = null;
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _workedBeforeCts = cts;
+        _ = RefreshWorkedBeforeCoreAsync(newValue.Trim(), cts.Token);
+    }
+
+    /// <summary>Worked-before plan (2026-09-01): re-fires the SAME query
+    /// <see cref="OnOverrideCallsignChanged"/> uses -- called from <c>MainWindow.axaml.cs</c>'s
+    /// parent-pushed wiring of <c>LogbookPaneViewModel.QsoLogged</c>. Without this, the indicator's
+    /// ONLY trigger is <see cref="OverrideCallsign"/> changing, so it would keep showing "New station"
+    /// for a station just logged until the next decode. No-op unless <paramref name="callsign"/>
+    /// matches the CURRENT <see cref="OverrideCallsign"/> (case-insensitive, matching the database's
+    /// own <c>COLLATE NOCASE</c> semantics -- a plain ordinal compare would silently no-op on a case
+    /// difference between what the operator typed in the Logbook form and what this pane currently
+    /// holds, a real, expected case, not an edge case) -- a QSO logged for a DIFFERENT callsign than
+    /// whatever this pane currently shows must not overwrite this indicator.</summary>
+    public void NotifyQsoLogged(string callsign)
+    {
+        if (!string.Equals(callsign, OverrideCallsign?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _workedBeforeCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _workedBeforeCts = cts;
+        _ = RefreshWorkedBeforeCoreAsync(callsign, cts.Token);
+    }
+
+    /// <summary>Shared by <see cref="OnOverrideCallsignChanged"/> and <see cref="NotifyQsoLogged"/> --
+    /// debounced (absorbs per-keystroke manual typing; imperceptible on the once-per-decode auto
+    /// path and on the log-just-happened path, neither of which is latency-sensitive), no in-flight
+    /// "checking..." state (the query is sub-millisecond locally; a spinner would only ever flash for
+    /// one frame -- the PREVIOUS value stays displayed during the debounce window instead of
+    /// blanking). Threading: bare <see langword="await"/> throughout, matching
+    /// <see cref="LookupQrzAsync"/>'s own shape -- simpler than <see cref="PersistNoteDebouncedAsync"/>'s
+    /// <c>ConfigureAwait(false)</c> + <see cref="Dispatcher"/>.Post pairing, and safe here because
+    /// both callers of this method already run on the UI thread.</summary>
+    private async Task RefreshWorkedBeforeCoreAsync(string callsign, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(WorkedBeforeDebounce, ct);
+            var lookup = await _logbookSession.GetWorkedBeforeAsync(callsign, ct);
+
+            // Captured-callsign compare-before-apply -- a SECOND guard, not redundant with the CTS
+            // cancel above: protects against out-of-order resolution between two in-flight queries
+            // even with cancellation in play.
+            if (!string.Equals(callsign, OverrideCallsign?.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            switch (lookup.Outcome)
+            {
+                case WorkedBeforeOutcome.NotFound:
+                    WorkedBeforeStatus = WorkedBeforeStatus.None;
+                    WorkedBeforeSummary = null;
+                    break;
+                case WorkedBeforeOutcome.Found:
+                    WorkedBeforeStatus = WorkedBeforeStatus.Found;
+                    WorkedBeforeSummary = FormatWorkedBefore(lookup.Info!);
+                    break;
+                default:
+                    // Failed -- deliberately NOT None: a failed check isn't "confirmed new" (see
+                    // ILogbookSessionService.GetWorkedBeforeAsync's own doc comment for why this
+                    // outcome exists separately from NotFound).
+                    WorkedBeforeStatus = WorkedBeforeStatus.Unknown;
+                    WorkedBeforeSummary = null;
+                    Log.GetWorkedBeforeFailed(_logger, callsign);
+                    break;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal control flow -- a newer change superseded this one, same convention as
+            // PersistNoteDebouncedAsync's own identical catch.
+        }
+    }
+
+    private string FormatWorkedBefore(WorkedBeforeInfo info)
+    {
+        var segments = new List<string>();
+        if (info.Count > 1)
+        {
+            segments.Add(_localization.GetString("Panes.RxFrameMeta.WorkedBefore.CountFormat", info.Count.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        if (info.LastBand is { } band)
+        {
+            segments.Add(band);
+        }
+
+        segments.Add(info.LastStartUtc.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        return string.Join(" · ", segments);
+    }
+
     /// <summary>Fires with no payload -- <c>MainWindow.axaml.cs</c>'s subscriber (the composition
     /// root holding both this VM and <see cref="LogbookPaneViewModel"/>) reads
     /// <see cref="OverrideCallsign"/>/<see cref="DetectedMode"/>/<see cref="StartedAt"/> directly
@@ -2219,6 +2396,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading whether QRZ lookup is configured failed")]
         public static partial void LoadQrzLookupConfiguredFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "GetWorkedBeforeAsync({Callsign}) reported a failure; the worked-before row shows \"—\" instead of an answer")]
+        public static partial void GetWorkedBeforeFailed(ILogger logger, string callsign);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading Previous-frames strip thumbnail failed for entry {EntryId}")]
         public static partial void LoadPreviousFrameThumbnailFailed(ILogger logger, string entryId, Exception ex);

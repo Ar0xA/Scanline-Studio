@@ -2072,6 +2072,50 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
         return Task.FromResult(DuplicateResultToReturn);
     }
 
+    /// <summary>Real case-insensitive callsign filtering + count + max-`StartUtc` selection over
+    /// <see cref="Records"/> -- unlike <see cref="SearchAsync"/> above (which ignores
+    /// <c>query.Callsign</c> entirely), this must actually filter, since worked-before-indicator
+    /// tests assert both "found" and "no match" outcomes. Deliberately does NOT call the real
+    /// `AmateurBandLookup.BandFor` -- `ScanlineStudio.UI.Tests` doesn't reference
+    /// `ScanlineStudio.Core.Logbook` (same layering wall `ScanlineStudio.UI` itself is gated behind),
+    /// so <see cref="WorkedBeforeBandToReturn"/> stands in for it; real band-label correctness is
+    /// `LogbookSessionService`'s own responsibility, tested in
+    /// `ScanlineStudio.Application.Tests.LogbookSessionServiceTests` instead.</summary>
+    public string? WorkedBeforeBandToReturn { get; set; }
+
+    /// <summary>When set, <see cref="GetWorkedBeforeAsync"/> returns this outcome directly (with no
+    /// <see cref="WorkedBeforeInfo"/>), bypassing the real filtering below -- models
+    /// <see cref="WorkedBeforeOutcome.Failed"/> the way the real <c>LogbookSessionService</c> (and
+    /// its interface contract) actually reports it, i.e. as a returned VALUE, never a thrown
+    /// exception (code-review finding: an earlier version of this fake modeled "failed" as an actual
+    /// thrown exception via a since-removed <c>ThrowOnGetWorkedBefore</c> field, which does not match
+    /// the real, documented "never throws" contract -- a caller's real `catch` clause only handles
+    /// <see cref="OperationCanceledException"/>, so a thrown non-cancellation exception here escaped
+    /// uncaught as an unobserved fire-and-forget task fault instead of exercising the VM's own
+    /// `Failed` handling, silently passing the test without ever writing the property under test).</summary>
+    public WorkedBeforeOutcome? WorkedBeforeOutcomeOverride { get; set; }
+
+    public List<string> GetWorkedBeforeCalls { get; } = [];
+
+    public Task<WorkedBeforeLookup> GetWorkedBeforeAsync(string callsign, CancellationToken ct = default)
+    {
+        GetWorkedBeforeCalls.Add(callsign);
+        if (WorkedBeforeOutcomeOverride is { } outcome)
+        {
+            return Task.FromResult(new WorkedBeforeLookup(outcome, null));
+        }
+
+        var matches = Records.Where(r => string.Equals(r.Callsign, callsign, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (matches.Count == 0)
+        {
+            return Task.FromResult(new WorkedBeforeLookup(WorkedBeforeOutcome.NotFound, null));
+        }
+
+        var latest = matches.MaxBy(r => r.StartUtc)!;
+        var info = new WorkedBeforeInfo(matches.Count, latest.StartUtc, WorkedBeforeBandToReturn);
+        return Task.FromResult(new WorkedBeforeLookup(WorkedBeforeOutcome.Found, info));
+    }
+
     public QrzCallsignLookupResult LookupResultToReturn { get; set; } = new(true, "Test Name", "Test QTH", "AA00", null);
 
     public Exception? ThrowOnLookup { get; set; }

@@ -300,6 +300,34 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         }
     }
 
+    public async Task<WorkedBeforeLookup> GetWorkedBeforeAsync(string callsign, CancellationToken ct = default)
+    {
+        try
+        {
+            var candidates = await _repository.SearchAsync(new LogbookQuery(callsign), ct).ConfigureAwait(false);
+            if (candidates.Count == 0)
+            {
+                return new WorkedBeforeLookup(WorkedBeforeOutcome.NotFound, null);
+            }
+
+            // Lexical, not chronological -- SqliteLogbookRepository's own ORDER BY sorts the
+            // DateTimeOffset-as-"O"-format TEXT column, which can misorder rows logged at different
+            // UTC offsets. MaxBy on the real DateTimeOffset value is required, not candidates[0].
+            var latest = candidates.MaxBy(c => c.StartUtc)!;
+            var info = new WorkedBeforeInfo(candidates.Count, latest.StartUtc, AmateurBandLookup.BandFor(latest.FrequencyHz));
+            return new WorkedBeforeLookup(WorkedBeforeOutcome.Found, info);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Deliberately NOT fail-open-to-"none found" (see this method's own interface doc
+            // comment) -- unlike FindLikelyDuplicateAsync, where "couldn't check" and "confirmed no
+            // duplicate" have the same safe consequence (let the QSO log), this is a dupe-avoidance
+            // display: silently rendering a DB failure as "New station" would be actively wrong.
+            Log.GetWorkedBeforeFailed(_logger, callsign, ex);
+            return new WorkedBeforeLookup(WorkedBeforeOutcome.Failed, null);
+        }
+    }
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (ADIF-UDP sent={AdifUdpSentCount}/{AdifUdpEnabledCount}, QRZ uploaded={QrzUploaded})")]
@@ -325,5 +353,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "FindLikelyDuplicateAsync({Callsign}) failed; treating as no duplicate found")]
         public static partial void FindLikelyDuplicateFailed(ILogger logger, string callsign, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "GetWorkedBeforeAsync({Callsign}) failed; reporting the check as unavailable")]
+        public static partial void GetWorkedBeforeFailed(ILogger logger, string callsign, Exception exception);
     }
 }
