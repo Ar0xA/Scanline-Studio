@@ -1061,6 +1061,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// refused, the fresh one otherwise.</summary>
     public Action? RequestTransmitTabFocus { get; set; }
 
+    /// <summary>Macros help plan (2026-09-01), item B. Same "settable delegate property" shape as
+    /// <see cref="RequestTransmitTabFocus"/> above, set once by <c>MainWindow.axaml.cs</c> to
+    /// <c>MainViewModel.OpenMacrosReferenceCommand</c> -- reuses that command's existing resolve-
+    /// and-show logic as-is. Named <c>RequestMacrosReference</c>, not <c>MacrosReferenceRequested</c>
+    /// (plan-review finding): <c>MainViewModel</c> already has its OWN pre-existing
+    /// <c>MacrosReferenceRequested</c> event for a different purpose (constructing/showing the actual
+    /// window); the two would sit ~15 lines apart in <c>MainWindow.axaml.cs</c> and read as the same
+    /// thing. Threaded into <see cref="TxImageEditorPaneViewModel"/>'s constructor as a CLOSURE at
+    /// both real construction call sites, not this property's captured value -- see that
+    /// constructor's own parameter doc comment for why a captured value would risk a permanently
+    /// dead button.</summary>
+    public Action? RequestMacrosReference { get; set; }
+
     /// <summary>RX pane's "Copy to TX" stub (legacy precedent: <c>fileview.cpp</c>'s
     /// <c>CopyRectBitmap(pBitmapTXM)</c> -- copies the received bitmap into the TX slot as a fresh
     /// base image, not an overlay). Distinct from the already-shipped <c>AddLastRxImage</c> (the "+
@@ -1330,7 +1343,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
-                currentContactVariables: currentContactVariables);
+                currentContactVariables: currentContactVariables,
+                macrosReferenceRequested: () => RequestMacrosReference?.Invoke());
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
@@ -1502,7 +1516,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables),
-                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest);
+                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                macrosReferenceRequested: () => RequestMacrosReference?.Invoke());
             // SelectedFileName! is safe here: only OnEditorApplied ever writes it, always in the
             // same assignment that sets _editState (:868-871 below) -- _editState being non-null at
             // this point (the guard above) guarantees SelectedFileName was set at the same time.

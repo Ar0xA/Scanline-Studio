@@ -782,17 +782,23 @@
                                                              — inline canvas text editing and a text-style-preset system are both
                                                              genuinely new subsystems, not reachable by relocating existing commands,
                                                              explicitly deferred rather than silently dropped. -->
+                                                        <!-- Macros help plan, item A: same 3-way grouping as the TEXT STYLE tab's own
+                                                             chip row (its own comment explains the membership) — Separators here since
+                                                             a MenuItem submenu has no room for a kicker sub-label the way the sidebar
+                                                             does; ToolTip.Tip carries the same explanation on groups 2/3. -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.InsertFieldMenu}">
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip1}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip2}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip3}" Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip4}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip5}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip6}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip7}" Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip8}" Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip9}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip10}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip4}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip8}" Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip7}" Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
+                                                            <Separator />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip5}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldRadioHint}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip6}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldRadioHint}" />
+                                                            <Separator />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip1}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip2}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.Chip9}" Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
                                                         </MenuItem>
                                                         <!-- Backlog item (user request, 2026-08-17): quick-pick submenus for font size/text
                                                              color, same discrete-CommandParameter shape as Align to Crop above — a native
@@ -1928,31 +1934,46 @@
                                      comment (moved from its old standalone panel, unchanged
                                      otherwise) for the full reasoning. -->
                                 <Border Classes="IndustryRow"><TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InsertFieldHeader}" /></Border>
+                                <!-- Macros help plan, item A: 3 visual groups, not a flat 12-chip row —
+                                     these chips insert 3 genuinely different behaviors (MacroTextResolver.cs
+                                     :150-164), a flat row gave no hint which is which. Membership is
+                                     pinned by plan-review, not arbitrary: group 1 (always resolve, no
+                                     dependency) gets no per-chip annotation, only the section kicker;
+                                     group 2 (radio-dependent, resolves to EMPTY with no rig) and group 3
+                                     (needs a QSO FILL bar value first) each get a shared ToolTip.Tip
+                                     explaining why. -->
+                                <TextBlock Classes="IndustryKicker" Margin="0,2,0,2" Text="{loc:Translate Panes.TxImageEditor.InsertFieldGroupMySide}" />
                                 <WrapPanel>
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip3}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="%m" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip10}"
                                             Command="{Binding InsertFieldCommand}" CommandParameter="{}{name}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip4}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{grid}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip8}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="%D" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip7}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="%T" />
+                                </WrapPanel>
+                                <TextBlock Classes="IndustryKicker" Margin="0,4,0,2" Text="{loc:Translate Panes.TxImageEditor.InsertFieldGroupRadio}" />
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip5}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{freq}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldRadioHint}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip6}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{mode}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldRadioHint}" />
+                                </WrapPanel>
+                                <TextBlock Classes="IndustryKicker" Margin="0,4,0,2" Text="{loc:Translate Panes.TxImageEditor.InsertFieldGroupPerQso}" />
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip1}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_call}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip2}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{his_grid}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip9}"
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{rsv}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip11}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{dist}" />
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{dist}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3" Content="{loc:Translate Panes.TxImageEditor.Chip12}"
-                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{bearing}" />
+                                            Command="{Binding InsertFieldCommand}" CommandParameter="{}{bearing}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.InsertFieldPerQsoHint}" />
                                 </WrapPanel>
 
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
@@ -2178,17 +2199,24 @@
                      between QSO FILL and SEND. -->
                 <Grid ColumnDefinitions="*,Auto,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                        <Grid ColumnDefinitions="Auto,Auto,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
                             <TextBlock Grid.Column="1" Classes="IndustryKicker" VerticalAlignment="Center"
                                        Text="{Binding TemplateVariableCountText}" IsVisible="{Binding !HasNoTemplateVariableRows}" />
+                            <!-- Macros help plan (2026-09-01), item B: 5th column added, Clear
+                                 re-indexed 3→4 — reaches the same Macros reference window
+                                 `Tools ▸ Macros` does, so an operator mid-template-edit doesn't have to
+                                 remember that menu exists. -->
+                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                                    Content="{loc:Translate Panes.TxImageEditor.MacrosButton}"
+                                    Command="{Binding OpenMacrosReferenceCommand}" />
                             <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not just left
                                  disabled) — no real default-value source exists yet (OperatorSettings is
                                  MY-side only; spec/15 frames any logbook-based prefill as future/
                                  additive). "Clear" is the one real, spec-backed action (spec/15: "one
                                  'clear fields' action after the QSO") — moved here (Phase F) from its
                                  old bottom-left spot to match the mock's own header-row placement. -->
-                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                            <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                     Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
                                     Command="{Binding ClearTemplateVariablesCommand}" />
                         </Grid>

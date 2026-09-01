@@ -114,6 +114,16 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), currentContactVariables: currentContactVariables);
 
+    /// <summary>Macros help plan (2026-09-01), item B overload -- exposes the
+    /// macrosReferenceRequested delegate for <see cref="OpenMacrosReferenceCommand_InvokesTheWiredDelegate"/>
+    /// and friends. Every OTHER <see cref="CreateEditor"/> overload omits it (defaults to null, a
+    /// silent no-op -- see the production constructor's own doc comment), matching how the real
+    /// production call sites are the only ones that ever pass a real delegate.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer, Action macrosReferenceRequested) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), macrosReferenceRequested: macrosReferenceRequested);
+
     private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
         new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), new FakeFilePickerService(), NullLogger<ReadyRackViewModel>.Instance);
 
@@ -464,6 +474,32 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.NotifyTransmitAvailabilityChanged();
 
         Assert.True(vm.ApplyAndTransmitCommand.CanExecute(null));
+    }
+
+    /// <summary>Macros help plan (2026-09-01), item B.</summary>
+    [AvaloniaFact]
+    public void OpenMacrosReferenceCommand_InvokesTheWiredDelegate()
+    {
+        var invokedCount = 0;
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), () => invokedCount++);
+
+        vm.OpenMacrosReferenceCommand.Execute(null);
+
+        Assert.Equal(1, invokedCount);
+    }
+
+    /// <summary>Macros help plan (2026-09-01), item B: every OTHER <see cref="CreateEditor"/> overload
+    /// (used by ~20 other test call sites) passes no delegate at all, matching production's own
+    /// "unwired = silent no-op" contract -- this pins that the command itself doesn't throw against
+    /// that default.</summary>
+    [AvaloniaFact]
+    public void OpenMacrosReferenceCommand_UnwiredDelegate_DoesNotThrow()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        var exception = Record.Exception(() => vm.OpenMacrosReferenceCommand.Execute(null));
+
+        Assert.Null(exception);
     }
 
     [AvaloniaFact]
