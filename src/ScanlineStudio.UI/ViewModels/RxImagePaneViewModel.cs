@@ -143,13 +143,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// <see cref="PreviousFramesCapacity"/> COMPLETED receptions, newest first. Deliberately NOT the
     /// same collection/query as <c>RxHistoryPaneViewModel.Entries</c> (that one is DB-backed,
     /// filtered by the Gallery tab's own <c>ShowTodayOnly</c> toggle, persists across restarts) --
-    /// user decision 2026-08-26: this strip must show only this session's own last two frames,
-    /// independent of any Gallery UI state. Lives only in memory for this pane's own lifetime;
+    /// user decision 2026-08-26: this strip must show only this session's own last
+    /// <see cref="PreviousFramesCapacity"/> frames, independent of any Gallery UI state. Lives only
+    /// in memory for this pane's own lifetime;
     /// starts empty on every app launch. See <see cref="AddPreviousFrameAsync"/> for how it's kept
     /// sorted/capped.</summary>
     public ObservableCollection<RxHistoryEntryViewModel> PreviousFrames { get; } = [];
 
-    private const int PreviousFramesCapacity = 2;
+    // Fable operator-perspective punch list (2026-09-01), priority #3: legacy kept 32 on the same
+    // page; this port's own strip forced a Gallery tab switch after only 2, even though operators
+    // routinely compare the last 4-6 receptions during a net or pileup. 6 covers that without
+    // reproducing legacy's much larger on-page list -- the strip already scrolls
+    // (MainWindow.axaml's ScrollViewer around the ItemsControl), so raising this is a pure capacity
+    // change, no new layout needed.
+    private const int PreviousFramesCapacity = 6;
 
     /// <summary>ui_transition_plan.md step 3 (T1-5). Handled in MainWindow.axaml.cs, same
     /// "source VM constructs the child view-model, the handler just wraps it in a View" convention

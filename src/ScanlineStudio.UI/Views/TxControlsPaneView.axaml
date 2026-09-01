@@ -183,6 +183,22 @@
                                Text="{Binding RadioStatus.TxVolumeDisplay}"
                                VerticalAlignment="Center" />
                 </Grid></Border>
+                <!-- Fable operator-perspective punch list (2026-09-01), priority #3 (bundled cheap
+                     win): "operators tune the amp seconds before every transmit" — MMSSTV puts a
+                     Tune button right on the TX pane, not two clicks away in Options/Calibration.
+                     Reuses RadioStatus.TuneCommand/TuneButtonLabel verbatim (same RadioStatus
+                     reference the Pwr slider above already uses, same loc keys the Options to Radio
+                     tab's own Tune button and the Tone Generator dialog already use) — no new
+                     ViewModel logic, a pure AXAML wiring addition. Deliberately does NOT also show
+                     RadioStatus.ErrorMessage here: that field is shared across every RadioStatus
+                     concern (frequency presets, CAT connection, Tune), not Tune-specific, so
+                     surfacing it under this button would risk showing an unrelated error as if it
+                     were a Tune failure. -->
+                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                        Content="{Binding RadioStatus.TuneButtonLabel}"
+                        Command="{Binding RadioStatus.TuneCommand}"
+                        ToolTip.Tip="{loc:Translate RadioStatus.Tune.Help}"
+                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <StackPanel Classes="Industry IndustryRows">
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
