@@ -185,9 +185,19 @@
                              source (cradio.h/cradio.cpp/Main.cpp/Option.cpp) has zero mentions of
                              RIT either; the only place it existed at all was an unused property on
                              OmniRig's auto-generated COM binding (OmniRig_OCX.h), never read/written
-                             by YONIQ's own code, and OmniRig is a removed feature in this port. Grid
-                             row 2 column 0 is now empty (no replacement control) — see
-                             spec/14-roadmap.md's backlog for both. -->
+                             by YONIQ's own code, and OmniRig is a removed feature in this port. See
+                             spec/14-roadmap.md's backlog for both. Grid row 2 column 0's own gap
+                             filled 2026-09-01 — see the CheckBox below. -->
+                        <!-- User feature request (2026-09-01), placement confirmed against Options/
+                             Radio&amp;CAT as the alternative — main header wins since this toggle is
+                             touched mid-session, not a one-time rig setup value. See
+                             RadioStatusViewModel.SsbAsPkt's own doc comment for the full mode-
+                             mapping design. -->
+                        <CheckBox Grid.Row="2" Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                  IsChecked="{Binding SsbAsPkt}"
+                                  Content="{loc:Translate RadioStatus.SsbAsPkt}"
+                                  ToolTip.Tip="{loc:Translate RadioStatus.SsbAsPkt.Help}"
+                                  VerticalAlignment="Center" />
                         <!-- Auditor usability review follow-up (2026-08-18): real now — the "no
                              rig-meters concept exists" premise this stub was built on was checked
                              directly against RigctldClientProtocol/HamlibRadioProtocol and found

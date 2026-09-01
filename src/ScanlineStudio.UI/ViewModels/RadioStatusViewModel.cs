@@ -133,6 +133,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private RadioMode _selectedRadioMode = RadioMode.Usb;
 
+    /// <summary>User bug/feature report (2026-09-01): "SSB as PKT" -- when checked, the USB/LSB
+    /// segment buttons target Hamlib's own PKTUSB/PKTLSB modes (<see cref="RadioMode.Data"/>/
+    /// <see cref="RadioMode.DataR"/> in this app's own generic enum -- <see langword="not"/> new
+    /// values; every backend already maps these correctly: confirmed against
+    /// <c>HamlibRadioProtocol</c>, <c>RigctldClientProtocol</c>, and <c>FlrigModeTokens</c>, which
+    /// already round-trip PKTUSB/PKTLSB ↔ USB-D/DATA-U/DATA-L for exactly this "digital mode on an
+    /// SSB-family sideband" concept -- this feature needed no new CAT-layer plumbing, only a UI
+    /// mapping choice). Session-only, not persisted -- matches an operator flipping between voice and
+    /// digital-mode operating within one sitting, not a one-time rig-setup preference like the
+    /// Options dialog's own Radio/CAT tab fields (placement confirmed with the user: main header, not
+    /// Options, specifically because it's touched mid-session).</summary>
+    [NotifyPropertyChangedFor(nameof(IsSidebandUsb), nameof(IsSidebandLsb))]
+    [ObservableProperty]
+    private bool _ssbAsPkt;
+
     /// <summary>Stub survey Tier 4 (2026-08-26): the VFO card's sideband segment
     /// (<c>RadioHeaderView.axaml</c>) was a fully-clickable but entirely unwired literal group --
     /// <see cref="SelectedRadioMode"/> itself was already real (<see cref="SetModeSafeAsync"/> keys
@@ -140,29 +155,35 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// get/set booleans, not a generic enum-to-bool converter -- matches this class's own established
     /// pattern for a bound 2/3-way segment (see the Receive tab's Listening/Paused segment, bound
     /// directly to a plain bool with Avalonia's <c>!</c> negation operator, no converter). <see
-    /// cref="RadioMode"/> has 12 members total; only these 3 are exposed here since they're the only
-    /// ones this segment offers -- selecting any of them while the rig is actually in, say, CW or
-    /// RTTY is a real, silent mode change, same as any other <see cref="SelectedRadioMode"/> write.</summary>
+    /// cref="RadioMode"/> has 12 members total; only these 3 slots are exposed here since they're the
+    /// only ones this segment offers -- selecting any of them while the rig is actually in, say, CW or
+    /// RTTY is a real, silent mode change, same as any other <see cref="SelectedRadioMode"/> write.
+    /// (<see cref="RadioMode.Data"/>/<see cref="RadioMode.DataR"/> reach the USB/LSB slots too, as the
+    /// PKT variant of each, once <see cref="SsbAsPkt"/> is checked -- 5 reachable modes total, not 3.)
+    /// USB/LSB (not FM -- <see cref="SsbAsPkt"/> only affects the two sideband slots, matching the
+    /// user's own exact scope) route through <see cref="SsbAsPkt"/> so a future click also lands on
+    /// the PKT variant while it's checked, not just the one-time conversion
+    /// <see cref="OnSsbAsPktChanged"/> performs.</summary>
     public bool IsSidebandUsb
     {
-        get => SelectedRadioMode == RadioMode.Usb;
+        get => SelectedRadioMode == (SsbAsPkt ? RadioMode.Data : RadioMode.Usb);
         set
         {
             if (value)
             {
-                SelectedRadioMode = RadioMode.Usb;
+                SelectedRadioMode = SsbAsPkt ? RadioMode.Data : RadioMode.Usb;
             }
         }
     }
 
     public bool IsSidebandLsb
     {
-        get => SelectedRadioMode == RadioMode.Lsb;
+        get => SelectedRadioMode == (SsbAsPkt ? RadioMode.DataR : RadioMode.Lsb);
         set
         {
             if (value)
             {
-                SelectedRadioMode = RadioMode.Lsb;
+                SelectedRadioMode = SsbAsPkt ? RadioMode.DataR : RadioMode.Lsb;
             }
         }
     }
@@ -177,6 +198,30 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 SelectedRadioMode = RadioMode.Fm;
             }
         }
+    }
+
+    /// <summary>Immediately converts whatever's CURRENTLY selected, matching the checkbox's own new
+    /// intent -- the operator doesn't have to re-click USB/LSB to see the effect ("when checked, sets
+    /// USB/LSB to PKTUSB/PKTLSB", the user's own exact wording). Symmetric: unchecking converts a
+    /// currently-Data/DataR mode back to plain Usb/Lsb too, so the segment buttons don't end up with
+    /// neither showing selected the moment the box is unchecked. A real CAT mode-set call either way
+    /// (via <see cref="SelectedRadioMode"/>'s own change hook), same as directly clicking USB/LSB --
+    /// a true no-op (falls to the <c>_ =&gt; SelectedRadioMode</c> self-assignment arm, equality-
+    /// guarded by the generated setter, so no PropertyChanged/CAT call either) when the rig is in any
+    /// other mode (CW/RTTY/etc.), matching how the USB/LSB buttons themselves never touch an unrelated
+    /// mode. The same arm also catches the already-in-target cases (e.g. checking while already on
+    /// Data) -- there <see cref="SsbAsPkt"/>'s own <c>NotifyPropertyChangedFor</c> still re-lights the
+    /// segment display even though this switch itself is a no-op.</summary>
+    partial void OnSsbAsPktChanged(bool value)
+    {
+        SelectedRadioMode = (value, SelectedRadioMode) switch
+        {
+            (true, RadioMode.Usb) => RadioMode.Data,
+            (true, RadioMode.Lsb) => RadioMode.DataR,
+            (false, RadioMode.Data) => RadioMode.Usb,
+            (false, RadioMode.DataR) => RadioMode.Lsb,
+            _ => SelectedRadioMode,
+        };
     }
 
     private bool _suppressModeCommand;
