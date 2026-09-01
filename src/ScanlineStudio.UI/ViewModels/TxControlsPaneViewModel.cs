@@ -1053,6 +1053,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// </summary>
     public Func<(string? Callsign, string? Grid)>? CurrentContactRequested { get; set; }
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 1. Set once by <c>MainWindow.axaml.cs</c>,
+    /// same "settable delegate property" shape as <see cref="CurrentContactRequested"/> -- this VM has
+    /// no reference to <c>MainViewModel.SelectedTabIndex</c> and never should. Invoked from
+    /// <see cref="CopyReceivedImageToTxAsync"/> on both the claim-success and claim-refused paths, so
+    /// the operator always lands on the Transmit tab -- their in-progress edit if the claim was
+    /// refused, the fresh one otherwise.</summary>
+    public Action? RequestTransmitTabFocus { get; set; }
+
     /// <summary>RX pane's "Copy to TX" stub (legacy precedent: <c>fileview.cpp</c>'s
     /// <c>CopyRectBitmap(pBitmapTXM)</c> -- copies the received bitmap into the TX slot as a fresh
     /// base image, not an overlay). Distinct from the already-shipped <c>AddLastRxImage</c> (the "+
@@ -1084,6 +1092,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         {
             return;
         }
+
+        RequestTransmitTabFocus?.Invoke();
 
         if (!TryClaimEditorSlotForNewSource())
         {

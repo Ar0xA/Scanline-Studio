@@ -479,6 +479,9 @@ public partial class MainWindow : Window
                 // TxControlsPaneViewModel.CurrentContactRequested's own doc comment.
                 vm.TxControls.CurrentContactRequested = () => (vm.RxImage.OverrideCallsign, vm.RxImage.LookupGrid);
 
+                // RX/TX pipeline fix plan (2026-09-01), item 1 -- same shape as CurrentContactRequested above.
+                vm.TxControls.RequestTransmitTabFocus = () => vm.SelectedTabIndex = MainViewModel.TransmitTabIndex;
+
                 // Stub survey Tier 3 (2026-08-26). Same shape as OptionsRequested above --
                 // DI-resolved view-model. Storage's own former entry here (stub survey Tier 2) was
                 // removed once its one setting (the RX images folder) moved into Options > General
