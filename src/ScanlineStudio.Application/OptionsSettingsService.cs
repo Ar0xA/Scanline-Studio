@@ -48,8 +48,13 @@ public sealed partial class OptionsSettingsService
         TxLpfEnabled: new AudioDeviceSettings().TxLpfEnabled ?? false,
         TxLpfFrequencyHz: new AudioDeviceSettings().TxLpfFrequencyHz ?? 2000.0,
         RadioBackendId: new RadioConnectionSettings().BackendId,
-        RigctldHost: new RadioConnectionSettings().Host,
-        RigctldPort: new RadioConnectionSettings().Port,
+        // "?? fallback" -- Host/Port have no property initializer of their own (see that property's
+        // own doc comment for why), unlike FlrigHost/FlrigPort below, which already resolve correctly
+        // from a fresh RadioConnectionSettings() construction (this Defaults snapshot is never
+        // deserialized, so the STJ trap doesn't apply here, but a genuinely-absent default still
+        // needs an explicit fallback regardless).
+        RigctldHost: new RadioConnectionSettings().Host ?? RadioConnectionSettings.RigctldHostFallback,
+        RigctldPort: new RadioConnectionSettings().Port ?? RadioConnectionSettings.RigctldPortFallback,
         HamlibModel: new RadioConnectionSettings().HamlibModel,
         HamlibLibraryPath: new RadioConnectionSettings().HamlibLibraryPath,
         HamlibSerialPort: new RadioConnectionSettings().SerialPort,
@@ -153,8 +158,17 @@ public sealed partial class OptionsSettingsService
             TxLpfEnabled: audio.TxLpfEnabled ?? false,
             TxLpfFrequencyHz: audio.TxLpfFrequencyHz ?? 2000.0,
             RadioBackendId: radio.BackendId,
-            RigctldHost: radio.Host,
-            RigctldPort: radio.Port,
+            // Not raw radio.Host/Port -- a settings.json that never had a rigctld section (e.g. the
+            // operator only ever used Hamlib/flrig before, then switches the backend picker to
+            // rigctld in the dialog) deserializes these as null, same reasoning FlrigHost/Port below
+            // already apply. RigctldHost specifically checks IsNullOrWhiteSpace, not just "?? null"
+            // (code-review finding, 2026-09-01) -- an operator who clears the TextBox and it persists
+            // "" rather than null hits the identical blank-field symptom the fallback exists to fix;
+            // an empty host is never a legitimate value here regardless (ToConnectionSpec's own
+            // `{ Length: > 0 }` guard already rejects it), so there is no real user intent to
+            // preserve by leaving a blank string alone.
+            RigctldHost: string.IsNullOrWhiteSpace(radio.Host) ? RadioConnectionSettings.RigctldHostFallback : radio.Host,
+            RigctldPort: radio.Port ?? RadioConnectionSettings.RigctldPortFallback,
             HamlibModel: radio.HamlibModel,
             HamlibLibraryPath: radio.HamlibLibraryPath,
             HamlibSerialPort: radio.SerialPort,
