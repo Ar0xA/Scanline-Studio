@@ -382,6 +382,74 @@
             <TextBlock Classes="IndustryRowValue" HorizontalAlignment="Center" Text="{Binding TransmitProgressText}" />
         </StackPanel>
 
+        <!-- TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX history") —
+             session-only, capped at TxControlsPaneViewModel.SentFramesCapacity, direct sibling of the
+             Receive tab's own PreviousFrames strip. Single-column (not RX's own UniformGrid
+             Columns="2") — this sidebar column is only ~258px wide (see the progress-row comment
+             above) and each entry needs room for a Resend/Save button row a plain thumbnail chip
+             doesn't. Enlarge is a plain Button.Flyout (Avalonia built-in, zero new code-behind) over
+             the SAME full-res Thumbnail bitmap already held for the strip — deliberately NOT the RX
+             Gallery's ImageViewerWindowViewModel (user decision: avoid new coupling for a "simple
+             enlarge"). Resend/Save are code-behind Click handlers (OnSentFrameResendClicked/
+             OnSentFrameSaveClicked in TxControlsPaneView.axaml.cs), NOT a XAML ancestor-cast
+             Command binding back to TxControlsPaneViewModel — see StockEntryViewModel's own doc
+             comment at the bottom of TxControlsPaneViewModel.cs for why that pattern crashes at
+             runtime inside a deferred ItemsControl template on this app's non-compiled bindings. -->
+        <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
+            <HeaderedContentControl.Header>
+                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.SentFrames.Header}" />
+            </HeaderedContentControl.Header>
+            <DockPanel LastChildFill="True">
+                <TextBlock DockPanel.Dock="Top" Classes="IndustryRowValue"
+                           Text="{loc:Translate Panes.TxControls.SentFrames.Empty}"
+                           IsVisible="{Binding !SentFrames.Count}" />
+                <ScrollViewer MaxHeight="360">
+                    <ItemsControl ItemsSource="{Binding SentFrames}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TransmittedFrameViewModel">
+                                <Border Classes="IndustryThumbnail" Margin="0,0,0,6">
+                                    <DockPanel LastChildFill="True">
+                                        <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
+                                            <Grid ColumnDefinitions="Auto,*,Auto">
+                                                <TextBlock Classes="IndustryThumbnailMeta" Text="{Binding Mode.DisplayName}" />
+                                                <TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" Text="{Binding TransmittedAt, StringFormat=HH:mm:ss}" />
+                                            </Grid>
+                                        </Border>
+                                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
+                                                    Spacing="{StaticResource IndustrySpacingHairline}" Margin="0,3,0,0">
+                                            <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                                    Content="{loc:Translate Panes.TxControls.SentFrames.Resend}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxControls.SentFrames.Resend}"
+                                                    Click="OnSentFrameResendClicked" />
+                                            <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
+                                                    Content="{loc:Translate Panes.TxControls.SentFrames.Save}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxControls.SentFrames.Save}"
+                                                    Click="OnSentFrameSaveClicked" />
+                                        </StackPanel>
+                                        <Panel>
+                                            <Button Background="Transparent" BorderThickness="0" Padding="0"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                                <Button.Flyout>
+                                                    <Flyout Placement="Right">
+                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" MaxWidth="480" MaxHeight="480" />
+                                                    </Flyout>
+                                                </Button.Flyout>
+                                                <Image Source="{Binding Thumbnail}" Stretch="Uniform" MaxHeight="120" />
+                                            </Button>
+                                            <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}"
+                                                    HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
+                                                <TextBlock Text="{Binding OutcomeLabel}" />
+                                            </Border>
+                                        </Panel>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </DockPanel>
+        </HeaderedContentControl>
+
     </StackPanel>
 
 </UserControl>
