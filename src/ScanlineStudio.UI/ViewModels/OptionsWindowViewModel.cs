@@ -288,6 +288,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _operatorGrid;
 
+    /// <summary>RST default plan (2026-09-01) -- see OperatorSettings.DefaultRst's own doc comment
+    /// for why "595", not "599".</summary>
+    [ObservableProperty]
+    private string? _defaultRst;
+
     [ObservableProperty]
     private bool _isConfirmingResetAll;
 
@@ -2892,6 +2897,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         Callsign = snapshot.Callsign;
         OperatorName = snapshot.OperatorName;
         OperatorGrid = snapshot.OperatorGrid;
+        DefaultRst = snapshot.DefaultRst;
         AutoSyncEnabled = snapshot.AutoSyncEnabled;
         AutoSlantEnabled = snapshot.AutoSlantEnabled;
         AutoStopEnabled = snapshot.AutoStopEnabled;
@@ -3130,6 +3136,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             Callsign: Callsign,
             OperatorName: OperatorName,
             OperatorGrid: OperatorGrid,
+            DefaultRst: DefaultRst,
             AutoSyncEnabled: AutoSyncEnabled,
             AutoSlantEnabled: AutoSlantEnabled,
             AutoStopEnabled: AutoStopEnabled,
@@ -3441,6 +3448,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         Callsign = OptionsSettingsService.Defaults.Callsign;
         OperatorName = OptionsSettingsService.Defaults.OperatorName;
         OperatorGrid = OptionsSettingsService.Defaults.OperatorGrid;
+        DefaultRst = OptionsSettingsService.Defaults.DefaultRst;
     }
 
     [RelayCommand]

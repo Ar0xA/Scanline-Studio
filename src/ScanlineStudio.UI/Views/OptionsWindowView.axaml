@@ -671,7 +671,10 @@
 
                             <!-- Name/Grid: no legacy MMSSTV equivalent (its own macro engine has no
                                  "my name"/"my QTH" token at all), added to back mock2's own "MY
-                                 NAME"/"MY GRID" overlay insert-field chips and the TX-macro engine. -->
+                                 NAME"/"MY GRID" overlay insert-field chips and the TX-macro engine.
+                                 Default RST (2026-09-01), the third row below, DOES have a legacy
+                                 equivalent — Main.cpp's LogRST combo default and LogSet.cpp's
+                                 DefMyRST — see OperatorSettings.DefaultRst's own doc comment. -->
                             <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                     <Grid ColumnDefinitions="Auto,*">
@@ -681,6 +684,13 @@
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorGrid}" />
                                         <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" />
+                                    </Grid>
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.DefaultRst}" />
+                                            <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.DefaultRst.Help}" />
+                                        </StackPanel>
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding DefaultRst}" />
                                     </Grid>
                                 </StackPanel>
                             </ContentControl>

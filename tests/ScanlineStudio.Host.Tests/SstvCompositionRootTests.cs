@@ -121,7 +121,7 @@ public sealed class SstvCompositionRootTests
     /// context, settings.json, and history.db all substituted so resolving the graph never touches
     /// real hardware/disk state on this developer/CI machine) -- extracted here since the two tests
     /// above need it identically and don't otherwise care about a specific settings VALUE the way
-    /// e.g. <see cref="MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange"/> does.</summary>
+    /// e.g. <see cref="MainViewModel_LoadOperatorSettingsAsync_ReflectsLaterSettingsChange"/> does.</summary>
     private static ServiceCollection BuildServicesWithFakes()
     {
         var services = new ServiceCollection();
@@ -138,15 +138,16 @@ public sealed class SstvCompositionRootTests
     }
 
     [Fact]
-    public async Task MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange()
+    public async Task MainViewModel_LoadOperatorSettingsAsync_ReflectsLaterSettingsChange()
     {
         // User-reported bug (2026-08-23): MainViewModel.Callsign (backs the header-row callsign
         // chip) only ever loaded once, from the constructor's own fire-and-forget call -- typing a
         // new callsign in Options and hitting Save persisted it correctly, but the chip kept
-        // showing the old value until the next full app restart. LoadCallsignAsync is now public
-        // and re-callable (MainWindow.axaml.cs calls it again once the Options window closes) --
-        // this proves the re-call actually reflects a settings change, not just that it doesn't
-        // throw. Same DI-substitution setup as RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup
+        // showing the old value until the next full app restart. LoadOperatorSettingsAsync (renamed
+        // from LoadCallsignAsync, RST default plan 2026-09-01, when it was extended to also cache
+        // DefaultRst) is public and re-callable (MainWindow.axaml.cs calls it again once the Options
+        // window closes) -- this proves the re-call actually reflects a settings change, not just
+        // that it doesn't throw. Same DI-substitution setup as RegisterServices_ResolvesEveryServiceMainActuallyRequiresAtStartup
         // above, since MainViewModel needs the full composition root to construct.
         var settingsStore = new StaticSettingsStore(new AppSettings());
         var services = new ServiceCollection();
@@ -169,16 +170,24 @@ public sealed class SstvCompositionRootTests
 
         // Awaiting this directly (not the constructor's own separate fire-and-forget call) gives a
         // deterministic completion point regardless of that background task's own timing.
-        await mainViewModel.LoadCallsignAsync();
+        await mainViewModel.LoadOperatorSettingsAsync();
         Assert.Null(mainViewModel.Callsign);
+        // RST default plan (2026-09-01): "595" here, not null -- OptionsSettingsService.LoadAsync's
+        // own "?? DefaultRstFallback" applies even with no OperatorSettings section on disk at all.
+        Assert.Equal(OperatorSettings.DefaultRstFallback, mainViewModel.DefaultRst);
 
         settingsStore.Settings = new AppSettings().WithSection(
             OperatorSettings.SectionKey,
-            new OperatorSettings { Callsign = "PD3AN" },
+            new OperatorSettings { Callsign = "PD3AN", DefaultRst = "579" },
             OperatorSettingsJsonContext.Default.OperatorSettings);
-        await mainViewModel.LoadCallsignAsync();
+        await mainViewModel.LoadOperatorSettingsAsync();
 
         Assert.Equal("PD3AN", mainViewModel.Callsign);
+        // Auditor code-review finding: DefaultRst's own re-read was untested here -- if the
+        // assignment inside LoadOperatorSettingsAsync ever regressed, vm.DefaultRst would stay null
+        // and MainWindow.axaml.cs's own "?? DefaultRstFallback" fallback would silently mask it for
+        // every operator, not just ones on a fresh install.
+        Assert.Equal("579", mainViewModel.DefaultRst);
     }
 
     [Fact]
@@ -510,7 +519,7 @@ public sealed class SstvCompositionRootTests
     private sealed class StaticSettingsStore(AppSettings settings) : ISettingsStore, ISettingsFileRelocator
     {
         // Settable (not the ctor param directly) so a test can simulate a settings change between
-        // two LoadAsync calls -- e.g. MainViewModel_LoadCallsignAsync_ReflectsLaterSettingsChange
+        // two LoadAsync calls -- e.g. MainViewModel_LoadOperatorSettingsAsync_ReflectsLaterSettingsChange
         // below, which mutates this between two calls to simulate what a real Options-dialog Save
         // does to the on-disk settings.
         public AppSettings Settings { get; set; } = settings;
