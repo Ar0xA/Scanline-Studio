@@ -1537,9 +1537,20 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         _currentEditor?.NotifyTransmitAvailabilityChanged();
 
+        // Code-review finding: _transmitCts must exist BEFORE the (potentially awaiting) macro
+        // re-resolution below, not just before the encode call -- otherwise a Stop TX click during
+        // that window hits a null _transmitCts (a silent no-op) and the transmission starts anyway.
         _transmitCts = new CancellationTokenSource();
         try
         {
+            // RX/TX pipeline fix plan (2026-09-01), item 2 -- re-resolve time/frequency macros fresh
+            // at the moment of transmission, not the moment of Apply. See the helper's own doc
+            // comment for the compare-then-conditionally-rebake gate and its fallback contract; it
+            // never throws out of this call (its own try/catch always returns an image), so it's
+            // safe to await inside this try without a separate handler for it.
+            image = await RefreshTransmitImageIfMacrosChangedAsync(image, mode);
+            _transmitCts.Token.ThrowIfCancellationRequested();
+
             await _sstvSession.TransmitAsync(mode, image, _transmitCts.Token);
         }
         catch (OperationCanceledException)
@@ -1576,6 +1587,116 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             StopTransmitCommand.NotifyCanExecuteChanged();
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             _currentEditor?.NotifyTransmitAvailabilityChanged();
+        }
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2: time/frequency macros (<c>%T</c>/
+    /// <c>%D</c>/<c>{freq}</c>/<c>{mode}</c> etc.) resolve once at Apply and get baked into
+    /// <see cref="_loadedImage"/> -- a manual Transmit some real time later, or a repeat Transmit on
+    /// an already-applied card, would otherwise send a stale value. Re-resolves each text element's
+    /// RAW (macro-tokens-intact) content fresh from <see cref="_editState"/>'s own
+    /// <see cref="EditState.RawOverlay"/> (index-parallel with <see cref="EditState.Document"/> by
+    /// construction -- both are <c>OverlayElements.Select(...)</c> projections read in the same
+    /// synchronous statement when <see cref="_editState"/> is built), compares each fresh value
+    /// against the already-frozen <see cref="TemplateTextElement.Content"/> already baked into
+    /// <see cref="EditState.Document"/>; only re-bakes (a full native-resolution
+    /// <see cref="ITransmitImagePreparer.ComposePreview"/> against <see cref="EditState.Original"/> --
+    /// NOT the cheap downscaled-working-copy cost the hot per-keystroke preview path pays elsewhere)
+    /// when at least one text element's resolved value actually differs. Templates containing
+    /// <c>{freq}</c>/<c>{mode}</c> will legitimately differ on most real Apply-then-Transmit presses
+    /// (live radio state polled at Hz granularity) -- this gate usually skips the redundant render
+    /// for <c>%T</c>/<c>%D</c>-only templates, it does not claim those tokens provably never change.
+    /// <para>On a rebake, replaces <see cref="_loadedImage"/>/<see cref="PreviewImage"/> together
+    /// (so the visible preview never shows a different value than what was actually sent -- a
+    /// changed macro can legitimately shrink-to-fit at a different font size) AND replaces
+    /// <see cref="_editState"/>'s own <see cref="EditState.Document"/> with the freshly-baked one,
+    /// not just the returned image -- otherwise the compare baseline the NEXT Transmit reads would
+    /// silently describe a Document from before this rebake, not what <see cref="_loadedImage"/> now
+    /// actually holds. Concretely: Apply at frequency A, Transmit at frequency B (rebakes, baseline
+    /// stays A), retune back to A, Transmit again -- fresh(A) would match the STILL-A baseline and
+    /// skip the rebake, transmitting the stale B image. Verified safe to replace: the only other
+    /// reader of <see cref="EditState.Document"/> is <see cref="OnSelectedModeChanged"/>'s reflow,
+    /// which re-bakes from it unconditionally (never compares), so a fresher <see cref="EditState.Document"/>
+    /// there changes nothing about that path's own behavior.</para>
+    /// <para>Wrapped in its own try/catch, separate from <see cref="TransmitAsync"/>'s own
+    /// transmission try -- a broken freshness check (a corrupt operator-settings file, an
+    /// <c>ApplyTemplate</c> throw on an unsupported font combination) must not block an operator who
+    /// just pressed Transmit from sending their card. Falls back to the unmodified
+    /// <paramref name="loadedImage"/>, unmodified <see cref="_editState"/>/<see cref="_loadedImage"/>/
+    /// <see cref="PreviewImage"/>, on any failure -- including when <see cref="_editState"/> is
+    /// somehow null despite <see cref="_loadedImage"/> being set (shouldn't happen, cheap to
+    /// guard).</para></summary>
+    private async Task<IImageSource> RefreshTransmitImageIfMacrosChangedAsync(IImageSource loadedImage, SstvModeDefinition mode)
+    {
+        if (_editState is not { } edit)
+        {
+            return loadedImage;
+        }
+
+        try
+        {
+            // Loaded fresh here, not cached -- the operator may have edited Options (Callsign/Name/
+            // Grid) at any point between Apply and this Transmit press.
+            var operatorSettings = (await _settingsStore.LoadAsync())
+                .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
+                ?? new OperatorSettings();
+            var radioState = _radioSession.LastKnownState;
+
+            var changed = false;
+            var freshElements = new List<TemplateElement>(edit.Document.Elements.Count);
+            for (var i = 0; i < edit.Document.Elements.Count; i++)
+            {
+                var element = edit.Document.Elements[i];
+                if (element is TemplateTextElement text && edit.RawOverlay[i] is TxImageEditorPaneViewModel.RawTextElementSnapshot raw)
+                {
+                    var fresh = _macroTextResolver.Resolve(raw.Text, operatorSettings, radioState, edit.TemplateVariables);
+                    if (!string.Equals(fresh, text.Content, StringComparison.Ordinal))
+                    {
+                        changed = true;
+                    }
+
+                    freshElements.Add(text with { Content = fresh });
+                }
+                else
+                {
+                    freshElements.Add(element);
+                }
+            }
+
+            if (!changed)
+            {
+                return loadedImage;
+            }
+
+            var freshDocument = edit.Document with { Elements = freshElements };
+            var final = _preparer.ComposePreview(
+                edit.Original, edit.CropRect, mode.ImageWidth, mode.ImageHeight, edit.PreserveAspect, edit.Adjustments, freshDocument);
+
+            // Code-review finding: SelectedMode can change during the settings-load await above --
+            // the mode ComboBox stays enabled during a transmit (CanChangeSourceOrMode has no
+            // IsTransmitting term). If it did, OnSelectedModeChanged already reflowed
+            // _loadedImage/_editState to the NEW mode's own dimensions; overwriting that here with
+            // an image baked against the stale captured `mode` would silently break the
+            // "_loadedImage always matches SelectedMode" invariant CanTransmit's own doc comment
+            // states. `final` is still returned either way -- the in-flight transmit uses the
+            // captured `mode`/`final` pairing, which stays internally self-consistent regardless.
+            if (SelectedMode == mode)
+            {
+                // Computed into a local FIRST (code-review finding): if ToBitmap itself throws, the
+                // catch below must return the pre-rebake image with _editState/_loadedImage/
+                // PreviewImage genuinely untouched, not left one field ahead of the other two.
+                var bitmap = ImageSourceBitmapConverter.ToBitmap(final);
+                _editState = edit with { Document = freshDocument };
+                _loadedImage = final;
+                PreviewImage = bitmap;
+            }
+
+            return final;
+        }
+        catch (Exception ex)
+        {
+            Log.TransmitMacroRebakeFailed(_logger, mode.Id, ex);
+            return loadedImage;
         }
     }
 
@@ -1781,6 +1902,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Transmit invoked: mode={ModeId}")]
         public static partial void TransmitInvoked(ILogger logger, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Fresh macro re-resolution at Transmit failed: mode={ModeId} -- falling back to the last-applied image")]
+        public static partial void TransmitMacroRebakeFailed(ILogger logger, string modeId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Transmit stopped manually: mode={ModeId}")]
         public static partial void TransmitStoppedManually(ILogger logger, string modeId);
