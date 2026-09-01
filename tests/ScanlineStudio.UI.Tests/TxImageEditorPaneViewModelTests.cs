@@ -2982,6 +2982,225 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotEqual(xBefore, element.X);
     }
 
+    // TX editor gap-items plan, line element (2026-09-01) -- VM-layer integration tests. See
+    // LineElementViewModelTests.cs for the element's own standalone derived-contract tests.
+
+    [AvaloniaFact]
+    public void AddLineElementCommand_CreatesAndSelectsAHorizontalLine_OnTheGeometryTab()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddLineElementCommand.Execute(null);
+
+        var line = Assert.IsType<LineElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.Same(line, vm.SelectedOverlayElement);
+        AssertClose(line.Y1, line.Y2); // horizontal default
+        Assert.True(vm.IsGeometryTabSelected);
+    }
+
+    [AvaloniaFact]
+    public void BuildTemplateElement_HorizontalLine_ProducesANonDegenerateInkInflatedBounds()
+    {
+        // Round 1/3 plan-review's own central concern: an un-inflated horizontal line's bbox has
+        // zero height, which ApplyTemplate's shared skip rule would silently drop before any render
+        // code even runs. This pins that BuildTemplateElement (not just the pipeline layer in
+        // isolation, already covered by ApplyTemplateTests.cs) actually produces a real, positive
+        // Bounds for the live VM-built element.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+
+        var line = Assert.IsType<TemplateLineElement>(Assert.Single(vm.Document.Elements));
+
+        Assert.True(line.Bounds.Width > 0);
+        Assert.True(line.Bounds.Height > 0);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_Line_RotatesEndpointsDirectly_FourRotationsReturnToStart()
+    {
+        // Round 1 blocker / round 2-3 verified fix: the GENERIC X/Y/Width/Height rotation transform
+        // would turn a 90-degree rotation into a MIRROR for a line (and collapse a horizontal line's
+        // Height to 0) -- this pins the real endpoint-rotation branch instead, including the
+        // 4-clicks-returns-to-start invariant every other element already has.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        // Asymmetric, off-center, diagonal -- deliberately NOT the symmetric-about-canvas-center
+        // default AddLineElement seeds: a mirror of a centered line coincidentally lands in the
+        // same place a true rotation would, so a symmetric line can't distinguish the two -- this
+        // needs an input where the buggy generic-transform mirror and a real per-point rotation
+        // provably diverge.
+        line.X1 = 0.2;
+        line.Y1 = 0.3;
+        line.X2 = 0.6;
+        line.Y2 = 0.35;
+        var (x1, y1, x2, y2) = (line.X1, line.Y1, line.X2, line.Y2);
+
+        vm.RotateCommand.Execute(null);
+
+        // The SAME per-point (x,y) -> (1-y,x) transform Rotate already applies to every other
+        // element's own center, applied independently to each endpoint.
+        AssertClose(1 - y1, line.X1);
+        AssertClose(x1, line.Y1);
+        AssertClose(1 - y2, line.X2);
+        AssertClose(x2, line.Y2);
+
+        vm.RotateCommand.Execute(null);
+        vm.RotateCommand.Execute(null);
+        vm.RotateCommand.Execute(null);
+
+        AssertClose(x1, line.X1);
+        AssertClose(y1, line.Y1);
+        AssertClose(x2, line.X2);
+        AssertClose(y2, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void NudgeElementResize_SelectedLine_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        var (x1, y1, x2, y2) = (line.X1, line.Y1, line.X2, line.Y2);
+
+        vm.NudgeElementResize(NudgeDirection.Right);
+
+        AssertClose(x1, line.X1);
+        AssertClose(y1, line.Y1);
+        AssertClose(x2, line.X2);
+        AssertClose(y2, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedElementBounds_Line_SnapToGridOn_SnapsBothEndpointsIndependently()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = true;
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        line.X1 = 0.313;
+        line.Y1 = 0.501;
+        line.X2 = 0.647;
+        line.Y2 = 0.499;
+
+        // The x/y/width/height args passed in are deliberately WRONG/stale (as they'd be if computed
+        // off the box-shaped helper) -- the line branch must ignore them entirely and re-derive its
+        // own snap straight from the live endpoints.
+        vm.ApplySnappedElementBounds(line, x: 999, y: 999, width: 999, height: 999);
+
+        AssertClose(0.3, line.X1);
+        AssertClose(0.5, line.Y1);
+        AssertClose(0.65, line.X2);
+        AssertClose(0.5, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedElementBounds_Line_AlreadyGridAligned_DoesNotPushADeadUndoStep()
+    {
+        // 2nd-round code-review finding: the CALLER's own "did anything change" guard compares
+        // against the line's DERIVED box, which can spuriously fire even when the real endpoints are
+        // already grid-aligned (the default line seed IS already 0.05-grid-aligned) -- an
+        // unconditional PushUndoSnapshot before that was re-checked left a dead step on the stack,
+        // so the first Ctrl+Z after such a drop silently did nothing.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = true;
+        vm.AddLineElementCommand.Execute(null); // pushes exactly 1 undo step (the Add)
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+
+        vm.ApplySnappedElementBounds(line, x: 999, y: 999, width: 999, height: 999);
+
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null), "a no-op snap must not leave a second, dead undo step on the stack");
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_OffCanvasLine_PreservesLengthAndAngle_ViaASharedDelta()
+    {
+        // 2nd-round code-review finding: a bare per-endpoint Math.Clamp (like every other element's
+        // own duplicate-offset case) can move one endpoint closer to the other than intended,
+        // distorting an off-canvas line's own length/angle -- off-canvas is explicitly legal (Rotate's
+        // own doc comment: "free overflow ... clipped at render time only"). ClampSharedOffsetDelta
+        // must pick ONE delta valid for both endpoints instead.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var original = (LineElementViewModel)vm.OverlayElements[0];
+        original.X1 = 0.95;
+        original.Y1 = 0.5;
+        original.X2 = 1.05; // off-canvas
+        original.Y2 = 0.5;
+        vm.SelectedOverlayElement = original;
+
+        vm.DuplicateCommand.Execute(null);
+
+        var clone = Assert.IsType<LineElementViewModel>(vm.OverlayElements[1]);
+        AssertClose(0.1, clone.X2 - clone.X1); // length preserved exactly, not shrunk by an uneven clamp
+        Assert.NotEqual(original.X1, clone.X1); // the clone still actually moved
+    }
+
+    [AvaloniaFact]
+    public void ApplySnappedElementBounds_Line_SnapToGridOff_IsANoOp()
+    {
+        // Round 3 plan-review finding: this method is ALSO reached by the separate alignment-guide-
+        // snap path, which runs regardless of SnapToGrid -- an ungated line branch would grid-snap
+        // even with grid-snap explicitly turned off.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SnapToGrid = false;
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        // Deliberately NOT the default (already 0.05-grid-aligned) seed -- snapping an
+        // already-aligned value produces the SAME value either way, which would make this test pass
+        // vacuously regardless of whether the SnapToGrid gate actually works.
+        line.X1 = 0.313;
+        line.Y1 = 0.501;
+        line.X2 = 0.647;
+        line.Y2 = 0.499;
+        var (x1, y1, x2, y2) = (line.X1, line.Y1, line.X2, line.Y2);
+
+        vm.ApplySnappedElementBounds(line, x: 999, y: 999, width: 999, height: 999);
+
+        AssertClose(x1, line.X1);
+        AssertClose(y1, line.Y1);
+        AssertClose(x2, line.X2);
+        AssertClose(y2, line.Y2);
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_Line_OffsetsBothEndpoints_NotJustZ()
+    {
+        // Plan-review-flagged real trap: InsertClonedSnapshot's own fallthrough (`var other => other`)
+        // would have left a duplicated line sitting EXACTLY on top of the original -- offsetting the
+        // base X/Y (like every other element's own case) does nothing for a line, since
+        // CreateElementFromSnapshot's own line case reads only X1/Y1/X2/Y2.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var original = (LineElementViewModel)vm.OverlayElements[0];
+        var (x1, y1, x2, y2) = (original.X1, original.Y1, original.X2, original.Y2);
+        vm.SelectedOverlayElement = original;
+
+        vm.DuplicateCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        var clone = Assert.IsType<LineElementViewModel>(vm.OverlayElements[1]);
+        Assert.NotEqual(x1, clone.X1);
+        Assert.NotEqual(y1, clone.Y1);
+        Assert.NotEqual(x2, clone.X2);
+        Assert.NotEqual(y2, clone.Y2);
+        // Same +0.02 offset, both endpoints, so the line's own length/angle survive the clone.
+        AssertClose(x2 - x1, clone.X2 - clone.X1);
+        AssertClose(y2 - y1, clone.Y2 - clone.Y1);
+    }
+
+    // Round 1 plan-review finding: X/Y/Width/Height are DERIVED cascades for a LineElementViewModel
+    // (unlike every other element kind, where they're the real drivers) -- OnOverlayElementPropertyChanged
+    // filters those names back out for a line sender specifically (see that method's own doc comment),
+    // matching the established "FillBrush" double-recompute precedent (box gradient fill). A raw
+    // ApplyTemplate-call-count assertion can't observe this (RecomputePreviewCoalesced's own coalescing
+    // absorbs any difference within one UI-thread idle tick, confirmed by direct experiment -- an
+    // earlier version of this test passed identically with the filter guard disabled and was removed
+    // for being vacuous) -- see SelectionReadoutText_LineEndpointEdit_RaisesExactlyOnce... below
+    // instead, which pins the filter's PLACEMENT (before the readout-raise block) via a synchronous
+    // PropertyChanged count unaffected by that coalescing.
+
     // Backlog item (auditor usability review, 2026-08-17, item 18): "no keyboard element-resize path
     // at all." Ctrl+Shift+arrow (TxImageEditorPaneView.OnRootKeyDown) resizes instead of moves --
     // same DirectionToPixelDelta sign convention as ApplyCropResize's own bottom-right-corner-grow.
@@ -3881,6 +4100,76 @@ public sealed class TxImageEditorPaneViewModelTests
         _ = vm.SelectionReadoutText;
 
         Assert.Equal("Panes.TxImageEditor.SelectionReadoutFormat", localization.LastKey);
+    }
+
+    [AvaloniaFact]
+    public void SelectionReadoutText_LineElementSelected_UsesFormatWithoutRotation()
+    {
+        // 2nd-round code-review finding: the typeLabel switch's own `_ => throw` had no line case,
+        // so simply SELECTING a line threw out of this getter -- caught by adding the missing case
+        // and a test that actually reads the property for a line (no prior test did).
+        var localization = new FakeLocalizationService();
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
+        vm.AddLineElementCommand.Execute(null);
+
+        _ = vm.SelectionReadoutText;
+
+        Assert.Equal("Panes.TxImageEditor.SelectionReadoutFormat", localization.LastKey);
+        Assert.Equal("Panes.TxImageEditor.TypeBadgeLine", localization.LastArgs?[0]);
+    }
+
+    [AvaloniaFact]
+    public void SelectedLineElement_RaisesPropertyChanged_OnSelectionChange()
+    {
+        // 2nd-round code-review finding: SelectedLineElement was declared alongside SelectedBoxElement
+        // but never added to OnSelectedOverlayElementChanged's own raise list -- the same
+        // "check every sibling on a notification set" bug class this project keeps re-hitting. A
+        // future GEOMETRY-tab line-style block binding to this property would have stayed
+        // permanently stale on selection change.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = null;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.SelectedOverlayElement = line;
+
+        Assert.Contains(nameof(vm.SelectedLineElement), raised);
+    }
+
+    [AvaloniaFact]
+    public void SelectionReadoutText_LineEndpointEdit_RaisesExactlyOnce_ProvingTheRecomputeFilterGuardIsPlacedCorrectly()
+    {
+        // Round-1 plan-review finding, verified via the specific deterministic signal round-2
+        // code-review identified: OnOverlayElementPropertyChanged's sender-typed X/Y/Width/Height
+        // filter guard for a line returns BEFORE the `ReferenceEquals(sender, SelectedOverlayElement)`
+        // readout block that raises SelectionReadoutText -- so a single endpoint edit must raise this
+        // exactly ONCE (from the raw X1 notification), not once per cascaded X/Y/Width/Height name
+        // too. A raw ApplyTemplate-call-count assertion can't observe this (RecomputePreviewCoalesced's
+        // own coalescing absorbs any difference within one UI-thread idle tick -- confirmed by direct
+        // experiment, see this test file's own comment near the old, removed version of this check),
+        // but this synchronous PropertyChanged count is unaffected by that coalescing entirely.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = (LineElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = line;
+        var raiseCount = 0;
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.SelectionReadoutText))
+            {
+                raiseCount++;
+            }
+        };
+
+        line.X1 = 0.1;
+
+        Assert.Equal(1, raiseCount);
     }
 
     // Backlog item (user request, 2026-08-17): "text size should be in px not 0.1 or 0.16 etc" --

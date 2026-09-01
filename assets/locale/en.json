@@ -492,6 +492,7 @@
   "Panes.TxImageEditor.TypeBadgeText": "TXT",
   "Panes.TxImageEditor.TypeBadgeBox": "BOX",
   "Panes.TxImageEditor.TypeBadgeImage": "IMG",
+  "Panes.TxImageEditor.TypeBadgeLine": "LINE",
   "Panes.TxImageEditor.Caption": "Preview shows crop/scale/overlay placement only -- does not simulate per-mode color/chroma effects.",
   "Panes.TxImageEditor.ToolMove": "Move",
   "Panes.TxImageEditor.ToolCrop": "Crop",
