@@ -499,6 +499,10 @@ public partial class MainWindow : Window
                 // pulls from RX), so the delegate lives on RxHistory instead.
                 vm.RxHistory.SendToTxRequested = request => vm.TxControls.OpenEditorForExternalFileAsync(request.FilePath, request.ContactVariables);
 
+                // Worked-before plan (2026-09-01) -- Logbook is the INITIATOR here (a QSO was just
+                // logged), same "plain assignment, not `+=`" convention as SendToTxRequested above.
+                vm.Logbook.QsoLogged = vm.RxImage.NotifyQsoLogged;
+
                 // Stub survey Tier 3 (2026-08-26). Same shape as OptionsRequested above --
                 // DI-resolved view-model. Storage's own former entry here (stub survey Tier 2) was
                 // removed once its one setting (the RX images folder) moved into Options > General

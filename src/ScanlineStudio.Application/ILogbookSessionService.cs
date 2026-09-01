@@ -81,4 +81,15 @@ public interface ILogbookSessionService
     /// failure (fail OPEN: a transient DB hiccup must never block logging or saving a real QSO),
     /// logged, never thrown.</summary>
     Task<QsoRecord?> FindLikelyDuplicateAsync(string callsign, DateTimeOffset startUtc, long? frequencyHz, string? excludeId, CancellationToken ct = default);
+
+    /// <summary>Worked-before plan (2026-09-01): every prior contact with <paramref name="callsign"/>,
+    /// summarized -- the RX pane's live indicator, NOT <see cref="FindLikelyDuplicateAsync"/>'s
+    /// save-time same-day dupe check (a different, pre-existing feature this does not touch or
+    /// reuse). Band computed here, not by the caller -- <c>ScanlineStudio.UI</c> cannot reference
+    /// <c>AmateurBandLookup</c> (<c>ScanlineStudio.Core.Logbook</c>, layering-test-gated). UNLIKE
+    /// <see cref="FindLikelyDuplicateAsync"/>'s fail-open-to-null contract, this distinguishes
+    /// <see cref="WorkedBeforeOutcome.NotFound"/> from <see cref="WorkedBeforeOutcome.Failed"/> --
+    /// collapsing them would mean a transient DB error renders as a false "New station" for a
+    /// dupe-avoidance indicator, the harmful direction.</summary>
+    Task<WorkedBeforeLookup> GetWorkedBeforeAsync(string callsign, CancellationToken ct = default);
 }

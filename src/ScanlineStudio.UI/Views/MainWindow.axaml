@@ -889,6 +889,13 @@
                                          value no longer comes from OCR (which still doesn't exist),
                                          so keeping "· OCR" in the label would misattribute the source. -->
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CallsignDisplay}" /></Grid></Border>
+                                    <!-- Worked-before plan (2026-09-01): a logbook-query result, not
+                                         decoded from the frame like the rows around it — kept here
+                                         anyway (Fable design review) so it reads together with the
+                                         callsign it describes, a deliberate exception to the "decoded
+                                         from frame" vs "not decoded" grouping Name/QTH/Grid's own move
+                                         below otherwise follows. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.WorkedBefore}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding WorkedBeforeDisplay}" /></Grid></Border>
                                     <!-- Wired 2026-08-26: DecodedNrRst (legacy's real MyRST equivalent,
                                          Main.cpp:3648) was real, tested backing state with no card row
                                          since Phase 5 — see that property's own doc comment. Placed
