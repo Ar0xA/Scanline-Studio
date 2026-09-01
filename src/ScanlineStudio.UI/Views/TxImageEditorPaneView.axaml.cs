@@ -1091,7 +1091,10 @@ public partial class TxImageEditorPaneView : UserControl
         // something else entirely (a future tab-switch shortcut, a browser-style binding); requiring
         // NO modifiers here is the same "don't steal a chord that isn't unambiguously ours" discipline
         // Ctrl/Cmd+C/X/V/Z/Y below already apply in reverse (they DO require a modifier, specifically
-        // so a bare keystroke doesn't get hijacked).
+        // so a bare keystroke doesn't get hijacked). Ctrl+1..Ctrl+9 is NOW claimed too -- Ready Rack
+        // direct-fire plan (2026-09-01), see the ctrlOrCmd-gated digit branch further below, right
+        // after ctrlOrCmd itself is computed -- ADDITIVE, not a replacement: this plain (no-modifier)
+        // branch and its own load-only recall behavior are completely unchanged.
         if (e.KeyModifiers == KeyModifiers.None)
         {
             var slot = e.Key switch
@@ -1131,6 +1134,35 @@ public partial class TxImageEditorPaneView : UserControl
         // Control OR Meta (task #23's own Ctrl/Cmd+wheel precedent) -- Ctrl on Windows/Linux, Cmd on
         // macOS.
         var ctrlOrCmd = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+
+        // Ready Rack direct-fire plan (2026-09-01): Ctrl+1..Ctrl+9 -- a deliberate two-key gesture
+        // (Fable design review), never a bare number key, so an accidental keystroke can't fire RF.
+        // Additive sibling to the plain-digit recall branch above (unchanged) -- checked separately
+        // since ctrlOrCmd wasn't computed yet at that point in this method. No Shift/Alt gate needed
+        // (Key.D1..D9/NumPad1..9 don't collide with anything else this method handles under Ctrl).
+        if (ctrlOrCmd)
+        {
+            var directFireSlot = e.Key switch
+            {
+                Key.D1 or Key.NumPad1 => 1,
+                Key.D2 or Key.NumPad2 => 2,
+                Key.D3 or Key.NumPad3 => 3,
+                Key.D4 or Key.NumPad4 => 4,
+                Key.D5 or Key.NumPad5 => 5,
+                Key.D6 or Key.NumPad6 => 6,
+                Key.D7 or Key.NumPad7 => 7,
+                Key.D8 or Key.NumPad8 => 8,
+                Key.D9 or Key.NumPad9 => 9,
+                _ => (int?)null,
+            };
+
+            if (directFireSlot is { } slotNumber)
+            {
+                vm.ReadyRack.DirectFireSlotCommand.Execute(slotNumber);
+                e.Handled = true;
+                return;
+            }
+        }
 
         // Backlog item (auditor usability review, 2026-08-17, item 1): "Ctrl+Z/Ctrl+Y not wired
         // (Undo/Redo mouse-only, conspicuous next to the new Ctrl+C/X/V)." CanExecute-gated (matches

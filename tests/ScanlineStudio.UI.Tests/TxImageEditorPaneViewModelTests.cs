@@ -14,6 +14,7 @@ using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.UI.Imaging;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
@@ -123,6 +124,19 @@ public sealed class TxImageEditorPaneViewModelTests
         new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack(), macrosReferenceRequested: macrosReferenceRequested);
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01) overload -- exposes the live
+    /// currentContactProvider delegate for direct-fire re-seed tests, mirroring the
+    /// currentContactVariables (one-shot snapshot) overload above. Also exposes
+    /// <see cref="ITemplateStore"/>/<see cref="ReadyRackViewModel"/> together, since every
+    /// direct-fire test needs a real rack to pin a template into.</summary>
+    private static TxImageEditorPaneViewModel CreateEditor(
+        IImageSource original, SstvModeDefinition mode, ITransmitImagePreparer preparer,
+        ITemplateStore templateStore, ReadyRackViewModel readyRack,
+        Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null, Func<bool>? canTransmitNow = null) =>
+        new(original, mode, preparer, new MacroTextResolver(), new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, new FakeImageSourceWriter(), readyRack, canTransmitNow: canTransmitNow, currentContactProvider: currentContactProvider);
 
     private static ReadyRackViewModel CreateReadyRack(ITemplateStore? templateStore = null) =>
         new(templateStore ?? new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), new FakeFilePickerService(), NullLogger<ReadyRackViewModel>.Instance);
@@ -6515,6 +6529,269 @@ public sealed class TxImageEditorPaneViewModelTests
         var reloadedRow = Assert.Single(vm.TemplateVariableRows);
         Assert.Equal("his_call", reloadedRow.Key);
         Assert.Equal("K1ABC", reloadedRow.Value);
+    }
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): auditor code-review round 1's central
+    /// finding -- a template load only ever replaces the OVERLAY, never the underlying photo, so a
+    /// "cold" direct-fire (this editor's own base image is still the blank placeholder) has no real
+    /// photo to send. Checked BEFORE the load starts, not after, since LoadTemplateIntoLiveEditor
+    /// clears OverlayElements unconditionally -- a refused fire must not wipe the operator's
+    /// existing overlay first.</summary>
+    private static async Task<(TxImageEditorPaneViewModel Vm, ReadyRackViewModel ReadyRack, string TemplateId)> CreateEditorWithPinnedTemplateAsync(
+        IImageSource original, Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null, Func<bool>? canTransmitNow = null)
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(original, SmallMode, new FakeTransmitImagePreparer(), templateStore, readyRack, currentContactProvider, canTransmitNow);
+        var templateId = templateStore.CreateTemplateId("Direct-fire target");
+        await templateStore.SaveAsync(templateId, "Direct-fire target", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        await readyRack.TogglePinCommand.ExecuteAsync(row); // slot 1
+
+        return (vm, readyRack, templateId);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_BasePhotoStillBlankPlaceholder_RefusesAndDoesNotTouchOverlay()
+    {
+        var blank = new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, new Rgb24(233, 233, 234));
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(blank);
+        vm.AddOverlayElementCommand.Execute(null);
+        var elementCountBefore = vm.OverlayElements.Count;
+        var raised = false;
+        vm.DirectFireRequested += _ => raised = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(raised);
+        // Code-review finding: !IsNullOrEmpty alone is vacuous -- AddOverlayElementCommand above
+        // ALSO sets HasUnsavedEdits (via PushUndoSnapshot), so this press could equally be blocked
+        // by the unrelated arm/confirm gate (which sets a DIFFERENT, non-empty StatusMessage) even
+        // if the blank-photo check itself were broken. Asserting the EXACT key (FakeLocalizationService.GetString
+        // returns the raw key) proves it's specifically the blank-photo refusal that fired.
+        Assert.Equal("Panes.TxImageEditor.DirectFireNoPhoto", vm.StatusMessage);
+        Assert.Equal(elementCountBefore, vm.OverlayElements.Count); // NOT wiped by an aborted load
+    }
+
+    /// <summary>Code-review finding: the blank-photo refusal must check <c>_sourceBaseline</c>, NOT
+    /// <c>_originalSource</c> -- <see cref="RotateCommand"/> reassigns <c>_originalSource</c> to a
+    /// real decoded image even when the underlying photo is still the blank placeholder, so a check
+    /// against that field alone would let blank-editor -&gt; Rotate -&gt; Ctrl+N bypass the refusal
+    /// and send overlay text on a gray card. <c>_sourceBaseline</c> is untouched by Rotate, so the
+    /// refusal correctly survives it.
+    ///
+    /// Confirming code-review round finding: a first draft of this test asserted only
+    /// <c>!string.IsNullOrEmpty(vm.StatusMessage)</c>, which is vacuous -- <see cref="RotateCommand"/>'s
+    /// own <c>PushUndoSnapshot()</c> call ALSO sets <c>HasUnsavedEdits</c>, so a single direct-fire
+    /// press here is blocked by the unrelated arm/confirm gate regardless of which field the
+    /// blank-photo check uses; that gate sets its OWN non-empty (but different) StatusMessage, so the
+    /// weak assertion passed even under a reverted <c>_originalSource</c>-based check. Asserting the
+    /// EXACT key is what actually proves the blank-photo check specifically fired, not the arm gate.</summary>
+    [AvaloniaFact]
+    public async Task DirectFire_BlankPhotoRotated_StillRefuses()
+    {
+        var blank = new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, new Rgb24(233, 233, 234));
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(blank);
+        vm.RotateCommand.Execute(null); // reassigns _originalSource to a real decoded image
+        var raised = false;
+        vm.DirectFireRequested += _ => raised = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(raised);
+        Assert.Equal("Panes.TxImageEditor.DirectFireNoPhoto", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_RealPhoto_NoUnsavedEdits_FiresOnOnePress()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(CreateSource(4, 4));
+        IImageSource? fired = null;
+        vm.DirectFireRequested += final => fired = final;
+
+        readyRack.DirectFireSlotCommand.Execute(1);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(fired);
+    }
+
+    /// <summary>Code-review finding on an earlier draft of this feature: a SHARED arm token would
+    /// let a plain-recall's own discard-only warning double as an unintended transmit confirmation.
+    /// This proves the fix -- direct-fire's OWN token requires its OWN two presses, never satisfied
+    /// by a plain-recall arm on the same slot.</summary>
+    [AvaloniaFact]
+    public async Task DirectFire_WithUnsavedEdits_PlainRecallArmDoesNotSatisfyDirectFireArm()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(CreateSource(4, 4));
+        vm.AddOverlayElementCommand.Execute(null); // real unsaved edit
+        var fired = false;
+        vm.DirectFireRequested += _ => fired = true;
+
+        readyRack.RecallSlotCommand.Execute(1); // arms _pendingRecallTemplateId, NOT the direct-fire token
+        Dispatcher.UIThread.RunJobs();
+        readyRack.DirectFireSlotCommand.Execute(1); // must ALSO only arm, not fire on this first press
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(fired);
+        // Code-review finding: must be the DISTINCT transmit-naming key, never the discard-only
+        // ConfirmRecallOverwrite text -- FakeLocalizationService.GetString returns the raw key, so
+        // asserting it (not just non-empty) proves the operator's confirming press would read a
+        // warning that actually names the transmit, not just the discard.
+        Assert.Equal("Panes.TxImageEditor.ConfirmDirectFireOverwrite", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_WithUnsavedEdits_SecondPressOnSameSlotFires()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(CreateSource(4, 4));
+        vm.AddOverlayElementCommand.Execute(null);
+        var fired = false;
+        vm.DirectFireRequested += _ => fired = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1); // arms
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(fired);
+        readyRack.DirectFireSlotCommand.Execute(1); // confirms -- SAME slot, second press
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(fired);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_LosesTheGenerationRace_AbandonedSilently_NeverFires()
+    {
+        // Same TaskCompletionSource-gated shape as LoadTemplate_OlderSlowerLoadCompletesAfterANewerFasterOne
+        // above, adapted for direct-fire's own async chain: slot A's load hangs on a gate, slot B's
+        // resolves synchronously and fires first, then A's stale completion arrives and must be
+        // abandoned -- never transmitted against the (by-then-reopened-with-B's-content) canvas.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, readyRack);
+        var idA = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(idA, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var idB = templateStore.CreateTemplateId("B");
+        await templateStore.SaveAsync(idB, "B", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.1, 0.1, 0.1, 0.1, 0, false, new Rgb24(1, 1, 1), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var rowA = readyRack.AllTemplates.Single(t => t.Name == "A");
+        var rowB = readyRack.AllTemplates.Single(t => t.Name == "B");
+        await readyRack.TogglePinCommand.ExecuteAsync(rowA); // slot 1
+        await readyRack.TogglePinCommand.ExecuteAsync(rowB); // slot 2
+
+        var gateA = new TaskCompletionSource<PersistedTemplateDocument>();
+        templateStore.LoadGates[idA] = gateA;
+        var fireCount = 0;
+        vm.DirectFireRequested += _ => fireCount++;
+
+        readyRack.DirectFireSlotCommand.Execute(1); // starts A's load, suspends on the gate
+        readyRack.DirectFireSlotCommand.Execute(2); // B has no gate -- resolves synchronously, fires first
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, fireCount); // B's fire only
+
+        gateA.SetResult(templateStore.Templates[idA].Document); // A's slow load finally completes
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, fireCount); // A's now-stale completion must be abandoned, not add a second fire
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_ReSeedsHisCallFromLiveContact_OverwritingAnyExistingValue()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(
+            CreateSource(4, 4), currentContactProvider: () => new Dictionary<string, string> { ["his_call"] = "W1AW" });
+        vm.AddOverlayElementCommand.Execute(null); // a real edit -- requires the 2-press arm/confirm below
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "STALE-CALL"; // simulates a value left over from a PRIOR contact
+        var fired = false;
+        vm.DirectFireRequested += _ => fired = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1); // arms (HasUnsavedEdits from AddOverlayElementCommand above)
+        Dispatcher.UIThread.RunJobs();
+        readyRack.DirectFireSlotCommand.Execute(1); // confirms
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(fired); // proves the assertion below isn't vacuously passing on an unfired arm
+        Assert.Equal("W1AW", vm.TemplateVariables["his_call"]);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_EmptyLiveContact_LeavesExistingFillBarValueAlone()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(
+            CreateSource(4, 4), currentContactProvider: () => null);
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
+        vm.TemplateVariableRows[0].Value = "K1ABC";
+        var fired = false;
+        vm.DirectFireRequested += _ => fired = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1); // arms
+        Dispatcher.UIThread.RunJobs();
+        readyRack.DirectFireSlotCommand.Execute(1); // confirms
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(fired);
+        // Same "never silently blank a field" rule the constructor's own one-shot seed follows --
+        // an empty/null live contact must not erase whatever the operator already typed.
+        Assert.Equal("K1ABC", vm.TemplateVariables["his_call"]);
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_Busy_RefusesVisibly_NeverFires()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(CreateSource(4, 4), canTransmitNow: () => false);
+        var fired = false;
+        vm.DirectFireRequested += _ => fired = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(fired);
+        Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+    }
+
+    [AvaloniaFact]
+    public async Task DirectFire_Success_RaisesOnlyDirectFireRequested_NeverAppliedOrAppliedAndTransmit()
+    {
+        var (vm, readyRack, _) = await CreateEditorWithPinnedTemplateAsync(CreateSource(4, 4));
+        var appliedRaised = false;
+        var appliedAndTransmitRaised = false;
+        var directFireRaised = false;
+        vm.Applied += _ => appliedRaised = true;
+        vm.AppliedAndTransmitRequested += _ => appliedAndTransmitRaised = true;
+        vm.DirectFireRequested += _ => directFireRaised = true;
+
+        readyRack.DirectFireSlotCommand.Execute(1);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(directFireRaised);
+        Assert.False(appliedRaised);
+        Assert.False(appliedAndTransmitRaised);
     }
 
     [AvaloniaFact]
