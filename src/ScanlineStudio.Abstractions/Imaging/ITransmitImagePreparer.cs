@@ -231,13 +231,29 @@ public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientC
 /// copy COUNT is derived at render time from the larger of the two resolved pixel steps (one copy
 /// per pixel of the dominant axis), not persisted separately -- a simplified, "improved on, not
 /// replicated" re-derivation (CLAUDE.md §2) of legacy's own signed-byte-packed step count, not a
-/// byte-for-byte port of its GDI-specific color-interpolation/shadow-mode-coupling.</para></summary>
+/// byte-for-byte port of its GDI-specific color-interpolation/shadow-mode-coupling.</para>
+/// <para>TX editor gap-items plan, item 4b (picture fill): <paramref name="BitmapFill"/> is an
+/// already-resolved <see cref="IImageSource"/>, same "resolved before hitting the pipeline"
+/// convention as <see cref="TemplateImageElement.Source"/> -- never re-loaded/re-decoded here.
+/// STABLE-INSTANCE INVARIANT: every caller composing this record must pass the SAME cached
+/// <see cref="IImageSource"/> instance across a template's own edit session (never a freshly
+/// re-loaded copy per frame) -- this record's auto-generated equality falls back to REFERENCE
+/// equality on this interface-typed member (the exact class of bug <see cref="TextGradient"/>'s own
+/// doc comment documents for its <c>Stops</c> list), so a fresh instance every call would make
+/// Flatten's own stale-result guard never match a picture-filled text element, discarding every
+/// flatten of one as stale. PRECEDENCE INVARIANT: when both <see cref="BitmapFill"/> and
+/// <see cref="Gradient"/> are non-null (representable via a hand-edited/shared template file, since
+/// nothing here enforces mutual exclusivity at the data level), <see cref="BitmapFill"/> wins -- this
+/// rule is stated ONCE here and must be enforced identically at every site that COMPOSES this
+/// record (the live pipeline, the persisted-template thumbnail-reconstruction path, and the editor's
+/// own canvas preview), not just wherever a caller happens to check first.</para></summary>
 public sealed record TemplateTextElement(
     NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color,
     Rgb24? StrokeColor = null, double StrokeThickness = 0,
     Rgb24? ShadowColor = null, double ShadowOffsetX = 0, double ShadowOffsetY = 0,
     double RotationDegrees = 0, TextGradient? Gradient = null,
-    Rgb24? StackColor = null, double StackStepX = 0, double StackStepY = 0)
+    Rgb24? StackColor = null, double StackStepX = 0, double StackStepY = 0,
+    IImageSource? BitmapFill = null)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
