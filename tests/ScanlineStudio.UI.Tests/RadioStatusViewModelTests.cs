@@ -100,6 +100,175 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void SsbAsPktChecked_WhileOnUsb_ConvertsToDataAndCallsRadioSession()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Usb;
+
+        vm.SsbAsPkt = true;
+
+        Assert.Equal(RadioMode.Data, vm.SelectedRadioMode);
+        Assert.Contains(RadioMode.Data, radioSession.SetModeCalls);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktChecked_WhileOnLsb_ConvertsToDataR()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Lsb;
+
+        vm.SsbAsPkt = true;
+
+        Assert.Equal(RadioMode.DataR, vm.SelectedRadioMode);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktUnchecked_WhileOnData_ConvertsBackToUsb()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        vm.SelectedRadioMode = RadioMode.Data;
+
+        vm.SsbAsPkt = false;
+
+        Assert.Equal(RadioMode.Usb, vm.SelectedRadioMode);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktUnchecked_WhileOnDataR_ConvertsBackToLsb()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        vm.SelectedRadioMode = RadioMode.DataR;
+
+        vm.SsbAsPkt = false;
+
+        Assert.Equal(RadioMode.Lsb, vm.SelectedRadioMode);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktToggled_WhileOnUnrelatedMode_IsANoOp()
+    {
+        // FM (and any other mode outside the Usb/Lsb/Data/DataR set) must not be touched --
+        // matches how the segment buttons themselves never affect an unrelated mode. Checks the CAT
+        // call count too (auditor finding): SelectedRadioMode's own self-assignment in the fallback
+        // arm is equality-guarded by the generated setter, so it must NOT fire a redundant
+        // SetModeAsync -- a bare SelectedRadioMode read-back alone wouldn't have caught that.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Fm;
+        var callCountBeforeToggle = radioSession.SetModeCalls.Count;
+
+        vm.SsbAsPkt = true;
+
+        Assert.Equal(RadioMode.Fm, vm.SelectedRadioMode);
+        Assert.Equal(callCountBeforeToggle, radioSession.SetModeCalls.Count);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktUnchecked_AfterASuppressedReadbackToAnUnrelatedMode_IsANoOp()
+    {
+        // Auditor finding: the one place the new switch composes with the existing rig-state-readback
+        // suppression mechanism (_suppressModeCommand) -- SsbAsPkt=true, then a live rig readback
+        // (Push, not a user click) reports a mode outside the Usb/Lsb/Data/DataR set, then the box is
+        // unchecked. _suppressModeCommand is back to false by the time OnSsbAsPktChanged runs (reset
+        // synchronously in OnStateChanged's own finally, same UI thread as this test), so this must
+        // stay the fallback arm's plain no-op, not an accidental CAT command. Baseline captured BEFORE
+        // Push (2nd-round auditor finding): capturing after would hide a broken suppression guard,
+        // since the readback's own echoed SetModeAsync(Cw) would already be in the count either way.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        var callCountBeforeReadback = radioSession.SetModeCalls.Count;
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Cw, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(callCountBeforeReadback, radioSession.SetModeCalls.Count);
+
+        vm.SsbAsPkt = false;
+
+        Assert.Equal(RadioMode.Cw, vm.SelectedRadioMode);
+        Assert.Equal(callCountBeforeReadback, radioSession.SetModeCalls.Count);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktChanged_RaisesPropertyChangedForBothSidebandBooleans_EvenWhenSelectedRadioModeArmIsANoOp()
+    {
+        // 2nd-round auditor finding: mirrors SelectedRadioModeChanged_RaisesPropertyChangedForAllThree
+        // SidebandBooleans's own established precedent for this exact gap class -- a getter-value
+        // assertion alone doesn't prove the segment RadioButtons actually re-render. Starts already on
+        // Data (not Usb) so OnSsbAsPktChanged's own switch hits the fallback (already-in-target) arm
+        // and performs zero SelectedRadioMode side effect -- isolates SsbAsPkt's own
+        // NotifyPropertyChangedFor attribute as the ONLY thing that can re-light the segment display.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Data;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.SsbAsPkt = true;
+
+        Assert.Contains(nameof(vm.IsSidebandUsb), raised);
+        Assert.Contains(nameof(vm.IsSidebandLsb), raised);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktEnabled_IsSidebandUsbSetTrue_SetsDataInstead()
+    {
+        // Proves a FUTURE click through IsSidebandUsb's own setter also lands on the PKT variant
+        // while the checkbox stays checked -- not just the one-time OnSsbAsPktChanged conversion.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        vm.SelectedRadioMode = RadioMode.Fm;
+
+        vm.IsSidebandUsb = true;
+
+        Assert.Equal(RadioMode.Data, vm.SelectedRadioMode);
+        Assert.True(vm.IsSidebandUsb);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktEnabled_IsSidebandLsbSetTrue_SetsDataRInstead()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        vm.SelectedRadioMode = RadioMode.Fm;
+
+        vm.IsSidebandLsb = true;
+
+        Assert.Equal(RadioMode.DataR, vm.SelectedRadioMode);
+        Assert.True(vm.IsSidebandLsb);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktEnabled_SelectedModeIsData_IsSidebandUsbReadsTrue()
+    {
+        // The segment display side of the mapping: with SsbAsPkt on, Data/DataR are what "USB"/
+        // "LSB" mean now, so the RadioButtons must show the correct one as active. Starts from Fm,
+        // not the default Usb (2nd-round auditor nit): SsbAsPkt=true from a Usb start already
+        // converts to Data via OnSsbAsPktChanged, making the later "act" assignment a no-op.
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedRadioMode = RadioMode.Fm;
+        vm.SsbAsPkt = true;
+
+        vm.SelectedRadioMode = RadioMode.Data;
+
+        Assert.True(vm.IsSidebandUsb);
+        Assert.False(vm.IsSidebandLsb);
+    }
+
+    [AvaloniaFact]
     public void TxVolumeDisplay_ShowsMutedGlyphInsteadOfPercent_WhenDeviceIsMuted()
     {
         var sstvSession = new FakeSstvSessionService { TxVolumePercent = 42, TxIsMuted = true };

@@ -66,6 +66,8 @@
   "RadioStatus.SidebandUsb": "USB",
   "RadioStatus.SidebandLsb": "LSB",
   "RadioStatus.SidebandFm": "FM",
+  "RadioStatus.SsbAsPkt": "SSB as PKT",
+  "RadioStatus.SsbAsPkt.Help": "When checked, the USB/LSB buttons target the rig's PKTUSB/PKTLSB (data) modes instead of plain voice USB/LSB. If the rig is currently on USB or LSB, it converts immediately.",
   "RadioStatus.BwValue": "BW —",
   "RadioStatus.SetBandwidth": "Set",
   "RadioStatus.BandwidthInput.Help": "Requests this filter passband (Hz) from the rig. An overly narrow value can break SSTV decode or clip TX audio -- the rig may also silently snap it to its nearest real filter.",
