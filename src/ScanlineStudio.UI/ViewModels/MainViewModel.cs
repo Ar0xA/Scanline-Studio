@@ -92,6 +92,13 @@ public partial class MainViewModel : ViewModelBase
     [ObservableProperty]
     private string? _callsign;
 
+    /// <summary>RST default plan (2026-09-01): cached the same way as <see cref="Callsign"/>, read
+    /// synchronously by <c>MainWindow.axaml.cs</c>'s <c>LogQsoRequested</c> handler so that handler
+    /// can stay synchronous rather than becoming <see langword="async"/> just to read settings fresh
+    /// on every click -- see <see cref="LoadOperatorSettingsAsync"/>'s own doc comment for why.</summary>
+    [ObservableProperty]
+    private string? _defaultRst;
+
     /// <summary>Null until <see cref="LoadActiveConfigurationNameAsync"/> first resolves it (fresh
     /// install, before anything has seeded/marked a configuration active) -- <see cref="WindowTitleDisplay"/>
     /// falls back to just name+version in that case, rather than showing a stale or guessed name.</summary>
@@ -176,7 +183,7 @@ public partial class MainViewModel : ViewModelBase
         // reordering rather than something to rely on staying harmless as this constructor grows.
         _ = OpenBlankEditorSafelyAsync(txControls);
 
-        _ = LoadCallsignAsync();
+        _ = LoadOperatorSettingsAsync();
         _ = LoadActiveConfigurationNameAsync();
     }
 
@@ -185,7 +192,7 @@ public partial class MainViewModel : ViewModelBase
     // command chain can reach (e.g. CloseBlankEditorForReplacement's own EditorClosed invocation) --
     // an exception escaping there from this fire-and-forget call would surface only as a
     // nondeterministic, context-free "unobserved task exception" log at GC time, same failure class
-    // LoadCallsignAsync's own try/catch already guards against just below. Isolated the same way.
+    // LoadOperatorSettingsAsync's own try/catch already guards against just below. Isolated the same way.
     private async Task OpenBlankEditorSafelyAsync(TxControlsPaneViewModel txControls)
     {
         try
@@ -376,24 +383,33 @@ public partial class MainViewModel : ViewModelBase
     /// callsign (or "N0CALL") was on disk at app startup until the next full restart, even after a
     /// successful Save (user-reported bug, 2026-08-23). Public, not internal -- this project has no
     /// <c>InternalsVisibleTo</c> wired up anywhere (see e.g. <c>AboutWindowViewModel</c>'s own doc
-    /// comment), so a test needing to call this directly couldn't otherwise.</summary>
-    public async Task LoadCallsignAsync()
+    /// comment), so a test needing to call this directly couldn't otherwise.
+    ///
+    /// RST default plan (2026-09-01): renamed from <c>LoadCallsignAsync</c> and extended to also
+    /// cache <see cref="DefaultRst"/> from the same snapshot read -- <c>MainWindow.axaml.cs</c>'s
+    /// <c>LogQsoRequested</c> handler reads <see cref="DefaultRst"/> synchronously off this cache
+    /// rather than becoming <see langword="async"/> itself just to read settings fresh on every
+    /// click (an auditor plan-review round found the async-handler alternative introduced its own
+    /// risks -- missing try/catch, an unstated tab-switch-ordering change -- for a freshness
+    /// guarantee nothing actually needed).</summary>
+    public async Task LoadOperatorSettingsAsync()
     {
         try
         {
             var snapshot = await _optionsSettingsService.LoadAsync();
             Callsign = snapshot.Callsign;
+            DefaultRst = snapshot.DefaultRst;
         }
         catch (Exception ex)
         {
-            Log.LoadCallsignFailed(_logger, ex);
+            Log.LoadOperatorSettingsFailed(_logger, ex);
         }
     }
 
     /// <summary>User-requested (2026-08-28): re-read after every Configurations-menu switch too
     /// (<c>MainWindow.axaml.cs</c>'s own <c>RefreshAfterConfigurationChange</c>), same reasoning as
     /// every other refresh-on-switch call there -- a switch changes which configuration is active.
-    /// Public for the same reason <see cref="LoadCallsignAsync"/> is.</summary>
+    /// Public for the same reason <see cref="LoadOperatorSettingsAsync"/> is.</summary>
     public async Task LoadActiveConfigurationNameAsync()
     {
         try
@@ -434,8 +450,8 @@ public partial class MainViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Debug, Message = "Ctrl+S dispatched to {Target}")]
         public static partial void SaveOrApplyInvoked(ILogger logger, string target);
 
-        [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator callsign failed; menu-row chip stays hidden")]
-        public static partial void LoadCallsignFailed(ILogger logger, Exception ex);
+        [LoggerMessage(Level = LogLevel.Error, Message = "Loading operator settings failed; menu-row callsign chip stays hidden and Log QSO's RST fields stay unprefilled")]
+        public static partial void LoadOperatorSettingsFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading the active configuration name failed; window title omits it")]
         public static partial void LoadActiveConfigurationNameFailed(ILogger logger, Exception ex);

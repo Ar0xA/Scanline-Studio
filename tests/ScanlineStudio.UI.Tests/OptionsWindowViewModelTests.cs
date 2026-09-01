@@ -1271,6 +1271,80 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("W1AW", persisted.Callsign);
     }
 
+    /// <summary>RST default plan (2026-09-01): mirrors <see cref="Constructor_LoadsEveryFieldFromPersistedSettings"/>'s
+    /// own Callsign coverage, for the new field.</summary>
+    [AvaloniaFact]
+    public void Constructor_LoadsDefaultRstFromPersistedSettings()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                OperatorSettings.SectionKey, new OperatorSettings { DefaultRst = "579" }, OperatorSettingsJsonContext.Default.OperatorSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("579", vm.DefaultRst);
+    }
+
+    /// <summary>RST default plan (2026-09-01): the real upgrade path -- a settings.json predating
+    /// this field (an OperatorSettings section present, but with no DefaultRst key at all, not just
+    /// an explicit null) must still show "595" in the dialog, not a blank field. See
+    /// <see cref="OperatorSettings.DefaultRst"/>'s own doc comment for the confirmed STJ trap this
+    /// guards against.</summary>
+    [AvaloniaFact]
+    public void Constructor_WithNoDefaultRstKeyOnDisk_FallsBackTo595()
+    {
+        // Hand-built JsonElement, not `new OperatorSettings { Callsign = ... }` -- that
+        // object-initializer shape can't express "key literally absent from JSON" now that
+        // DefaultRst has no non-null initializer of its own.
+        var preExistingOperatorJson = System.Text.Json.JsonDocument.Parse("""{"Callsign":"KD9TAW"}""").RootElement;
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings { Sections = new() { [OperatorSettings.SectionKey] = preExistingOperatorJson } },
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("595", vm.DefaultRst);
+    }
+
+    /// <summary>RST default plan (2026-09-01): mirrors <see cref="ApplyCommand_PersistsFieldsWithoutClosing"/>'s
+    /// own Callsign coverage, for the new field.</summary>
+    [AvaloniaFact]
+    public async Task ApplyCommand_PersistsDefaultRstWithoutClosing()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.DefaultRst = "579";
+
+        await vm.ApplyCommand.ExecuteAsync(null);
+
+        var persisted = settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)!;
+        Assert.Equal("579", persisted.DefaultRst);
+    }
+
+    /// <summary>RST default plan (2026-09-01): the Station tab's "Reset to default" button must
+    /// restore "595" (<see cref="OptionsSettingsService.Defaults"/>), not clear the field -- unlike
+    /// Callsign/OperatorName/OperatorGrid, which have no sensible non-null default.</summary>
+    [AvaloniaFact]
+    public void ResetTxToDefaultCommand_RestoresDefaultRstTo595()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                OperatorSettings.SectionKey, new OperatorSettings { DefaultRst = "579" }, OperatorSettingsJsonContext.Default.OperatorSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("579", vm.DefaultRst);
+
+        vm.ResetTxToDefaultCommand.Execute(null);
+
+        Assert.Equal("595", vm.DefaultRst);
+    }
+
     /// <summary>Mirrors SaveCommand's own failure-signaling gap this step also fixes -- Apply must
     /// surface WHY it silently didn't close, not just leave the dialog open with no explanation.</summary>
     [AvaloniaFact]
@@ -3612,6 +3686,37 @@ public sealed class OptionsWindowViewModelTests
         var reloaded = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.Null(reloaded.NrRstText);
+    }
+
+    /// <summary>RST default plan (2026-09-01), auditor code-review finding: unlike
+    /// <see cref="SaveAsync_ClearedNrRstText_PersistsAsNullNotResurrectedOnReload"/>'s field (which
+    /// has no "?? DefaultXxx" fallback at the `LoadAsync` read site), <see cref="DefaultRst"/> DOES
+    /// have one (<c>OperatorSettings.DefaultRstFallback</c>, "595") -- so clearing the TextBox and
+    /// saving must persist an actual empty string, not <see langword="null"/>, or the next load's
+    /// "?? DefaultRstFallback" would silently resurrect "595" and undo the user's clear.</summary>
+    [AvaloniaFact]
+    public async Task SaveAsync_ClearedDefaultRst_PersistsAsEmptyNotResurrectedOnReload()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                OperatorSettings.SectionKey,
+                new OperatorSettings { DefaultRst = "579" },
+                OperatorSettingsJsonContext.Default.OperatorSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("579", vm.DefaultRst); // loaded correctly before the clear
+
+        vm.DefaultRst = null;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var persisted = settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings);
+        Assert.Equal(string.Empty, persisted!.DefaultRst);
+
+        var reloaded = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(string.Empty, reloaded.DefaultRst);
     }
 
     [AvaloniaFact]
