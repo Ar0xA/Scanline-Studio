@@ -1009,7 +1009,23 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    [RelayCommand]
+    /// <summary>TX-pane Tune button plan (2026-09-01), auditor code-review finding:
+    /// <c>AllowConcurrentExecutions = true</c> is required, not decorative -- CommunityToolkit.Mvvm's
+    /// generated <c>AsyncRelayCommand</c> defaults to <see langword="false"/>, which ANDs into
+    /// <c>CanExecute</c> for the whole duration the command is already running. Without this, the
+    /// bound button greys out the instant the tone starts and the "Stop tune" click (the
+    /// <see cref="IsTuning"/> branch below) becomes unreachable from real UI -- only reachable from a
+    /// test calling <c>ExecuteAsync</c> directly, which bypasses <c>CanExecute</c> entirely. This
+    /// exact bug was already found and fixed on the sibling command
+    /// <see cref="OptionsWindowViewModel.TestPttCommand"/>, which explicitly left THIS command
+    /// untouched as "out of that diff's scope" -- harmless at the time, since this command's only
+    /// surface was the Tone Generator dialog, which has its own close-to-cancel backstop
+    /// (<see cref="StopTuneIfActive"/>). It stopped being harmless once
+    /// <c>TxControlsPaneView.axaml</c> bound this same command directly on the TX pane, next to a
+    /// live Transmit control and with NO dialog to close as a backstop -- a dead Stop button there
+    /// would key PTT with a steady test tone for up to <see cref="TuneDurationSeconds"/> seconds with
+    /// no way to abort from that screen.</summary>
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task TuneAsync()
     {
         if (IsTuning)

@@ -1634,8 +1634,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// already running. Without this, the button greys out the instant the tone starts and the
     /// "Stop test" click (the <see cref="IsTestingPtt"/> branch below) becomes unreachable from the
     /// real UI -- only reachable from a test calling <c>ExecuteAsync</c> directly, which bypasses
-    /// <c>CanExecute</c> entirely. <see cref="TuneCommand"/> has this same latent shape; left
-    /// untouched here as out of this diff's scope.</summary>
+    /// <c>CanExecute</c> entirely. <see cref="TuneCommand"/> had this same latent shape; left
+    /// untouched here as out of that diff's scope, then fixed 2026-09-01 (see
+    /// <see cref="RadioStatusViewModel.TuneCommand"/>'s own doc comment -- a DIFFERENT command from
+    /// this dialog's own <see cref="TuneCommand"/> despite the shared name, though both had the
+    /// identical bug).</summary>
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task TestPttAsync()
     {
