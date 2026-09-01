@@ -422,8 +422,8 @@
                                         <!-- Padding="6,0" (design-fidelity-caught fix): IndustryBtn22's
                                              fixed 22px box was clipping the label's descenders/baseline
                                              against Fluent's own default Button padding. -->
-                                        <Button Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
-                                        <Button Grid.Column="1" Classes="Industry IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.CorrectSlant}" Command="{Binding RequestCorrectSlantCommand}" />
+                                        <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.Resync}" Command="{Binding RequestReSyncCommand}" />
+                                        <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Content="{loc:Translate Panes.RxSync.CorrectSlant}" Command="{Binding RequestCorrectSlantCommand}" />
                                     </Grid>
                                 </StackPanel>
                             </HeaderedContentControl>
