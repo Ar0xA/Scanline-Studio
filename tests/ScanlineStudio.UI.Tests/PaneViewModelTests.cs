@@ -3215,6 +3215,196 @@ public sealed class PaneViewModelTests
         Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
     }
 
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2: a template referencing {freq} must send
+    /// the frequency at the moment of TRANSMIT, not the frequency frozen at Apply time.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Transmit_FrequencyMacroChangedSinceApply_RebakesWithFreshValue()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "{freq}";
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var loadedImageAfterApply = ExtractLoadedImage(vm);
+        radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 7_045_000 };
+
+        await vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var lastDocument = preparer.TemplateDocuments[^1];
+        var textElement = Assert.IsType<TemplateTextElement>(Assert.Single(lastDocument.Elements));
+        Assert.Equal("7.045000 MHz", textElement.Content);
+        Assert.NotSame(loadedImageAfterApply, sstvSession.TransmitCalls[^1].Image);
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2: when nothing macro-driven has changed
+    /// since Apply, Transmit must skip the (expensive, native-resolution) rebake and send the
+    /// already-baked image as-is -- the compare-then-conditionally-rebake gate's whole point.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Transmit_NoMacroChangeSinceApply_DoesNotRebake()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "{freq}";
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var applyTemplateCallCountAfterApply = preparer.ApplyTemplateCallCount;
+        var loadedImageAfterApply = ExtractLoadedImage(vm);
+
+        await vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(applyTemplateCallCountAfterApply, preparer.ApplyTemplateCallCount);
+        Assert.Same(loadedImageAfterApply, sstvSession.TransmitCalls[^1].Image);
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2, auditor round 2's blocker A: the
+    /// compare-gate's baseline must update after a successful rebake, or retuning BACK to a
+    /// previously-transmitted value silently transmits the stale image from the intervening
+    /// rebake. Apply at freq A, Transmit at freq B (rebakes to B), retune to A, Transmit again --
+    /// must transmit A, not the leftover B image from the first rebake.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Transmit_RetuneBackToOriginalValueAfterRebake_TransmitsFreshValueNotStaleRebake()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "{freq}";
+        editor.ApplyCommand.Execute(null); // baseline: 14.230000 MHz baked at Apply
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 7_045_000 };
+        await vm.TransmitCommand.ExecuteAsync(null); // rebakes to 7.045000 MHz
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 14_230_000 }; // retune back to the ORIGINAL Apply-time value
+        await vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var lastDocument = preparer.TemplateDocuments[^1];
+        var textElement = Assert.IsType<TemplateTextElement>(Assert.Single(lastDocument.Elements));
+        Assert.Equal("14.230000 MHz", textElement.Content);
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2, code-review finding: the macro
+    /// freshness check awaits a real settings load, so <c>_transmitCts</c> must exist BEFORE that
+    /// await starts, not just before the encode call -- otherwise a Stop TX click during that window
+    /// hits a null <c>_transmitCts</c> (a silent no-op via <c>_transmitCts?.Cancel()</c>) and the
+    /// transmission proceeds anyway despite the click.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Transmit_StopClickedDuringMacroRefreshSettingsLoad_CancelsBeforeSending()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), settingsStore, new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var gate = new TaskCompletionSource();
+        settingsStore.Gate = gate.Task;
+
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsTransmitting);
+        Assert.Empty(sstvSession.TransmitCalls); // still parked inside the macro-refresh settings load
+        vm.StopTransmitCommand.Execute(null);
+
+        gate.SetResult();
+        await transmitTask;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(sstvSession.TransmitCalls); // the cancellation must be observed BEFORE encoding starts
+        Assert.False(vm.IsTransmitting);
+    }
+
+    /// <summary>RX/TX pipeline fix plan (2026-09-01), item 2, code-review finding: the mode ComboBox
+    /// stays enabled during a transmit (<c>CanChangeSourceOrMode</c> has no <c>IsTransmitting</c>
+    /// term), so <c>SelectedMode</c> can change during the macro-refresh settings-load await. If it
+    /// does, <c>OnSelectedModeChanged</c> already reflowed <c>_loadedImage</c>/<c>PreviewImage</c> to
+    /// the NEW mode's own dimensions -- the rebake must NOT overwrite that with an image baked
+    /// against the stale captured mode, or the "_loadedImage always matches SelectedMode" invariant
+    /// breaks and a LATER Transmit hands a wrong-sized image to the encoder. The in-flight
+    /// transmission itself must still stay internally self-consistent (captured mode + its own
+    /// correctly-sized rebake), even though the retained state update is skipped.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_Transmit_SelectedModeChangedDuringMacroRefresh_DoesNotClobberTheNewModesReflow()
+    {
+        var testMode2 = TestMode with { Id = "test2", ImageWidth = 2, ImageHeight = 2 };
+        var preparer = new FakeTransmitImagePreparer();
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+        };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode, testMode2] };
+        var settingsStore = new FakeSettingsStore();
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) }, new FakeStockImageLibrary(), preparer, new FakeFilePickerService(), new FakeLocalizationService(), settingsStore, radioSession, new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)editor.OverlayElements[0];
+        element.Text = "{freq}";
+        editor.ApplyCommand.Execute(null); // baked against TestMode (1x1) at 14.230000 MHz
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 7_045_000 }; // forces a rebake
+        var gate = new TaskCompletionSource();
+        settingsStore.Gate = gate.Task;
+
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedMode = testMode2; // fires OnSelectedModeChanged's own reflow to 2x2 while the rebake is still parked
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(2, ExtractLoadedImage(vm)!.Width);
+
+        gate.SetResult();
+        await transmitTask;
+        Dispatcher.UIThread.RunJobs();
+
+        // The retained state must still reflect testMode2's own reflow, not get clobbered by the
+        // rebake (which was baked against the STALE captured TestMode).
+        Assert.Equal(2, ExtractLoadedImage(vm)!.Width);
+        Assert.Equal(2, ExtractLoadedImage(vm)!.Height);
+
+        // The in-flight transmission itself must still be self-consistent: TestMode (captured before
+        // the await) paired with an image actually sized for TestMode, not testMode2.
+        var sent = Assert.Single(sstvSession.TransmitCalls);
+        Assert.Equal(TestMode, sent.Mode);
+        Assert.Equal(1, sent.Image.Width);
+        Assert.Equal(1, sent.Image.Height);
+    }
+
     /// <summary>ui_transition_plan.md step 2 (T1-2): one click applies AND starts the transmit --
     /// the whole point of the SEND row's new primary action is that the operator doesn't have to
     /// separately find and click Transmit in the sidebar afterward.</summary>
