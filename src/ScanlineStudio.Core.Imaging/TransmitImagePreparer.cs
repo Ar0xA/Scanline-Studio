@@ -687,10 +687,17 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var opacity = Math.Clamp((float)element.Opacity, 0f, 1f);
         var options = new DrawingOptions { GraphicsOptions = new GraphicsOptions { BlendPercentage = opacity } };
         var fillColor = new Rgba32(element.FillColor.R, element.FillColor.G, element.FillColor.B, 255);
+        // Box gradient fill (TX editor gap-items plan, 2026-09-01) -- SAME BuildGradientBrush call
+        // DrawTemplateText already uses; that method's own bounds/fallback-color params carry no
+        // text-specific assumption, confirmed before reuse. `bounds` here is destination-image
+        // space (boxes have no rotation/sub-bitmap path, unlike text), so it's passed directly.
+        Brush fillBrush = element.Gradient is { } gradient
+            ? BuildGradientBrush(gradient, bounds, element.FillColor)
+            : Brushes.Solid(fillColor);
 
         image.Mutate(ctx =>
         {
-            ctx.Fill(options, fillColor, rect);
+            ctx.Fill(options, fillBrush, rect);
 
             if (element.BorderColor is { } borderColor && element.BorderThickness > 0)
             {

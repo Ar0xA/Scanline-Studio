@@ -1023,7 +1023,7 @@
                                                  brush, which Avalonia treats as "no border" — matching
                                                  TemplateBoxElement's own BorderColor==null="no border" contract. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
-                                                    Background="{Binding FillColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
+                                                    Background="{Binding FillBrush}"
                                                     BorderBrush="{Binding BorderColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                     BorderThickness="{Binding CanvasBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
                                                     CornerRadius="{Binding CanvasCornerRadiusPixels, Converter={x:Static conv:DoubleToCornerRadiusConverter.Instance}}"
@@ -2067,6 +2067,30 @@
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.CornerRadiusLabel}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
                                              Text="{Binding SelectedBoxElementCornerRadiusPx}" />
+                                </Grid></Border>
+                                <!-- TX editor gap-items plan (2026-09-01, box gradient fill) — same
+                                     4-row Gradient block TEXT STYLE has above, same AvailableGradientKinds
+                                     ItemsSource (shared, TextGradientKind isn't text-specific despite
+                                     the name — see TemplateBoxElement.Gradient's own doc comment). -->
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.GradientLabel}"
+                                              IsChecked="{Binding SelectedBoxElement.GradientEnabled}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedBoxElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientKindLabel}" />
+                                    <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                              ItemsSource="{Binding AvailableGradientKinds}"
+                                              SelectedItem="{Binding SelectedBoxElement.GradientKind}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedBoxElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientStartColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedBoxElement.GradientStartColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
+                                </Grid></Border>
+                                <Border Classes="IndustryRow" IsEnabled="{Binding SelectedBoxElement.GradientEnabled}"><Grid ColumnDefinitions="Auto,*">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.GradientEndColorLabel}" />
+                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                                 Color="{Binding SelectedBoxElement.GradientEndColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
                                 </Grid></Border>
                             </StackPanel>
 

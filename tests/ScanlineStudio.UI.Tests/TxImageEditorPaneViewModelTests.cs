@@ -2286,6 +2286,88 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.5, box.Opacity);
     }
 
+    /// <summary>Code-review finding (2026-09-01, box gradient fill): the persistence/VM-level tests
+    /// for box gradient fill all used a fake preparer or asserted at the persistence layer, leaving
+    /// the ONE line that actually puts the gradient into the transmitted image
+    /// (<see cref="TxImageEditorPaneViewModel.BuildTemplateElement"/>'s box case) unguarded -- a
+    /// mutation reverting it to a plain solid box would have passed every other test in this file.
+    /// Same real-pipeline-document assertion pattern as <see cref="AddBoxElement_BakesFillBorderThicknessOpacityIntoTheAppliedDocument"/>
+    /// above, extended to the gradient fields.</summary>
+    [AvaloniaFact]
+    public void AddBoxElement_WithGradientEnabled_BakesTheGradientIntoTheAppliedDocument()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+
+        element.GradientEnabled = true;
+        element.GradientKind = TextGradientKind.Vertical;
+        element.GradientStartColor = new Rgb24(10, 20, 30);
+        element.GradientEndColor = new Rgb24(40, 50, 60);
+        Dispatcher.UIThread.RunJobs();
+
+        var box = Assert.IsType<TemplateBoxElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        if (box.Gradient is not { } gradient)
+        {
+            Assert.Fail("Expected a non-null Gradient.");
+            return;
+        }
+
+        Assert.Equal(TextGradientKind.Vertical, gradient.Kind);
+        Assert.Equal(new Rgb24(10, 20, 30), gradient.Stops[0].Color);
+        Assert.Equal(new Rgb24(40, 50, 60), gradient.Stops[1].Color);
+    }
+
+    /// <summary>Code-review finding (2026-09-01, box gradient fill): GradientEnabled=false must
+    /// still bake Gradient: null into the applied document -- otherwise a stale non-null gradient
+    /// from an earlier enable/disable toggle could leak through.</summary>
+    [AvaloniaFact]
+    public void AddBoxElement_GradientDisabled_BakesNullGradientIntoTheAppliedDocument()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+
+        element.GradientEnabled = true;
+        Dispatcher.UIThread.RunJobs();
+        element.GradientEnabled = false;
+        Dispatcher.UIThread.RunJobs();
+
+        var box = Assert.IsType<TemplateBoxElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.Null(box.Gradient);
+    }
+
+    /// <summary>Code-review finding (2026-09-01, box gradient fill): CopySelectedElementStyle/
+    /// PasteSelectedElementStyle's box case was missing Gradient entirely -- Copy Style on a gradient
+    /// box then Paste Style onto a solid box silently left the target solid instead of copying the
+    /// gradient across.</summary>
+    [AvaloniaFact]
+    public void PasteSelectedElementStyle_BoxWithGradient_CopiesGradientFieldsToTheTarget()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var source = (BoxElementViewModel)vm.OverlayElements[0];
+        source.GradientEnabled = true;
+        source.GradientKind = TextGradientKind.Radial;
+        source.GradientStartColor = new Rgb24(1, 2, 3);
+        source.GradientEndColor = new Rgb24(4, 5, 6);
+        vm.SelectedOverlayElement = source;
+        vm.CopySelectedElementStyleCommand.Execute(null);
+
+        vm.AddBoxElementCommand.Execute(null);
+        var target = (BoxElementViewModel)vm.OverlayElements[1];
+        vm.SelectedOverlayElement = target;
+
+        vm.PasteSelectedElementStyleCommand.Execute(null);
+
+        Assert.True(target.GradientEnabled);
+        Assert.Equal(TextGradientKind.Radial, target.GradientKind);
+        Assert.Equal(new Rgb24(1, 2, 3), target.GradientStartColor);
+        Assert.Equal(new Rgb24(4, 5, 6), target.GradientEndColor);
+    }
+
     // TX workflow modernization plan, Phase 1: Quick Style Flyout / Fill & Border flyout.
 
     [AvaloniaFact]
@@ -4240,6 +4322,163 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(persistedText.GradientEnabled);
         Assert.Equal(TextGradientKind.BitmapPattern, persistedText.GradientKind);
+    }
+
+    // TX editor gap-items plan (2026-09-01): box gradient fill -- the same gap Fable's comparative
+    // review flagged (text gradients shipped, boxes only had flat fill). Mirrors the two text-gradient
+    // tests immediately above, one property/type swapped throughout.
+
+    [AvaloniaFact]
+    public void BoxFillBrush_BitmapPatternGradientKind_ReturnsATiledDrawingBrush()
+    {
+        var box = new BoxElementViewModel
+        {
+            GradientEnabled = true,
+            GradientKind = TextGradientKind.BitmapPattern,
+            GradientStartColor = new Rgb24(255, 0, 0),
+            GradientEndColor = new Rgb24(0, 0, 255),
+        };
+
+        var brush = Assert.IsType<Avalonia.Media.DrawingBrush>(box.FillBrush);
+
+        Assert.Equal(Avalonia.Media.TileMode.Tile, brush.TileMode);
+        // Code-review finding: TileMode alone doesn't distinguish a correctly-built pattern from
+        // swapped fore/back colors or an empty DrawingGroup -- assert the actual tile content:
+        // the first child is the full-tile BACKGROUND (GradientEndColor), and the group has more
+        // than just that one background fill (the foreground pattern cells).
+        var drawingGroup = Assert.IsType<Avalonia.Media.DrawingGroup>(brush.Drawing);
+        Assert.True(drawingGroup.Children.Count > 1, "Expected background fill plus at least one foreground pattern cell.");
+        var background = Assert.IsType<Avalonia.Media.GeometryDrawing>(drawingGroup.Children[0]);
+        var backgroundBrush = Assert.IsType<Avalonia.Media.SolidColorBrush>(background.Brush);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(0, 0, 255), backgroundBrush.Color);
+        var foreground = Assert.IsType<Avalonia.Media.GeometryDrawing>(drawingGroup.Children[1]);
+        var foregroundBrush = Assert.IsType<Avalonia.Media.SolidColorBrush>(foreground.Brush);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(255, 0, 0), foregroundBrush.Color);
+    }
+
+    // Second-round audit finding: GradientBrushFactory's Horizontal/Vertical/Radial branches had no
+    // test at all for either caller -- the extraction's "behavior-neutral" claim rested on reading,
+    // not a guard. These cover the shared factory through the box caller (text shares the same
+    // factory call, so this covers both by construction).
+
+    [AvaloniaFact]
+    public void BoxFillBrush_HorizontalGradientKind_ReturnsALeftToRightLinearBrush()
+    {
+        var box = new BoxElementViewModel
+        {
+            GradientEnabled = true,
+            GradientKind = TextGradientKind.Horizontal,
+            GradientStartColor = new Rgb24(255, 0, 0),
+            GradientEndColor = new Rgb24(0, 0, 255),
+        };
+
+        var brush = Assert.IsType<Avalonia.Media.LinearGradientBrush>(box.FillBrush);
+
+        Assert.Equal(new Avalonia.RelativePoint(0, 0.5, Avalonia.RelativeUnit.Relative), brush.StartPoint);
+        Assert.Equal(new Avalonia.RelativePoint(1, 0.5, Avalonia.RelativeUnit.Relative), brush.EndPoint);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(255, 0, 0), brush.GradientStops[0].Color);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(0, 0, 255), brush.GradientStops[1].Color);
+    }
+
+    [AvaloniaFact]
+    public void BoxFillBrush_VerticalGradientKind_ReturnsATopToBottomLinearBrush()
+    {
+        var box = new BoxElementViewModel
+        {
+            GradientEnabled = true,
+            GradientKind = TextGradientKind.Vertical,
+            GradientStartColor = new Rgb24(255, 0, 0),
+            GradientEndColor = new Rgb24(0, 0, 255),
+        };
+
+        var brush = Assert.IsType<Avalonia.Media.LinearGradientBrush>(box.FillBrush);
+
+        Assert.Equal(new Avalonia.RelativePoint(0.5, 0, Avalonia.RelativeUnit.Relative), brush.StartPoint);
+        Assert.Equal(new Avalonia.RelativePoint(0.5, 1, Avalonia.RelativeUnit.Relative), brush.EndPoint);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(255, 0, 0), brush.GradientStops[0].Color);
+        Assert.Equal(Avalonia.Media.Color.FromRgb(0, 0, 255), brush.GradientStops[1].Color);
+    }
+
+    [AvaloniaFact]
+    public void BoxFillBrush_RadialGradientKind_ReturnsACenteredRadialBrush()
+    {
+        var box = new BoxElementViewModel
+        {
+            GradientEnabled = true,
+            GradientKind = TextGradientKind.Radial,
+        };
+
+        var brush = Assert.IsType<Avalonia.Media.RadialGradientBrush>(box.FillBrush);
+
+        var center = new Avalonia.RelativePoint(0.5, 0.5, Avalonia.RelativeUnit.Relative);
+        Assert.Equal(center, brush.Center);
+        Assert.Equal(center, brush.GradientOrigin);
+        Assert.Equal(new Avalonia.RelativeScalar(0.5, Avalonia.RelativeUnit.Relative), brush.RadiusX);
+        Assert.Equal(new Avalonia.RelativeScalar(0.5, Avalonia.RelativeUnit.Relative), brush.RadiusY);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_RoundTripsBoxGradientFill()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddBoxElementCommand.Execute(null);
+        var box = (BoxElementViewModel)vm.OverlayElements[0];
+        box.GradientEnabled = true;
+        box.GradientKind = TextGradientKind.Vertical;
+        box.GradientStartColor = new Rgb24(10, 20, 30);
+        box.GradientEndColor = new Rgb24(40, 50, 60);
+        vm.NewTemplateName = "Gradient box";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedBox = Assert.IsType<PersistedBoxElement>(Assert.Single(document.Elements));
+
+        Assert.True(persistedBox.GradientEnabled);
+        Assert.Equal(TextGradientKind.Vertical, persistedBox.GradientKind);
+        Assert.Equal(new Rgb24(10, 20, 30), persistedBox.GradientStartColor);
+        Assert.Equal(new Rgb24(40, 50, 60), persistedBox.GradientEndColor);
+    }
+
+    /// <summary>Proves the round-trip is genuinely wired end-to-end, not just persisted -- loading a
+    /// saved template back through the real Ready Rack path must produce a live BoxElementViewModel
+    /// whose gradient properties match what was saved (the ToRawElementSnapshotAsync/CreateBoxElement
+    /// load path, not just BuildPersistedElementAsync's save path). Uses ReadyRack.LoadCommand, the
+    /// same real load mechanism LoadTemplate_ReplacesElementsAndPushesOneUndoStep's own sibling test
+    /// uses -- there is no direct LoadTemplateCommand on this VM.</summary>
+    [AvaloniaFact]
+    public async Task LoadTemplate_BoxGradientFill_RehydratesIntoALiveElementWithMatchingValues()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+
+        var templateId = templateStore.CreateTemplateId("Reloaded gradient box");
+        await templateStore.SaveAsync(templateId, "Reloaded gradient box", new PersistedTemplateDocument([
+            new PersistedBoxElement(
+                X: 0.5, Y: 0.5, Width: 0.2, Height: 0.2, Z: 0, Locked: false,
+                FillColor: new Rgb24(0, 0, 0), BorderColor: null, BorderThickness: 0, Opacity: 1.0,
+                GradientEnabled: true, GradientKind: TextGradientKind.Radial,
+                GradientStartColor: new Rgb24(1, 2, 3), GradientEndColor: new Rgb24(4, 5, 6)),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        // No unsaved edits on this fresh editor, so the first click loads immediately -- the second
+        // is a harmless no-op re-click, matching this file's own established belt-and-suspenders
+        // shape for this same load mechanism elsewhere.
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+
+        var reloadedBox = Assert.IsType<BoxElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.True(reloadedBox.GradientEnabled);
+        Assert.Equal(TextGradientKind.Radial, reloadedBox.GradientKind);
+        Assert.Equal(new Rgb24(1, 2, 3), reloadedBox.GradientStartColor);
+        Assert.Equal(new Rgb24(4, 5, 6), reloadedBox.GradientEndColor);
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "ELEMENTS rows don't select or highlight
@@ -6879,6 +7118,59 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotSame(sourceBefore, vm.CurrentSource);
         Assert.Equal(sourceBefore.Width, vm.CurrentSource.Width);
         Assert.Equal(sourceBefore.Height, vm.CurrentSource.Height);
+    }
+
+    /// <summary>Code-review finding (2026-09-01, box gradient fill): <see cref="TextGradient"/>'s
+    /// auto-generated record equality compared its <c>Stops</c> list via reference equality (an
+    /// <c>IReadOnlyList&lt;T&gt;</c>-typed property falls back to that), and
+    /// <see cref="TxImageEditorPaneViewModel.BuildTemplateElement"/> mints a fresh <c>Stops</c> array
+    /// on every call -- so Flatten's own stale-result guard (<c>!BuildTemplateElement(element).Equals(
+    /// request.Element)</c>) NEVER matched for a gradient element, unconditionally discarding every
+    /// flatten of a gradient box (or text -- same pre-existing shape, now reachable for boxes too) as
+    /// stale. Fixed with a real <see cref="TextGradient.Equals(TextGradient?)"/>/<c>GetHashCode</c>
+    /// override; this proves flatten actually succeeds now, using the REAL preparer (not a fake), so
+    /// the genuine equality comparison is exercised end-to-end.</summary>
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_GradientBoxElement_SucceedsRatherThanDiscardingAsStale()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)Assert.Single(vm.OverlayElements);
+        element.GradientEnabled = true;
+        element.GradientKind = TextGradientKind.Horizontal;
+        var sourceBefore = vm.CurrentSource;
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.NotSame(sourceBefore, vm.CurrentSource);
+        // FakeLocalizationService.GetString returns the raw key unchanged -- a literal match against
+        // that key IS the exact-value check that this StatusMessage was NOT the stale-discard path.
+        Assert.NotEqual("Panes.TxImageEditor.FlattenDiscardedStale", vm.StatusMessage);
+    }
+
+    /// <summary>Second-round audit finding: the sibling test above covers box only, but the
+    /// <see cref="TextGradient"/> equality bug it fixes was ALREADY reachable for gradient TEXT
+    /// elements before this session's box gradient fill ever existed -- meaning flatten-a-gradient-
+    /// text-element had never executed its success path in production until this fix. Same real-
+    /// preparer proof, text element instead of box.</summary>
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_GradientTextElement_SucceedsRatherThanDiscardingAsStale()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
+        element.GradientEnabled = true;
+        element.GradientKind = TextGradientKind.Horizontal;
+        var sourceBefore = vm.CurrentSource;
+
+        await vm.FlattenElementCommand.ExecuteAsync(element);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.NotSame(sourceBefore, vm.CurrentSource);
+        Assert.NotEqual("Panes.TxImageEditor.FlattenDiscardedStale", vm.StatusMessage);
     }
 
     [AvaloniaFact]

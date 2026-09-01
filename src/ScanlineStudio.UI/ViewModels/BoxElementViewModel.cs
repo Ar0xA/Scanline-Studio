@@ -1,6 +1,9 @@
+using AvaloniaColor = Avalonia.Media.Color;
+using Avalonia.Media;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.UI.Imaging;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -53,6 +56,24 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// <see cref="BorderThickness"/>. 0 (default) renders identically to a plain square-cornered box.</summary>
     [ObservableProperty]
     private double _cornerRadius;
+
+    /// <summary>TX editor gap-items plan (2026-09-01, box gradient fill) -- SAME simplified 2-stop
+    /// shape <see cref="OverlayElementViewModel.GradientEnabled"/> already established for text, on
+    /// the SAME "text gradients already shipped, boxes only had flat fill" gap Fable's comparative
+    /// review flagged. <see cref="TxImageEditorPaneViewModel.BuildTemplateElement"/> composes these
+    /// four fields into a real <see cref="TextGradient"/> only when <see cref="GradientEnabled"/> is
+    /// true, mirroring the text element's own composition exactly.</summary>
+    [ObservableProperty]
+    private bool _gradientEnabled;
+
+    [ObservableProperty]
+    private TextGradientKind _gradientKind = TextGradientKind.Horizontal;
+
+    [ObservableProperty]
+    private Rgb24 _gradientStartColor = new(255, 0, 0);
+
+    [ObservableProperty]
+    private Rgb24 _gradientEndColor = new(0, 0, 255);
 
     [ObservableProperty]
     private double _imageWidth;
@@ -192,6 +213,19 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         }
     }
 
+    /// <summary>Canvas-preview counterpart to <see cref="OverlayElementViewModel.ForegroundBrush"/> --
+    /// same shape, shared <see cref="Imaging.GradientBrushFactory"/> implementation (code-review
+    /// finding: an earlier version of this duplicated the brush-building logic locally to avoid any
+    /// risk of touching the already-shipped text-gradient render path; the shared factory is a pure
+    /// function of its own arguments with no VM state, so it can't regress that path by
+    /// construction). The real pipeline side (<c>TransmitImagePreparer.BuildGradientBrush</c>) is
+    /// ALREADY shared between text and box -- this brings the canvas-preview side in line too.</summary>
+    public IBrush FillBrush => GradientEnabled
+        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
+        : new SolidColorBrush(ToAvaloniaColor(FillColor));
+
+    private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
+
     partial void OnXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
 
     partial void OnYChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
@@ -252,6 +286,8 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     // why these five didn't have one before this change.
     partial void OnFillColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
+    partial void OnFillColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
+
     partial void OnBorderColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     partial void OnBorderThicknessChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
@@ -259,4 +295,22 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     partial void OnOpacityChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     partial void OnCornerRadiusChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    // Gradient fill undo wiring -- same PushUndoSnapshotForStyleChange convention as
+    // FillColor/BorderColor/etc. above, plus a FillBrush re-notify so the canvas preview updates.
+    partial void OnGradientEnabledChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientEnabledChanged(bool value) => OnPropertyChanged(nameof(FillBrush));
+
+    partial void OnGradientKindChanging(TextGradientKind value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientKindChanged(TextGradientKind value) => OnPropertyChanged(nameof(FillBrush));
+
+    partial void OnGradientStartColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientStartColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
+
+    partial void OnGradientEndColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientEndColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
 }

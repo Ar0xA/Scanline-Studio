@@ -78,7 +78,11 @@ public sealed class TemplateStoreTests : IDisposable
                 GradientStartColor: new Rgb24(255, 0, 0), GradientEndColor: new Rgb24(0, 255, 0)),
             new PersistedBoxElement(
                 X: 0.5, Y: 0.5, Width: 1, Height: 1, Z: -1, Locked: true,
-                FillColor: new Rgb24(20, 20, 20), BorderColor: null, BorderThickness: 0, Opacity: 0.8),
+                FillColor: new Rgb24(20, 20, 20), BorderColor: null, BorderThickness: 0, Opacity: 0.8,
+                // TX editor gap-items plan (2026-09-01, box gradient fill) -- same 4 trailing
+                // scalars as PersistedTextElement's own gradient, round-tripped the identical way.
+                GradientEnabled: true, GradientKind: TextGradientKind.Vertical,
+                GradientStartColor: new Rgb24(10, 20, 30), GradientEndColor: new Rgb24(40, 50, 60)),
             new PersistedImageElement(
                 X: 0.7, Y: 0.7, Width: 0.2, Height: 0.2, Z: 1, Locked: true,
                 AssetFileName: "asset1.png", Fit: ImageFitMode.Cover,
@@ -111,6 +115,10 @@ public sealed class TemplateStoreTests : IDisposable
         var box = Assert.IsType<PersistedBoxElement>(loaded.Elements[1]);
         Assert.True(box.Locked);
         Assert.Equal(0.8, box.Opacity);
+        Assert.True(box.GradientEnabled);
+        Assert.Equal(TextGradientKind.Vertical, box.GradientKind);
+        Assert.Equal(new Rgb24(10, 20, 30), box.GradientStartColor);
+        Assert.Equal(new Rgb24(40, 50, 60), box.GradientEndColor);
 
         var image = Assert.IsType<PersistedImageElement>(loaded.Elements[2]);
         Assert.Equal("asset1.png", image.AssetFileName);
@@ -138,6 +146,36 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements);
         var thumbnailPath = Path.Combine(_root, templateId, "thumbnail.png");
         Assert.True(_imageSourceWriter.Files.ContainsKey(thumbnailPath));
+    }
+
+    /// <summary>Code-review finding (2026-09-01, box gradient fill): <c>ToTemplateElementAsync</c>'s
+    /// box case silently dropped Gradient, so a gradient box's Ready Rack/Template Library thumbnail
+    /// rendered flat solid while the real template rendered the gradient correctly -- same bug class
+    /// <c>PersistedTextElement</c>'s own case was already fixed for once, now fixed for box too.</summary>
+    [Fact]
+    public async Task SaveAsync_GradientBox_PassesTheGradientToTheThumbnailRenderer()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Gradient thumbnail");
+        var document = new PersistedTemplateDocument([
+            new PersistedBoxElement(
+                0.5, 0.5, 1, 1, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0,
+                GradientEnabled: true, GradientKind: TextGradientKind.Radial,
+                GradientStartColor: new Rgb24(10, 20, 30), GradientEndColor: new Rgb24(40, 50, 60)),
+        ]);
+
+        await store.SaveAsync(templateId, "Gradient thumbnail", document);
+
+        var thumbnailBox = Assert.IsType<TemplateBoxElement>(Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements));
+        if (thumbnailBox.Gradient is not { } gradient)
+        {
+            Assert.Fail("Expected a non-null Gradient.");
+            return;
+        }
+
+        Assert.Equal(TextGradientKind.Radial, gradient.Kind);
+        Assert.Equal(new Rgb24(10, 20, 30), gradient.Stops[0].Color);
+        Assert.Equal(new Rgb24(40, 50, 60), gradient.Stops[1].Color);
     }
 
     [Fact]
