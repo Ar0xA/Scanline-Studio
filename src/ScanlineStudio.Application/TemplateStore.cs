@@ -95,7 +95,11 @@ public sealed partial class TemplateStore : ITemplateStore
         var thumbnail = await RenderThumbnailAsync(templateId, document, ct).ConfigureAwait(false);
         await _imageSourceWriter.WritePngAsync(thumbnail, Path.Combine(directory, "thumbnail.png"), ct).ConfigureAwait(false);
 
-        var manifest = new TemplateManifest(templateId, name, DateTimeOffset.Now, document.Elements);
+        // SchemaVersion passed explicitly (line-element plan-review, Amendment F) -- the
+        // constructor's own default is deliberately the LITERAL 1, not CurrentSchemaVersion (see
+        // TemplateManifest's own doc comment), so a REAL write must state the current version itself
+        // rather than rely on a default that no longer means "current."
+        var manifest = new TemplateManifest(templateId, name, DateTimeOffset.Now, document.Elements, TemplateManifest.CurrentSchemaVersion);
         var json = JsonSerializer.Serialize(manifest, PersistedTemplateJsonContext.Default.TemplateManifest);
         await File.WriteAllTextAsync(Path.Combine(directory, "template.json"), json, ct).ConfigureAwait(false);
     }
@@ -531,6 +535,20 @@ public sealed partial class TemplateStore : ITemplateStore
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);
                 return new TemplateImageElement(bounds, image.Z, source, image.Fit);
+            case PersistedLineElement line:
+                // Deliberately NOT the shared `bounds` local above -- that's derived from the base
+                // X/Y/Width/Height fields, which for a line are write-time-only convenience values
+                // (see PersistedLineElement's own doc comment: endpoints are the sole truth on read).
+                // A horizontal/vertical line's own base Height/Width is legitimately 0, and the
+                // shared ApplyTemplate skip rule would drop it outright without the ink-inflated
+                // bounds TemplateLineGeometry computes here.
+                // Named width/height args (code-review finding): two adjacent doubles a swap
+                // compiles for, and the whole point of the shared helper is that every caller agrees
+                // on the same formula -- a silent width/height swap here would defeat that.
+                var lineBounds = TemplateLineGeometry.ComputeInflatedBounds(
+                    line.X1, line.Y1, line.X2, line.Y2, line.StrokeThickness,
+                    imageWidthPx: ThumbnailWidth, imageHeightPx: ThumbnailHeight);
+                return new TemplateLineElement(lineBounds, line.Z, line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity);
             default:
                 throw new NotSupportedException($"Unrecognized {nameof(PersistedTemplateElement)}: {element.GetType()}.");
         }

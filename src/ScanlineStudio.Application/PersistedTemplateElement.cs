@@ -15,6 +15,7 @@ namespace ScanlineStudio.Application;
 [JsonDerivedType(typeof(PersistedTextElement), "text")]
 [JsonDerivedType(typeof(PersistedBoxElement), "box")]
 [JsonDerivedType(typeof(PersistedImageElement), "image")]
+[JsonDerivedType(typeof(PersistedLineElement), "line")]
 public abstract record PersistedTemplateElement(double X, double Y, double Width, double Height, int Z, bool Locked);
 
 /// <summary>Phase 8 (YONIQ-style text-effects follow-up) additions — <paramref name="ShadowColor"/>/
@@ -63,6 +64,24 @@ public sealed record PersistedBoxElement(
     Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
+/// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th persisted element kind. Base
+/// <paramref name="X"/>/<paramref name="Y"/>/<paramref name="Width"/>/<paramref name="Height"/> are
+/// derived-from-endpoints values written for schema/API uniformity with every other element kind
+/// (e.g. a generic tool that lists every element's bounds without knowing about lines specifically),
+/// but <see cref="X1"/>/<see cref="Y1"/>/<see cref="X2"/>/<see cref="Y2"/> are the SOLE truth on
+/// read -- a loader must reconstruct a live line purely from the endpoints, never from the base
+/// fields (a horizontal or vertical line's own base Height/Width is legitimately 0, which the base
+/// fields alone can't distinguish from "not yet loaded"). <paramref name="StrokeColor"/>/
+/// <paramref name="StrokeThickness"/> mirror <see cref="PersistedBoxElement.BorderColor"/>/
+/// <c>BorderThickness</c>'s own convention, except non-nullable -- a line with no stroke color is
+/// nothing, unlike a box, which still has a fill without a border. No fill, no gradient, no corner
+/// radius.</summary>
+public sealed record PersistedLineElement(
+    double X, double Y, double Width, double Height, int Z, bool Locked,
+    double X1, double Y1, double X2, double Y2,
+    Rgb24 StrokeColor, double StrokeThickness, double Opacity = 1.0)
+    : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
+
 /// <summary>Persistence-layer counterpart to <c>TxImageEditorPaneViewModel.ImageSourceKind</c> (a
 /// UI-layer nested type this project cannot reference from here) — informational only, recording
 /// WHERE an image element's pixels originally came from. Never used to re-resolve pixels on load
@@ -107,6 +126,7 @@ public sealed record TemplateMetadata(string Id, string Name, DateTimeOffset Sav
 [JsonSerializable(typeof(PersistedTextElement))]
 [JsonSerializable(typeof(PersistedBoxElement))]
 [JsonSerializable(typeof(PersistedImageElement))]
+[JsonSerializable(typeof(PersistedLineElement))]
 [JsonSerializable(typeof(TemplateManifest))]
 public sealed partial class PersistedTemplateJsonContext : JsonSerializerContext;
 
@@ -125,11 +145,16 @@ public sealed partial class PersistedTemplateJsonContext : JsonSerializerContext
 /// payload; a record's POSITIONAL constructor parameter default is a different System.Text.Json code
 /// path (constructor-argument binding, not object-initializer binding) and IS honored for a missing
 /// member — confirmed for this exact type via
-/// <c>TemplateStoreTests.TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToCurrentVersion</c>,
+/// <c>TemplateStoreTests.TemplateManifest_DeserializeMissingSchemaVersion_DefaultsToVersion1</c>,
 /// not assumed. Every <c>template.json</c> written before this field existed therefore deserializes
-/// as <see cref="CurrentSchemaVersion"/> (1) — the correct value, since 1 is what those files
-/// actually are.</summary>
-public sealed record TemplateManifest(string Id, string Name, DateTimeOffset SavedAt, IReadOnlyList<PersistedTemplateElement> Elements, int SchemaVersion = TemplateManifest.CurrentSchemaVersion)
+/// as the LITERAL <c>1</c> — the correct value, since 1 is what those files actually are.
+/// Deliberately a literal, NOT <see cref="CurrentSchemaVersion"/> (line-element plan-review, round 2
+/// finding): once a future schema bump moves <see cref="CurrentSchemaVersion"/> past 1, a missing
+/// field must still mean "1, the version those old files really are," not silently reinterpret every
+/// pre-existing file as whatever the CURRENT version happens to be. <see cref="TemplateStore.SaveAsync"/>
+/// passes <see cref="CurrentSchemaVersion"/> explicitly for every REAL write — this default only
+/// ever fires on deserializing an old file that predates this field.</summary>
+public sealed record TemplateManifest(string Id, string Name, DateTimeOffset SavedAt, IReadOnlyList<PersistedTemplateElement> Elements, int SchemaVersion = 1)
 {
     /// <summary>Bumped only when <c>template.json</c>'s own shape changes in a way an OLDER app
     /// build could not safely round-trip (e.g. a new required element kind) — the polymorphic
@@ -139,6 +164,15 @@ public sealed record TemplateManifest(string Id, string Name, DateTimeOffset Sav
     /// this exists specifically for <c>ITemplateStore.ImportAsync</c> to reject a bundle from a
     /// FUTURE, incompatible app version cleanly instead of throwing a raw
     /// <see cref="System.Text.Json.JsonException"/> partway through deserializing an element kind
-    /// this build doesn't recognize.</summary>
-    public const int CurrentSchemaVersion = 1;
+    /// this build doesn't recognize.
+    /// <para>Bumped 1 -&gt; 2 for the line element (TX editor gap-items plan, 2026-09-01) -- a new
+    /// <c>$type</c> discriminator (<see cref="PersistedLineElement"/>, <c>"line"</c>) an older build's
+    /// polymorphic deserializer doesn't recognize and would otherwise throw a raw
+    /// <see cref="System.Text.Json.JsonException"/> partway through, per this const's own stated
+    /// purpose above. Per user decision, EVERY save/export after this ships writes 2, whether or not
+    /// the document actually contains a line -- <see cref="TemplateStore.ExportAsync"/> byte-copies
+    /// <c>template.json</c> from disk rather than re-serializing it, though, so this only actually
+    /// affects a template SAVED (or re-saved) after this change; an already-saved, never-touched-again
+    /// template keeps exporting/importing at whatever version it was already written at.</para></summary>
+    public const int CurrentSchemaVersion = 2;
 }
