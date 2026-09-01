@@ -8,6 +8,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Views;
@@ -195,6 +196,15 @@ public partial class TxImageEditorPaneView : UserControl
         _pendingPlacementKind = null;
         _pendingPlacementSticky = false;
         EditorCanvas.Cursor = Cursor.Default;
+        // Right-click-mid-drag disarm (OnArmedPlacementPressed) leaves _dragMode stuck at Placing
+        // until the eventual pointer release, so the rubber band has to clear HERE, immediately --
+        // waiting for OnCanvasPointerReleased's own unconditional clear would leave it visibly
+        // following the cursor (frozen, since OnCanvasPointerMoved's own Placing branch is gated on
+        // _pendingPlacementKind, not _dragMode) for however long the button stays held after this.
+        if (ViewModel is { } vm)
+        {
+            vm.PlacementPreviewRect = null;
+        }
     }
 
     /// <summary>TX workflow modernization plan, Phase 3a -- the Tunnel handler registered in the
@@ -288,6 +298,43 @@ public partial class TxImageEditorPaneView : UserControl
         (double X, double Y) cropCenter,
         double thresholdNormalized = AlignmentSnapThresholdNormalized)
     {
+        var (xTargets, yTargets, xPoints, yPoints) = BuildAlignmentCandidates(dragged, others, cropCenter);
+        return (FindClosestSnap(xPoints, xTargets, thresholdNormalized).Center, FindClosestSnap(yPoints, yTargets, thresholdNormalized).Center);
+    }
+
+    /// <summary>Live guide-LINE counterpart to <see cref="ComputeAlignmentSnap"/> above (TX workflow
+    /// modernization plan, follow-up visual-polish pass) -- same candidate set, same threshold, but
+    /// returns the matched TARGET coordinate itself (where the shared edge/center line actually sits),
+    /// not <see cref="ComputeAlignmentSnap"/>'s snapped dragged-element CENTER. Those two differ by
+    /// <c>CenterOffset</c> for any edge match (only a center-to-center match has the two coincide) --
+    /// binding <see cref="ComputeAlignmentSnap"/>'s own return value straight into a rendered guide
+    /// line would draw it half the dragged element's width/height away from the edge it claims to
+    /// align with, for every edge-to-edge case (plan-review blocker, caught before this was built:
+    /// pin-checked against <see cref="ComputeAlignmentSnap"/>'s own existing left-edge test, which
+    /// already proves the two values differ). Never applied to the element's actual position --
+    /// display-only, the real drop-time snap this mirrors stays exactly as <see cref="ComputeAlignmentSnap"/>
+    /// already implements it, untouched by this method's existence.</summary>
+    public static (double? X, double? Y) ComputeAlignmentGuideLines(
+        (double X, double Y, double Width, double Height) dragged,
+        IReadOnlyList<(double X, double Y, double Width, double Height)> others,
+        (double X, double Y) cropCenter,
+        double thresholdNormalized = AlignmentSnapThresholdNormalized)
+    {
+        var (xTargets, yTargets, xPoints, yPoints) = BuildAlignmentCandidates(dragged, others, cropCenter);
+        return (FindClosestSnap(xPoints, xTargets, thresholdNormalized).Target, FindClosestSnap(yPoints, yTargets, thresholdNormalized).Target);
+    }
+
+    /// <summary>Shared candidate-list construction for <see cref="ComputeAlignmentSnap"/>/
+    /// <see cref="ComputeAlignmentGuideLines"/> -- extracted so the two can never silently diverge on
+    /// what counts as a match (plan-review finding: two independent copies would let one gain, say, a
+    /// "skip locked elements" filter without the other, so the live guide line would point at a
+    /// target the eventual drop wouldn't actually snap to).</summary>
+    private static (List<double> XTargets, List<double> YTargets, (double Point, double CenterOffset)[] XPoints, (double Point, double CenterOffset)[] YPoints)
+        BuildAlignmentCandidates(
+            (double X, double Y, double Width, double Height) dragged,
+            IReadOnlyList<(double X, double Y, double Width, double Height)> others,
+            (double X, double Y) cropCenter)
+    {
         var xTargets = new List<double> { cropCenter.X };
         var yTargets = new List<double> { cropCenter.Y };
         foreach (var other in others)
@@ -313,13 +360,19 @@ public partial class TxImageEditorPaneView : UserControl
             (dragged.Y + (dragged.Height / 2), -(dragged.Height / 2)),
         };
 
-        return (FindClosestSnap(xPoints, xTargets, thresholdNormalized), FindClosestSnap(yPoints, yTargets, thresholdNormalized));
+        return (xTargets, yTargets, xPoints, yPoints);
     }
 
-    private static double? FindClosestSnap(
+    /// <summary>Returns BOTH the snapped dragged-element center (<see cref="ComputeAlignmentSnap"/>'s
+    /// own contract, unchanged) and the raw matched target coordinate (<see cref="ComputeAlignmentGuideLines"/>'s
+    /// own contract) from a single closest-match search -- one pass, not two, and the two public
+    /// callers can never disagree on WHICH match won even though they want different numbers out of
+    /// it.</summary>
+    private static (double? Center, double? Target) FindClosestSnap(
         IReadOnlyList<(double Point, double CenterOffset)> draggedPoints, IReadOnlyList<double> targets, double threshold)
     {
-        double? bestCenter = null;
+        double? bestTarget = null;
+        var bestCenterOffset = 0.0;
         var bestDistance = threshold;
         foreach (var (point, centerOffset) in draggedPoints)
         {
@@ -329,12 +382,30 @@ public partial class TxImageEditorPaneView : UserControl
                 if (distance <= bestDistance)
                 {
                     bestDistance = distance;
-                    bestCenter = target + centerOffset;
+                    bestTarget = target;
+                    bestCenterOffset = centerOffset;
                 }
             }
         }
 
-        return bestCenter;
+        return bestTarget is { } t ? (t + bestCenterOffset, t) : (null, null);
+    }
+
+    /// <summary>Shared "others in normalized element space, plus the crop's own center" candidate
+    /// input for <see cref="ComputeAlignmentSnap"/>/<see cref="ComputeAlignmentGuideLines"/> -- used
+    /// identically at the live per-frame preview call site (<see cref="OnCanvasPointerMoved"/>) and
+    /// the drop-time snap-apply call site (<see cref="OnCanvasPointerReleased"/>) so the two can never
+    /// silently diverge on what counts as a candidate (same reasoning as
+    /// <see cref="BuildAlignmentCandidates"/>'s own doc comment, one level up the call chain).</summary>
+    private static (List<(double X, double Y, double Width, double Height)> Others, (double X, double Y) CropCenter) BuildAlignmentInputs(
+        TxImageEditorPaneViewModel vm, ITemplateElementViewModel element)
+    {
+        var others = vm.OverlayElements
+            .Where(other => !ReferenceEquals(other, element))
+            .Select(other => (other.X, other.Y, other.Width, other.Height))
+            .ToList();
+        var cropCenter = (vm.CropRect.X + (vm.CropRect.Width / 2), vm.CropRect.Y + (vm.CropRect.Height / 2));
+        return (others, cropCenter);
     }
 
     /// <summary>Task #23 (zoom slider addendum, plan-reviewed) -- Ctrl/Cmd+wheel zooms, anchored so
@@ -615,6 +686,22 @@ public partial class TxImageEditorPaneView : UserControl
                 // clamping here.
                 element.X += dxNormalized;
                 element.Y += dyNormalized;
+
+                // Live guide-line preview (follow-up visual-polish pass) -- READ-ONLY, never applied
+                // to element.X/Y here; the actual snap stays exactly the drop-only behavior
+                // OnCanvasPointerReleased's own Overlay branch already implements (see that branch's
+                // own doc comment for why absolute mid-drag snapping would decouple the element from
+                // the cursor). Skipped on a zero-delta move (this file already documents Avalonia can
+                // raise one right after press) -- the guides can't have changed if the element didn't.
+                if (dxNormalized != 0 || dyNormalized != 0)
+                {
+                    var (others, cropCenter) = BuildAlignmentInputs(vm, element);
+                    var (guideX, guideY) = ComputeAlignmentGuideLines(
+                        (element.X, element.Y, element.Width, element.Height), others, cropCenter);
+                    vm.GuideLineXNormalized = guideX;
+                    vm.GuideLineYNormalized = guideY;
+                }
+
                 break;
             case DragMode.ElementResize when _draggedElement is { } element:
                 // Shift = preserve aspect ratio (auditor usability review follow-up, 2026-08-18) --
@@ -630,9 +717,31 @@ public partial class TxImageEditorPaneView : UserControl
                 element.Y += centerDeltaY;
                 break;
             case DragMode.Placing:
-                // No live rubber-band preview yet (TX workflow modernization plan, Phase 3a scope
-                // cut, tracked as follow-up polish) -- the actual rect is computed once, from the
-                // anchor and release point together, in OnCanvasPointerReleased's own Placing branch.
+                // Live rubber-band preview (follow-up visual-polish pass). Gated on
+                // _pendingPlacementKind, not just _dragMode == Placing -- OnArmedPlacementPressed's
+                // right-click-to-disarm can leave _dragMode stuck at Placing until the eventual
+                // pointer release (see that handler's own doc comment), and without this gate the
+                // preview would keep tracking the cursor after the tool was already disarmed.
+                // Below PlacementClickThresholdPixels of movement, OnCanvasPointerReleased's own
+                // Placing branch creates a default-SIZED element regardless of where the cursor is
+                // (a click, not a drag) -- suppressing the preview in that band avoids showing a
+                // tiny 2%x2% rect that then pops to a much larger default size the instant the
+                // threshold is crossed.
+                if (_pendingPlacementKind is null)
+                {
+                    break;
+                }
+
+                if (Point.Distance(_placementAnchorPoint, current) < PlacementClickThresholdPixels)
+                {
+                    vm.PlacementPreviewRect = null;
+                    break;
+                }
+
+                var (previewCenterX, previewCenterY, previewWidth, previewHeight) =
+                    ComputeRectFromDrag(_placementAnchorPoint, current, vm.CanvasDisplayWidth, vm.CanvasDisplayHeight);
+                vm.PlacementPreviewRect = new NormalizedRect(
+                    previewCenterX - (previewWidth / 2), previewCenterY - (previewHeight / 2), previewWidth, previewHeight);
                 break;
         }
     }
@@ -738,11 +847,7 @@ public partial class TxImageEditorPaneView : UserControl
                 // stands on an axis alignment didn't touch.
                 if (_dragMode == DragMode.Overlay)
                 {
-                    var others = vm.OverlayElements
-                        .Where(other => !ReferenceEquals(other, element))
-                        .Select(other => (other.X, other.Y, other.Width, other.Height))
-                        .ToList();
-                    var cropCenter = (vm.CropRect.X + (vm.CropRect.Width / 2), vm.CropRect.Y + (vm.CropRect.Height / 2));
+                    var (others, cropCenter) = BuildAlignmentInputs(vm, element);
                     var (alignX, alignY) = ComputeAlignmentSnap((element.X, element.Y, element.Width, element.Height), others, cropCenter);
                     x = alignX ?? x;
                     y = alignY ?? y;
@@ -798,11 +903,39 @@ public partial class TxImageEditorPaneView : UserControl
                     DisarmPlacement();
                 }
             }
+
+            // Unconditional -- every drag ends here (or at CancelActiveDrag/DisarmPlacement/
+            // OnEditorCanvasPointerCaptureLost for the paths that don't reach a real release), and
+            // none of these three should ever persist past the gesture that set them: a sticky
+            // Placing repeat still needs the rubber band cleared between each individual placement,
+            // and a resize/crop drag never set the guide lines in the first place, so clearing them
+            // here too is a harmless no-op rather than a mode-gated special case.
+            vm.PlacementPreviewRect = null;
+            vm.GuideLineXNormalized = null;
+            vm.GuideLineYNormalized = null;
         }
 
         _dragMode = DragMode.None;
         _draggedElement = null;
         e.Pointer.Capture(null);
+    }
+
+    /// <summary>Plan-review finding, follow-up visual-polish pass -- no handler existed anywhere in
+    /// this file for a LOST pointer capture (window deactivation, a modal/flyout stealing it,
+    /// Alt-Tab: Avalonia does not deliver <see cref="OnCanvasPointerReleased"/> to the old capture
+    /// target in that case). Pre-existing latent gap this doesn't widen scope to fix (<see cref="_dragMode"/>
+    /// itself is left as it was, same as before this pass) -- narrowly clears the rubber-band/guide-
+    /// line preview state specifically, since those are new and would otherwise be able to get stuck
+    /// visibly on screen with no gesture left to clear them, unlike every pre-existing piece of drag
+    /// state this file already tolerates staying stale until the next real drag starts.</summary>
+    private void OnEditorCanvasPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        if (ViewModel is { } vm)
+        {
+            vm.PlacementPreviewRect = null;
+            vm.GuideLineXNormalized = null;
+            vm.GuideLineYNormalized = null;
+        }
     }
 
     /// <summary>Pure grid-snap math (unit-testable without a real drag, same reasoning as
@@ -1164,6 +1297,12 @@ public partial class TxImageEditorPaneView : UserControl
         {
             DisarmPlacement();
         }
+
+        // Unconditional -- same unconditional-clear reasoning as OnCanvasPointerReleased's own tail;
+        // an Overlay drag is the only mode that ever sets these, but clearing regardless keeps this
+        // one call site correct even if that changes later.
+        vm.GuideLineXNormalized = null;
+        vm.GuideLineYNormalized = null;
 
         _dragMode = DragMode.None;
         _draggedElement = null;
