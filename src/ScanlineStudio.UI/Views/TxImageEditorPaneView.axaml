@@ -849,7 +849,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <!-- TX workflow modernization plan, Phase 1 — Quick Style Flyout content, shown
@@ -1069,7 +1069,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <FlyoutBase.AttachedFlyout>
@@ -1229,7 +1229,7 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Del" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
                                                 <Image Source="{Binding CanvasBitmap}"

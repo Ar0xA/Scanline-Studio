@@ -1,9 +1,15 @@
 using System.Globalization;
 using System.Linq;
+using Avalonia.Controls;
 using Avalonia.Headless.XUnit;
+using Avalonia.LogicalTree;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
+using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
@@ -961,6 +967,148 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(vm.UndoCommand.CanExecute(null));
         vm.UndoCommand.Execute(null);
         AssertClose(0, vm.Brightness);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    // PROJECT_BRIEF.md tracked debt: same coalescing mechanism as Brightness above
+    // (PushUndoSnapshotCoalesced, keyed on nameof(<Property>)), each key needing its own dedicated
+    // same-key-burst test -- a test that changes two DIFFERENT keys back-to-back only proves
+    // non-interference, not that a given key's OWN burst actually collapses to one step. Mirrors
+    // Brightness_RapidBurst_CoalescesIntoOneUndoStep's exact shape for the 5 remaining adjustment
+    // sliders, then the 2 boolean toggles, then text's "OverlayStyle" key (the one other undo-
+    // coalescing gap the same tracked-debt note names, alongside BoxStyle -- already covered by
+    // BoxFillColorAndBorderThickness_ThenUndo_RevertsBothAsOneStep above).
+
+    [AvaloniaFact]
+    public void Contrast_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Contrast = 20;
+        vm.Contrast = 30;
+        vm.Contrast = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Contrast);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Saturation_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Saturation = 20;
+        vm.Saturation = 30;
+        vm.Saturation = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Saturation);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Gamma_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Gamma = 20;
+        vm.Gamma = 30;
+        vm.Gamma = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Gamma);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Sharpen_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Sharpen = 20;
+        vm.Sharpen = 30;
+        vm.Sharpen = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Sharpen);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void Denoise_RapidBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.Denoise = 20;
+        vm.Denoise = 30;
+        vm.Denoise = 40;
+        vm.UndoCommand.Execute(null);
+
+        AssertClose(0, vm.Denoise);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void PreserveAspect_RapidToggleBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.True(vm.PreserveAspect);
+
+        vm.PreserveAspect = false;
+        vm.PreserveAspect = true;
+        vm.PreserveAspect = false;
+        vm.UndoCommand.Execute(null);
+
+        Assert.True(vm.PreserveAspect);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void LockAspectToMode_RapidToggleBurst_CoalescesIntoOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.LockAspectToMode);
+
+        vm.LockAspectToMode = true;
+        vm.LockAspectToMode = false;
+        vm.LockAspectToMode = true;
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.LockAspectToMode);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void TextFontSizeAndColor_ThenUndo_RevertsBothAsOneStep()
+    {
+        // "OverlayStyle" key's own dedicated coalescing test -- same shape as
+        // BoxFillColorAndBorderThickness_ThenUndo_RevertsBothAsOneStep above, for the text-element
+        // counterpart (OnFontSizeRelativeChanging/OnColorChanging -> PushUndoSnapshotForStyleChange
+        // -> PushUndoSnapshotCoalesced("OverlayStyle")).
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null); // its own push -- one level stays below the burst's
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var fontSizeBefore = element.FontSizeRelative;
+        var colorBefore = element.Color;
+
+        element.FontSizeRelative = 0.25;
+        element.Color = new Rgb24(10, 200, 30);
+
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        // Re-read from vm.OverlayElements, not the captured `element` reference -- ApplyState
+        // (undo's own restore path) replaces elements wholesale from the snapshot, same reasoning
+        // BoxFillColorAndBorderThickness_ThenUndo_RevertsBothAsOneStep's own re-read follows.
+        var restored = (OverlayElementViewModel)Assert.Single(vm.OverlayElements);
+        AssertClose(fontSizeBefore, restored.FontSizeRelative);
+        Assert.Equal(colorBefore, restored.Color);
+        // Exactly ONE step for the size+color burst -- AddOverlayElement's own earlier push is the
+        // one level still remaining, not a second style-burst step.
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.Empty(vm.OverlayElements);
         Assert.False(vm.UndoCommand.CanExecute(null));
     }
 
@@ -3432,6 +3580,126 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(vm.IsTextStyleTabSelected);
         Assert.False(vm.IsGeometryTabSelected);
         Assert.False(vm.IsImageTabSelected);
+    }
+
+    // PROJECT_BRIEF.md tracked debt, TX workflow modernization plan Phase 2's own tab-switch
+    // policy: the two tests above only prove the 3 Select*Tab commands are mutually exclusive in
+    // isolation -- neither ever exercises WHEN each caller (new-element creation vs. Paste/
+    // Duplicate/Ctrl-drag-clone vs. a plain selection change) is supposed to invoke them. The 6
+    // tests below cover each documented behavior from SwitchToApplicableTabIfNeeded's/
+    // AddOverlayElementAt's/AddBoxElementAt's own doc comments individually.
+
+    [AvaloniaFact]
+    public void NewElementCreation_ForceSelectsItsApplicableTab_EvenOverridingAnOpenGeometryTab()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.SelectGeometryTabCommand.Execute(null);
+        Assert.True(vm.IsGeometryTabSelected);
+
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.IsTextStyleTabSelected, "new text element must force-select Text Style, even overriding an open Geometry tab");
+
+        vm.SelectGeometryTabCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        Assert.True(vm.IsGeometryTabSelected, "box's own applicable tab IS Geometry -- already selected, force-select is a no-op here");
+
+        // Code-review finding: the block above starts already on Geometry, so it can't distinguish
+        // "force-selected" from "never left" -- this one starts from a DIFFERENT tab (Image) so
+        // landing on Geometry actually proves the force-select fired, not that it was a no-op.
+        vm.SelectImageTabCommand.Execute(null);
+        vm.AddBoxElementCommand.Execute(null);
+        Assert.True(vm.IsGeometryTabSelected, "box's applicable tab stays Geometry regardless of starting tab");
+    }
+
+    [AvaloniaFact]
+    public async Task NewImageElementInsertion_ForceSelectsImageTab_EvenOverridingAnOpenGeometryTab()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        vm.SelectGeometryTabCommand.Execute(null);
+        Assert.True(vm.IsGeometryTabSelected);
+
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsImageTabSelected, "a new image element must force-select Image, even overriding an open Geometry tab");
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_DoesNotForceSelectATab_UnlikeNewElementCreation()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null); // force-selects Text Style
+        var element = vm.OverlayElements[0];
+        vm.SelectedOverlayElement = element;
+        vm.SelectGeometryTabCommand.Execute(null); // operator deliberately parked on Geometry
+
+        vm.DuplicateCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.True(vm.IsGeometryTabSelected, "Duplicate must NOT force-switch away from an open Geometry tab the way new-element creation does");
+    }
+
+    [AvaloniaFact]
+    public void PasteElement_DoesNotForceSelectATab_UnlikeNewElementCreation()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.SelectedOverlayElement = vm.OverlayElements[0];
+        vm.CopySelectedElementCommand.Execute(null);
+        vm.SelectGeometryTabCommand.Execute(null); // operator deliberately parked on Geometry
+
+        vm.PasteElementCommand.Execute(null);
+
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.True(vm.IsGeometryTabSelected, "Paste must NOT force-switch away from an open Geometry tab the way new-element creation does");
+    }
+
+    [AvaloniaFact]
+    public void CtrlDragClone_DoesNotForceSelectATab_UnlikeNewElementCreation()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = vm.OverlayElements[0];
+        vm.SelectGeometryTabCommand.Execute(null); // operator deliberately parked on Geometry
+
+        var clone = vm.DuplicateElementForDrag(original);
+
+        Assert.NotSame(original, clone);
+        Assert.True(vm.IsGeometryTabSelected, "Ctrl-drag-clone must NOT force-switch away from an open Geometry tab the way new-element creation does");
+    }
+
+    [AvaloniaFact]
+    public void PlainSelectionChange_SwitchesAwayFromAnInapplicableTab()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var textElement = vm.OverlayElements[0];
+        vm.AddBoxElementCommand.Execute(null); // force-selects Geometry, box's own applicable tab
+        Assert.True(vm.IsGeometryTabSelected);
+        vm.SelectImageTabCommand.Execute(null); // simulate the operator having since switched to Image
+
+        vm.SelectedOverlayElement = textElement; // a plain re-selection, not a new-element/Paste/Duplicate path
+
+        Assert.True(vm.IsTextStyleTabSelected, "selecting a text element while on the inapplicable Image tab must switch to Text Style");
+    }
+
+    [AvaloniaFact]
+    public void PlainSelectionChange_NeverSwitchesAwayFromGeometry()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var textElement = vm.OverlayElements[0];
+        vm.AddBoxElementCommand.Execute(null); // force-selects Geometry, box's own applicable tab
+        var boxElement = vm.OverlayElements[1];
+        Assert.True(vm.IsGeometryTabSelected);
+
+        vm.SelectedOverlayElement = textElement; // plain selection change, box -> text, while on Geometry
+        Assert.True(vm.IsGeometryTabSelected, "Geometry applies to every element type and must never be switched away from on a plain selection change");
+
+        vm.SelectedOverlayElement = boxElement;
+        Assert.True(vm.IsGeometryTabSelected);
     }
 
     [AvaloniaFact]
@@ -6492,6 +6760,210 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(mae < 1.5, $"Mean absolute error too high: {mae}");
         Assert.True(outlierFraction < 0.02, $"Outlier fraction too high: {outlierFraction}");
         Assert.True(inkPixelCount > 5, $"Expected visible text ink after flatten, found {inkPixelCount} bright pixels");
+    }
+
+    // Menu-command reachability (PROJECT_BRIEF.md tracked debt). Confirms every command a
+    // context-menu MenuItem binds to actually resolves to the ELEMENT's own pushed command
+    // instance, not silently null. Real regression class this project already hit once ("Important
+    // correction found and fixed mid-Phase-7" in PROJECT_BRIEF.md): a bare
+    // Command="{Binding XCommand}" where XCommand exists only on the PARENT VM, not the element
+    // DataContext these per-row context menus actually have, resolves to null with no build error
+    // and no failing VM unit test -- the menu item just sits permanently disabled at runtime.
+    // Instantiates the REAL TxImageEditorPaneView (not a fake/mock) and inspects the real
+    // Avalonia-resolved Command values on its real ContextMenu/MenuItem tree.
+
+    [AvaloniaFact]
+    public void TextElementContextMenu_EveryPushedCommand_ResolvesToTheElementsOwnInstance()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var found = CollectMenuCommands(BuildElementContextMenu(vm, element));
+
+        AssertCommandReachable(element.RemoveCommand, found);
+        AssertCommandReachable(element.MoveUpCommand, found);
+        AssertCommandReachable(element.MoveDownCommand, found);
+        AssertCommandReachable(element.BringToFrontCommand, found);
+        AssertCommandReachable(element.SendToBackCommand, found);
+        AssertCommandReachable(element.DuplicateCommand, found);
+        AssertCommandReachable(element.AlignSelectedElementToCropCommand, found);
+        AssertCommandReachable(element.CopyCommand, found);
+        AssertCommandReachable(element.CutCommand, found);
+        AssertCommandReachable(element.PasteCommand, found);
+        AssertCommandReachable(element.FlattenCommand, found);
+        AssertCommandReachable(element.CopyStyleCommand, found);
+        AssertCommandReachable(element.PasteStyleCommand, found);
+        AssertCommandReachable(element.AddPlateCommand, found);
+        AssertCommandReachable(element.InsertFieldCommand, found);
+        AssertCommandReachable(element.SetFontSizePresetCommand, found);
+        AssertCommandReachable(element.SetTextColorPresetCommand, found);
+    }
+
+    [AvaloniaFact]
+    public void BoxElementContextMenu_EveryPushedCommand_ResolvesToTheElementsOwnInstance()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var element = (BoxElementViewModel)vm.OverlayElements[0];
+        var found = CollectMenuCommands(BuildElementContextMenu(vm, element));
+
+        AssertCommandReachable(element.RemoveCommand, found);
+        AssertCommandReachable(element.MoveUpCommand, found);
+        AssertCommandReachable(element.MoveDownCommand, found);
+        AssertCommandReachable(element.BringToFrontCommand, found);
+        AssertCommandReachable(element.SendToBackCommand, found);
+        AssertCommandReachable(element.DuplicateCommand, found);
+        AssertCommandReachable(element.AlignSelectedElementToCropCommand, found);
+        AssertCommandReachable(element.CopyCommand, found);
+        AssertCommandReachable(element.CutCommand, found);
+        AssertCommandReachable(element.PasteCommand, found);
+        AssertCommandReachable(element.FlattenCommand, found);
+        AssertCommandReachable(element.CopyStyleCommand, found);
+        AssertCommandReachable(element.PasteStyleCommand, found);
+    }
+
+    [AvaloniaFact]
+    public async Task ImageElementContextMenu_EveryPushedCommand_ResolvesToTheElementsOwnInstance()
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        await vm.AddImageFromFileCommand.ExecuteAsync(null);
+        var element = (ImageElementViewModel)vm.OverlayElements[0];
+        var found = CollectMenuCommands(BuildElementContextMenu(vm, element));
+
+        AssertCommandReachable(element.RemoveCommand, found);
+        AssertCommandReachable(element.MoveUpCommand, found);
+        AssertCommandReachable(element.MoveDownCommand, found);
+        AssertCommandReachable(element.BringToFrontCommand, found);
+        AssertCommandReachable(element.SendToBackCommand, found);
+        AssertCommandReachable(element.DuplicateCommand, found);
+        AssertCommandReachable(element.AlignSelectedElementToCropCommand, found);
+        AssertCommandReachable(element.CopyCommand, found);
+        AssertCommandReachable(element.CutCommand, found);
+        AssertCommandReachable(element.PasteCommand, found);
+        AssertCommandReachable(element.FlattenCommand, found);
+        AssertCommandReachable(element.SetAsBackgroundCommand, found);
+        AssertCommandReachable(element.ResetToOriginalSizeCommand, found);
+        AssertCommandReachable(element.FitCommand, found);
+    }
+
+    private static void AssertCommandReachable(CommunityToolkit.Mvvm.Input.IRelayCommand? command, HashSet<object> found)
+    {
+        Assert.NotNull(command);
+        Assert.Contains((object)command, found);
+    }
+
+    /// <summary>Real Avalonia View infra for the 3 tests above -- headless (Avalonia.Headless.XUnit,
+    /// see TestAppBuilder), not a fake DataContext walk. Builds the real, compiled canvas
+    /// DataTemplate for <paramref name="element"/>'s own runtime type directly
+    /// (<c>IDataTemplate.Build</c>), rather than going through <c>OverlayElementsHost</c>'s normal
+    /// ItemsControl container-generation + a real layout pass -- this View's canvas TextBlocks use
+    /// custom bundled fonts (Barlow Condensed/DejaVu Sans Mono) that Avalonia.Headless's default
+    /// font-manager STUB (this test project's own <c>TestAppBuilder</c>, deliberately fast/no-real-
+    /// rendering -- see <c>ScanlineStudio.UI.FontTests</c>'s own doc comment for why that split
+    /// project exists) can't resolve, so any real Measure/Show() pass over this View throws.
+    /// Building the template directly needs no layout at all -- but needs two DataContext
+    /// assignments neither the ItemsControl's own normal container-prep path nor a naive read of
+    /// <c>DataTemplate.Build</c>'s docs would suggest, both found empirically (a diagnostic dump of
+    /// the built tree, not assumed from documentation): (1) <c>DataTemplate.Build(object)</c> does
+    /// NOT itself set the returned root's DataContext -- an ItemsControl's own container generator
+    /// does that as a SEPARATE step this bypasses, so it must be set here explicitly; ordinary child
+    /// controls (the row Border, resize handles) then inherit it fine through the logical tree, even
+    /// fully detached from any Window. (2) <c>Border.ContextMenu</c> does NOT inherit DataContext the
+    /// same way -- it's Popup-backed and, per this project's own established comments elsewhere
+    /// ("CanExecute states are already correct by the time the menu opens"), only gets its
+    /// DataContext copied across by Avalonia's real context-menu-OPEN machinery, not passively while
+    /// closed; mirrored here with one direct assignment rather than actually opening the popup.
+    /// <para><c>{loc:Translate ...}</c> (used by every MenuItem Header in this View) requires
+    /// <c>App.Services</c> to hold a real <see cref="ILocalizationService"/> or it throws AT
+    /// BUILD TIME (<c>TranslateExtension.ProvideValue</c>) -- and that build is DEFERRED until
+    /// <c>DataTemplate.Build</c> runs below, not eager at <c>InitializeComponent</c> time (an
+    /// earlier draft of this helper restored <c>App.Services</c> right after construction and broke
+    /// here for exactly that reason). Kept swapped in for BOTH the View construction and the
+    /// template build, restored once at the very end -- <c>App.Services</c> is a shared static and
+    /// each <c>TranslateBindingSource</c> captures its own <see cref="ILocalizationService"/>
+    /// reference once, at build time (it never reads <c>App.Services</c> again after that), so
+    /// nothing later needs the swap still active.</para></summary>
+    private static ContextMenu BuildElementContextMenu(TxImageEditorPaneViewModel vm, ITemplateElementViewModel element)
+    {
+        EnsureIndustryStylesLoaded();
+        var previousServices = App.Services;
+        try
+        {
+            App.Services = new ServiceCollection()
+                .AddSingleton<ILocalizationService>(new FakeLocalizationService())
+                .BuildServiceProvider();
+            var view = new TxImageEditorPaneView { DataContext = vm };
+            var itemsHost = view.GetLogicalDescendants().OfType<ItemsControl>().First(c => c.Name == "OverlayElementsHost");
+            var template = itemsHost.DataTemplates.First(t => t.Match(element));
+            var root = template.Build(element) ?? throw new InvalidOperationException("DataTemplate.Build returned null.");
+            root.DataContext = element;
+            var descendants = root.GetLogicalDescendants().ToList();
+            var border = descendants.OfType<Border>()
+                .First(b => ReferenceEquals(b.DataContext, element) && b.ContextMenu is not null);
+            var contextMenu = border.ContextMenu!;
+            // A real right-click copies the owning control's DataContext onto its ContextMenu at
+            // OPEN time (this app's own doc comments confirm CanExecute states are already correct
+            // "by the time the menu opens" -- a real click was never simulated to discover this, DID
+            // discover it: Border.DataContext inherits fine off root.DataContext = element above,
+            // but ContextMenu is Popup-backed and does NOT participate in that same passive logical-
+            // tree inheritance while unopened -- its own DataContext stays null/unset until Avalonia's
+            // real context-menu-open machinery copies it across). Mirrored here directly rather than
+            // actually opening the popup, which needs a real pointer event this project's own
+            // OnOverlayElementPointerPressed doc comment says fires the SAME copy this line does.
+            contextMenu.DataContext = element;
+            return contextMenu;
+        }
+        finally
+        {
+            App.Services = previousServices;
+        }
+    }
+
+    // Same pattern IndustryStepperTests.EnsureIndustryStylesLoaded already established -- this
+    // headless TestAppBuilder configures a bare Avalonia.Application, not ScanlineStudio.UI.App, so
+    // App.axaml's own <Application.Styles> (FluentTheme, ColorPicker's Fluent theme, Atoms*.axaml)
+    // never runs; StaticResource lookups this View makes (IndustryAccent, IndustrySliderTheme, etc.)
+    // need them loaded directly instead.
+    private static void EnsureIndustryStylesLoaded()
+    {
+        var app = Avalonia.Application.Current!;
+        if (app.Styles.OfType<StyleInclude>().Any(s => s.Source!.OriginalString.Contains("Atoms.axaml")))
+        {
+            return;
+        }
+
+        var baseUri = new System.Uri("avares://ScanlineStudio.UI/");
+        app.Styles.Add(new StyleInclude(baseUri) { Source = new System.Uri("avares://ScanlineStudio.UI/Styles/AtomsTokens.axaml") });
+        app.Styles.Add(new StyleInclude(baseUri) { Source = new System.Uri("avares://ScanlineStudio.UI/Styles/Atoms.axaml") });
+        app.Styles.Add(new StyleInclude(baseUri) { Source = new System.Uri("avares://Avalonia.Controls.ColorPicker/Themes/Fluent/Fluent.xaml") });
+    }
+
+    /// <summary>Recursively walks a ContextMenu's real, XAML-resolved MenuItem tree (submenus
+    /// included) and collects every non-null bound Command by reference -- ContextMenu/MenuItem
+    /// content is populated from XAML at construction time regardless of Popup-open state (it's a
+    /// LOGICAL-tree structure, not a visual-tree one), and DataContext inheritance for it flows the
+    /// same way, so this does not need to actually open the menu to see real, resolved bindings.</summary>
+    private static HashSet<object> CollectMenuCommands(ItemsControl menu)
+    {
+        var found = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        CollectMenuCommandsInto(menu, found);
+        return found;
+    }
+
+    private static void CollectMenuCommandsInto(ItemsControl menu, HashSet<object> found)
+    {
+        foreach (var item in menu.Items.OfType<MenuItem>())
+        {
+            if (item.Command is { } command)
+            {
+                found.Add(command);
+            }
+
+            CollectMenuCommandsInto(item, found);
+        }
     }
 
     private static ArrayImageSource CreateSource(int width, int height)
