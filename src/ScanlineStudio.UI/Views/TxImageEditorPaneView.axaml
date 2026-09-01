@@ -830,10 +830,10 @@
                                                              color pickers the TEXT STYLE tab already has, without leaving the canvas. One
                                                              combined flyout, not two — FlyoutBase.AttachedFlyout is single-valued, so a
                                                              "More Sizes…" flyout and a "More Colors…" flyout can't both live on this row's
-                                                             Border at once. OnOpenElementQuickStyleFlyout resolves the anchor via this
-                                                             MenuItem's owning ContextMenu.PlacementTarget (see that handler's own doc
-                                                             comment) — top-level, not nested, so the anchor lookup doesn't depend on
-                                                             Avalonia's logical-tree parenting through an intermediate submenu MenuItem. -->
+                                                             Border at once. OnOpenElementQuickStyleFlyout resolves the anchor via
+                                                             _lastContextMenuAnchor (see that handler's own doc comment for the real,
+                                                             PointerPressed-based capture mechanism — NOT ContextMenu.PlacementTarget,
+                                                             which Avalonia never populates on a real right-click). -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.QuickStyleMenu}" Click="OnOpenElementQuickStyleFlyout" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
@@ -1060,9 +1060,9 @@
                                                         <!-- TX workflow modernization plan, Phase 1 — Fill & Border flyout. Before this,
                                                              a box element's fill/border/opacity/corner-radius had NO entry point outside
                                                              the sidebar GEOMETRY tab's Box Style block — this is its first. Same
-                                                             single-combined-flyout, PlacementTarget-anchored mechanism as the text
-                                                             element's Quick Style Flyout above (OnOpenElementQuickStyleFlyout's own doc
-                                                             comment has the full reasoning). -->
+                                                             single-combined-flyout mechanism as the text element's Quick Style Flyout
+                                                             above (OnOpenElementQuickStyleFlyout's own doc comment has the full
+                                                             reasoning, including the real PointerPressed-based anchor capture). -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FillBorderMenu}" Click="OnOpenElementQuickStyleFlyout" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" InputGesture="Ctrl+D" Command="{Binding DuplicateCommand}" />
