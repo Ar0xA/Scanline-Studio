@@ -299,6 +299,63 @@ public readonly record struct PerspectiveCorners(
         var maxY = Math.Max(Math.Max(Corner0Y, Corner1Y), Math.Max(Corner2Y, Corner3Y));
         return new NormalizedRect(minX, minY, maxX - minX, maxY - minY);
     }
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- moved here
+    /// from <c>TransmitImagePreparer</c> (was <c>private static</c> in <c>ScanlineStudio.Core.Imaging</c>,
+    /// which <c>ScanlineStudio.UI</c> cannot reference -- <c>UiLayeringArchitectureTests</c> bans it)
+    /// so the TX editor's own real-time corner-drag clamp can call the EXACT SAME check the render
+    /// path uses, not a second, independently-drifting copy -- the ONE-shared-helper discipline
+    /// <see cref="ToBoundingBox"/> itself already established. Logic unchanged from the original.
+    /// <para>The normalized cross product at each of the 4 vertices (a dimensionless sin-of-interior-
+    /// angle, scale-invariant BY CONSTRUCTION -- a raw, un-normalized cross product scales as edge-
+    /// length-squared, so a small legitimately-square element and a large near-degenerate quad can't
+    /// be compared against the same fixed threshold correctly), plus a separate ABSOLUTE edge-length
+    /// floor (rejects near-coincident vertices specifically, which would otherwise make the
+    /// normalized ratio an unstable 0/0 -- NOT scale-invariant, callers in a different coordinate
+    /// scale than pixels should convert first). All 4 must share the same sign AND clear the angular
+    /// epsilon for the quad to be accepted.</para></summary>
+    public bool IsConvexAndWellFormed()
+    {
+        Span<(double X, double Y)> pts = [(Corner0X, Corner0Y), (Corner1X, Corner1Y), (Corner2X, Corner2Y), (Corner3X, Corner3Y)];
+        const double minEdgeLength = 1e-3;
+        const double minAngleSin = 1e-3;
+        double? sign = null;
+        for (var i = 0; i < 4; i++)
+        {
+            var prev = pts[(i + 3) % 4];
+            var curr = pts[i];
+            var next = pts[(i + 1) % 4];
+            var inX = curr.X - prev.X;
+            var inY = curr.Y - prev.Y;
+            var outX = next.X - curr.X;
+            var outY = next.Y - curr.Y;
+            var inLen = Math.Sqrt((inX * inX) + (inY * inY));
+            var outLen = Math.Sqrt((outX * outX) + (outY * outY));
+            if (inLen < minEdgeLength || outLen < minEdgeLength)
+            {
+                return false;
+            }
+
+            var cross = (inX * outY) - (inY * outX);
+            var normalized = cross / (inLen * outLen);
+            if (Math.Abs(normalized) < minAngleSin)
+            {
+                return false;
+            }
+
+            var thisSign = Math.Sign(normalized);
+            if (sign is null)
+            {
+                sign = thisSign;
+            }
+            else if (sign != thisSign)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
 /// <summary><paramref name="Opacity"/> (0..1) applies to fill and border alike — text/image
