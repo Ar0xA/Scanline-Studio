@@ -417,6 +417,182 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(vm.UndoCommand.CanExecute(null));
     }
 
+    // TX editor gap-items plan, item 2 (group-ops-lite, revision 3 -- self-healing sync).
+
+    [AvaloniaFact]
+    public void ToggleElementSelection_AddsThenRemovesElementFromTheSet()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+
+        vm.ToggleElementSelection(a);
+
+        Assert.Equal(2, vm.SelectedOverlayElements.Count);
+        Assert.Contains(a, vm.SelectedOverlayElements);
+        Assert.Contains(b, vm.SelectedOverlayElements);
+        Assert.True(a.IsSelected);
+        Assert.True(b.IsSelected);
+
+        vm.ToggleElementSelection(a);
+
+        Assert.Equal(new[] { b }, vm.SelectedOverlayElements);
+        Assert.False(a.IsSelected);
+        Assert.True(b.IsSelected);
+    }
+
+    [AvaloniaFact]
+    public void DirectAssignmentToSelectedOverlayElement_CollapsesAnExistingGroup()
+    {
+        // Round-3 plan-review's own self-healing hook: EVERY raw SelectedOverlayElement assignment
+        // (all ~13 pre-existing call sites, unchanged) must collapse a live multi-selection, not just
+        // the new SetSelection-routed sites.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, b, c]);
+        Assert.Equal(3, vm.SelectedOverlayElements.Count);
+
+        vm.SelectedOverlayElement = b;
+
+        Assert.Equal(new[] { b }, vm.SelectedOverlayElements);
+        Assert.False(a.IsSelected);
+        Assert.True(b.IsSelected);
+        Assert.False(c.IsSelected);
+    }
+
+    [AvaloniaFact]
+    public void SetSelectionToAnAlreadyPrimaryGroupMember_StillCollapsesTheGroup()
+    {
+        // Round-3 plan-review blocker: a sidebar row click on the element that's ALREADY the
+        // group's primary is a value-EQUAL SelectedOverlayElement assignment, which CommunityToolkit's
+        // generated setter skips entirely -- the collapse hook never fires on a bare assignment. This
+        // pins that SetSelection itself (used by OnElementRowPointerPressed instead of a raw
+        // assignment) still collapses correctly in exactly that edge case, since it rebuilds
+        // SelectedOverlayElements directly rather than depending on the hook firing.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, b, c]);
+        Assert.Same(c, vm.SelectedOverlayElement);
+        Assert.Equal(3, vm.SelectedOverlayElements.Count); // group genuinely formed before the collapse below
+
+        vm.SetSelection([c]);
+
+        Assert.Equal(new[] { c }, vm.SelectedOverlayElements);
+        Assert.False(a.IsSelected);
+        Assert.False(b.IsSelected);
+        Assert.True(c.IsSelected);
+    }
+
+    [AvaloniaFact]
+    public void RemoveOverlayElement_OnNonPrimaryGroupMember_ShrinksGroupRatherThanLeavingAStaleMember()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, b, c]);
+        Assert.Same(c, vm.SelectedOverlayElement);
+
+        vm.RemoveOverlayElementCommand.Execute(a);
+
+        Assert.DoesNotContain(a, vm.OverlayElements);
+        Assert.Equal(2, vm.SelectedOverlayElements.Count);
+        Assert.DoesNotContain(a, vm.SelectedOverlayElements);
+        Assert.Contains(b, vm.SelectedOverlayElements);
+        Assert.Contains(c, vm.SelectedOverlayElements);
+        Assert.Same(c, vm.SelectedOverlayElement);
+    }
+
+    [AvaloniaFact]
+    public void RemoveOverlayElement_OnThePrimaryOfAThreeMemberGroup_ShrinksRatherThanClearingTheWholeGroup()
+    {
+        // Regression pin for the ORIGINAL bug this fix replaced: the old `if (ReferenceEquals(
+        // SelectedOverlayElement, element)) SelectedOverlayElement = null;` check would have wrongly
+        // cleared BOTH remaining group members just because the removed element was the primary.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, b, c]);
+        Assert.Same(c, vm.SelectedOverlayElement);
+
+        vm.RemoveOverlayElementCommand.Execute(c);
+
+        Assert.Equal(2, vm.SelectedOverlayElements.Count);
+        Assert.Contains(a, vm.SelectedOverlayElements);
+        Assert.Contains(b, vm.SelectedOverlayElements);
+        Assert.NotNull(vm.SelectedOverlayElement);
+    }
+
+    [AvaloniaFact]
+    public void RemoveSelectedElements_RemovesOnlyGroupMembersInExactlyOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddOverlayElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, c]); // b left out of the group deliberately
+
+        vm.RemoveSelectedElementsCommand.Execute(null);
+
+        Assert.Equal(new[] { b }, vm.OverlayElements);
+        Assert.Empty(vm.SelectedOverlayElements);
+
+        vm.UndoCommand.Execute(null); // undoes ONLY the group removal, not the 3 earlier adds
+
+        Assert.Equal(3, vm.OverlayElements.Count);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void DuplicateGroup_ClonesInZOrder_NotSelectionOrder()
+    {
+        // Round-1 plan-review's real Z-order finding: cloning in SELECTION order (rather than
+        // sorting by each element's own Z first) would silently re-stack an overlapping group on
+        // duplicate. b is added but deliberately left OUT of the group, so it can't coincidentally
+        // make the assertion pass by being adjacent in Z.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var a = (OverlayElementViewModel)vm.OverlayElements[0];
+        a.Text = "A";
+        vm.AddOverlayElementCommand.Execute(null); // b: Z between a and c, not selected
+        vm.AddOverlayElementCommand.Execute(null);
+        var c = (OverlayElementViewModel)vm.OverlayElements[2];
+        c.Text = "C";
+        vm.SetSelection([c, a]); // reverse click order -- a has the LOWER Z, c the higher
+
+        vm.DuplicateCommand.Execute(null);
+
+        Assert.Equal(5, vm.OverlayElements.Count);
+        Assert.Equal(2, vm.SelectedOverlayElements.Count);
+        var cloneOfA = (OverlayElementViewModel)vm.SelectedOverlayElements[0];
+        var cloneOfC = (OverlayElementViewModel)vm.SelectedOverlayElements[1];
+        Assert.Equal("A", cloneOfA.Text);
+        Assert.Equal("C", cloneOfC.Text);
+        Assert.True(cloneOfA.Z < cloneOfC.Z);
+    }
+
     [AvaloniaFact]
     public void Apply_RunsThePipelineAgainstTheOriginalSource_NotTheDownsampledWorkingCopy()
     {
@@ -3147,6 +3323,31 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.NudgeElement(NudgeDirection.Right, ctrl: false);
 
         Assert.NotEqual(xBefore, element.X);
+    }
+
+    [AvaloniaFact]
+    public void NudgeSelectedElements_MovesEveryUnlockedGroupMemberBySameDeltaAndSkipsLocked()
+    {
+        // Auditor finished-code-review finding (group-ops-lite): plain-arrow nudge only moved the
+        // PRIMARY while a 2+ group was selected, an oversight rather than a documented v1 cut, since
+        // group MOVE is explicitly in scope. Locked members are skipped individually, matching the
+        // drag path's own _draggedGroup capture (excludes Locked, never rejects the whole gesture).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var a = vm.OverlayElements[0];
+        vm.AddBoxElementCommand.Execute(null);
+        var b = vm.OverlayElements[1];
+        b.Locked = true;
+        vm.AddBoxElementCommand.Execute(null);
+        var c = vm.OverlayElements[2];
+        vm.SetSelection([a, b, c]);
+        var (xBeforeA, xBeforeB, xBeforeC) = (a.X, b.X, c.X);
+
+        vm.NudgeSelectedElements(NudgeDirection.Right, ctrl: false);
+
+        AssertClose(xBeforeA + (1.0 / vm.WorkingCopyWidth), a.X);
+        AssertClose(xBeforeB, b.X); // Locked -- untouched
+        AssertClose(xBeforeC + (1.0 / vm.WorkingCopyWidth), c.X);
     }
 
     // TX editor gap-items plan, line element (2026-09-01) -- VM-layer integration tests. See
@@ -7935,6 +8136,30 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotSame(sourceBefore, vm.CurrentSource);
         Assert.Equal(sourceBefore.Width, vm.CurrentSource.Width);
         Assert.Equal(sourceBefore.Height, vm.CurrentSource.Height);
+    }
+
+    /// <summary>TX editor gap-items plan, item 2 (group-ops-lite) -- flattening a NON-primary group
+    /// member must shrink <see cref="TxImageEditorPaneViewModel.SelectedOverlayElements"/> to the
+    /// remaining member, not leave a stale (and by then disposed) reference in the set. Uses the
+    /// REAL <see cref="TransmitImagePreparer"/>, same as the other Flatten tests in this region,
+    /// since Flatten's own stale-result guard compares against a genuine rendered result.</summary>
+    [AvaloniaFact]
+    public async Task FlattenElementAsync_OnNonPrimaryGroupMember_ShrinksTheGroup()
+    {
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddBoxElementCommand.Execute(null);
+        var boxA = vm.OverlayElements[0];
+        vm.AddBoxElementCommand.Execute(null);
+        var boxB = vm.OverlayElements[1];
+        vm.SetSelection([boxA, boxB]);
+        Assert.Same(boxB, vm.SelectedOverlayElement);
+
+        await vm.FlattenElementCommand.ExecuteAsync(boxA);
+
+        Assert.DoesNotContain(boxA, vm.OverlayElements);
+        Assert.Equal(new[] { boxB }, vm.SelectedOverlayElements);
+        Assert.Same(boxB, vm.SelectedOverlayElement);
     }
 
     /// <summary>Code-review finding (2026-09-01, box gradient fill): <see cref="TextGradient"/>'s
