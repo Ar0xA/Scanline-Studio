@@ -528,15 +528,30 @@ public sealed partial class TemplateStore : ITemplateStore
                 // PersistedTextElement's own case above was already fixed for once -- this path
                 // silently dropped Gradient, rendering the Ready Rack/Template Library thumbnail
                 // flat solid while the real template rendered the gradient correctly.
+                //
+                // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- corners
+                // are RAW (this thumbnail-reconstruction path has no crop-relative projection
+                // concept at all, unlike the live editor's own TxImageEditorPaneViewModel), and
+                // Bounds is rebuilt from their own bbox (the shared ToBoundingBox helper every
+                // caller uses, per that struct's own doc comment), not the generic X/Y/Width/Height
+                // fields -- same "don't trust the redundant flat fields, corners are the sole
+                // truth" convention PersistedLineElement's own endpoints already established below.
+                var boxPerspective = box.PerspectiveEnabled
+                    ? new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y)
+                    : (PerspectiveCorners?)null;
                 return new TemplateBoxElement(
-                    bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                    boxPerspective?.ToBoundingBox() ?? bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                     box.GradientEnabled
                         ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor ?? box.FillColor), new GradientColorStop(1f, box.GradientEndColor ?? box.FillColor)])
-                        : null);
+                        : null,
+                    boxPerspective);
             case PersistedImageElement image:
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);
-                return new TemplateImageElement(bounds, image.Z, source, image.Fit);
+                var imagePerspective = image.PerspectiveEnabled
+                    ? new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y)
+                    : (PerspectiveCorners?)null;
+                return new TemplateImageElement(imagePerspective?.ToBoundingBox() ?? bounds, image.Z, source, image.Fit, imagePerspective);
             case PersistedLineElement line:
                 // Deliberately NOT the shared `bounds` local above -- that's derived from the base
                 // X/Y/Width/Height fields, which for a line are write-time-only convenience values

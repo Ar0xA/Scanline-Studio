@@ -262,8 +262,44 @@ public sealed record TemplateTextElement(
 /// <see cref="ITransmitImagePreparer.ApplyTemplate"/> stays synchronous and I/O-free (matches
 /// <c>TxImageEditorPaneViewModel.RecomputePreview</c>'s existing synchronous-per-frame
 /// model).</summary>
-public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSource Source, ImageFitMode Fit)
+public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSource Source, ImageFitMode Fit, PerspectiveCorners? Perspective = null)
     : TemplateElement(Bounds, Z);
+
+/// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- 8 FLAT doubles,
+/// not an array/list/tuple collection -- a record struct's auto-generated equality already compares
+/// every field (including a nested value type) by value, but a COLLECTION-typed member falls back to
+/// REFERENCE equality, the exact <see cref="TextGradient"/>-<c>Stops</c>/<see cref="TemplateTextElement"/>-<c>BitmapFill</c>
+/// trap this session has already hit twice: <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s
+/// caller-side Flatten stale-result guard compares two composed <see cref="TemplateElement"/>
+/// instances with <c>Equals</c>, and a reference-equality member there would make every flatten of a
+/// warped element discarded as stale, unconditionally. Corner winding is TopLeft/TopRight/
+/// BottomRight/BottomLeft (0/1/2/3), same as <see cref="TemplateLineElement"/>'s own flat-scalar
+/// X1/Y1/X2/Y2 precedent, generalized from 2 points to 4. Positions are in the SAME normalized space
+/// as <see cref="TemplateElement.Bounds"/> (destination-image-space at render time; the editor VM's
+/// own corners are canvas-normalized full-working-copy space, PROJECTED into this space via
+/// <c>TxImageEditorPaneViewModel.ProjectRectToCropRelative</c>, one call per corner, the same
+/// technique <c>BuildTemplateLineElement</c> already uses for its own 2 endpoints -- see that
+/// method's own doc comment).</summary>
+public readonly record struct PerspectiveCorners(
+    double Corner0X, double Corner0Y, double Corner1X, double Corner1Y,
+    double Corner2X, double Corner2Y, double Corner3X, double Corner3Y)
+{
+    /// <summary>Bounding box of the 4 corners, in whatever space they're already in -- the ONE
+    /// shared helper every caller (the live pipeline, on PROJECTED corners; <c>TemplateStore</c>'s
+    /// own thumbnail-reconstruction path, on RAW persisted corners, no projection -- that path has
+    /// no crop-rect concept at all) must use, so they can never independently compute a slightly
+    /// different bbox and drift apart -- the exact same "one shared function" discipline
+    /// <see cref="TemplateLineElement"/>'s own doc comment already mandates for its own
+    /// <c>TemplateLineGeometry.ComputeInflatedBounds</c>.</summary>
+    public NormalizedRect ToBoundingBox()
+    {
+        var minX = Math.Min(Math.Min(Corner0X, Corner1X), Math.Min(Corner2X, Corner3X));
+        var maxX = Math.Max(Math.Max(Corner0X, Corner1X), Math.Max(Corner2X, Corner3X));
+        var minY = Math.Min(Math.Min(Corner0Y, Corner1Y), Math.Min(Corner2Y, Corner3Y));
+        var maxY = Math.Max(Math.Max(Corner0Y, Corner1Y), Math.Max(Corner2Y, Corner3Y));
+        return new NormalizedRect(minX, minY, maxX - minX, maxY - minY);
+    }
+}
 
 /// <summary><paramref name="Opacity"/> (0..1) applies to fill and border alike — text/image
 /// elements don't have their own opacity yet (not a confirmed 1.1 requirement; add if actually
@@ -289,7 +325,7 @@ public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSo
 /// null-means-none convention <see cref="TemplateTextElement.Gradient"/> already established.</summary>
 public sealed record TemplateBoxElement(
     NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
-    double CornerRadius = 0, TextGradient? Gradient = null)
+    double CornerRadius = 0, TextGradient? Gradient = null, PerspectiveCorners? Perspective = null)
     : TemplateElement(Bounds, Z);
 
 /// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th element kind, a single
@@ -464,5 +500,110 @@ public interface ITransmitImagePreparer
         var resized = Resize(cropped, targetWidth, targetHeight, preserveAspect);
         var adjusted = ApplyAdjustments(resized, adjustments);
         return ApplyTemplate(adjusted, templateDocument);
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- renders ONE
+    /// element's own content (an image's <c>Source</c>, or a box's fill+border+corner-radius+gradient
+    /// rasterized flat first) warped into a <paramref name="targetWidthPx"/> x
+    /// <paramref name="targetHeightPx"/> bitmap, for the TX editor's own live canvas preview during a
+    /// corner drag -- a genuinely different concern from <see cref="ApplyTemplate"/> (which composes
+    /// EVERY element onto the full, already-cropped destination canvas): this renders exactly one
+    /// element's own content, at whatever pixel size the CANVAS (not the final transmitted image)
+    /// currently displays it at, with no crop-projection or Z-ordering involved at all -- the caller
+    /// builds a throwaway <paramref name="element"/> whose own <c>Bounds</c>/<c>Perspective</c> corners
+    /// need only be MUTUALLY CONSISTENT with each other (this method normalizes the corners relative
+    /// to their own bounding box internally, as its first step, so the caller never needs to
+    /// pre-normalize or know this method's own internal coordinate convention) -- NOT crop-projected,
+    /// NOT full-canvas-normalized, just "this element's own corners, in the same space as its own
+    /// Bounds." <paramref name="element"/>.<c>Perspective</c> must be non-null (an unwarped element has
+    /// no reason to call this at all -- callers only reach for this while a corner-drag is actually
+    /// live).
+    /// <para>Returns <see cref="BgraPixelBuffer"/> (real, PREMULTIPLIED alpha), not
+    /// <see cref="IImageSource"/> (this namespace's Rgb24, alpha-less, wrong for this call: a warped
+    /// rounded-corner box's own true silhouette is warped ARCS, not a plain quadrilateral -- an
+    /// Avalonia-side polygon clip cannot represent that, confirmed empirically before this shape was
+    /// settled on; real alpha is what makes the silhouette correct uniformly for both a plain warped
+    /// image and a warped rounded box, with zero clip-geometry code on the UI side at all).</para>
+    /// <para><b>Default implementation</b> degrades gracefully, never throws -- exactly what a fake/mock
+    /// implementation of this interface (this project's test doubles) gets for free without its own
+    /// override, matching <see cref="ComposePreview"/>'s own established precedent for this exact
+    /// problem. For a <see cref="TemplateImageElement"/>: a plain (unwarped) <see cref="Resize"/> to
+    /// the target size, opaque-alpha-expanded into a <see cref="BgraPixelBuffer"/> -- fit-mode-
+    /// APPROXIMATE, not a byte-for-byte match of the real warp (a fake has no reason to implement real
+    /// perspective math). For a <see cref="TemplateBoxElement"/> (no source image to resize): a flat,
+    /// fully-opaque buffer solid-filled with the element's own <c>FillColor</c> (border/corner-radius/
+    /// gradient ignored in this fallback specifically) -- the real, production
+    /// <c>TransmitImagePreparer</c> always overrides this with the true warp; this default only matters
+    /// to a test double that never exercises perspective rendering directly.</para></summary>
+    BgraPixelBuffer RenderWarpedElementPreview(TemplateElement element, int targetWidthPx, int targetHeightPx)
+    {
+        targetWidthPx = Math.Max(1, targetWidthPx);
+        targetHeightPx = Math.Max(1, targetHeightPx);
+        if (element is TemplateImageElement image)
+        {
+            var resized = Resize(image.Source, targetWidthPx, targetHeightPx, preserveAspect: false);
+            return BgraPixelBuffer.FromOpaqueSource(resized);
+        }
+
+        if (element is TemplateBoxElement box)
+        {
+            return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
+        }
+
+        return BgraPixelBuffer.FromSolidColor(new Rgb24(0, 0, 0), targetWidthPx, targetHeightPx);
+    }
+}
+
+/// <summary>TX editor gap-items plan, item 3 (perspective transform) -- a small, real-alpha pixel
+/// buffer, deliberately NOT growing <see cref="IImageSource"/> itself (every other call site in this
+/// codebase already assumes that type is alpha-less Rgb24; adding alpha to it would be a much larger,
+/// unrelated change). BGRA byte order matches Avalonia's own <c>PixelFormat.Bgra8888</c> (the UI-side
+/// blit target), so the UI layer's own conversion is a straight byte copy, not a channel-reorder.
+/// <b>Alpha is PREMULTIPLIED</b> -- Avalonia's <c>WriteableBitmap</c> with
+/// <c>AlphaFormat.Premul</c> requires it; ImageSharp's own <c>Rgba32</c> is STRAIGHT (unpremultiplied)
+/// alpha, so every real producer of this type must explicitly premultiply at the boundary (verified
+/// empirically before this shape was settled on, not assumed from either library's own
+/// documentation).</summary>
+public sealed class BgraPixelBuffer
+{
+    public required byte[] Pixels { get; init; }
+
+    public required int Width { get; init; }
+
+    public required int Height { get; init; }
+
+    public static BgraPixelBuffer FromOpaqueSource(IImageSource source)
+    {
+        var pixels = new byte[source.Width * source.Height * 4];
+        for (var y = 0; y < source.Height; y++)
+        {
+            var row = source.GetScanline(y);
+            var rowOffset = y * source.Width * 4;
+            for (var x = 0; x < source.Width; x++)
+            {
+                var pixel = row[x];
+                var offset = rowOffset + (x * 4);
+                pixels[offset] = pixel.B;
+                pixels[offset + 1] = pixel.G;
+                pixels[offset + 2] = pixel.R;
+                pixels[offset + 3] = 255;
+            }
+        }
+
+        return new BgraPixelBuffer { Pixels = pixels, Width = source.Width, Height = source.Height };
+    }
+
+    public static BgraPixelBuffer FromSolidColor(Rgb24 color, int width, int height)
+    {
+        var pixels = new byte[width * height * 4];
+        for (var i = 0; i < pixels.Length; i += 4)
+        {
+            pixels[i] = color.B;
+            pixels[i + 1] = color.G;
+            pixels[i + 2] = color.R;
+            pixels[i + 3] = 255;
+        }
+
+        return new BgraPixelBuffer { Pixels = pixels, Width = width, Height = height };
     }
 }
