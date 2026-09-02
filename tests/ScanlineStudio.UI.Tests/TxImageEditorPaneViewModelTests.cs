@@ -2826,6 +2826,173 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(vm.UndoCommand.CanExecute(null));
     }
 
+    // TX editor gap-items plan, item 3 (perspective transform) -- these tests target the exact
+    // failure classes 3 rounds of adversarial plan-review found in the design: undo-step double-
+    // counting (TogglePerspective/SetAsBackground/ResetToOriginalSize all mutate perspective state
+    // inside an existing _suspendPreview window), the corner-cascade notification chain actually
+    // reaching what AXAML binds, and the "independent per-corner clamp shears the quad" trap
+    // InsertClonedSnapshot's own Line-element precedent already hit once.
+
+    [AvaloniaFact]
+    public void TogglePerspective_On_SeedsCornersFromTheCurrentBboxAndPushesExactlyOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        var (x, y, w, h) = (box.X, box.Y, box.Width, box.Height);
+
+        vm.TogglePerspectiveCommand.Execute(box);
+
+        Assert.True(box.PerspectiveEnabled);
+        AssertClose(x - (w / 2), box.Corner0X);
+        AssertClose(y - (h / 2), box.Corner0Y);
+        AssertClose(x + (w / 2), box.Corner1X);
+        AssertClose(y - (h / 2), box.Corner1Y);
+        AssertClose(x + (w / 2), box.Corner2X);
+        AssertClose(y + (h / 2), box.Corner2Y);
+        AssertClose(x - (w / 2), box.Corner3X);
+        AssertClose(y + (h / 2), box.Corner3Y);
+        // bbox center/extent unchanged by enabling -- X/Y/Width/Height now read through the corners.
+        AssertClose(x, box.X);
+        AssertClose(y, box.Y);
+        AssertClose(w, box.Width);
+        AssertClose(h, box.Height);
+
+        // Same "count total undo depth" idiom as SetAsBackground_PushesExactlyOneUndoStep above --
+        // AddBoxElement (1) then TogglePerspective (should be exactly 1 more); 2 Undos must leave
+        // nothing.
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void TogglePerspective_OnThenOff_RestoresTheOriginalBboxAndPushesExactlyTwoUndoSteps()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        var (x, y, w, h) = (box.X, box.Y, box.Width, box.Height);
+
+        vm.TogglePerspectiveCommand.Execute(box);
+        vm.TogglePerspectiveCommand.Execute(box);
+
+        Assert.False(box.PerspectiveEnabled);
+        AssertClose(x, box.X);
+        AssertClose(y, box.Y);
+        AssertClose(w, box.Width);
+        AssertClose(h, box.Height);
+
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackground_OnAWarpedImageElement_TurnsPerspectiveOffWithExactlyOneUndoStep()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.TogglePerspectiveCommand.Execute(image);
+        Assert.True(image.PerspectiveEnabled);
+
+        vm.SetAsBackgroundCommand.Execute(image);
+
+        Assert.False(image.PerspectiveEnabled);
+        AssertClose(0.5, image.X);
+        AssertClose(0.5, image.Y);
+        AssertClose(1, image.Width);
+        AssertClose(1, image.Height);
+
+        // AddLastRxImage (1) + TogglePerspective (1) + SetAsBackground (should be exactly 1 more) = 3.
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void Rotate_OnAWarpedBoxElement_RotatesTheCornersDirectlyNotTheDerivedBbox()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.Corner0X = 0.1;
+        box.Corner0Y = 0.2;
+        box.Corner1X = 0.6;
+        box.Corner1Y = 0.25;
+        box.Corner2X = 0.55;
+        box.Corner2Y = 0.7;
+        box.Corner3X = 0.05;
+        box.Corner3Y = 0.65;
+        box.PerspectiveEnabled = true;
+
+        vm.RotateCommand.Execute(null);
+
+        AssertClose(1 - 0.2, box.Corner0X);
+        AssertClose(0.1, box.Corner0Y);
+        AssertClose(1 - 0.25, box.Corner1X);
+        AssertClose(0.6, box.Corner1Y);
+        AssertClose(1 - 0.7, box.Corner2X);
+        AssertClose(0.55, box.Corner2Y);
+        AssertClose(1 - 0.65, box.Corner3X);
+        AssertClose(0.05, box.Corner3Y);
+    }
+
+    [AvaloniaFact]
+    public void RawOverlayElements_ForAWarpedBox_IncludesPerspectiveEnabledAndTheCorners()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        vm.TogglePerspectiveCommand.Execute(box);
+        box.Corner1X = 0.77;
+
+        var raw = Assert.IsType<TxImageEditorPaneViewModel.RawBoxElementSnapshot>(Assert.Single(vm.RawOverlayElements));
+
+        Assert.True(raw.PerspectiveEnabled);
+        AssertClose(0.77, raw.Corner1X);
+        AssertClose(box.Corner0X, raw.Corner0X);
+        AssertClose(box.Corner2Y, raw.Corner2Y);
+    }
+
+    [AvaloniaFact]
+    public void Duplicate_OnAWarpedBoxElement_ShiftsAllCornersByTheSameSharedDeltaNotIndependentClamps()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.Corner0X = 0.1;
+        box.Corner0Y = 0.1;
+        box.Corner1X = 0.5;
+        box.Corner1Y = 0.15;
+        box.Corner2X = 0.45;
+        box.Corner2Y = 0.5;
+        box.Corner3X = 0.05;
+        box.Corner3Y = 0.45;
+        box.PerspectiveEnabled = true;
+
+        vm.DuplicateCommand.Execute(null);
+
+        var clone = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        Assert.NotSame(box, clone);
+        Assert.True(clone.PerspectiveEnabled);
+        var dx = clone.Corner0X - box.Corner0X;
+        var dy = clone.Corner0Y - box.Corner0Y;
+        AssertClose(dx, clone.Corner1X - box.Corner1X);
+        AssertClose(dx, clone.Corner2X - box.Corner2X);
+        AssertClose(dx, clone.Corner3X - box.Corner3X);
+        AssertClose(dy, clone.Corner1Y - box.Corner1Y);
+        AssertClose(dy, clone.Corner2Y - box.Corner2Y);
+        AssertClose(dy, clone.Corner3Y - box.Corner3Y);
+    }
+
     [AvaloniaFact]
     public void SetAsBackground_OnAnElementNoLongerInOverlayElements_DoesNotThrowAndIsANoOp()
     {
