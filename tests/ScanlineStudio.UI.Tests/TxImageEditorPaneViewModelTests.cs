@@ -6011,6 +6011,47 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(height > 0);
     }
 
+    // TX editor gap-items plan, item 3 (perspective transform) -- TryWritePerspectiveCorner's own
+    // real-time convexity clamp, same "public static, unit-testable without simulating real Avalonia
+    // pointer events" precedent as ComputeElementResize above.
+
+    [Fact]
+    public void TryWritePerspectiveCorner_ValidPosition_WritesTheCorner()
+    {
+        var box = new BoxElementViewModel
+        {
+            Corner0X = 0, Corner0Y = 0, Corner1X = 1, Corner1Y = 0, Corner2X = 1, Corner2Y = 1, Corner3X = 0, Corner3Y = 1,
+            PerspectiveEnabled = true,
+        };
+
+        TxImageEditorPaneView.TryWritePerspectiveCorner(box, cornerIndex: 0, x: 0.1, y: 0.15, workingCopyWidth: 100, workingCopyHeight: 100);
+
+        AssertClose(0.1, box.Corner0X);
+        AssertClose(0.15, box.Corner0Y);
+        // Untouched corners stay untouched.
+        AssertClose(1, box.Corner1X);
+        AssertClose(1, box.Corner2Y);
+    }
+
+    [Fact]
+    public void TryWritePerspectiveCorner_WouldMakeTheQuadNonConvex_RejectsAndLeavesTheCornerUnchanged()
+    {
+        // Square quad, TopLeft=Corner0. Dragging it far past TopRight (Corner1) on the X axis
+        // crosses the top edge, producing a self-intersecting (bowtie) quad -- independently
+        // verified by hand (pixel-space cross products at the two affected vertices have opposite
+        // signs), not just asserted from the implementation's own claim.
+        var box = new BoxElementViewModel
+        {
+            Corner0X = 0, Corner0Y = 0, Corner1X = 1, Corner1Y = 0, Corner2X = 1, Corner2Y = 1, Corner3X = 0, Corner3Y = 1,
+            PerspectiveEnabled = true,
+        };
+
+        TxImageEditorPaneView.TryWritePerspectiveCorner(box, cornerIndex: 0, x: 2.0, y: 0, workingCopyWidth: 100, workingCopyHeight: 100);
+
+        AssertClose(0, box.Corner0X);
+        AssertClose(0, box.Corner0Y);
+    }
+
     // Auditor usability review follow-up (2026-08-18): 8-handle resize (corners + edge midpoints),
     // replacing the earlier bottom-right-only handle -- see TxImageEditorPaneView.ResizeHandle's own
     // doc comment for why this is scoped as new interaction-model functionality, not a legacy port.
