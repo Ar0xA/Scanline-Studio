@@ -3344,6 +3344,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(SelectedElementTopPx));
         OnPropertyChanged(nameof(SelectedElementWidthPx));
         OnPropertyChanged(nameof(SelectedElementHeightPx));
+        OnPropertyChanged(nameof(IsPerspectiveEligibleElementSelected));
+        OnPropertyChanged(nameof(SelectedElementPerspectiveEnabled));
     }
 
     /// <summary>Phase 4 (spec/15-template-designer.md) -- <see cref="SelectedOverlayElement"/>
@@ -3545,6 +3547,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>TX editor gap-items plan (2026-09-01) -- same narrowed-cast shape as
     /// <see cref="SelectedBoxElement"/>, for the GEOMETRY tab's new line-only style block.</summary>
     public LineElementViewModel? SelectedLineElement => SelectedOverlayElement as LineElementViewModel;
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- true when the currently
+    /// selected element is an image or box AND supports perspective (both do). Backs the GEOMETRY
+    /// tab's Perspective checkbox's own <c>IsVisible</c> -- one shared row rather than duplicating it
+    /// inside BOTH the box-style and image-style blocks above.</summary>
+    public bool IsPerspectiveEligibleElementSelected => SelectedOverlayElement is ImageElementViewModel or BoxElementViewModel;
+
+    /// <summary>TX editor gap-items plan, item 3 -- read-only reflection of the selected element's
+    /// own <c>PerspectiveEnabled</c> (not part of the shared <see cref="ITemplateElementViewModel"/>
+    /// interface, so this narrows by type same as <see cref="SelectedBoxElement"/> above). The
+    /// checkbox's own AXAML binds this ONE-WAY for its checked state and separately binds
+    /// <see cref="ImageElementViewModel.TogglePerspectiveCommand"/> for the actual click action --
+    /// NOT a plain two-way <c>IsChecked</c> binding, because enabling has a real side effect (seeding
+    /// the 4 corners from the current bbox) only the command performs correctly; a bare two-way
+    /// binding would flip the flag with no seed step. Re-raised from
+    /// <see cref="OnSelectedOverlayElementChanged"/> (selection change) and
+    /// <see cref="OnOverlayElementPropertyChanged"/> (the selected element's own flag flips).</summary>
+    public bool SelectedElementPerspectiveEnabled => SelectedOverlayElement switch
+    {
+        ImageElementViewModel image => image.PerspectiveEnabled,
+        BoxElementViewModel box => box.PerspectiveEnabled,
+        _ => false,
+    };
 
     /// <summary>Same target-mode-height px conversion as <see cref="SelectedTextElementStrokeThicknessPx"/>,
     /// for <see cref="BoxElementViewModel.BorderThickness"/> (same relative-to-image-height convention,
@@ -5537,6 +5562,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             OnPropertyChanged(nameof(SelectedElementHeightPx));
             OnPropertyChanged(nameof(SelectedBoxElementBorderThicknessPx));
             OnPropertyChanged(nameof(SelectedBoxElementCornerRadiusPx));
+            // TX editor gap-items plan, item 3 -- same "raised unconditionally on every change to the
+            // selected element" shape as everything else in this block; the GEOMETRY tab's Perspective
+            // checkbox needs to reflect a toggle regardless of which property changed to cause it.
+            OnPropertyChanged(nameof(SelectedElementPerspectiveEnabled));
         }
 
         // T0-12: coalesced -- fires on every PointerMoved while dragging/resizing a selected canvas

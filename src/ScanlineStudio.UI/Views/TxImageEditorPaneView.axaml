@@ -1022,12 +1022,21 @@
                                                  normalized BorderThickness). A null BorderColor yields a null
                                                  brush, which Avalonia treats as "no border" — matching
                                                  TemplateBoxElement's own BorderColor==null="no border" contract. -->
+                                            <!-- TX editor gap-items plan, item 3 (perspective transform) —
+                                                 Background/BorderThickness/Opacity bind to the Effective*
+                                                 properties, not the raw FillBrush/CanvasBorderThicknessPixels/
+                                                 Opacity ones — Avalonia is LocalValue-beats-Style, so a Style
+                                                 selector on PerspectiveEnabled could never override these same
+                                                 3 already-local bindings; Effective* itself is the
+                                                 PerspectiveEnabled-aware switch instead (see that property's
+                                                 own doc comment on BoxElementViewModel). Pixel-identical to the
+                                                 raw properties when perspective is off. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
-                                                    Background="{Binding FillBrush}"
+                                                    Background="{Binding EffectiveBackground}"
                                                     BorderBrush="{Binding BorderColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
-                                                    BorderThickness="{Binding CanvasBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
+                                                    BorderThickness="{Binding EffectiveBorderThicknessPixels, Converter={x:Static conv:DoubleToThicknessConverter.Instance}}"
                                                     CornerRadius="{Binding CanvasCornerRadiusPixels, Converter={x:Static conv:DoubleToCornerRadiusConverter.Instance}}"
-                                                    Opacity="{Binding Opacity}"
+                                                    Opacity="{Binding EffectiveOpacity}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <!-- Task #24: same inline-ContextMenu reasoning as the text
                                                      DataTemplate above — no Add Plate item (text-only) or
@@ -1106,55 +1115,96 @@
                                                         </StackPanel>
                                                     </Flyout>
                                                 </FlyoutBase.AttachedFlyout>
+                                                <!-- TX editor gap-items plan, item 3 — the warped-preview
+                                                     visual. The Border stays the ONLY hit-test/context-menu/
+                                                     flyout surface regardless of PerspectiveEnabled (see this
+                                                     Border's own Background/BorderThickness/Opacity comment
+                                                     above) — this Image is purely decorative, sized/shaped
+                                                     exactly to the target already (RenderWarpedElementPreview's
+                                                     own contract), so Stretch="Fill" is hardcoded, not bound to
+                                                     any Fit concept (boxes have none). -->
+                                                <Image Source="{Binding WarpedCanvasBitmap}" Stretch="Fill" IsHitTestVisible="False"
+                                                       IsVisible="{Binding PerspectiveEnabled}" />
                                             </Border>
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopLeftCorner" Tag="TopLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopSide" Tag="Top"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopRightCorner" Tag="TopRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="RightSide" Tag="Right"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomRightCorner" Tag="BottomRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomSide" Tag="Bottom"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomLeftCorner" Tag="BottomLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <!-- TX editor gap-items plan, item 3 — 4 perspective-corner
+                                                 handles, NOT the 8 axis-aligned resize handles above (see
+                                                 DragMode.PerspectiveCorner's own doc comment) — same 10x10
+                                                 accent-square visual, positioned via
+                                                 CanvasCorner0Point..3Point (container-relative, same
+                                                 convention the line element's own CanvasStartPoint/EndPoint
+                                                 already use). -->
+                                            <Border Canvas.Left="{Binding CanvasCorner0Point.X}" Canvas.Top="{Binding CanvasCorner0Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner0"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner1Point.X}" Canvas.Top="{Binding CanvasCorner1Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner1"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner2Point.X}" Canvas.Top="{Binding CanvasCorner2Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner2"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner3Point.X}" Canvas.Top="{Binding CanvasCorner3Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner3"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                         </Canvas>
                                     </DataTemplate>
                                     <!-- TX editor gap-items plan, line element (2026-09-01) — 4th
@@ -1316,58 +1366,97 @@
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
-                                                <Image Source="{Binding CanvasBitmap}"
-                                                       Stretch="{Binding Fit, Converter={x:Static conv:ImageFitModeToStretchConverter.Instance}}"
-                                                       IsHitTestVisible="False" />
+                                                <!-- TX editor gap-items plan, item 3 (perspective transform) —
+                                                     Border.Child can only hold ONE control, so the plain and
+                                                     warped visuals live as 2 IsVisible-toggled siblings inside
+                                                     a Grid wrapper (both occupy the same single cell). -->
+                                                <Grid>
+                                                    <Image Source="{Binding CanvasBitmap}"
+                                                           Stretch="{Binding Fit, Converter={x:Static conv:ImageFitModeToStretchConverter.Instance}}"
+                                                           IsHitTestVisible="False" IsVisible="{Binding !PerspectiveEnabled}" />
+                                                    <!-- Stretch="Fill" hardcoded, not bound to Fit — the warp
+                                                         render always fills the quad exactly, ignoring Fit
+                                                         entirely (see RenderWarpedElementPreview's own
+                                                         contract). -->
+                                                    <Image Source="{Binding WarpedCanvasBitmap}" Stretch="Fill"
+                                                           IsHitTestVisible="False" IsVisible="{Binding PerspectiveEnabled}" />
+                                                </Grid>
                                             </Border>
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopLeftCorner" Tag="TopLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopSide" Tag="Top"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="TopRightCorner" Tag="TopRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="RightSide" Tag="Right"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomRightCorner" Tag="BottomRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomSide" Tag="Bottom"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="BottomLeftCorner" Tag="BottomLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
                                                     Background="{StaticResource IndustryAccent}"
-                                                    IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
+                                                    IsVisible="{Binding ShowResizeHandles}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
+                                            <!-- TX editor gap-items plan, item 3 — 4 perspective-corner
+                                                 handles, same shape as the box DataTemplate's own identical
+                                                 set above. -->
+                                            <Border Canvas.Left="{Binding CanvasCorner0Point.X}" Canvas.Top="{Binding CanvasCorner0Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner0"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner1Point.X}" Canvas.Top="{Binding CanvasCorner1Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner1"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner2Point.X}" Canvas.Top="{Binding CanvasCorner2Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner2"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
+                                            <Border Canvas.Left="{Binding CanvasCorner3Point.X}" Canvas.Top="{Binding CanvasCorner3Point.Y}"
+                                                    RenderTransform="translate(-5px, -5px)"
+                                                    Width="10" Height="10"
+                                                    Background="{StaticResource IndustryAccent}"
+                                                    IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner3"
+                                                    PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                         </Canvas>
                                     </DataTemplate>
                                 </ItemsControl.DataTemplates>
@@ -2168,6 +2257,20 @@
                                     <TextBox Classes="Industry IndustryInput" HorizontalContentAlignment="Right" Text="{Binding SelectedElementHeightPx}" />
                                 </StackPanel>
                             </Grid>
+
+                            <!-- TX editor gap-items plan, item 3 (perspective transform) — ONE shared
+                                 row (not duplicated inside BOX STYLE and IMAGE STYLE below), since
+                                 both element kinds support it identically. IsChecked binds ONE-WAY
+                                 (SelectedElementPerspectiveEnabled has no setter) purely to reflect
+                                 current state; the actual toggle happens via Command, which seeds/
+                                 writes-back the 4 corners as a real side effect a plain two-way
+                                 IsChecked binding could never perform correctly (see that command's
+                                 own doc comment on ImageElementViewModel). -->
+                            <Border Classes="IndustryRow" IsVisible="{Binding IsPerspectiveEligibleElementSelected}"><Grid ColumnDefinitions="Auto,*">
+                                <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.PerspectiveLabel}"
+                                          IsChecked="{Binding SelectedElementPerspectiveEnabled}"
+                                          Command="{Binding TogglePerspectiveCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
+                            </Grid></Border>
 
                             <!-- Backlog item (auditor usability review, 2026-08-17, item 5): "Box
                                  elements have no style UI at all." Lives here (GEOMETRY, the one tab

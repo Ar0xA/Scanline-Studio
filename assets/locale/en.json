@@ -459,6 +459,7 @@
   "Panes.TxImageEditor.GeometryYLabel": "Y (PX)",
   "Panes.TxImageEditor.GeometryWidthLabel": "W (PX)",
   "Panes.TxImageEditor.GeometryHeightLabel": "H (PX)",
+  "Panes.TxImageEditor.PerspectiveLabel": "PERSPECTIVE",
   "Panes.TxImageEditor.BoxStyleHeader": "BOX STYLE",
   "Panes.TxImageEditor.BorderLabel": "BORDER",
   "Panes.TxImageEditor.BorderThicknessLabel": "BORDER WIDTH (PX)",
