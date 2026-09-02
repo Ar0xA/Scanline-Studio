@@ -1699,6 +1699,366 @@ public sealed class ApplyTemplateTests
         }
     }
 
+    [Fact]
+    public async Task ApplyTemplate_ImageWithPerspective_WarpsAnInteriorMarkerToItsIndependentlyComputedPosition()
+    {
+        // TX editor gap-items plan, item 3 (perspective transform) -- the load-bearing correctness
+        // gate this feature's own plan-review required before trusting the homography math: render
+        // REAL pixels through the actual ApplyTemplate/ctx.Transform path, and check that an interior
+        // source marker lands where an INDEPENDENTLY solved projective transform (a fresh Gaussian-
+        // elimination solve of the same 4-corner-correspondence system, written separately from
+        // SolveHomography's own Heckbert-shortcut code, not by asking that production code where it
+        // thinks the marker should land) says it must -- same "verify against reality, not self-
+        // consistency" bar the picture-fill feature's own decisive anchoring test used.
+        //
+        // Base canvas 120x120 white. Source element is a NON-SQUARE 20x10 magenta rectangle (breaks
+        // any accidental x/y symmetry) with a solid 2x2 green marker block near the BOTTOM-RIGHT
+        // corner, centered at continuous source coordinate (17, 8) -- deliberately close to source
+        // corner2 (20,10), not near the source's own centroid or any other corner. Destination quad
+        // is chosen so its LOCAL (bbox-relative) corners are exact integers with safetyScale=1 --
+        // (0,0), (100,0), (80,100), (0,100), a genuine non-parallelogram convex quad -- so every
+        // intermediate pixel-space value inside TryWarpElementContent is exact, no rounding ambiguity
+        // between this test's own expected value and the render path's.
+        //
+        // Marker size/placement and the match tolerance below were both tuned against two REAL
+        // mutations of the production code (each reverted after confirming the test caught it, not
+        // hypothetical): (1) production's localCorners with Corner1/Corner3 transposed; (2) the
+        // homography matrix's perspective terms (g/h) written into the wrong Matrix4x4 slot (M13/M23
+        // instead of M14/M24), silently degrading the warp to a pure AFFINE map. Two earlier draft
+        // placements were genuinely vacuous against one or the other: a larger (4x4), more central
+        // marker produced a destination blob big enough (heavy upsampling -- source 20x10 into a
+        // ~100x100 quad) that a 2px match radius stayed inside the wrong-code blob too; a marker near
+        // source corner1 wasn't sensitive to mutation (2), since destination corner C2=(80,100) is
+        // the ONE corner where an affine (parallelogram-only) approximation diverges from the true
+        // projective map -- only a marker actually near source corner2 moves enough under that bug.
+        // The GREEN CENTROID (weighted by G-minus-avg(R,B) over the whole image, not a raw bounding-
+        // box midpoint or single-pixel match -- far less sensitive to bicubic edge blending) lands
+        // ~4.8px from this test's own naive point-forward-mapped expectation under verified-correct
+        // code -- a real, reproducible effect of resampling a non-uniformly-scaled projective warp
+        // (the destination-space blur kernel is asymmetric where the map locally compresses more on
+        // one side than the other), not a bug. Measured against BOTH real mutations above: mutation
+        // (1) shifted the centroid 9.0px from expected, mutation (2) shifted it 14.3px. The 7px
+        // tolerance below sits with real margin above the measured correct-code gap (4.8px) and below
+        // both measured mutation distances (9.0px, 14.3px) -- an 8px tolerance tried first left only
+        // 0.98px of margin against mutation (1), too fragile to trust across environments.
+        var basePath = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        var elementPath = await WriteFixturePngAsync(20, 10, (x, y) =>
+            x is >= 16 and < 18 && y is >= 7 and < 9
+                ? new ImageSharpRgb24(0, 255, 0)
+                : new ImageSharpRgb24(255, 0, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 120, 120);
+            var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 20, 10);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            // Global (full-image-pixel-space) destination corners: local design + (5,5) offset, so
+            // the bbox top-left lands at exactly (5,5) with width/height exactly 100 -- no rounding.
+            var corners = new PerspectiveCorners(
+                5.0 / 120, 5.0 / 120,
+                105.0 / 120, 5.0 / 120,
+                85.0 / 120, 105.0 / 120,
+                5.0 / 120, 105.0 / 120);
+            var document = new TemplateDocument(null, [
+                new TemplateImageElement(corners.ToBoundingBox(), Z: 0, elementSource, ImageFitMode.Stretch, corners),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Independent solve: general 4-point projective correspondence via Gaussian elimination,
+            // NOT SolveHomography's own Heckbert-shortcut code path.
+            double[] localDestX = [0, 100, 80, 0];
+            double[] localDestY = [0, 0, 100, 100];
+            double[] srcX = [0, 20, 20, 0];
+            double[] srcY = [0, 0, 10, 10];
+            var (a, b, c, d, e, f, g, h) = SolveProjectiveIndependently(srcX, srcY, localDestX, localDestY);
+
+            const double markerX = 17;
+            const double markerY = 8;
+            var denom = (g * markerX) + (h * markerY) + 1;
+            var expectedGlobalX = (((a * markerX) + (b * markerY) + c) / denom) + 5;
+            var expectedGlobalY = (((d * markerX) + (e * markerY) + f) / denom) + 5;
+
+            AssertGreenCentroidNear(result, expectedGlobalX, expectedGlobalY, tolerance: 7.0);
+
+            // Negative control near the top-left corner of the quad, far from where the marker must
+            // land -- rules out a degenerate bug that paints the marker color across the whole quad.
+            AssertPixelIsNotColor(result, 10, 10, r: 0, g: 255, b: 0);
+        }
+        finally
+        {
+            File.Delete(basePath);
+            File.Delete(elementPath);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_BoxWithPerspective_FillsInsideTheQuadAndLeavesOutsideUntouched()
+    {
+        // TX editor gap-items plan, item 3 (perspective transform) -- box elements have no source
+        // image, so TryWarpBoxContent draws the box's own fill/border into an offscreen sub-bitmap
+        // (via the SAME DrawBoxContent already exercised by the plain (unwarped) box tests elsewhere
+        // in this file) before warping it. The homography math itself is already pixel-verified,
+        // mutation-tested, against ApplyTemplate_ImageWithPerspective_WarpsAnInteriorMarker... above
+        // -- this test's job is narrower: confirm TryWarpBoxContent is actually wired up (the fill
+        // color appears inside the warped quad) and correctly bounded (it does NOT leak outside the
+        // quad's own bounding box).
+        //
+        // A first draft's negative control point (115,115) was VACUOUS -- a mutation test that
+        // disabled the whole perspective branch (forcing the plain axis-aligned bbox-fill fallback)
+        // still passed, since (115,115) sits outside the quad's bbox EITHER WAY. The quad below is a
+        // trapezoid whose bottom-right corner (85,105) is pulled in from the bbox's own corner
+        // (105,105) -- so (100,100) sits INSIDE the axis-aligned bbox but OUTSIDE the actual quad
+        // polygon (the quad's right edge at y=100 is around x=86), making it sensitive to exactly the
+        // bug that mutation introduced.
+        var basePath = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            // Same quad as the image perspective test: global corners (5,5),(105,5),(85,105),(5,105).
+            var corners = new PerspectiveCorners(
+                5.0 / 120, 5.0 / 120,
+                105.0 / 120, 5.0 / 120,
+                85.0 / 120, 105.0 / 120,
+                5.0 / 120, 105.0 / 120);
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(
+                    corners.ToBoundingBox(), Z: 0, new Rgb24(0, 0, 255), BorderColor: null, BorderThickness: 0, Opacity: 1,
+                    CornerRadius: 0, Gradient: null, corners),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Well inside the quad (near its own centroid) -- must be the fill color.
+            AssertPixel(result, 40, 40, 0, 0, 255);
+
+            // Inside the axis-aligned bbox but outside the actual trapezoid quad -- must be
+            // untouched background. A plain (unwarped) bbox fill would incorrectly paint this blue.
+            AssertPixel(result, 100, 100, 255, 255, 255);
+
+            // Outside the quad's own bounding box entirely (max corner X/Y is 105) -- must be
+            // untouched background too, ruling out a bug that fills the WHOLE destination image.
+            AssertPixel(result, 115, 115, 255, 255, 255);
+        }
+        finally
+        {
+            File.Delete(basePath);
+        }
+    }
+
+    [Fact]
+    public async Task RenderWarpedElementPreview_Image_WarpsIntoTheQuadAndIsTransparentOutsideIt()
+    {
+        // TX editor gap-items plan, item 3 (perspective transform) -- the live canvas-preview render
+        // path (distinct from ApplyTemplate: this renders ONE element's own content at whatever pixel
+        // size the canvas currently shows it, no larger destination canvas involved). Corners chosen
+        // at exactly (0,0),(100,0),(80,100),(0,100) with a 100x100 target -- their own bbox is
+        // already exactly (0,0)-(100,100), so TryComputeLocalWarpGeometry's bbox-to-target scale
+        // factor is exactly 1 and localCorners equal these corners verbatim, no rounding ambiguity.
+        var elementPath = await WriteFixturePngAsync(10, 10, (_, _) => new ImageSharpRgb24(255, 0, 0));
+        try
+        {
+            var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 10, 10);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var corners = new PerspectiveCorners(0, 0, 100, 0, 80, 100, 0, 100);
+            var element = new TemplateImageElement(corners.ToBoundingBox(), Z: 0, elementSource, ImageFitMode.Stretch, corners);
+
+            var result = preparer.RenderWarpedElementPreview(element, 100, 100);
+
+            Assert.Equal(100, result.Width);
+            Assert.Equal(100, result.Height);
+            AssertBgraPixel(result, 40, 40, r: 255, g: 0, b: 0, a: 255);
+
+            // (95,95) is inside the 100x100 TARGET rectangle but outside the actual trapezoid quad
+            // (whose bottom-right corner is pulled in to (80,100)) -- must be fully transparent, not
+            // filled background, confirming Clone()'s zero-initialized buffer assumption in production.
+            AssertBgraPixel(result, 95, 95, r: 0, g: 0, b: 0, a: 0);
+        }
+        finally
+        {
+            File.Delete(elementPath);
+        }
+    }
+
+    [Fact]
+    public void RenderWarpedElementPreview_Box_FillsTheQuadAndIsTransparentOutsideIt()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var corners = new PerspectiveCorners(0, 0, 100, 0, 80, 100, 0, 100);
+        var element = new TemplateBoxElement(
+            corners.ToBoundingBox(), Z: 0, new Rgb24(0, 0, 255), BorderColor: null, BorderThickness: 0, Opacity: 1,
+            CornerRadius: 0, Gradient: null, corners);
+
+        var result = preparer.RenderWarpedElementPreview(element, 100, 100);
+
+        Assert.Equal(100, result.Width);
+        Assert.Equal(100, result.Height);
+        AssertBgraPixel(result, 40, 40, r: 0, g: 0, b: 255, a: 255);
+        AssertBgraPixel(result, 95, 95, r: 0, g: 0, b: 0, a: 0);
+    }
+
+    [Fact]
+    public void RenderWarpedElementPreview_BoxWithPartialOpacity_ProducesGenuinelyPremultipliedAlpha()
+    {
+        // The other RenderWarpedElementPreview tests are all fully opaque (alpha=255), where
+        // premultiplication is a no-op and wouldn't catch a missing/wrong premultiply step -- this
+        // test's Opacity=0.5 box blends its fill color against DrawBoxContent's own transparent
+        // sub-bitmap background (BlendPercentage), producing a genuinely semi-transparent straight-
+        // alpha pixel, so ToPremultipliedBgra's own multiply actually has to do something.
+        // Invariant checked: for correctly premultiplied BGRA, each channel <= its own alpha (since
+        // premultiplied = straight * alpha/255, and straight is always <= 255) -- a channel value
+        // exceeding alpha is only possible if premultiplication was skipped or done wrong.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var corners = new PerspectiveCorners(0, 0, 100, 0, 80, 100, 0, 100);
+        var element = new TemplateBoxElement(
+            corners.ToBoundingBox(), Z: 0, new Rgb24(200, 100, 50), BorderColor: null, BorderThickness: 0, Opacity: 0.5,
+            CornerRadius: 0, Gradient: null, corners);
+
+        var result = preparer.RenderWarpedElementPreview(element, 100, 100);
+
+        var offset = ((40 * result.Width) + 40) * 4;
+        var (b, g, r, a) = (result.Pixels[offset], result.Pixels[offset + 1], result.Pixels[offset + 2], result.Pixels[offset + 3]);
+        Assert.True(a > 0 && a < 255, $"Expected a genuinely semi-transparent alpha, got {a}.");
+        Assert.True(r <= a && g <= a && b <= a, $"Expected premultiplied channels <= alpha; got R={r} G={g} B={b} A={a}.");
+    }
+
+    [Fact]
+    public void RenderWarpedElementPreview_BoxWithoutPerspective_FallsBackToASolidFill()
+    {
+        // Perspective is documented as "callers only reach for this while a corner-drag is actually
+        // live" -- null must still degrade gracefully (never throw), same as the interface's own
+        // default implementation this class overrides.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var element = new TemplateBoxElement(
+            new NormalizedRect(0, 0, 1, 1), Z: 0, new Rgb24(10, 20, 30), BorderColor: null, BorderThickness: 0);
+
+        var result = preparer.RenderWarpedElementPreview(element, 5, 5);
+
+        Assert.Equal(5, result.Width);
+        Assert.Equal(5, result.Height);
+        AssertBgraPixel(result, 2, 2, r: 10, g: 20, b: 30, a: 255);
+    }
+
+    private static void AssertBgraPixel(BgraPixelBuffer buffer, int x, int y, byte r, byte g, byte b, byte a)
+    {
+        var offset = ((y * buffer.Width) + x) * 4;
+        Assert.Equal(b, buffer.Pixels[offset]);
+        Assert.Equal(g, buffer.Pixels[offset + 1]);
+        Assert.Equal(r, buffer.Pixels[offset + 2]);
+        Assert.Equal(a, buffer.Pixels[offset + 3]);
+    }
+
+    /// <summary>Weighted centroid of "greenness" (G channel minus the average of R/B, floored at 0)
+    /// over the whole image -- far more stable under bicubic edge blending than a raw bounding-box
+    /// midpoint or a single-pixel exact-color match, since faint partially-blended edge pixels
+    /// contribute little weight instead of skewing a min/max box equally with the solid core.</summary>
+    private static void AssertGreenCentroidNear(IImageSource image, double expectedX, double expectedY, double tolerance)
+    {
+        double sumWeight = 0, sumWeightX = 0, sumWeightY = 0;
+        for (var y = 0; y < image.Height; y++)
+        {
+            var row = image.GetScanline(y);
+            for (var x = 0; x < image.Width; x++)
+            {
+                var weight = Math.Max(0, row[x].G - ((row[x].R + row[x].B) / 2.0));
+                sumWeight += weight;
+                sumWeightX += weight * x;
+                sumWeightY += weight * y;
+            }
+        }
+
+        Assert.True(sumWeight > 0, "Expected some green-weighted pixels in the rendered output, found none.");
+        var centroidX = sumWeightX / sumWeight;
+        var centroidY = sumWeightY / sumWeight;
+        var distance = Math.Sqrt(Math.Pow(centroidX - expectedX, 2) + Math.Pow(centroidY - expectedY, 2));
+        Assert.True(
+            distance <= tolerance,
+            $"Expected the green centroid within {tolerance}px of ({expectedX:F2},{expectedY:F2}), but it was at ({centroidX:F2},{centroidY:F2}), {distance:F2}px away.");
+    }
+
+    private static (double A, double B, double C, double D, double E, double F, double G, double H) SolveProjectiveIndependently(
+        double[] srcX, double[] srcY, double[] dstX, double[] dstY)
+    {
+        // General 8-unknown linear solve for a..h in:
+        //   X' = (a*x + b*y + c) / (g*x + h*y + 1)
+        //   Y' = (d*x + e*y + f) / (g*x + h*y + 1)
+        // from 4 (x,y)->(X',Y') correspondences -- Gaussian elimination with partial pivoting,
+        // written fresh for this test, independent of the production Heckbert-shortcut solver.
+        var m = new double[8, 9];
+        for (var i = 0; i < 4; i++)
+        {
+            var x = srcX[i];
+            var y = srcY[i];
+            var xd = dstX[i];
+            var yd = dstY[i];
+
+            m[2 * i, 0] = x;
+            m[2 * i, 1] = y;
+            m[2 * i, 2] = 1;
+            m[2 * i, 6] = -x * xd;
+            m[2 * i, 7] = -y * xd;
+            m[2 * i, 8] = xd;
+
+            m[(2 * i) + 1, 3] = x;
+            m[(2 * i) + 1, 4] = y;
+            m[(2 * i) + 1, 5] = 1;
+            m[(2 * i) + 1, 6] = -x * yd;
+            m[(2 * i) + 1, 7] = -y * yd;
+            m[(2 * i) + 1, 8] = yd;
+        }
+
+        for (var col = 0; col < 8; col++)
+        {
+            var pivotRow = col;
+            for (var row = col + 1; row < 8; row++)
+            {
+                if (Math.Abs(m[row, col]) > Math.Abs(m[pivotRow, col]))
+                {
+                    pivotRow = row;
+                }
+            }
+
+            if (pivotRow != col)
+            {
+                for (var k = 0; k < 9; k++)
+                {
+                    (m[col, k], m[pivotRow, k]) = (m[pivotRow, k], m[col, k]);
+                }
+            }
+
+            var pivot = m[col, col];
+            for (var row = 0; row < 8; row++)
+            {
+                if (row == col)
+                {
+                    continue;
+                }
+
+                var factor = m[row, col] / pivot;
+                for (var k = col; k < 9; k++)
+                {
+                    m[row, k] -= factor * m[col, k];
+                }
+            }
+        }
+
+        var solution = new double[8];
+        for (var i = 0; i < 8; i++)
+        {
+            solution[i] = m[i, 8] / m[i, i];
+        }
+
+        return (solution[0], solution[1], solution[2], solution[3], solution[4], solution[5], solution[6], solution[7]);
+    }
+
+    private static void AssertPixelIsNotColor(IImageSource image, int x, int y, byte r, byte g, byte b)
+    {
+        var pixel = image.GetScanline(y)[x];
+        Assert.False(pixel.R == r && pixel.G == g && pixel.B == b, $"Expected ({x},{y}) to NOT be ({r},{g},{b}), but it was.");
+    }
+
     private static void AssertPixel(IImageSource image, int x, int y, byte r, byte g, byte b)
     {
         var pixel = image.GetScanline(y)[x];

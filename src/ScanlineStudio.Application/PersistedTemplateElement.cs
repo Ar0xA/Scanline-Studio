@@ -70,12 +70,24 @@ public sealed record PersistedTextElement(
 /// plan, 2026-09-01) are the SAME 4 trailing scalar fields <see cref="PersistedTextElement"/> already
 /// persists its own gradient this exact way -- see that record's own doc comment for why this sidesteps
 /// the "silent missing-registration" failure mode a separate <c>PersistedGradientColorStop</c> record
-/// would risk.</summary>
+/// would risk.
+/// <para><paramref name="PerspectiveEnabled"/>/<paramref name="Corner0X"/>..<paramref name="Corner3Y"/>
+/// (TX editor gap-items plan, item 3, 2026-09-02) persist <see cref="PerspectiveCorners"/> as 9 FLAT
+/// trailing scalars, not a single nested <c>PerspectiveCorners?</c> field -- deliberately consistent
+/// with every other field in this file being a flat scalar (and with <see cref="PersistedLineElement"/>'s
+/// own flat <c>X1</c>/<c>Y1</c>/<c>X2</c>/<c>Y2</c>), not because a nested record struct couldn't
+/// serialize. <see cref="PerspectiveEnabled"/> is the actual source of truth the loader reads --
+/// missing/default corner scalars on an older saved template are all 0 (a degenerate quad), but
+/// <see cref="PerspectiveEnabled"/> also defaults to <see langword="false"/> on the same older file,
+/// so the loader never constructs a <c>PerspectiveCorners</c> from them at all.</para></summary>
 public sealed record PersistedBoxElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,
     Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0,
     bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
+    Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
+    bool PerspectiveEnabled = false,
+    double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
+    double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th persisted element kind. Base
@@ -123,7 +135,12 @@ public sealed record PersistedImageElement(
     // to default), same additive convention IsBackground itself established, so no schema-version
     // bump and no migration. 0 means "written before this field existed"; the loader falls back to
     // the asset's own dimensions.
-    int NaturalPixelWidth = 0, int NaturalPixelHeight = 0)
+    int NaturalPixelWidth = 0, int NaturalPixelHeight = 0,
+    // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- same 9-flat-scalar
+    // convention as PersistedBoxElement's own Perspective fields; see that record's own doc comment.
+    bool PerspectiveEnabled = false,
+    double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
+    double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>What <see cref="ITemplateStore.SaveAsync"/> accepts and <see cref="ITemplateStore.LoadAsync"/>
