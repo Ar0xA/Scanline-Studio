@@ -47,6 +47,19 @@ public partial class TxImageEditorPaneView : UserControl
         /// call snaps a WHOLE line's two endpoints together -- an endpoint drag needs its own
         /// single-endpoint snap instead, see <see cref="TxImageEditorPaneViewModel.ApplySnappedLineEndpoint"/>).</summary>
         LineEndpoint,
+
+        /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- dragging
+        /// ONE of a perspective-enabled image/box element's 4 corner handles. Same shape as
+        /// <see cref="LineEndpoint"/> above (a new mode, not folded into <see cref="ElementResize"/>
+        /// -- that mode's own math assumes a box's corner/edge semantics against DERIVED Width/
+        /// Height, not an independent corner field), and same exclusions for the same reasons: left
+        /// OUT of the undo-push check right below (a corner drag pushes via the corner's own
+        /// <c>On*Changing</c>-coalesced hook instead, same as <see cref="Overlay"/>/
+        /// <see cref="ElementResize"/>/<see cref="LineEndpoint"/>) and out of
+        /// <see cref="OnCanvasPointerReleased"/>'s own snap-on-drop condition (corner snap-on-drop is
+        /// a deliberate v1 scope cut -- see <see cref="TxImageEditorPaneViewModel.ApplySnappedElementBounds"/>'s
+        /// own perspective-enabled early-return).</summary>
+        PerspectiveCorner,
     }
 
     /// <summary>Which toolbar "Add" button armed the placement tool currently pending on the canvas
@@ -99,6 +112,14 @@ public partial class TxImageEditorPaneView : UserControl
     /// <c>Tag</c> (<see cref="OnLineEndpointHandlePointerPressed"/>), same "read Tag, don't infer
     /// from geometry" convention <see cref="_resizeHandle"/> already uses.</summary>
     private bool _draggedIsFirstEndpoint;
+
+    /// <summary>Which of a dragged perspective-enabled element's 4 corners
+    /// <see cref="DragMode.PerspectiveCorner"/> is currently moving (0-3, matching
+    /// <see cref="PerspectiveCorners"/>' own TopLeft/TopRight/BottomRight/BottomLeft winding). Set
+    /// from the pressed handle's own AXAML <c>Tag</c> (<see cref="OnPerspectiveCornerHandlePointerPressed"/>),
+    /// same "read Tag, don't infer from geometry" convention <see cref="_resizeHandle"/>/
+    /// <see cref="_draggedIsFirstEndpoint"/> already use.</summary>
+    private int _draggedCornerIndex;
 
     /// <summary>See <see cref="OnOpenElementQuickStyleFlyout"/>'s own doc comment for why this
     /// exists -- <see cref="ContextMenu.PlacementTarget"/> is never populated by Avalonia itself, so
@@ -724,6 +745,27 @@ public partial class TxImageEditorPaneView : UserControl
         StartDrag(DragMode.LineEndpoint, e);
     }
 
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- a perspective-enabled
+    /// image/box element's 4 corner handles, NOT the 8 axis-aligned resize handles above (see
+    /// <see cref="DragMode.PerspectiveCorner"/>'s own doc comment for why this needs a genuinely
+    /// separate handler/drag mode). Same Locked/left-button gates as
+    /// <see cref="OnLineEndpointHandlePointerPressed"/>, same "read Tag" convention -- <c>Tag</c> is
+    /// <c>"Corner0"</c>..<c>"Corner3"</c> (set in the image/box DataTemplate's own corner-handle
+    /// controls), parsed here into <see cref="_draggedCornerIndex"/>.</summary>
+    private void OnPerspectiveCornerHandlePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is not Control { DataContext: ITemplateElementViewModel element } control || element.Locked
+            || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed
+            || control.Tag is not string tagValue || tagValue is not ("Corner0" or "Corner1" or "Corner2" or "Corner3"))
+        {
+            return;
+        }
+
+        _draggedElement = element;
+        _draggedCornerIndex = tagValue[^1] - '0';
+        StartDrag(DragMode.PerspectiveCorner, e);
+    }
+
     /// <summary>Captures on <see cref="EditorCanvas"/> itself (not the pressed sub-control) so every
     /// subsequent move/release during this drag routes through the canvas's own handlers below,
     /// regardless of which element (crop body, resize handle, a canvas element, an element's own
@@ -789,7 +831,11 @@ public partial class TxImageEditorPaneView : UserControl
         // exact bug class already fixed once at AlignSelectedElementToCrop.
         if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
-            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing or DragMode.LineEndpoint))
+            // PerspectiveCorner excluded here for the SAME "pushes via the element's own
+            // On*Changing-coalesced hook instead" reason as Overlay/ElementResize/LineEndpoint --
+            // this file's own LineEndpoint comment above documents the exact double-push bug an
+            // earlier omission caused; not repeating it here.
+            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing or DragMode.LineEndpoint or DragMode.PerspectiveCorner))
             {
                 vm.PushUndoSnapshotForDragGesture();
             }
@@ -909,6 +955,93 @@ public partial class TxImageEditorPaneView : UserControl
                 }
 
                 break;
+            case DragMode.PerspectiveCorner when _draggedElement is { } draggedElement:
+                // TX editor gap-items plan, item 3 -- writes an ABSOLUTE position every frame, same
+                // "no delta-accumulation, no incremental-rounding drift" reasoning as LineEndpoint's
+                // own identical convention above. Gated behind a real-time convexity clamp
+                // (TryWritePerspectiveCorner's own doc comment) -- a rejected candidate position
+                // simply doesn't move the corner further that frame, same silent-clamp UX as every
+                // other real-time drag constraint in this editor.
+                TryWritePerspectiveCorner(
+                    draggedElement, _draggedCornerIndex, current.X / vm.CanvasDisplayWidth, current.Y / vm.CanvasDisplayHeight,
+                    vm.WorkingCopyWidth, vm.WorkingCopyHeight);
+                break;
+        }
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 -- writes corner <paramref name="cornerIndex"/> of
+    /// <paramref name="element"/> to (<paramref name="x"/>, <paramref name="y"/>) ONLY if the
+    /// resulting quad is still convex/well-formed, checked via
+    /// <see cref="PerspectiveCorners.IsConvexAndWellFormed"/> -- the SAME shared check
+    /// <c>TransmitImagePreparer</c>'s own render path uses (moved to <see cref="PerspectiveCorners"/>
+    /// specifically so this UI-layer clamp and the render-time check can never independently drift
+    /// apart -- <c>ScanlineStudio.UI</c> cannot reference <c>Core.Imaging</c>). Candidate corners are
+    /// converted to WORKING-COPY pixel space first (not left in normalized [0,1] space) so the
+    /// check's own absolute edge-length floor means something at a comparable scale to what the
+    /// render path itself checks in destination-pixel space -- a stated approximation, not exact
+    /// space-matching (the final TX-mode target size isn't fixed at edit time, so exact matching
+    /// isn't possible client-side). Public, not private -- same "unit-testable without simulating
+    /// real Avalonia pointer events" reasoning <see cref="ComputeElementResize"/>'s own doc comment
+    /// gives (this project has no <c>InternalsVisibleTo</c> wired up anywhere).</summary>
+    public static void TryWritePerspectiveCorner(
+        ITemplateElementViewModel element, int cornerIndex, double x, double y, double workingCopyWidth, double workingCopyHeight)
+    {
+        var (c0x, c0y, c1x, c1y, c2x, c2y, c3x, c3y) = element switch
+        {
+            ImageElementViewModel image => (image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+            BoxElementViewModel box => (box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+            _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+        };
+
+        switch (cornerIndex)
+        {
+            case 0: (c0x, c0y) = (x, y); break;
+            case 1: (c1x, c1y) = (x, y); break;
+            case 2: (c2x, c2y) = (x, y); break;
+            case 3: (c3x, c3y) = (x, y); break;
+            default: return;
+        }
+
+        var candidate = new PerspectiveCorners(
+            c0x * workingCopyWidth, c0y * workingCopyHeight,
+            c1x * workingCopyWidth, c1y * workingCopyHeight,
+            c2x * workingCopyWidth, c2y * workingCopyHeight,
+            c3x * workingCopyWidth, c3y * workingCopyHeight);
+        if (!candidate.IsConvexAndWellFormed())
+        {
+            return;
+        }
+
+        switch (element)
+        {
+            case ImageElementViewModel image:
+                SetCorner(image, cornerIndex, x, y);
+                break;
+            case BoxElementViewModel box:
+                SetCorner(box, cornerIndex, x, y);
+                break;
+        }
+    }
+
+    private static void SetCorner(ImageElementViewModel image, int cornerIndex, double x, double y)
+    {
+        switch (cornerIndex)
+        {
+            case 0: image.Corner0X = x; image.Corner0Y = y; break;
+            case 1: image.Corner1X = x; image.Corner1Y = y; break;
+            case 2: image.Corner2X = x; image.Corner2Y = y; break;
+            case 3: image.Corner3X = x; image.Corner3Y = y; break;
+        }
+    }
+
+    private static void SetCorner(BoxElementViewModel box, int cornerIndex, double x, double y)
+    {
+        switch (cornerIndex)
+        {
+            case 0: box.Corner0X = x; box.Corner0Y = y; break;
+            case 1: box.Corner1X = x; box.Corner1Y = y; break;
+            case 2: box.Corner2X = x; box.Corner2Y = y; break;
+            case 3: box.Corner3X = x; box.Corner3Y = y; break;
         }
     }
 
