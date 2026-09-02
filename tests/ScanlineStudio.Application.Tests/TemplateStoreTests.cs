@@ -82,12 +82,20 @@ public sealed class TemplateStoreTests : IDisposable
                 // TX editor gap-items plan (2026-09-01, box gradient fill) -- same 4 trailing
                 // scalars as PersistedTextElement's own gradient, round-tripped the identical way.
                 GradientEnabled: true, GradientKind: TextGradientKind.Vertical,
-                GradientStartColor: new Rgb24(10, 20, 30), GradientEndColor: new Rgb24(40, 50, 60)),
+                GradientStartColor: new Rgb24(10, 20, 30), GradientEndColor: new Rgb24(40, 50, 60),
+                // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- 9 flat
+                // scalars, round-tripped the identical way as every other trailing addition here.
+                PerspectiveEnabled: true,
+                Corner0X: 0.1, Corner0Y: 0.1, Corner1X: 0.9, Corner1Y: 0.15,
+                Corner2X: 0.85, Corner2Y: 0.9, Corner3X: 0.05, Corner3Y: 0.95),
             new PersistedImageElement(
                 X: 0.7, Y: 0.7, Width: 0.2, Height: 0.2, Z: 1, Locked: true,
                 AssetFileName: "asset1.png", Fit: ImageFitMode.Cover,
                 OriginKind: PersistedImageSourceKind.File, OriginPayload: "/some/original.png",
-                IsBackground: true),
+                IsBackground: true,
+                PerspectiveEnabled: true,
+                Corner0X: 0.6, Corner0Y: 0.6, Corner1X: 0.8, Corner1Y: 0.6,
+                Corner2X: 0.8, Corner2Y: 0.8, Corner3X: 0.6, Corner3Y: 0.8),
         ]);
 
         await store.SaveAsync(templateId, "Contest", document);
@@ -119,6 +127,15 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(TextGradientKind.Vertical, box.GradientKind);
         Assert.Equal(new Rgb24(10, 20, 30), box.GradientStartColor);
         Assert.Equal(new Rgb24(40, 50, 60), box.GradientEndColor);
+        Assert.True(box.PerspectiveEnabled);
+        Assert.Equal(0.1, box.Corner0X);
+        Assert.Equal(0.1, box.Corner0Y);
+        Assert.Equal(0.9, box.Corner1X);
+        Assert.Equal(0.15, box.Corner1Y);
+        Assert.Equal(0.85, box.Corner2X);
+        Assert.Equal(0.9, box.Corner2Y);
+        Assert.Equal(0.05, box.Corner3X);
+        Assert.Equal(0.95, box.Corner3Y);
 
         var image = Assert.IsType<PersistedImageElement>(loaded.Elements[2]);
         Assert.Equal("asset1.png", image.AssetFileName);
@@ -129,6 +146,9 @@ public sealed class TemplateStoreTests : IDisposable
         // Locked already round-trips, so leaving IsBackground unpersisted would round-trip a
         // background element into a WORSE state than before Phase 6).
         Assert.True(image.IsBackground);
+        Assert.True(image.PerspectiveEnabled);
+        Assert.Equal(0.6, image.Corner0X);
+        Assert.Equal(0.8, image.Corner2X);
     }
 
     [Fact]
@@ -176,6 +196,48 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(TextGradientKind.Radial, gradient.Kind);
         Assert.Equal(new Rgb24(10, 20, 30), gradient.Stops[0].Color);
         Assert.Equal(new Rgb24(40, 50, 60), gradient.Stops[1].Color);
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- same
+    /// "ToTemplateElementAsync is a second hand-maintained switch" bug class the gradient/bitmap-fill
+    /// tests above already pin, applied to Perspective. Also pins the RAW-corners bbox rule
+    /// (PerspectiveCorners.ToBoundingBox on the un-projected corners, not the base X/Y/Width/Height
+    /// fields) -- this document's own X/Y/Width/Height deliberately do NOT match the corners' real
+    /// bbox, so a test that passed by coincidentally reading the base fields instead would fail here.</summary>
+    [Fact]
+    public async Task SaveAsync_PerspectiveBox_PassesTheCornersAndTheirOwnBoundingBoxToTheThumbnailRenderer()
+    {
+        var store = CreateStore();
+        var templateId = store.CreateTemplateId("Perspective thumbnail");
+        var document = new PersistedTemplateDocument([
+            new PersistedBoxElement(
+                X: 0.5, Y: 0.5, Width: 1, Height: 1, Z: 0, Locked: false,
+                FillColor: new Rgb24(1, 2, 3), BorderColor: null, BorderThickness: 0, Opacity: 1.0,
+                PerspectiveEnabled: true,
+                Corner0X: 0.2, Corner0Y: 0.3, Corner1X: 0.7, Corner1Y: 0.25,
+                Corner2X: 0.65, Corner2Y: 0.8, Corner3X: 0.15, Corner3Y: 0.75),
+        ]);
+
+        await store.SaveAsync(templateId, "Perspective thumbnail", document);
+
+        var thumbnailBox = Assert.IsType<TemplateBoxElement>(Assert.Single(_preparer.ApplyTemplateDocuments[0].Elements));
+        if (thumbnailBox.Perspective is not { } corners)
+        {
+            Assert.Fail("Expected a non-null Perspective.");
+            return;
+        }
+
+        Assert.Equal(0.2, corners.Corner0X);
+        Assert.Equal(0.3, corners.Corner0Y);
+        Assert.Equal(0.65, corners.Corner2X);
+        Assert.Equal(0.8, corners.Corner2Y);
+
+        // bbox of the 4 corners above: X in [0.15, 0.7], Y in [0.25, 0.8] -- NOT the document's own
+        // X:0.5/Y:0.5/Width:1/Height:1.
+        Assert.Equal(0.15, thumbnailBox.Bounds.X, precision: 10);
+        Assert.Equal(0.25, thumbnailBox.Bounds.Y, precision: 10);
+        Assert.Equal(0.55, thumbnailBox.Bounds.Width, precision: 10);
+        Assert.Equal(0.55, thumbnailBox.Bounds.Height, precision: 10);
     }
 
     /// <summary>TX editor gap-items plan, item 4b (picture fill, 2026-09-01) -- plan-review's own
