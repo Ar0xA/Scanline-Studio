@@ -1,5 +1,7 @@
 using AvaloniaColor = Avalonia.Media.Color;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
@@ -14,20 +16,50 @@ namespace ScanlineStudio.UI.ViewModels;
 /// <see cref="PushUndoSnapshotForGeometryChange"/> convention) since both implement
 /// <see cref="ITemplateElementViewModel"/> and share one remove/undo/rotate path in
 /// <see cref="TxImageEditorPaneViewModel"/> -- see that class's own <c>CreateBoxElement</c> for the
-/// construction-time wiring.</summary>
-public sealed partial class BoxElementViewModel : ObservableObject, ITemplateElementViewModel
+/// construction-time wiring.
+///
+/// <para><b>X/Y/Width/Height are MODE-SWITCHED</b> -- see <see cref="ImageElementViewModel"/>'s own
+/// doc comment for the full design (identical mechanism on both element kinds).</para></summary>
+public sealed partial class BoxElementViewModel : ObservableObject, ITemplateElementViewModel, IDisposable
 {
     [ObservableProperty]
-    private double _x = 0.5;
+    private double _naturalX = 0.5;
 
     [ObservableProperty]
-    private double _y = 0.5;
+    private double _naturalY = 0.5;
 
     [ObservableProperty]
-    private double _width = 0.3;
+    private double _naturalWidth = 0.3;
 
     [ObservableProperty]
-    private double _height = 0.2;
+    private double _naturalHeight = 0.2;
+
+    [ObservableProperty]
+    private bool _perspectiveEnabled;
+
+    [ObservableProperty]
+    private double _corner0X;
+
+    [ObservableProperty]
+    private double _corner0Y;
+
+    [ObservableProperty]
+    private double _corner1X;
+
+    [ObservableProperty]
+    private double _corner1Y;
+
+    [ObservableProperty]
+    private double _corner2X;
+
+    [ObservableProperty]
+    private double _corner2Y;
+
+    [ObservableProperty]
+    private double _corner3X;
+
+    [ObservableProperty]
+    private double _corner3Y;
 
     [ObservableProperty]
     private int _z;
@@ -112,6 +144,9 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public IRelayCommand? PasteStyleCommand { get; init; }
 
+    /// <inheritdoc cref="ImageElementViewModel.TogglePerspectiveCommand"/>
+    public IRelayCommand? TogglePerspectiveCommand { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     /// <summary>TX workflow modernization plan, Phase 1 (Fill &amp; Border flyout) -- box's own
@@ -126,6 +161,163 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// comment).</summary>
     public Action? PushUndoSnapshotForStyleChange { get; init; }
 
+    /// <inheritdoc cref="ImageElementViewModel.X"/>
+    public double X
+    {
+        get
+        {
+            if (!PerspectiveEnabled)
+            {
+                return NaturalX;
+            }
+
+            var bbox = CornersBoundingBox();
+            return bbox.X + (bbox.Width / 2);
+        }
+        set
+        {
+            if (!double.IsFinite(value))
+            {
+                return;
+            }
+
+            if (PerspectiveEnabled)
+            {
+                var delta = value - X;
+                Corner0X += delta;
+                Corner1X += delta;
+                Corner2X += delta;
+                Corner3X += delta;
+            }
+            else
+            {
+                NaturalX = value;
+            }
+        }
+    }
+
+    /// <inheritdoc cref="ImageElementViewModel.Y"/>
+    public double Y
+    {
+        get
+        {
+            if (!PerspectiveEnabled)
+            {
+                return NaturalY;
+            }
+
+            var bbox = CornersBoundingBox();
+            return bbox.Y + (bbox.Height / 2);
+        }
+        set
+        {
+            if (!double.IsFinite(value))
+            {
+                return;
+            }
+
+            if (PerspectiveEnabled)
+            {
+                var delta = value - Y;
+                Corner0Y += delta;
+                Corner1Y += delta;
+                Corner2Y += delta;
+                Corner3Y += delta;
+            }
+            else
+            {
+                NaturalY = value;
+            }
+        }
+    }
+
+    /// <inheritdoc cref="ImageElementViewModel.Width"/>
+    public double Width
+    {
+        get
+        {
+            if (!PerspectiveEnabled)
+            {
+                return NaturalWidth;
+            }
+
+            return CornersBoundingBox().Width;
+        }
+        set
+        {
+            if (!double.IsFinite(value))
+            {
+                return;
+            }
+
+            var w = Math.Max(0, value);
+            if (PerspectiveEnabled)
+            {
+                var bbox = CornersBoundingBox();
+                var centerX = bbox.X + (bbox.Width / 2);
+                if (bbox.Width <= 1e-9)
+                {
+                    return;
+                }
+
+                var scale = w / bbox.Width;
+                Corner0X = centerX + ((Corner0X - centerX) * scale);
+                Corner1X = centerX + ((Corner1X - centerX) * scale);
+                Corner2X = centerX + ((Corner2X - centerX) * scale);
+                Corner3X = centerX + ((Corner3X - centerX) * scale);
+            }
+            else
+            {
+                NaturalWidth = w;
+            }
+        }
+    }
+
+    /// <inheritdoc cref="ImageElementViewModel.Height"/>
+    public double Height
+    {
+        get
+        {
+            if (!PerspectiveEnabled)
+            {
+                return NaturalHeight;
+            }
+
+            return CornersBoundingBox().Height;
+        }
+        set
+        {
+            if (!double.IsFinite(value))
+            {
+                return;
+            }
+
+            var h = Math.Max(0, value);
+            if (PerspectiveEnabled)
+            {
+                var bbox = CornersBoundingBox();
+                var centerY = bbox.Y + (bbox.Height / 2);
+                if (bbox.Height <= 1e-9)
+                {
+                    return;
+                }
+
+                var scale = h / bbox.Height;
+                Corner0Y = centerY + ((Corner0Y - centerY) * scale);
+                Corner1Y = centerY + ((Corner1Y - centerY) * scale);
+                Corner2Y = centerY + ((Corner2Y - centerY) * scale);
+                Corner3Y = centerY + ((Corner3Y - centerY) * scale);
+            }
+            else
+            {
+                NaturalHeight = h;
+            }
+        }
+    }
+
+    private NormalizedRect CornersBoundingBox() =>
+        new PerspectiveCorners(Corner0X, Corner0Y, Corner1X, Corner1Y, Corner2X, Corner2Y, Corner3X, Corner3Y).ToBoundingBox();
+
     public double LeftPixels => (X - (Width / 2)) * ImageWidth;
 
     public double TopPixels => (Y - (Height / 2)) * ImageHeight;
@@ -133,6 +325,15 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     public double CanvasWidthPixels => Width * ImageWidth;
 
     public double CanvasHeightPixels => Height * ImageHeight;
+
+    /// <inheritdoc cref="ImageElementViewModel.CanvasCorner0Point"/>
+    public Avalonia.Point CanvasCorner0Point => new((Corner0X * ImageWidth) - LeftPixels, (Corner0Y * ImageHeight) - TopPixels);
+
+    public Avalonia.Point CanvasCorner1Point => new((Corner1X * ImageWidth) - LeftPixels, (Corner1Y * ImageHeight) - TopPixels);
+
+    public Avalonia.Point CanvasCorner2Point => new((Corner2X * ImageWidth) - LeftPixels, (Corner2Y * ImageHeight) - TopPixels);
+
+    public Avalonia.Point CanvasCorner3Point => new((Corner3X * ImageWidth) - LeftPixels, (Corner3Y * ImageHeight) - TopPixels);
 
     /// <summary>BorderThickness is normalized to image height (same convention as
     /// <see cref="OverlayElementViewModel.FontSizeRelative"/>, per spec/15-template-designer.md) --
@@ -224,36 +425,137 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
         : new SolidColorBrush(ToAvaloniaColor(FillColor));
 
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- while perspective is on,
+    /// the Border's own local Fill/Border/Opacity bindings must yield to the warped-preview `Image`
+    /// child, but Avalonia's LocalValue-beats-Style precedence means a `Style` selector CANNOT
+    /// override those already-local bindings (verified, not assumed, before this design was
+    /// finalized). So the AXAML binds to these 3 "Effective*" properties INSTEAD of the raw ones
+    /// directly -- still a single local binding each, no precedence conflict, and pixel-identical to
+    /// the raw properties when perspective is off (nothing changes for the ordinary box).
+    /// <see cref="CornerRadius"/> deliberately has no `Effective*` counterpart: a `Transparent`
+    /// background with 0 border thickness draws no visible rounded chrome regardless (Avalonia's
+    /// `Border` doesn't clip its child by default), so neutralizing it would be a no-op.</summary>
+    public IBrush EffectiveBackground => PerspectiveEnabled ? Brushes.Transparent : FillBrush;
+
+    public double EffectiveBorderThicknessPixels => PerspectiveEnabled ? 0 : CanvasBorderThicknessPixels;
+
+    public double EffectiveOpacity => PerspectiveEnabled ? 1 : Opacity;
+
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 
-    partial void OnXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+    /// <inheritdoc cref="ImageElementViewModel.ShowResizeHandles"/>
+    public bool ShowResizeHandles => !Locked && !PerspectiveEnabled;
 
-    partial void OnYChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+    public bool ShowPerspectiveCornerHandles => !Locked && PerspectiveEnabled;
 
-    partial void OnWidthChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
-
-    partial void OnHeightChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
-
-    partial void OnXChanged(double value) => OnPropertyChanged(nameof(LeftPixels));
-
-    partial void OnYChanged(double value) => OnPropertyChanged(nameof(TopPixels));
-
-    partial void OnWidthChanged(double value)
+    partial void OnLockedChanged(bool value)
     {
-        OnPropertyChanged(nameof(LeftPixels));
-        OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(ShowResizeHandles));
+        OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
     }
 
-    partial void OnHeightChanged(double value)
+    partial void OnNaturalXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnNaturalYChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnNaturalWidthChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnNaturalHeightChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnNaturalXChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnNaturalYChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnNaturalWidthChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnNaturalHeightChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner0XChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner0YChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner1XChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner1YChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner2XChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner2YChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner3XChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner3YChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnCorner0XChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner0YChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner1XChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner1YChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner2XChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner2YChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner3XChanged(double value) => RaiseGeometryChanged();
+
+    partial void OnCorner3YChanged(double value) => RaiseGeometryChanged();
+
+    /// <inheritdoc cref="ImageElementViewModel.RaiseGeometryChanged"/>
+    private void RaiseGeometryChanged()
     {
+        OnPropertyChanged(nameof(X));
+        OnPropertyChanged(nameof(Y));
+        OnPropertyChanged(nameof(Width));
+        OnPropertyChanged(nameof(Height));
+        OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(TopPixels));
+        OnPropertyChanged(nameof(CanvasWidthPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
+        OnPropertyChanged(nameof(CanvasCorner0Point));
+        OnPropertyChanged(nameof(CanvasCorner1Point));
+        OnPropertyChanged(nameof(CanvasCorner2Point));
+        OnPropertyChanged(nameof(CanvasCorner3Point));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
+
+    /// <inheritdoc cref="ImageElementViewModel.OnPerspectiveEnabledChanged"/>
+    partial void OnPerspectiveEnabledChanged(bool value)
+    {
+        RaiseGeometryChanged();
+        OnPropertyChanged(nameof(ShowResizeHandles));
+        OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        OnPropertyChanged(nameof(EffectiveBorderThicknessPixels));
+        OnPropertyChanged(nameof(EffectiveOpacity));
+        if (!value)
+        {
+            var old = WarpedCanvasBitmap;
+            WarpedCanvasBitmap = null;
+            OnPropertyChanged(nameof(WarpedCanvasBitmap));
+            if (old is not null)
+            {
+                Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+            }
+        }
     }
 
     partial void OnImageWidthChanged(double value)
     {
         OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(CanvasCorner0Point));
+        OnPropertyChanged(nameof(CanvasCorner1Point));
+        OnPropertyChanged(nameof(CanvasCorner2Point));
+        OnPropertyChanged(nameof(CanvasCorner3Point));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
     }
 
     partial void OnImageHeightChanged(double value)
@@ -262,31 +564,60 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         OnPropertyChanged(nameof(CanvasHeightPixels));
         OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
         OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
+        OnPropertyChanged(nameof(CanvasCorner0Point));
+        OnPropertyChanged(nameof(CanvasCorner1Point));
+        OnPropertyChanged(nameof(CanvasCorner2Point));
+        OnPropertyChanged(nameof(CanvasCorner3Point));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
     }
 
     partial void OnBorderThicknessChanged(double value)
     {
         OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
         OnPropertyChanged(nameof(BorderThicknessPx));
+        OnPropertyChanged(nameof(EffectiveBorderThicknessPixels));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
     }
 
     partial void OnCornerRadiusChanged(double value)
     {
         OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
         OnPropertyChanged(nameof(CornerRadiusPx));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
     }
 
     partial void OnBorderColorChanged(Rgb24? value)
     {
         OnPropertyChanged(nameof(HasBorder));
         OnPropertyChanged(nameof(BorderColorForPicker));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
     }
 
     // Fill & Border flyout undo wiring -- see PushUndoSnapshotForStyleChange's own doc comment for
     // why these five didn't have one before this change.
     partial void OnFillColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
-    partial void OnFillColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
+    partial void OnFillColorChanged(Rgb24 value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
 
     partial void OnBorderColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
 
@@ -294,23 +625,141 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     partial void OnOpacityChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
 
+    partial void OnOpacityChanged(double value)
+    {
+        OnPropertyChanged(nameof(EffectiveOpacity));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
+
     partial void OnCornerRadiusChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     // Gradient fill undo wiring -- same PushUndoSnapshotForStyleChange convention as
     // FillColor/BorderColor/etc. above, plus a FillBrush re-notify so the canvas preview updates.
     partial void OnGradientEnabledChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
 
-    partial void OnGradientEnabledChanged(bool value) => OnPropertyChanged(nameof(FillBrush));
+    partial void OnGradientEnabledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
 
     partial void OnGradientKindChanging(TextGradientKind value) => PushUndoSnapshotForStyleChange?.Invoke();
 
-    partial void OnGradientKindChanged(TextGradientKind value) => OnPropertyChanged(nameof(FillBrush));
+    partial void OnGradientKindChanged(TextGradientKind value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
 
     partial void OnGradientStartColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
-    partial void OnGradientStartColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
+    partial void OnGradientStartColorChanged(Rgb24 value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
 
     partial void OnGradientEndColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
-    partial void OnGradientEndColorChanged(Rgb24 value) => OnPropertyChanged(nameof(FillBrush));
+    partial void OnGradientEndColorChanged(Rgb24 value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 -- the live warped-preview bitmap. See
+    /// <see cref="ImageElementViewModel.WarpedCanvasBitmap"/>'s own doc comment; identical shape.</summary>
+    public WriteableBitmap? WarpedCanvasBitmap { get; private set; }
+
+    /// <inheritdoc cref="ImageElementViewModel.RenderWarpedPreview"/>
+    public Func<int, int, BgraPixelBuffer>? RenderWarpedPreview
+    {
+        get => _renderWarpedPreview;
+        set
+        {
+            _renderWarpedPreview = value;
+            if (PerspectiveEnabled)
+            {
+                ScheduleWarpedPreviewRebuild();
+            }
+        }
+    }
+
+    private Func<int, int, BgraPixelBuffer>? _renderWarpedPreview;
+
+    private bool _warpedPreviewRebuildScheduled;
+
+    private const int PreviewSizeCeilingPx = 2048;
+
+    private void ScheduleWarpedPreviewRebuild()
+    {
+        if (_warpedPreviewRebuildScheduled)
+        {
+            return;
+        }
+
+        _warpedPreviewRebuildScheduled = true;
+        Dispatcher.UIThread.Post(RebuildWarpedPreview, DispatcherPriority.Input);
+    }
+
+    private void RebuildWarpedPreview()
+    {
+        _warpedPreviewRebuildScheduled = false;
+        if (_disposed || !PerspectiveEnabled || RenderWarpedPreview is null)
+        {
+            return;
+        }
+
+        var targetWidth = Math.Max(1, (int)Math.Round(Math.Min(CanvasWidthPixels, PreviewSizeCeilingPx)));
+        var targetHeight = Math.Max(1, (int)Math.Round(Math.Min(CanvasHeightPixels, PreviewSizeCeilingPx)));
+        var buffer = RenderWarpedPreview(targetWidth, targetHeight);
+
+        var old = WarpedCanvasBitmap;
+        WarpedCanvasBitmap = BgraPixelBufferConverter.ToBitmap(buffer);
+        OnPropertyChanged(nameof(WarpedCanvasBitmap));
+        if (old is not null)
+        {
+            Dispatcher.UIThread.Post(old.Dispose, DispatcherPriority.Background);
+        }
+    }
+
+    private bool _disposed;
+
+    /// <summary>TX editor gap-items plan, item 3 -- <see cref="BoxElementViewModel"/> didn't need
+    /// <see cref="IDisposable"/> before this feature (no bitmap resource); now it owns
+    /// <see cref="WarpedCanvasBitmap"/>. Same deferred-dispose/guarded-against-a-second-call shape as
+    /// <see cref="ImageElementViewModel.Dispose"/> -- every existing element-disposal call site
+    /// already checks the generic <c>element is IDisposable</c>, so no call-site edit is needed.</summary>
+    public void Dispose()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+        if (WarpedCanvasBitmap is { } warped)
+        {
+            Dispatcher.UIThread.Post(warped.Dispose, DispatcherPriority.Background);
+        }
+    }
 }

@@ -316,7 +316,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// (normalized, crop-relative, raw pixels) since only their RELATIVE positions matter here.</summary>
     private static bool TryComputeLocalWarpGeometry(PerspectiveCorners corners, int targetWidthPx, int targetHeightPx, out PerspectiveCorners localCorners)
     {
-        if (!IsConvexAndWellFormed(corners))
+        if (!corners.IsConvexAndWellFormed())
         {
             localCorners = default;
             return false;
@@ -917,7 +917,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             corners.Corner2X * imageWidth, corners.Corner2Y * imageHeight,
             corners.Corner3X * imageWidth, corners.Corner3Y * imageHeight);
 
-        if (!IsConvexAndWellFormed(destCorners))
+        if (!destCorners.IsConvexAndWellFormed())
         {
             bboxPx = default;
             subBitmapWidth = 0;
@@ -945,59 +945,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return true;
     }
 
-    /// <summary>Round-4/5 code-review-shaped fix (this feature's own plan-review, not a prior
-    /// session's finding): the normalized cross product at each of the 4 vertices (a dimensionless
-    /// sin-of-interior-angle, scale-invariant BY CONSTRUCTION -- a raw, un-normalized cross product
-    /// scales as edge-length-squared, so a small legitimately-square element and a large near-
-    /// degenerate quad can't be compared against the same fixed threshold correctly), plus a
-    /// separate absolute edge-length floor (rejects near-coincident vertices specifically, which
-    /// would otherwise make the normalized ratio an unstable 0/0). All 4 must share the same sign
-    /// AND clear the angular epsilon for the quad to be accepted.</summary>
-    private static bool IsConvexAndWellFormed(PerspectiveCorners c)
-    {
-        Span<(double X, double Y)> pts = [(c.Corner0X, c.Corner0Y), (c.Corner1X, c.Corner1Y), (c.Corner2X, c.Corner2Y), (c.Corner3X, c.Corner3Y)];
-        const double minEdgeLength = 1e-3;
-        const double minAngleSin = 1e-3;
-        double? sign = null;
-        for (var i = 0; i < 4; i++)
-        {
-            var prev = pts[(i + 3) % 4];
-            var curr = pts[i];
-            var next = pts[(i + 1) % 4];
-            var inX = curr.X - prev.X;
-            var inY = curr.Y - prev.Y;
-            var outX = next.X - curr.X;
-            var outY = next.Y - curr.Y;
-            var inLen = Math.Sqrt((inX * inX) + (inY * inY));
-            var outLen = Math.Sqrt((outX * outX) + (outY * outY));
-            if (inLen < minEdgeLength || outLen < minEdgeLength)
-            {
-                return false;
-            }
-
-            var cross = (inX * outY) - (inY * outX);
-            var normalized = cross / (inLen * outLen);
-            if (Math.Abs(normalized) < minAngleSin)
-            {
-                return false;
-            }
-
-            var thisSign = Math.Sign(normalized);
-            if (sign is null)
-            {
-                sign = thisSign;
-            }
-            else if (sign != thisSign)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
     /// <summary>Render-layer degeneracy guard (defense-in-depth for a hand-edited/imported template
-    /// that never went through the UI's own real-time convexity clamp -- <see cref="IsConvexAndWellFormed"/>
+    /// that never went through the UI's own real-time convexity clamp -- <see cref="PerspectiveCorners.IsConvexAndWellFormed"/>
     /// already rejects most bad quads before a matrix is even solved, but a near-degenerate-not-quite-
     /// degenerate quad can still solve to an ill-conditioned matrix). Checks the projective
     /// denominator <c>w = g*x + h*y + 1</c> ONLY at the source rectangle's 4 corners -- <c>w</c> is
@@ -1005,7 +954,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// sample the whole extent. Requires BOTH: all 4 corner <c>w</c> values share the exact same sign
     /// (catches a horizon-crossing quad even when the ratio check below would pass -- e.g.
     /// w={+1,+1,-1,-1} has ratio 1 but genuinely crosses zero), AND a RELATIVE (not absolute -- an
-    /// absolute threshold repeats the exact non-scale-invariant mistake <see cref="IsConvexAndWellFormed"/>
+    /// absolute threshold repeats the exact non-scale-invariant mistake <see cref="PerspectiveCorners.IsConvexAndWellFormed"/>
     /// already avoids) <c>min(|w|) &gt; k*max(|w|)</c> for a small constant k.</summary>
     private static bool IsWellConditioned(Matrix4x4 m, int sourceWidthPx, int sourceHeightPx)
     {
