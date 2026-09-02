@@ -78,12 +78,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary><paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
     /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> (TX editor gap-items
     /// plan, 2026-09-01) mirror <see cref="RawTextElementSnapshot"/>'s own identical fields exactly
-    /// -- same trailing/optional treatment, same simplified 2-stop VM shape.</summary>
+    /// -- same trailing/optional treatment, same simplified 2-stop VM shape.
+    /// <para><paramref name="PerspectiveEnabled"/>/<paramref name="Corner0X"/>..<paramref name="Corner3Y"/>
+    /// (TX editor gap-items plan, item 3, 2026-09-02) -- without these, the FIRST Undo after enabling
+    /// perspective on a box would silently revert the warp, since <c>ApplyState</c>'s own recreate-
+    /// every-element-from-a-snapshot path has nowhere else to read the corners from. Same 9-flat-
+    /// scalar convention as <see cref="PersistedBoxElement"/>'s own identical fields -- see that
+    /// record's own doc comment for why (consistency with every other field here being flat, not a
+    /// nested <c>PerspectiveCorners?</c>).</para></summary>
     public sealed record RawBoxElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
         Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0,
         bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null)
+        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
+        bool PerspectiveEnabled = false,
+        double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
+        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Line element (TX editor gap-items plan, 2026-09-01) -- base <paramref name="X"/>/
@@ -120,7 +130,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // TX workflow modernization plan, Phase 7 -- trailing, defaulted (0 = unknown, same
         // convention IsBackground itself established), so ApplyState's own recreate-every-element-
         // from-a-snapshot path doesn't lose this field on the first Undo.
-        int NaturalPixelWidth = 0, int NaturalPixelHeight = 0)
+        int NaturalPixelWidth = 0, int NaturalPixelHeight = 0,
+        // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- same 9-flat-scalar
+        // convention as RawBoxElementSnapshot's own Perspective fields; see that record's own doc
+        // comment.
+        bool PerspectiveEnabled = false,
+        double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
+        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -1244,10 +1260,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
             box.CornerRadius,
-            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor),
+            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
+            box.PerspectiveEnabled,
+            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
-            image.NaturalPixelWidth, image.NaturalPixelHeight),
+            image.NaturalPixelWidth, image.NaturalPixelHeight,
+            image.PerspectiveEnabled,
+            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
         LineElementViewModel line => new RawLineElementSnapshot(
             line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
             line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity),
@@ -1436,6 +1456,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             }
 
             RecomputePreview();
+            return;
+        }
+
+        // TX editor gap-items plan, item 3 (perspective transform) -- v1 scope cut: grid-snap and
+        // alignment-guide-snap are both deliberately deferred for a warped element (same tier as the
+        // line case's own "out of scope in v1" alignment-guide note above). Checked BEFORE
+        // PushUndoSnapshot (round-3 plan-review nit) so a snap-drop on a warped element pushes no
+        // dead undo step, not just skips the 4 writes.
+        if (element is ImageElementViewModel { PerspectiveEnabled: true } or BoxElementViewModel { PerspectiveEnabled: true })
+        {
             return;
         }
 
@@ -2302,6 +2332,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _suspendPreview = true;
         try
         {
+            // TX editor gap-items plan, item 3 (perspective transform) -- turn perspective off
+            // FIRST, so the geometry writes below land on Natural fields, not the corners. Placed
+            // inside this SAME _suspendPreview window (not before PushUndoSnapshot/before the try)
+            // so its own coalesced undo push correctly no-ops here -- one undo step for the whole
+            // command, not two (round-3 plan-review finding).
+            if (element is ImageElementViewModel { PerspectiveEnabled: true } warpedImage)
+            {
+                DisablePerspective(warpedImage);
+            }
+
             element!.X = 0.5;
             element.Y = 0.5;
             element.Width = 1;
@@ -2330,6 +2370,147 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         RecomputePreview();
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- toggles
+    /// <see cref="ImageElementViewModel.PerspectiveEnabled"/>/<see cref="BoxElementViewModel.PerspectiveEnabled"/>.
+    /// Uses this method's OWN non-coalesced <see cref="PushUndoSnapshot"/> (not the coalesced
+    /// per-property push every ordinary geometry edit uses) -- a coalesced push from a toggle click
+    /// landing inside an open coalescing window from a preceding drag would be silently swallowed,
+    /// making the toggle un-undoable (round-3 plan-review nit). Wrapped in
+    /// <see cref="_suspendPreview"/>, same shape as <see cref="SetAsBackground"/>/
+    /// <see cref="Rotate"/>, so the corner-seed/writeback mutations below don't ALSO each push their
+    /// own coalesced step on top of this one explicit push.
+    /// <para>Enabling seeds the 4 corners from the CURRENT X/Y/Width/Height bbox; disabling writes
+    /// the CURRENT bbox (of the corners as they are right now, NOT a preserved "pre-warp original")
+    /// back into the Natural fields -- the only choice internally consistent with
+    /// <see cref="BuildRawSnapshot"/> already doing the identical "derived bbox becomes the base
+    /// X/Y/Width/Height" thing for every Undo/Redo snapshot of a warped element (round-2 plan-review
+    /// finding: this plan originally left that choice ambiguous across 3 different call sites).</para></summary>
+    [RelayCommand]
+    private void TogglePerspective(ITemplateElementViewModel? element)
+    {
+        var index = element is null ? -1 : OverlayElements.IndexOf(element);
+        if (index < 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            switch (element)
+            {
+                case ImageElementViewModel { PerspectiveEnabled: false } image:
+                    SeedPerspectiveCorners(image);
+                    image.PerspectiveEnabled = true;
+                    break;
+                case ImageElementViewModel { PerspectiveEnabled: true } image:
+                    DisablePerspective(image);
+                    break;
+                case BoxElementViewModel { PerspectiveEnabled: false } box:
+                    SeedPerspectiveCorners(box);
+                    box.PerspectiveEnabled = true;
+                    break;
+                case BoxElementViewModel { PerspectiveEnabled: true } box:
+                    DisablePerspective(box);
+                    break;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
+
+    private static void SeedPerspectiveCorners(ImageElementViewModel element)
+    {
+        var left = element.X - (element.Width / 2);
+        var top = element.Y - (element.Height / 2);
+        var right = element.X + (element.Width / 2);
+        var bottom = element.Y + (element.Height / 2);
+        element.Corner0X = left;
+        element.Corner0Y = top;
+        element.Corner1X = right;
+        element.Corner1Y = top;
+        element.Corner2X = right;
+        element.Corner2Y = bottom;
+        element.Corner3X = left;
+        element.Corner3Y = bottom;
+    }
+
+    private static void SeedPerspectiveCorners(BoxElementViewModel element)
+    {
+        var left = element.X - (element.Width / 2);
+        var top = element.Y - (element.Height / 2);
+        var right = element.X + (element.Width / 2);
+        var bottom = element.Y + (element.Height / 2);
+        element.Corner0X = left;
+        element.Corner0Y = top;
+        element.Corner1X = right;
+        element.Corner1Y = top;
+        element.Corner2X = right;
+        element.Corner2Y = bottom;
+        element.Corner3X = left;
+        element.Corner3Y = bottom;
+    }
+
+    private static void DisablePerspective(ImageElementViewModel element)
+    {
+        element.NaturalX = element.X;
+        element.NaturalY = element.Y;
+        element.NaturalWidth = element.Width;
+        element.NaturalHeight = element.Height;
+        element.PerspectiveEnabled = false;
+    }
+
+    private static void DisablePerspective(BoxElementViewModel element)
+    {
+        element.NaturalX = element.X;
+        element.NaturalY = element.Y;
+        element.NaturalWidth = element.Width;
+        element.NaturalHeight = element.Height;
+        element.PerspectiveEnabled = false;
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 -- see <see cref="Rotate"/>'s own call-site comment
+    /// for why this bypasses the derived X/Y/Width/Height setters entirely, applying the SAME
+    /// (x,y) -&gt; (1-y,x) 90°-clockwise transform every other element kind's own generic path uses,
+    /// directly to all 4 corner fields.</summary>
+    private static void RotateCorners(ImageElementViewModel element)
+    {
+        var (x0, y0) = (element.Corner0X, element.Corner0Y);
+        var (x1, y1) = (element.Corner1X, element.Corner1Y);
+        var (x2, y2) = (element.Corner2X, element.Corner2Y);
+        var (x3, y3) = (element.Corner3X, element.Corner3Y);
+        element.Corner0X = 1 - y0;
+        element.Corner0Y = x0;
+        element.Corner1X = 1 - y1;
+        element.Corner1Y = x1;
+        element.Corner2X = 1 - y2;
+        element.Corner2Y = x2;
+        element.Corner3X = 1 - y3;
+        element.Corner3Y = x3;
+    }
+
+    /// <inheritdoc cref="RotateCorners(ImageElementViewModel)"/>
+    private static void RotateCorners(BoxElementViewModel element)
+    {
+        var (x0, y0) = (element.Corner0X, element.Corner0Y);
+        var (x1, y1) = (element.Corner1X, element.Corner1Y);
+        var (x2, y2) = (element.Corner2X, element.Corner2Y);
+        var (x3, y3) = (element.Corner3X, element.Corner3Y);
+        element.Corner0X = 1 - y0;
+        element.Corner0Y = x0;
+        element.Corner1X = 1 - y1;
+        element.Corner1Y = x1;
+        element.Corner2X = 1 - y2;
+        element.Corner2Y = x2;
+        element.Corner3X = 1 - y3;
+        element.Corner3Y = x3;
     }
 
     /// <summary>Shared element-construction wiring for <see cref="AddOverlayElement"/> and
@@ -2442,7 +2623,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked,
         double cornerRadius = 0,
         bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
-        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null)
+        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
+        // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- trailing/defaulted,
+        // same additive convention every other Phase-N addition to this factory already uses.
+        bool perspectiveEnabled = false,
+        double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
+        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0)
     {
         var element = new BoxElementViewModel
         {
@@ -2462,6 +2648,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // (every non-Phase-8 site) never has to know or care what these defaults are.
             GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
             GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
+            // Perspective transform, item 3 -- required construction ORDER (round-1/round-3 plan-
+            // review blockers): the 8 corners MUST be assigned before PerspectiveEnabled, or every
+            // intermediate corner assignment would read a partially-populated quad through the
+            // mode-switched X/Width getters (harmless here since nothing re-reads them mid-
+            // initializer, but the wrong general habit to establish); PerspectiveEnabled MUST be
+            // assigned before the undo-delegate lines below, or a real, undone restore's own
+            // construction-time write would push a spurious undo step.
+            Corner0X = corner0X,
+            Corner0Y = corner0Y,
+            Corner1X = corner1X,
+            Corner1Y = corner1Y,
+            Corner2X = corner2X,
+            Corner2Y = corner2Y,
+            Corner3X = corner3X,
+            Corner3Y = corner3Y,
+            PerspectiveEnabled = perspectiveEnabled,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -2480,6 +2682,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             FlattenCommand = FlattenElementCommand,
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
+            TogglePerspectiveCommand = TogglePerspectiveCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
             // Set LAST, after FillColor/BorderColor/BorderThickness/Opacity/CornerRadius above --
             // an object initializer assigns in listed order, so their own construction-time
@@ -2489,7 +2692,43 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("BoxStyle"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
+        // RenderWarpedPreview can't be assigned inside the object initializer above (it must close
+        // over the constructed element itself, not in scope inside its own initializer) -- assigning
+        // it triggers its own one-shot rebuild if PerspectiveEnabled is already true at this point
+        // (BoxElementViewModel.RenderWarpedPreview's own setter, not a plain auto-property -- see its
+        // doc comment for the real, found bug this fixes: a restored/loaded warped element would
+        // otherwise stay silently invisible).
+        element.RenderWarpedPreview = (w, h) => RenderWarpedElementPreview(element, w, h);
         return element;
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 -- shared by <see cref="CreateBoxElement"/>'s and
+    /// <see cref="CreateImageElement"/>'s own <c>RenderWarpedPreview</c> delegate assignment. Builds
+    /// the element's own <see cref="TemplateBoxElement"/>/<see cref="TemplateImageElement"/> from its
+    /// CURRENT live state (Bounds/Perspective in the SAME space as its own X/Y/Width/Height -- this
+    /// call reads properties fresh every time it's invoked, not a value captured when the delegate
+    /// was assigned) and renders it via <see cref="_preparer"/>. NOT crop-projected (unlike
+    /// <see cref="BuildImageTemplateElement"/>/<see cref="BuildBoxTemplateElement"/>) --
+    /// <c>RenderWarpedElementPreview</c>'s own contract only needs the corners mutually consistent
+    /// with the element's own Bounds, in ANY space.</summary>
+    private BgraPixelBuffer RenderWarpedElementPreview(ITemplateElementViewModel element, int targetWidthPx, int targetHeightPx)
+    {
+        TemplateElement templateElement = element switch
+        {
+            ImageElementViewModel image => new TemplateImageElement(
+                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y).ToBoundingBox(),
+                Z: 0, image.Source, image.Fit,
+                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y)),
+            BoxElementViewModel box => new TemplateBoxElement(
+                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y).ToBoundingBox(),
+                Z: 0, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
+                box.GradientEnabled
+                    ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
+                    : null,
+                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y)),
+            _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
+        };
+        return _preparer.RenderWarpedElementPreview(templateElement, targetWidthPx, targetHeightPx);
     }
 
     /// <summary>Line counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
@@ -2546,7 +2785,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
     private ImageElementViewModel CreateImageElement(
         double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked,
-        bool isBackground = false, int naturalPixelWidth = 0, int naturalPixelHeight = 0)
+        bool isBackground = false, int naturalPixelWidth = 0, int naturalPixelHeight = 0,
+        // TX editor gap-items plan, item 3 -- same additive convention as CreateBoxElement's own
+        // identical trailing parameters; see that method's own comment for the required construction
+        // order (corners before PerspectiveEnabled, PerspectiveEnabled before the undo delegate).
+        bool perspectiveEnabled = false,
+        double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
+        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0)
     {
         var element = new ImageElementViewModel(source)
         {
@@ -2556,6 +2801,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Height = height,
             Fit = fit,
             Origin = origin,
+            Corner0X = corner0X,
+            Corner0Y = corner0Y,
+            Corner1X = corner1X,
+            Corner1Y = corner1Y,
+            Corner2X = corner2X,
+            Corner2Y = corner2Y,
+            Corner3X = corner3X,
+            Corner3Y = corner3Y,
+            PerspectiveEnabled = perspectiveEnabled,
             Z = z,
             Locked = locked,
             IsBackground = isBackground,
@@ -2577,9 +2831,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             FlattenCommand = FlattenElementCommand,
             FitCommand = SetSelectedImageFitCommand,
             ResetToOriginalSizeCommand = ResetImageElementToOriginalSizeCommand,
+            TogglePerspectiveCommand = TogglePerspectiveCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
+        // See CreateBoxElement's own identical comment -- must be assigned post-construction, and
+        // its own setter fixes the "restored already-warped element stays invisible" bug.
+        element.RenderWarpedPreview = (w, h) => RenderWarpedElementPreview(element, w, h);
         return element;
     }
 
@@ -2599,10 +2857,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
             box.CornerRadius,
-            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor),
+            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
+            box.PerspectiveEnabled,
+            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
-            image.NaturalPixelWidth, image.NaturalPixelHeight),
+            image.NaturalPixelWidth, image.NaturalPixelHeight,
+            image.PerspectiveEnabled,
+            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
         // Endpoints (X1/Y1/X2/Y2), NOT the base X/Y/Width/Height -- RawLineElementSnapshot's own
         // doc comment: the base fields are derived-for-uniformity-on-write only, endpoints are the
         // sole truth on read.
@@ -2744,7 +3006,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 return new PersistedBoxElement(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
                     box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
-                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor);
+                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
+                    box.PerspectiveEnabled,
+                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y);
             case RawImageElementSnapshot image:
                 // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
                 // own doc comment): safe against any reordering/filtering between here and the manifest
@@ -2774,7 +3038,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 return new PersistedImageElement(
                     image.X, image.Y, image.Width, image.Height, image.Z, image.Locked,
                     assetFileName, image.Fit, originKind, originPayload, image.IsBackground,
-                    image.NaturalPixelWidth, image.NaturalPixelHeight);
+                    image.NaturalPixelWidth, image.NaturalPixelHeight,
+                    image.PerspectiveEnabled,
+                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y);
             case RawLineElementSnapshot line:
                 return new PersistedLineElement(
                     line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
@@ -2854,7 +3120,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 return new RawBoxElementSnapshot(
                     box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
                     box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
-                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor);
+                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
+                    box.PerspectiveEnabled,
+                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -2871,7 +3139,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     // needs no migration -- same additive convention IsBackground's own doc comment
                     // describes.
                     image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
-                    image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height);
+                    image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height,
+                    image.PerspectiveEnabled,
+                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y);
             case PersistedLineElement line:
                 return new RawLineElementSnapshot(
                     line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
@@ -3564,6 +3834,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _suspendPreview = true;
         try
         {
+            // TX editor gap-items plan, item 3 -- same "turn perspective off first, inside this same
+            // suspend window" reasoning as SetAsBackground's own identical fix.
+            if (element.PerspectiveEnabled)
+            {
+                DisablePerspective(element);
+            }
+
             element.Width = width;
             element.Height = height;
         }
@@ -3909,26 +4186,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         const double offset = 0.02;
         var offsetSnapshot = snapshot switch
         {
-            RawImageElementSnapshot image => image with
-            {
-                X = Math.Clamp(image.X + offset, 0, 1),
-                Y = Math.Clamp(image.Y + offset, 0, 1),
-                Z = NextZ(),
-                IsBackground = false,
-                Locked = false,
-            },
+            RawImageElementSnapshot image => OffsetImageSnapshot(image, offset),
             RawTextElementSnapshot text => text with
             {
                 X = Math.Clamp(text.X + offset, 0, 1),
                 Y = Math.Clamp(text.Y + offset, 0, 1),
                 Z = NextZ(),
             },
-            RawBoxElementSnapshot box => box with
-            {
-                X = Math.Clamp(box.X + offset, 0, 1),
-                Y = Math.Clamp(box.Y + offset, 0, 1),
-                Z = NextZ(),
-            },
+            RawBoxElementSnapshot box => OffsetBoxSnapshot(box, offset),
             // Plan-review-flagged real trap: offsetting the base X/Y here (like every case above)
             // would do NOTHING for a line -- CreateElementFromSnapshot's own line case reads ONLY
             // X1/Y1/X2/Y2 (the sole truth, see RawLineElementSnapshot's own doc comment), never the
@@ -3966,20 +4231,99 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         return line with { X1 = line.X1 + dx, X2 = line.X2 + dx, Y1 = line.Y1 + dy, Y2 = line.Y2 + dy, Z = NextZ() };
     }
 
-    /// <summary>Clamps a single shift amount so BOTH <paramref name="a"/> and <paramref name="b"/>
-    /// (a line's two endpoint coordinates on one axis) stay inside <c>[0,1]</c> when shifted by the
-    /// SAME delta -- see <see cref="InsertClonedSnapshot"/>'s own line-case doc comment for why a
-    /// bare per-endpoint <c>Math.Clamp</c> is wrong here. Returns 0 (no shift) rather than throwing
-    /// if no single shared delta could keep both endpoints in range (only reachable when the line
-    /// already spans more than the whole canvas on this axis) -- a total function. Can return a
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- a perspective-enabled
+    /// element's corners are the SAME "must shift by ONE shared delta, not clamp each independently"
+    /// case <see cref="OffsetLineSnapshot"/>'s own doc comment already documents for a line's two
+    /// endpoints, generalized to 4 points: an independent per-corner clamp would shear the quad.
+    /// <paramref name="image"/>.<c>X</c>/<c>Y</c> (the Natural-field fallback, used only if perspective
+    /// is later toggled off) are shifted by the SAME delta too, so they stay a reasonable value
+    /// rather than going stale.</summary>
+    private RawImageElementSnapshot OffsetImageSnapshot(RawImageElementSnapshot image, double offset)
+    {
+        if (!image.PerspectiveEnabled)
+        {
+            return image with
+            {
+                X = Math.Clamp(image.X + offset, 0, 1),
+                Y = Math.Clamp(image.Y + offset, 0, 1),
+                Z = NextZ(),
+                IsBackground = false,
+                Locked = false,
+            };
+        }
+
+        var dx = ClampSharedOffsetDelta(offset, image.Corner0X, image.Corner1X, image.Corner2X, image.Corner3X);
+        var dy = ClampSharedOffsetDelta(offset, image.Corner0Y, image.Corner1Y, image.Corner2Y, image.Corner3Y);
+        return image with
+        {
+            X = image.X + dx,
+            Y = image.Y + dy,
+            Corner0X = image.Corner0X + dx,
+            Corner0Y = image.Corner0Y + dy,
+            Corner1X = image.Corner1X + dx,
+            Corner1Y = image.Corner1Y + dy,
+            Corner2X = image.Corner2X + dx,
+            Corner2Y = image.Corner2Y + dy,
+            Corner3X = image.Corner3X + dx,
+            Corner3Y = image.Corner3Y + dy,
+            Z = NextZ(),
+            IsBackground = false,
+            Locked = false,
+        };
+    }
+
+    /// <inheritdoc cref="OffsetImageSnapshot"/>
+    private RawBoxElementSnapshot OffsetBoxSnapshot(RawBoxElementSnapshot box, double offset)
+    {
+        if (!box.PerspectiveEnabled)
+        {
+            return box with
+            {
+                X = Math.Clamp(box.X + offset, 0, 1),
+                Y = Math.Clamp(box.Y + offset, 0, 1),
+                Z = NextZ(),
+            };
+        }
+
+        var dx = ClampSharedOffsetDelta(offset, box.Corner0X, box.Corner1X, box.Corner2X, box.Corner3X);
+        var dy = ClampSharedOffsetDelta(offset, box.Corner0Y, box.Corner1Y, box.Corner2Y, box.Corner3Y);
+        return box with
+        {
+            X = box.X + dx,
+            Y = box.Y + dy,
+            Corner0X = box.Corner0X + dx,
+            Corner0Y = box.Corner0Y + dy,
+            Corner1X = box.Corner1X + dx,
+            Corner1Y = box.Corner1Y + dy,
+            Corner2X = box.Corner2X + dx,
+            Corner2Y = box.Corner2Y + dy,
+            Corner3X = box.Corner3X + dx,
+            Corner3Y = box.Corner3Y + dy,
+            Z = NextZ(),
+        };
+    }
+
+    /// <summary>Clamps a single shift amount so EVERY value in <paramref name="values"/> (2 for a
+    /// line's endpoint pair, 4 for a perspective element's corners on one axis) stays inside
+    /// <c>[0,1]</c> when shifted by the SAME delta -- see <see cref="InsertClonedSnapshot"/>'s own
+    /// line-case doc comment for why a bare per-point <c>Math.Clamp</c> is wrong here (it would
+    /// distort a line's length/angle, or shear a perspective quad). Returns 0 (no shift) rather than
+    /// throwing if no single shared delta could keep every value in range (only reachable when the
+    /// shape already spans more than the whole canvas on this axis) -- a total function. Can return a
     /// delta that INVERTS SIGN and/or EXCEEDS <paramref name="offset"/> in magnitude (2nd-round
     /// code-review nit on this doc comment's own prior wording, which read as if the result were
-    /// always a mild trim) -- e.g. a line already past the canvas edge can need to shift the OPPOSITE
-    /// direction from the nominal +offset seed to land both endpoints back in range at all.</summary>
-    private static double ClampSharedOffsetDelta(double offset, double a, double b)
+    /// always a mild trim) -- e.g. a shape already past the canvas edge can need to shift the
+    /// OPPOSITE direction from the nominal +offset seed to land every value back in range at all.</summary>
+    private static double ClampSharedOffsetDelta(double offset, params double[] values)
     {
-        var min = Math.Max(-a, -b);
-        var max = Math.Min(1 - a, 1 - b);
+        var min = double.NegativeInfinity;
+        var max = double.PositiveInfinity;
+        foreach (var v in values)
+        {
+            min = Math.Max(min, -v);
+            max = Math.Min(max, 1 - v);
+        }
+
         return min <= max ? Math.Clamp(offset, min, max) : 0;
     }
 
@@ -4696,6 +5040,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     continue;
                 }
 
+                // TX editor gap-items plan, item 3 (perspective transform) -- a DELIBERATE
+                // DIFFERENCE from the generic path just below, not "matches existing behavior": the
+                // SAME per-point transform is applied DIRECTLY to all 4 corner fields (bypassing the
+                // derived X/Y/Width/Height setters, which would incorrectly translate+scale a quad
+                // instead of rotate it), without re-indexing which corner is "TopLeft" -- this DOES
+                // rotate the warped visual content along with the canvas position (the map is
+                // orientation-preserving, so winding/convexity survive, and 4 applications compose
+                // to the identity, same as every other element kind's own 4-clicks-returns-to-start
+                // property). Toggling perspective off afterward always adopts the CURRENT bbox (see
+                // TogglePerspective's own doc comment) -- no special-case discontinuity to handle.
+                if (element is ImageElementViewModel { PerspectiveEnabled: true } warpedImage)
+                {
+                    RotateCorners(warpedImage);
+                    continue;
+                }
+
+                if (element is BoxElementViewModel { PerspectiveEnabled: true } warpedBox)
+                {
+                    RotateCorners(warpedBox);
+                    continue;
+                }
+
                 var (x, y) = (element.X, element.Y);
                 element.X = 1 - y;
                 element.Y = x;
@@ -5031,7 +5397,36 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             or nameof(LineElementViewModel.CanvasStrokeThicknessPixels)
             or nameof(LineElementViewModel.StrokeThicknessPx)
             or nameof(LineElementViewModel.CanvasStartPoint)
-            or nameof(LineElementViewModel.CanvasEndPoint))
+            or nameof(LineElementViewModel.CanvasEndPoint)
+            // TX editor gap-items plan, item 3 (perspective transform) -- pure canvas chrome, the
+            // SAME "cascade of an already-unfiltered driver" tier as CanvasBitmap/FillBrush above.
+            // WarpedCanvasBitmap/CanvasCorner0Point..3Point are identically-named on BOTH
+            // ImageElementViewModel and BoxElementViewModel (one filter entry catches both, no
+            // sender-type check needed, same as CanvasWidthPixels above).
+            or nameof(ImageElementViewModel.WarpedCanvasBitmap)
+            or nameof(ImageElementViewModel.CanvasCorner0Point)
+            or nameof(ImageElementViewModel.CanvasCorner1Point)
+            or nameof(ImageElementViewModel.CanvasCorner2Point)
+            or nameof(ImageElementViewModel.CanvasCorner3Point)
+            or nameof(ImageElementViewModel.ShowResizeHandles)
+            or nameof(ImageElementViewModel.ShowPerspectiveCornerHandles)
+            // Round-2 plan-review finding: NaturalX/Y/Width/Height are the REAL backing fields once
+            // X/Y/Width/Height became mode-switched hand-written properties -- their own OnChanged
+            // hooks re-raise the PUBLIC X/Y/Width/Height names (preserving the external notification
+            // contract every existing AXAML binding relies on), so leaving Natural* itself unfiltered
+            // would double-recompute every ORDINARY (non-perspective) geometry edit: once from the
+            // real NaturalX notification, once more from the X cascade it triggers -- the exact
+            // FillBrush/CanvasBitmapFill double-recompute bug class already fixed twice above.
+            or nameof(ImageElementViewModel.NaturalX)
+            or nameof(ImageElementViewModel.NaturalY)
+            or nameof(ImageElementViewModel.NaturalWidth)
+            or nameof(ImageElementViewModel.NaturalHeight)
+            // Box-only chrome-neutralization cascades (round-2 plan-review fix) -- derived from
+            // PerspectiveEnabled/FillColor/Gradient*/BorderThickness/Opacity, all of which already
+            // independently drive a recompute.
+            or nameof(BoxElementViewModel.EffectiveBackground)
+            or nameof(BoxElementViewModel.EffectiveBorderThicknessPixels)
+            or nameof(BoxElementViewModel.EffectiveOpacity))
         {
             return;
         }
@@ -5047,6 +5442,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // already fixed once for box gradient fill. Sender-typed, not name-only, since these same
         // names must stay unfiltered for every OTHER element kind.
         if (sender is LineElementViewModel
+            && e.PropertyName is nameof(ITemplateElementViewModel.X)
+                or nameof(ITemplateElementViewModel.Y)
+                or nameof(ITemplateElementViewModel.Width)
+                or nameof(ITemplateElementViewModel.Height))
+        {
+            return;
+        }
+
+        // TX editor gap-items plan, item 3 (perspective transform) -- the SAME "derived cascade of a
+        // real driver" shape as the LineElementViewModel check just above, but MODE-GATED: for an
+        // ImageElementViewModel/BoxElementViewModel, X/Y/Width/Height ARE the real drivers when
+        // PerspectiveEnabled is false (every other case in this file relies on that), and become a
+        // cascade of the 8 corner fields ONLY once perspective is on -- so this filter entry, unlike
+        // the line one above, must check the flag too, not just the sender's type.
+        if (sender is ImageElementViewModel { PerspectiveEnabled: true } or BoxElementViewModel { PerspectiveEnabled: true }
             && e.PropertyName is nameof(ITemplateElementViewModel.X)
                 or nameof(ITemplateElementViewModel.Y)
                 or nameof(ITemplateElementViewModel.Width)
@@ -5662,14 +6072,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // DrawTemplateText checks BitmapFill first, so composing both fields here is safe
                 // regardless -- this switch doesn't need its own precedence logic.
                 text.BitmapFillEnabled ? text.BitmapFillSource : null),
-            BoxElementViewModel box => new TemplateBoxElement(
-                bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
-                // Same composition as text's own Gradient above -- the VM's simplified 2-stop shape,
-                // folded into a real TextGradient only when actually enabled.
-                box.GradientEnabled
-                    ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
-                    : null),
-            ImageElementViewModel image => new TemplateImageElement(bounds, image.Z, image.Source, image.Fit),
+            BoxElementViewModel box => BuildBoxTemplateElement(box, bounds),
+            ImageElementViewModel image => BuildImageTemplateElement(image, bounds),
             // Deliberately NOT `bounds` (computed above from element.X/Y/Width/Height, which for a
             // line are DERIVED cascades of the endpoints, not independent geometry) -- each endpoint
             // is projected individually via ProjectRectToCropRelative(x, y, 0, 0) (round-2 plan-review,
@@ -5684,6 +6088,51 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             LineElementViewModel line => BuildTemplateLineElement(line),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
+    }
+
+    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- projects each of the 4
+    /// corners individually via <see cref="ProjectRectToCropRelative"/>(cx, cy, 0, 0), the EXACT
+    /// technique <see cref="BuildTemplateLineElement"/>'s own endpoints already use (with
+    /// width=height=0, the center-to-top-left conversion is a no-op in every branch, so `.X`/`.Y` of
+    /// the result IS the projected point). Returns null when the element isn't perspective-enabled,
+    /// so the caller falls back to the plain, non-perspective bounds.</summary>
+    private PerspectiveCorners? TryProjectPerspectiveCorners(ITemplateElementViewModel element)
+    {
+        var raw = element switch
+        {
+            ImageElementViewModel { PerspectiveEnabled: true } image => new PerspectiveCorners(
+                image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+            BoxElementViewModel { PerspectiveEnabled: true } box => new PerspectiveCorners(
+                box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+            _ => (PerspectiveCorners?)null,
+        };
+
+        if (raw is not { } corners)
+        {
+            return null;
+        }
+
+        var p0 = ProjectRectToCropRelative(corners.Corner0X, corners.Corner0Y, 0, 0);
+        var p1 = ProjectRectToCropRelative(corners.Corner1X, corners.Corner1Y, 0, 0);
+        var p2 = ProjectRectToCropRelative(corners.Corner2X, corners.Corner2Y, 0, 0);
+        var p3 = ProjectRectToCropRelative(corners.Corner3X, corners.Corner3Y, 0, 0);
+        return new PerspectiveCorners(p0.X, p0.Y, p1.X, p1.Y, p2.X, p2.Y, p3.X, p3.Y);
+    }
+
+    private TemplateBoxElement BuildBoxTemplateElement(BoxElementViewModel box, NormalizedRect naturalBounds)
+    {
+        var corners = TryProjectPerspectiveCorners(box);
+        var gradient = box.GradientEnabled
+            ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
+            : null;
+        return new TemplateBoxElement(
+            corners?.ToBoundingBox() ?? naturalBounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius, gradient, corners);
+    }
+
+    private TemplateImageElement BuildImageTemplateElement(ImageElementViewModel image, NormalizedRect naturalBounds)
+    {
+        var corners = TryProjectPerspectiveCorners(image);
+        return new TemplateImageElement(corners?.ToBoundingBox() ?? naturalBounds, image.Z, image.Source, image.Fit, corners);
     }
 
     private TemplateLineElement BuildTemplateLineElement(LineElementViewModel line)
