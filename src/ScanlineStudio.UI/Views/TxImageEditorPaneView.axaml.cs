@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
@@ -60,6 +61,20 @@ public partial class TxImageEditorPaneView : UserControl
         /// a deliberate v1 scope cut -- see <see cref="TxImageEditorPaneViewModel.ApplySnappedElementBounds"/>'s
         /// own perspective-enabled early-return).</summary>
         PerspectiveCorner,
+
+        /// <summary>TX editor gap-items plan, item 2 (group-ops-lite, 2026-09-02) -- dragging a
+        /// 2+-member selection together. A NEW mode, not <see cref="Overlay"/> reused per-element,
+        /// because the move must apply the same pixel delta to every captured member in one
+        /// <see cref="OnCanvasPointerMoved"/> frame; <see cref="_draggedGroup"/> is captured once at
+        /// press time (same "captured, not re-read live" invariant <see cref="_draggedElement"/>
+        /// already uses) so a mid-drag selection change (there isn't one today, but nothing prevents
+        /// it) can't retarget an in-flight drag. Excluded from the undo-push check below the same way
+        /// <see cref="Overlay"/> is (each member's own <c>On*Changing</c>-coalesced hook pushes once,
+        /// under the shared "OverlayGeometry" key, so an N-member group move still costs one undo
+        /// step) and from <see cref="OnCanvasPointerReleased"/>'s own snap-on-drop condition (v1
+        /// scope cut -- group snap would need to snap the WHOLE group's bounds, not each member
+        /// independently, which isn't designed yet).</summary>
+        OverlayGroup,
     }
 
     /// <summary>Which toolbar "Add" button armed the placement tool currently pending on the canvas
@@ -106,6 +121,13 @@ public partial class TxImageEditorPaneView : UserControl
     private Point _lastPointerPosition;
     private ITemplateElementViewModel? _draggedElement;
     private ResizeHandle _resizeHandle = ResizeHandle.BottomRight;
+
+    /// <summary>Captured at press time for <see cref="DragMode.OverlayGroup"/> -- see that mode's
+    /// own doc comment for why this is captured once rather than read live from
+    /// <see cref="TxImageEditorPaneViewModel.SelectedOverlayElements"/> on every
+    /// <see cref="OnCanvasPointerMoved"/> frame. Empty (not null) when no group drag is active, so
+    /// call sites can iterate unconditionally.</summary>
+    private List<ITemplateElementViewModel> _draggedGroup = [];
 
     /// <summary>Which of a dragged line's 2 endpoints <see cref="DragMode.LineEndpoint"/> is
     /// currently moving -- true = X1/Y1, false = X2/Y2. Set from the pressed handle's own AXAML
@@ -637,7 +659,49 @@ public partial class TxImageEditorPaneView : UserControl
         // that opens a context menu, for any button, so capturing here has no such ordering risk.
         _lastContextMenuAnchor = sender as Border;
 
-        vm.SelectedOverlayElement = element;
+        var isLeft = e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed;
+
+        // TX editor gap-items plan, item 2 (group-ops-lite) -- checked FIRST, before the plain-click
+        // select-or-preserve write below: a shift-click is a pure selection-toggle gesture and must
+        // never be collapsed by that write first. Gated on isLeft + !Locked (a locked element must
+        // never join a group); a non-left shift-press (shift+right-click) falls through instead of
+        // returning here, so the normal single-select write below still runs and the context menu
+        // still targets the right-clicked element (round-3 plan-review finding -- an earlier draft's
+        // unconditional `return` on Shift left the context menu pointed at a stale
+        // SelectedOverlayElement).
+        if (e.KeyModifiers.HasFlag(KeyModifiers.Shift) && isLeft)
+        {
+            if (!element.Locked)
+            {
+                vm.ToggleElementSelection(element);
+                e.Handled = true;
+            }
+
+            return;
+        }
+
+        // Ungated by button/Locked, same as this line's own single-element behavior before group-
+        // ops-lite (context-menu commands read SelectedOverlayElement unparameterized, so it must be
+        // correct by the time ANY button's release opens a menu) -- EXCEPT a LEFT press on an
+        // EXISTING 2+ group member, which does NOT collapse (so a left-press-and-drag on it can move
+        // the whole group, decided further down); a right-press on a group member still collapses/
+        // selects normally (round-3 plan-review finding -- an earlier draft skipped this write for
+        // ANY button on a group member, leaving the right-clicked element's own context menu
+        // operating on the stale prior primary instead).
+        if (!(isLeft && vm.SelectedOverlayElements.Contains(element) && vm.SelectedOverlayElements.Count > 1))
+        {
+            // Routed through SetSelection, not a raw assignment (auditor finished-code-review finding
+            // -- the exact value-equal-hook-skip trap OnElementRowPointerPressed was already fixed
+            // for): a right-press on the group's own PRIMARY member is a no-op SelectedOverlayElement
+            // assignment (reference-equal to the current value), which skips the collapse hook
+            // entirely and leaves the group live under a single-element context menu -- its
+            // parameterless Duplicate item would then clone the WHOLE group instead of just the
+            // right-clicked element. SetSelection rebuilds SelectedOverlayElements directly, so it
+            // collapses regardless of whether the underlying property actually changed; a strict
+            // no-op for every other case that reaches here (a left-press is, by construction, not an
+            // existing 2+ group member by this point).
+            vm.SetSelection([element]);
+        }
 
         // Backlog item (auditor usability review, 2026-08-17): "No inline canvas text editing (no
         // double-click/F2)." A double-click on a selected, unlocked TEXT element enters edit mode
@@ -652,7 +716,7 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
-        if (element.Locked || !e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
+        if (element.Locked || !isLeft)
         {
             return;
         }
@@ -665,6 +729,17 @@ public partial class TxImageEditorPaneView : UserControl
         if (e.KeyModifiers.HasFlag(KeyModifiers.Control))
         {
             element = vm.DuplicateElementForDrag(element);
+        }
+
+        // TX editor gap-items plan, item 2 (group-ops-lite) -- a left-press on an EXISTING 2+ group
+        // member drags the whole group instead of just this element; _draggedGroup is captured ONCE
+        // here (see its own doc comment for why), excluding Locked members so a locked sibling never
+        // moves via a group drag even though it stays visually part of the group.
+        if (vm.SelectedOverlayElements.Contains(element) && vm.SelectedOverlayElements.Count > 1)
+        {
+            _draggedGroup = vm.SelectedOverlayElements.Where(el => !el.Locked).ToList();
+            StartDrag(DragMode.OverlayGroup, e);
+            return;
         }
 
         _draggedElement = element;
@@ -831,11 +906,13 @@ public partial class TxImageEditorPaneView : UserControl
         // exact bug class already fixed once at AlignSelectedElementToCrop.
         if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
-            // PerspectiveCorner excluded here for the SAME "pushes via the element's own
+            // PerspectiveCorner/OverlayGroup excluded here for the SAME "pushes via the element's own
             // On*Changing-coalesced hook instead" reason as Overlay/ElementResize/LineEndpoint --
             // this file's own LineEndpoint comment above documents the exact double-push bug an
-            // earlier omission caused; not repeating it here.
-            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing or DragMode.LineEndpoint or DragMode.PerspectiveCorner))
+            // earlier omission caused; not repeating it here. A group drag's N members all push under
+            // the SAME "OverlayGeometry" coalescing key (PushUndoSnapshotCoalesced's own doc comment),
+            // so even an N-member group move still costs exactly one undo step with no extra code.
+            if (_dragMode is not (DragMode.Overlay or DragMode.ElementResize or DragMode.Placing or DragMode.LineEndpoint or DragMode.PerspectiveCorner or DragMode.OverlayGroup))
             {
                 vm.PushUndoSnapshotForDragGesture();
             }
@@ -873,6 +950,20 @@ public partial class TxImageEditorPaneView : UserControl
                         (element.X, element.Y, element.Width, element.Height), others, cropCenter);
                     vm.GuideLineXNormalized = guideX;
                     vm.GuideLineYNormalized = guideY;
+                }
+
+                break;
+            case DragMode.OverlayGroup:
+                // TX editor gap-items plan, item 2 (group-ops-lite) -- iterates the CAPTURED
+                // _draggedGroup (see its own doc comment), not a live re-read of
+                // SelectedOverlayElements, matching the Overlay case's own single-element free-drag
+                // (no clamping, same overflow-allowed rule). No alignment-guide computation for a
+                // group drag -- v1 scope cut (per-member guides against a moving multi-element group
+                // aren't designed).
+                foreach (var groupMember in _draggedGroup)
+                {
+                    groupMember.X += dxNormalized;
+                    groupMember.Y += dyNormalized;
                 }
 
                 break;
@@ -1256,6 +1347,7 @@ public partial class TxImageEditorPaneView : UserControl
 
         _dragMode = DragMode.None;
         _draggedElement = null;
+        _draggedGroup = [];
         e.Pointer.Capture(null);
     }
 
@@ -1517,7 +1609,17 @@ public partial class TxImageEditorPaneView : UserControl
         // forward-delete key without Fn; matches other creative-tool conventions, e.g. Figma treats
         // both the same way). RemoveOverlayElementCommand already no-ops on a null element, but the
         // explicit guard here avoids marking a keypress Handled when nothing is selected, letting it
-        // fall through to whatever Avalonia's own default handling would otherwise be.
+        // fall through to whatever Avalonia's own default handling would otherwise be. TX editor
+        // gap-items plan, item 2 (group-ops-lite) -- a 2+ member selection routes to the group
+        // command instead, so one Delete removes the whole group in one undo step rather than only
+        // the primary.
+        if ((e.Key == Key.Delete || e.Key == Key.Back) && vm.SelectedOverlayElements.Count > 1)
+        {
+            vm.RemoveSelectedElementsCommand.Execute(null);
+            e.Handled = true;
+            return;
+        }
+
         if ((e.Key == Key.Delete || e.Key == Key.Back) && vm.SelectedOverlayElement is not null)
         {
             vm.RemoveOverlayElementCommand.Execute(vm.SelectedOverlayElement);
@@ -1620,6 +1722,17 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        // TX editor gap-items plan, item 2 (group-ops-lite) -- auditor finished-code-review finding:
+        // a 2+ group nudges together (same "move" scope the drag/Delete/Duplicate group commands
+        // already cover), checked BEFORE the single-element branch below so a live group is never
+        // silently narrowed to just the primary.
+        if (!e.KeyModifiers.HasFlag(KeyModifiers.Shift) && vm.SelectedOverlayElements.Count > 1)
+        {
+            vm.NudgeSelectedElements(dir, ctrl: e.KeyModifiers.HasFlag(KeyModifiers.Control));
+            e.Handled = true;
+            return;
+        }
+
         // Phase 6: Shift+arrow stays bound to crop-RESIZE unconditionally (plan-review-scoped
         // decision -- this phase does NOT add an element-resize-by-nudge counterpart, only move).
         // Plain arrow nudges the selected element instead of the crop rect when one is selected and
@@ -1678,6 +1791,7 @@ public partial class TxImageEditorPaneView : UserControl
 
         _dragMode = DragMode.None;
         _draggedElement = null;
+        _draggedGroup = [];
     }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17, item 13): "ELEMENTS rows don't
@@ -1687,12 +1801,20 @@ public partial class TxImageEditorPaneView : UserControl
     /// button also selecting first is harmless, matching that established precedent exactly).
     /// Highlighting itself is driven by <see cref="ITemplateElementViewModel.IsSelected"/>, set by
     /// <c>TxImageEditorPaneViewModel.OnSelectedOverlayElementChanged</c> -- this handler only needs
-    /// to write the selection, not the highlight.</summary>
+    /// to write the selection, not the highlight. No shift-click support here (TX editor gap-items
+    /// plan, item 2 -- group-ops-lite's own scope cut, building/editing a group is canvas-click-only
+    /// in v1); this row click always collapses to a single selection. Routes through
+    /// <c>vm.SetSelection</c> rather than a raw <c>SelectedOverlayElement</c> assignment (round-3
+    /// plan-review finding): clicking the row of an element that's ALREADY the primary of an
+    /// existing 2+ group is a value-equal, no-op assignment that CommunityToolkit's generated setter
+    /// skips entirely -- the self-healing collapse hook never fires, silently leaving the group
+    /// intact. <c>SetSelection</c> rebuilds <c>SelectedOverlayElements</c> directly, so the collapse
+    /// happens regardless of whether the underlying property actually changed.</summary>
     private void OnElementRowPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (sender is Control { DataContext: ITemplateElementViewModel element } && ViewModel is { } vm)
         {
-            vm.SelectedOverlayElement = element;
+            vm.SetSelection([element]);
         }
     }
 

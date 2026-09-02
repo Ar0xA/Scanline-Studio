@@ -400,6 +400,77 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [ObservableProperty]
     private ITemplateElementViewModel? _selectedOverlayElement;
 
+    /// <summary>TX editor gap-items plan, item 2 (group-ops-lite, 2026-09-02) -- the FULL multi-
+    /// selection set (always includes <see cref="SelectedOverlayElement"/> as a member when
+    /// non-empty; empty exactly when it's null). Kept in sync by
+    /// <see cref="OnSelectedOverlayElementChanged"/>'s own self-healing hook for the common
+    /// (0-1 selected) case, and explicitly by <see cref="SetSelection"/> for a real 2+ group -- see
+    /// that hook's own doc comment for the full mechanism. GEOMETRY/STYLE sidebar tabs deliberately
+    /// keep reading only <see cref="SelectedOverlayElement"/> (the primary) -- group style/resize/
+    /// align is out of scope for this "lite" feature.</summary>
+    public ObservableCollection<ITemplateElementViewModel> SelectedOverlayElements { get; } = [];
+
+    /// <summary>Guards <see cref="OnSelectedOverlayElementChanged"/>'s own self-healing collapse
+    /// while <see cref="SetSelection"/> is assigning <see cref="SelectedOverlayElement"/> as part of
+    /// building a REAL multi-element selection -- without this, the hook would immediately collapse
+    /// the very set <see cref="SetSelection"/> just populated. Save/restore (not a hardcoded
+    /// true/false pair) so a hypothetical future nested call can't clear an outer call's own guard
+    /// early.</summary>
+    private bool _updatingSelectionSet;
+
+    /// <summary>TX editor gap-items plan, item 2 -- the ONE place that atomically replaces the whole
+    /// selection (single element, empty, or a real 2+ group). Every raw
+    /// <c>SelectedOverlayElement = x</c> assignment elsewhere in this file (unchanged, still valid)
+    /// relies on <see cref="OnSelectedOverlayElementChanged"/>'s own self-healing collapse instead --
+    /// this method exists for the cases that self-healing CAN'T cover: building/shrinking an actual
+    /// group, and re-selecting an element that's ALREADY the primary (a value-EQUAL assignment
+    /// never fires the hook at all, so re-clicking the primary's own sidebar row while it's a
+    /// group's primary needs this explicit path to force the collapse -- see
+    /// <see cref="OnElementRowPointerPressed"/>).</summary>
+    public void SetSelection(IEnumerable<ITemplateElementViewModel> elements)
+    {
+        // ToList() FIRST, unconditionally -- a caller (ToggleElementSelection's removal branch, the
+        // RemoveOverlayElement/FlattenElementAsync shrink) may pass a deferred Where() over
+        // SelectedOverlayElements itself, which this method then clears; evaluating lazily would
+        // observe its own mutation mid-enumeration.
+        var newSet = elements.ToList();
+        var previous = _updatingSelectionSet;
+        _updatingSelectionSet = true;
+        try
+        {
+            SelectedOverlayElements.Clear();
+            foreach (var element in newSet)
+            {
+                SelectedOverlayElements.Add(element);
+            }
+
+            SelectedOverlayElement = newSet.Count > 0 ? newSet[^1] : null;
+        }
+        finally
+        {
+            _updatingSelectionSet = previous;
+        }
+
+        // The assignment above fires OnSelectedOverlayElementChanged, which already re-syncs
+        // IsSelected against SelectedOverlayElements (populated before that assignment ran) for
+        // every REAL change -- but CommunityToolkit's generated setter skips the hook entirely on a
+        // value-EQUAL assignment (e.g. newSet's last element already WAS the primary, the routine
+        // case for a group shrink that doesn't touch the primary). Re-run unconditionally here so
+        // IsSelected always ends up correct regardless of whether the hook fired.
+        foreach (var element in OverlayElements)
+        {
+            element.IsSelected = SelectedOverlayElements.Contains(element);
+        }
+    }
+
+    /// <summary>TX editor gap-items plan, item 2 -- shift-click's own selection-toggle gesture:
+    /// adds <paramref name="element"/> to the multi-selection set if absent, removes it if present.</summary>
+    public void ToggleElementSelection(ITemplateElementViewModel element)
+    {
+        var current = SelectedOverlayElements.ToList();
+        SetSelection(current.Contains(element) ? current.Where(e => !ReferenceEquals(e, element)) : current.Append(element));
+    }
+
     /// <summary>Phase 5 (spec/15-template-designer.md) -- bound to the Templates panel's name-entry
     /// TextBox, backing <see cref="SaveTemplateAsync"/>'s <see cref="CanSaveTemplate"/> gate.</summary>
     [ObservableProperty]
@@ -1337,6 +1408,37 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, delta);
         element.X += dxPixels / WorkingCopyWidth;
         element.Y += dyPixels / WorkingCopyHeight;
+    }
+
+    /// <summary>TX editor gap-items plan, item 2 (group-ops-lite) -- auditor finished-code-review
+    /// finding: arrow-key nudge moved only the primary while a 2+ group was selected, an oversight
+    /// (group MOVE is explicitly in scope for this feature, unlike resize/style/align) rather than a
+    /// documented v1 cut. Same 1px/Ctrl+16px precision and pixel-space math as
+    /// <see cref="NudgeElement"/>; Locked members are skipped individually rather than blocking the
+    /// whole gesture, matching the drag path's own <c>_draggedGroup</c> capture (excludes Locked
+    /// members, never rejects the drag outright). Each member's own <c>OnXChanging</c>/
+    /// <c>OnYChanging</c>-&gt;<c>PushUndoSnapshotForGeometryChange</c> hook pushes the undo step,
+    /// under the shared "OverlayGeometry" coalescing key, so an N-member group nudge still costs
+    /// exactly one undo step.</summary>
+    public void NudgeSelectedElements(NudgeDirection direction, bool ctrl)
+    {
+        if (WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return;
+        }
+
+        var delta = ctrl ? 16 : 1;
+        var (dxPixels, dyPixels) = DirectionToPixelDelta(direction, delta);
+        foreach (var element in SelectedOverlayElements)
+        {
+            if (element.Locked)
+            {
+                continue;
+            }
+
+            element.X += dxPixels / WorkingCopyWidth;
+            element.Y += dyPixels / WorkingCopyHeight;
+        }
     }
 
     /// <summary>Floor for <see cref="NudgeElementResize"/> -- same value as
@@ -3280,15 +3382,41 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     partial void OnSelectedOverlayElementChanged(ITemplateElementViewModel? value)
     {
+        // TX editor gap-items plan, item 2 (group-ops-lite, 2026-09-02) -- this hook is the SOLE
+        // sync point between SelectedOverlayElement (the single "primary," unchanged in shape) and
+        // SelectedOverlayElements (the new multi-selection set): a raw assignment (every existing
+        // call site in this file, and every existing test that writes this property directly)
+        // always means "select exactly this one" intent, so it collapses the set to match --
+        // UNLESS this write came from SetSelection itself (guarded by _updatingSelectionSet, so a
+        // real multi-element SetSelection([a, b, c]) doesn't get collapsed by its own trailing
+        // primary-assignment). This is a STRUCTURAL guarantee, not a convention every call site has
+        // to remember -- but only for a VALUE-CHANGING assignment: CommunityToolkit's generated
+        // setter skips this hook entirely when the new value reference-equals the current one (no
+        // Equals override on any element VM, confirmed before relying on it), so re-selecting an
+        // ALREADY-primary element (e.g. clicking its own sidebar row while it's a 2+ group's
+        // primary) does NOT re-fire this collapse -- call sites that need to force a collapse even
+        // onto the current primary must go through the public SetSelection/SelectOnly path instead
+        // of a raw assignment (see OnElementRowPointerPressed).
+        if (!_updatingSelectionSet)
+        {
+            SelectedOverlayElements.Clear();
+            if (value is not null)
+            {
+                SelectedOverlayElements.Add(value);
+            }
+        }
+
         // Backlog item (auditor usability review, 2026-08-17): ELEMENTS panel row highlight -- a
         // plain loop over every live element, same "parent pushes shared state down" convention as
         // every command on ITemplateElementViewModel, just a settable property instead of a command
         // (see IsSelected's own doc comment). O(n) in element count, which this editor's whole
         // undo/redo snapshot mechanism already treats as small/cheap (CaptureSnapshot copies the
-        // full element list on every edit).
+        // full element list on every edit). Generalized (TX editor gap-items plan, item 2) from
+        // "is this the one SelectedOverlayElement" to "is this a member of SelectedOverlayElements"
+        // -- identical result whenever the set has 0-1 members (every pre-existing scenario).
         foreach (var element in OverlayElements)
         {
-            element.IsSelected = ReferenceEquals(element, value);
+            element.IsSelected = SelectedOverlayElements.Contains(element);
         }
 
         if (value is not null)
@@ -4085,9 +4213,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 disposableElement.Dispose();
             }
 
-            if (ReferenceEquals(SelectedOverlayElement, element))
+            // TX editor gap-items plan, item 2 (group-ops-lite) -- SHRINKS the selection if
+            // `element` was a member, rather than the OLD "if it was the primary, null the whole
+            // selection" check: that would have wrongly cleared every OTHER group member too when
+            // the flattened element happened to be the primary, and would have left a stale,
+            // DISPOSED element as a group member when it was a NON-primary member (this exact case
+            // is why FlattenElementAsync specifically needs this, not just RemoveOverlayElement).
+            if (SelectedOverlayElements.Contains(element))
             {
-                SelectedOverlayElement = null;
+                SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, element)));
             }
 
             // New generation: this source can never be reached from the old baseline by rotation,
@@ -4191,12 +4325,41 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [RelayCommand(CanExecute = nameof(CanDuplicate))]
     private void Duplicate()
     {
+        if (SelectedOverlayElements.Count > 1)
+        {
+            DuplicateGroup(SelectedOverlayElements.ToList());
+            return;
+        }
+
         if (SelectedOverlayElement is not { } selected)
         {
             return;
         }
 
         InsertClonedSnapshot(BuildRawSnapshot(selected));
+    }
+
+    /// <summary>Group-ops-lite (TX editor gap-items plan, item 2) -- clones every member of a
+    /// multi-selection in ONE undo step. Clones are built in Z order (not selection/click order,
+    /// which round-1 plan-review flagged as the wrong sort key -- click order would silently
+    /// re-stack overlapping elements), each via the same per-kind offset logic
+    /// <see cref="InsertClonedSnapshot"/> uses for a single element, so a duplicated group keeps its
+    /// original relative layout and simply lands as a new, independently-selected group on top.</summary>
+    private void DuplicateGroup(IReadOnlyList<ITemplateElementViewModel> elements)
+    {
+        PushUndoSnapshot();
+        var clones = new List<ITemplateElementViewModel>();
+        foreach (var element in elements.OrderBy(e => e.Z))
+        {
+            const double offset = 0.02;
+            var snapshot = OffsetSnapshotForClone(BuildRawSnapshot(element), offset);
+            var copy = CreateElementFromSnapshot(snapshot);
+            OverlayElements.Add(copy);
+            clones.Add(copy);
+        }
+
+        SetSelection(clones);
+        RecomputePreview();
     }
 
     /// <summary>Backlog item (user request, 2026-08-17): factored out of <see cref="Duplicate"/> so
@@ -4208,34 +4371,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// this to cascade repeated pastes, see its own doc comment).</summary>
     private ITemplateElementViewModel InsertClonedSnapshot(RawElementSnapshot snapshot)
     {
-        const double offset = 0.02;
-        var offsetSnapshot = snapshot switch
-        {
-            RawImageElementSnapshot image => OffsetImageSnapshot(image, offset),
-            RawTextElementSnapshot text => text with
-            {
-                X = Math.Clamp(text.X + offset, 0, 1),
-                Y = Math.Clamp(text.Y + offset, 0, 1),
-                Z = NextZ(),
-            },
-            RawBoxElementSnapshot box => OffsetBoxSnapshot(box, offset),
-            // Plan-review-flagged real trap: offsetting the base X/Y here (like every case above)
-            // would do NOTHING for a line -- CreateElementFromSnapshot's own line case reads ONLY
-            // X1/Y1/X2/Y2 (the sole truth, see RawLineElementSnapshot's own doc comment), never the
-            // base fields, so a clone/duplicate/paste would land EXACTLY on top of the original at
-            // the same position (though a new Z, so at least not perfectly indistinguishable) -- the
-            // `var other => other` fallthrough below would have hit this silently.
-            // Code-review finding: a bare `Math.Clamp` PER ENDPOINT (like every case above) is wrong
-            // here specifically -- an off-canvas line is legal (Rotate's own doc comment: elements
-            // may sit "free overflow" past [0,1], clipped only at render time), and clamping each
-            // endpoint independently can move one endpoint closer to the other than the other,
-            // distorting the line's own length/angle on duplicate. OffsetLineSnapshot computes ONE
-            // delta valid for BOTH endpoints on each axis, so the line's shape survives exactly (or
-            // the clone doesn't move on that axis at all, if the line already spans past what ANY
-            // single shared shift could keep in-bounds).
-            RawLineElementSnapshot line => OffsetLineSnapshot(line, offset),
-            var other => other,
-        };
+        var offsetSnapshot = OffsetSnapshotForClone(snapshot, 0.02);
 
         PushUndoSnapshot();
         var copy = CreateElementFromSnapshot(offsetSnapshot);
@@ -4244,6 +4380,37 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RecomputePreview();
         return copy;
     }
+
+    /// <summary>Extracted (group-ops-lite, TX editor gap-items plan item 2) from
+    /// <see cref="InsertClonedSnapshot"/>'s own per-kind offset switch so <see cref="DuplicateGroup"/>
+    /// can apply the identical offset logic to each group member without a second, driftable copy.</summary>
+    private RawElementSnapshot OffsetSnapshotForClone(RawElementSnapshot snapshot, double offset) => snapshot switch
+    {
+        RawImageElementSnapshot image => OffsetImageSnapshot(image, offset),
+        RawTextElementSnapshot text => text with
+        {
+            X = Math.Clamp(text.X + offset, 0, 1),
+            Y = Math.Clamp(text.Y + offset, 0, 1),
+            Z = NextZ(),
+        },
+        RawBoxElementSnapshot box => OffsetBoxSnapshot(box, offset),
+        // Plan-review-flagged real trap: offsetting the base X/Y here (like every case above)
+        // would do NOTHING for a line -- CreateElementFromSnapshot's own line case reads ONLY
+        // X1/Y1/X2/Y2 (the sole truth, see RawLineElementSnapshot's own doc comment), never the
+        // base fields, so a clone/duplicate/paste would land EXACTLY on top of the original at
+        // the same position (though a new Z, so at least not perfectly indistinguishable) -- the
+        // `var other => other` fallthrough below would have hit this silently.
+        // Code-review finding: a bare `Math.Clamp` PER ENDPOINT (like every case above) is wrong
+        // here specifically -- an off-canvas line is legal (Rotate's own doc comment: elements
+        // may sit "free overflow" past [0,1], clipped only at render time), and clamping each
+        // endpoint independently can move one endpoint closer to the other than the other,
+        // distorting the line's own length/angle on duplicate. OffsetLineSnapshot computes ONE
+        // delta valid for BOTH endpoints on each axis, so the line's shape survives exactly (or
+        // the clone doesn't move on that axis at all, if the line already spans past what ANY
+        // single shared shift could keep in-bounds).
+        RawLineElementSnapshot line => OffsetLineSnapshot(line, offset),
+        var other => other,
+    };
 
     /// <summary>Extracted (2nd-round code-review nit) so the shared-per-axis delta is computed ONCE
     /// each, not twice via duplicated call sites in a switch-expression arm -- a future edit to one
@@ -4761,11 +4928,43 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             disposableElement.Dispose();
         }
 
-        if (ReferenceEquals(SelectedOverlayElement, element))
+        // TX editor gap-items plan, item 2 (group-ops-lite) -- SHRINKS the selection if `element`
+        // was a member, same shape as FlattenElementAsync's own identical fix (see that method's
+        // own doc comment for why "if primary, null everything" is wrong for both a non-primary
+        // member and a primary member of a 3+ group).
+        if (SelectedOverlayElements.Contains(element))
         {
-            SelectedOverlayElement = null;
+            SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, element)));
         }
 
+        RecomputePreview();
+    }
+
+    /// <summary>TX editor gap-items plan, item 2 (group-ops-lite) -- deletes every member of
+    /// <see cref="SelectedOverlayElements"/> as ONE undo step, mirroring <see cref="RemoveOverlayElement"/>'s
+    /// own stale-reference guard (filtered BEFORE <see cref="PushUndoSnapshot"/>, same "a queued
+    /// click racing an Undo" reasoning that method's own doc comment gives).</summary>
+    [RelayCommand]
+    private void RemoveSelectedElements()
+    {
+        var toRemove = SelectedOverlayElements.Where(OverlayElements.Contains).ToList();
+        if (toRemove.Count == 0)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        foreach (var element in toRemove)
+        {
+            element.PropertyChanged -= OnOverlayElementPropertyChanged;
+            OverlayElements.Remove(element);
+            if (element is IDisposable disposableElement)
+            {
+                disposableElement.Dispose();
+            }
+        }
+
+        SetSelection([]);
         RecomputePreview();
     }
 
