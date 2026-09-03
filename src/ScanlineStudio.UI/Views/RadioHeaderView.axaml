@@ -149,11 +149,23 @@
                             <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding CanReadBandwidth}">
                                 <TextBlock Text="{Binding BandwidthDisplay}" />
                             </Border>
-                            <NumericUpDown Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
-                                           Width="86" Height="22" FontSize="11"
-                                           Minimum="0" Maximum="20000" Increment="10" FormatString="0"
-                                           Value="{Binding BandwidthInputHz}" IsVisible="{Binding CanSetBandwidth}"
-                                           ToolTip.Tip="{loc:Translate RadioStatus.BandwidthInput.Help}" />
+                            <!-- 2026-09-03 user-directed redesign: a NumericUpDown became an editable
+                                 ComboBox with 1800/2400/2800 Hz quick-picks (RadioStatusViewModel.
+                                 AvailableBandwidthPresetsHz's own doc comment for why those three) —
+                                 same "ItemsSource + Text + IsEditable" pattern already established for
+                                 OptionsWindowView's Sample rate/serial port/baud rate fields, so an
+                                 out-of-list value the operator types still round-trips to
+                                 BandwidthInputHz exactly as the old NumericUpDown did. -->
+                            <!-- Code-review nit: no Height/FontSize here (unlike the old NumericUpDown)
+                                 — both are inert against the "Industry IndustryInput" style class's own
+                                 MinHeight/FontSize setters (Atoms.axaml), which clamp/override a local
+                                 value the same way; the old attributes were dead weight, not a real
+                                 override, on this same control before this change too. -->
+                            <ComboBox Classes="Industry IndustryInput" Width="86"
+                                      ItemsSource="{Binding AvailableBandwidthPresetsHz}"
+                                      Text="{Binding BandwidthInputHz}" IsEditable="True"
+                                      IsVisible="{Binding CanSetBandwidth}"
+                                      ToolTip.Tip="{loc:Translate RadioStatus.BandwidthInput.Help}" />
                             <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}"
                                     Content="{loc:Translate RadioStatus.SetBandwidth}" Command="{Binding SetBandwidthCommand}"
                                     IsVisible="{Binding CanSetBandwidth}" />
