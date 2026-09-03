@@ -88,6 +88,14 @@ public partial class MainWindow : Window
         // ISettingsStore is actually registered. Port of legacy's own
         // Main.cpp:1686-1692 load gate (sys.m_MemWindow) -- see WindowGeometrySettings' own doc
         // comment for the full citation.
+        //
+        // User-directed 2026-09-03 ("how hard is it to set the window to maximized if that's what
+        // we closed with"): declared out here, not inside the block below, so it survives to the
+        // very end of this constructor -- WindowState = Maximized must be assigned AFTER the
+        // Windows-only maximize-bounds-recovery PropertyChanged subscription further down (it reacts
+        // to exactly this transition), not from inside this block, which runs before that
+        // subscription exists.
+        var shouldStartMaximized = false;
         if (_settingsStore is not null)
         {
             var geometry = Task.Run(() => _settingsStore.LoadAsync()).GetAwaiter().GetResult()
@@ -234,6 +242,20 @@ public partial class MainWindow : Window
             {
                 Log.RestoredWindowPositionOffScreen(logger, startPosition.X, startPosition.Y);
             }
+
+            // User-directed 2026-09-03 ("how hard is it to set the window to maximized if that's
+            // what we closed with"): only the FLAG is set here -- Position/Width/Height are already
+            // established above (from a real restore, a computed default, or -- the rejected-
+            // position fallback -- Avalonia's own CenterScreen) and still matter as the "restore to"
+            // bounds for whenever the operator later un-maximizes, regardless of whether this ends
+            // up applying. The actual WindowState assignment happens at the very end of this
+            // constructor (see shouldStartMaximized's own doc comment above for why: it has to run
+            // AFTER the maximize-bounds-recovery PropertyChanged subscription exists, so a
+            // restored-maximized window gets the exact same live bounds recompute a manual maximize
+            // click would, not a second, separate code path to keep in sync). Gated on
+            // RememberWindowPosition, same preference that gates everything else in this block --
+            // "don't remember my window" should mean don't remember this either.
+            shouldStartMaximized = geometry is { RememberWindowPosition: true, WasMaximized: true };
         }
 
         // Code-review finding (2026-09-03): the constructor's own clamp above compares the
@@ -301,11 +323,22 @@ public partial class MainWindow : Window
         // real running window, not by the build or test suite).
         Closing += (_, _) =>
         {
-            if (_settingsStore is null || WindowState != WindowState.Normal)
+            // User-directed 2026-09-03 ("how hard is it to set the window to maximized if that's
+            // what we closed with"): the gate now also accepts Maximized, not just Normal --
+            // WindowGeometrySettings.WasMaximized's own doc comment for the full design. Minimized
+            // is still excluded (same as before this change): no meaningful "restore to" state
+            // exists for it, and legacy's own wsNormal-only save gate never covered it either.
+            var closingState = WindowState;
+            if (_settingsStore is null || (closingState != WindowState.Normal && closingState != WindowState.Maximized))
             {
                 return;
             }
 
+            // Only captured/used when closingState == Normal below -- while Maximized, Position/
+            // Width/Height reflect the MAXIMIZED bounds, not a Normal-state size worth persisting
+            // as the "restore to" fallback (see WasMaximized's own doc comment for why those four
+            // fields are left untouched entirely in that case, not overwritten with maximized
+            // values).
             var left = Position.X;
             var top = Position.Y;
             var width = Width;
@@ -332,7 +365,14 @@ public partial class MainWindow : Window
                         return settings;
                     }
 
-                    var updated = current with { Left = left, Top = top, Width = width, Height = height };
+                    // WasMaximized always reflects THIS close's real state. Left/Top/Width/Height
+                    // only update when closing from Normal -- when closing from Maximized, `current`'s
+                    // own already-persisted values (the last real Normal-state size, or still null if
+                    // this window has never once closed Normal) pass through unchanged, exactly the
+                    // "restore to" fallback WasMaximized's own doc comment describes.
+                    var updated = closingState == WindowState.Normal
+                        ? current with { Left = left, Top = top, Width = width, Height = height, WasMaximized = false }
+                        : current with { WasMaximized = true };
                     return settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
                 })).GetAwaiter().GetResult();
             }
@@ -407,6 +447,17 @@ public partial class MainWindow : Window
                     }
                 }, DispatcherPriority.Background);
             };
+        }
+
+        // User-directed 2026-09-03: the actual WindowState assignment shouldStartMaximized's own
+        // doc comment (above, near this constructor's geometry block) promised -- deliberately
+        // placed HERE, after the maximize-bounds-recovery subscription immediately above (Windows
+        // only) already exists, so this transition gets caught and corrected by that same
+        // mechanism exactly like a live user click would, not left to whatever Avalonia's own
+        // maximize-from-code sizing does unassisted.
+        if (shouldStartMaximized)
+        {
+            WindowState = WindowState.Maximized;
         }
 
         DataContextChanged += (_, _) =>
