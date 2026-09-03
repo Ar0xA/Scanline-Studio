@@ -44,7 +44,7 @@ public sealed class SstvSessionServiceAudioAutoSaveTests
 
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder,
-            new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+            new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         // Auditor-caught (round 2 code-review): without this, every test's scratch files land in the
         // real DefaultAudioDirectory (~/Music/ScanlineStudio/History on the running machine/CI agent)

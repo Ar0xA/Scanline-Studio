@@ -675,6 +675,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _fskIdRxEnabled;
 
+    [ObservableProperty]
+    private bool _cwIdRxEnabled;
+
+    /// <summary>Literal `12` (not a reference to
+    /// `ScanlineStudio.Core.Sstv.StationIdSettings.DefaultCwIdRxWindowSeconds`, which
+    /// `ScanlineStudio.UI` cannot reference -- `UiLayeringArchitectureTests`), same reasoning as
+    /// <see cref="CwWpm"/>'s own doc comment.</summary>
+    [ObservableProperty]
+    private int _cwIdRxWindowSeconds = 12;
+
     /// <summary>Real, tested backend setting (<c>StationIdSettings.NrRstEnabled</c>, default
     /// <see langword="true"/> per that record's own doc comment) previously had no Options-dialog
     /// control at all -- see <c>OptionsSnapshot</c>'s own doc comment, which this closes out. Static,
@@ -2999,6 +3009,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         CwToneFrequencyHz = snapshot.CwToneFrequencyHz;
         FskIdTxEnabled = snapshot.FskIdTxEnabled;
         FskIdRxEnabled = snapshot.FskIdRxEnabled;
+        CwIdRxEnabled = snapshot.CwIdRxEnabled;
+        CwIdRxWindowSeconds = snapshot.CwIdRxWindowSeconds;
         NrRstEnabled = snapshot.NrRstEnabled;
         NrRstText = snapshot.NrRstText;
         SoundFileMmvPath = snapshot.SoundFileMmvPath;
@@ -3207,6 +3219,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             CwToneFrequencyHz: CwToneFrequencyHz,
             FskIdTxEnabled: FskIdTxEnabled,
             FskIdRxEnabled: FskIdRxEnabled,
+            CwIdRxEnabled: CwIdRxEnabled,
+            CwIdRxWindowSeconds: CwIdRxWindowSeconds,
             NrRstEnabled: NrRstEnabled,
             NrRstText: NrRstText,
             SoundFileMmvPath: SoundFileMmvPath,
@@ -3655,6 +3669,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         CwToneFrequencyHz = defaults.CwToneFrequencyHz;
         FskIdTxEnabled = defaults.FskIdTxEnabled;
         FskIdRxEnabled = defaults.FskIdRxEnabled;
+        CwIdRxEnabled = defaults.CwIdRxEnabled;
+        CwIdRxWindowSeconds = defaults.CwIdRxWindowSeconds;
         NrRstEnabled = defaults.NrRstEnabled;
         NrRstText = defaults.NrRstText;
         SoundFileMmvPath = defaults.SoundFileMmvPath;

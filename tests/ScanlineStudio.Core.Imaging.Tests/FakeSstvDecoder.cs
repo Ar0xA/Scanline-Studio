@@ -16,6 +16,8 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public long ReceptionSequence { get; private set; }
 
+    public int AnchorLagSamples { get; set; }
+
     public void ResetAgc()
     {
     }
@@ -105,7 +107,9 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
         ModeDetected?.Invoke(mode);
     }
 
-    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+    // fsk_cwid.md A1: auto-stamps from the fake's OWN current ReceptionSequence, matching the real
+    // RestartableSstvDecoder.OnStationIdDecoded's unconditional read-then-forward.
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info with { ReceptionSequence = ReceptionSequence });
 
     public void RaiseDecodeRestarted(SstvModeDefinition abandonedMode) => DecodeRestarted?.Invoke(abandonedMode);
 }

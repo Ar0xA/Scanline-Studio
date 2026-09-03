@@ -1515,6 +1515,23 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>See <see cref="ISstvDecoder.AnchorLagSamples"/>. Forwarded to whichever inner
+    /// instance is current, same shape as <see cref="BufferedSampleCount"/> above -- UNLIKE
+    /// <see cref="ReceptionSequence"/>, this one has no cross-swap identity problem to avoid: it
+    /// is only ever meaningful when read from inside a <see cref="ModeDetected"/> callback for
+    /// the CURRENT reception (its own doc comment's read-in-callback contract), by which point
+    /// <see cref="_inner"/> is already the instance that just raised it.</summary>
+    public int AnchorLagSamples
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.AnchorLagSamples;
+            }
+        }
+    }
+
     /// <summary>Returns whether the swap actually committed a fresh <see cref="_inner"/> (always
     /// <see langword="true"/> when <paramref name="mandatory"/> is <see langword="true"/> -- a
     /// mandatory swap either commits or throws, it never silently no-ops). <paramref name="reconfigurationRejected"/>
@@ -1814,7 +1831,14 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     private void OnDecodeRestarted(SstvModeDefinition mode) => RaiseForwardedSubscribers(DecodeRestarted, mode);
 
-    private void OnStationIdDecoded(FskStationIdDecodedInfo info) => RaiseForwardedSubscribers(StationIdDecoded, info);
+    // fsk_cwid.md A1 / auditor code-review correction: AnalogFmSstvDecoder DOES have its own
+    // ReceptionSequence (and stamps it too, see that raise site's own comment) -- but this wrapper's
+    // OWN counter (_receptionSequence's field doc comment above) is the one that's actually correct
+    // across a Swap, since a per-inner counter resets to 0 and reuses ids. Overwriting here
+    // unconditionally, at the one true fan-out point every external subscriber goes through, is what
+    // makes AnalogFmSstvDecoder's own stamp harmless dead weight today rather than a real
+    // correctness dependency -- same reasoning as OnModeDetected's own comment.
+    private void OnStationIdDecoded(FskStationIdDecodedInfo info) => RaiseForwardedSubscribers(StationIdDecoded, info with { ReceptionSequence = Interlocked.Read(ref _receptionSequence) });
 
     private static void RaiseForwardedSubscribers<T>(Action<T>? handlers, T value)
     {

@@ -860,6 +860,13 @@
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.FskDecode}"
                                               IsChecked="{Binding FskIdRxEnabled}" />
 
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.CwDecode}"
+                                              IsChecked="{Binding CwIdRxEnabled}" />
+                                    <Grid IsVisible="{Binding CwIdRxEnabled}" ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Identification.CwDecodeWindowSeconds}" />
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}" Value="{Binding CwIdRxWindowSeconds}" Minimum="5" Maximum="20" HorizontalAlignment="Left" />
+                                    </Grid>
+
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Identification.NrRstEnabled}"
                                               IsChecked="{Binding NrRstEnabled}" />
                                     <StackPanel IsVisible="{Binding NrRstEnabled}" Spacing="{StaticResource IndustrySpacingSnug}">

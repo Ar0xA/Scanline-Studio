@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
@@ -46,22 +48,11 @@ internal static class CwMorseGenerator
     /// label -- an earlier version of this comment had this direction backwards).</summary>
     public static double MillisecondsPerDotFromWpm(double wpm) => 1110.0 / wpm;
 
-    // sstv.cpp:2953-2966, verbatim byte values.
-    private static readonly ushort[] Table =
-    [
-        // 0       1       2       3       4       5       6       7
-        0x0005, 0x8005, 0xc005, 0xe005, 0xf005, 0xf805, 0x7805, 0x3805,
-        // 8       9       :       ;       <       =       >       ?
-        0x1805, 0x0805, 0x0000, 0x0000, 0x0000, 0x7005, 0xa805, 0xcc06,
-        // @       A       B       C       D       E       F       G
-        0x0000, 0x8002, 0x7004, 0x5004, 0x6003, 0x8001, 0xd004, 0x2003,
-        // H       I       J       K       L       M       N       O
-        0xf004, 0xc002, 0x8004, 0x4003, 0xb004, 0x0002, 0x4002, 0x0003,
-        // P       Q       R       S       T       U       V       W
-        0x9004, 0x2004, 0xa003, 0xe003, 0x0001, 0xc003, 0xe004, 0x8003,
-        // X       Y       Z
-        0x6004, 0x4004, 0x3004,
-    ];
+    // fsk_cwid.md B-P1: relocated to ScanlineStudio.Abstractions.Sstv.CwMorseTable so
+    // ScanlineStudio.Core.Cw's own inverse (decode-side) lookup can share the identical table data --
+    // see that type's own doc comment for the full citation trail and the '.'/'/' special cases NOT
+    // captured by the table itself.
+    private static readonly ushort[] Table = CwMorseTable.Table;
 
     /// <summary>Encodes <paramref name="text"/> as a full CW-ID transmission: leading '@' (250ms
     /// silence) then one Morse character at a time, in the same segment-tuple shape as

@@ -1313,6 +1313,7 @@
                                                  comment for the full reasoning. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
                                                     BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
+                                                    Background="Transparent"
                                                     IsHitTestVisible="{Binding !BlocksHitTesting}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <!-- Task #24: same inline-ContextMenu reasoning as the text
@@ -1673,14 +1674,17 @@
                                  its own width into N equal columns, which Stretch then fills. -->
                             <UniformGrid Columns="4">
                                 <!-- TX workflow modernization plan, Phase 3a: draw-to-place. NOT a
-                                     Command binding anymore — PointerPressed instead, so Shift
+                                     Command binding — pointer-press handling instead, so Shift
                                      (sticky placement) is readable via KeyModifiers at arm time,
                                      which a plain Click event carries no way to see. Clicking this
                                      button arms the tool (crosshair cursor); the actual element is
-                                     created by a canvas press/release, not by this button itself. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.AddText}"
-                                        PointerPressed="OnArmTextPlacementPressed" />
+                                     created by a canvas press/release, not by this button itself. No
+                                     PointerPressed="..." attribute here — see the code-behind
+                                     constructor's AddHandler(..., RoutingStrategies.Tunnel) calls for
+                                     this button and the other 2 below (a plain bubbling attribute
+                                     never fires on a Button, see that call site's own comment). -->
+                                <Button x:Name="AddTextButton" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.AddText}" />
                                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
                                         Content="{loc:Translate Panes.TxImageEditor.AddImage}">
                                     <Button.Flyout>
@@ -1725,7 +1729,7 @@
                                                                                     Command="{Binding SelectCommand}" CommandParameter="{Binding}">
                                                                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                                                                     <Image Source="{Binding Thumbnail}" Width="32" Height="32" Stretch="Uniform" />
-                                                                                    <TextBlock Text="{Binding Id}" VerticalAlignment="Center" />
+                                                                                    <TextBlock Text="{Binding ReceivedAt, StringFormat='yyyy-MM-dd HH:mm:ss'}" VerticalAlignment="Center" />
                                                                                 </StackPanel>
                                                                             </Button>
                                                                         </DataTemplate>
@@ -1740,14 +1744,12 @@
                                     </Button.Flyout>
                                 </Button>
                                 <!-- Same reasoning as the AddText button above. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.ToolBox}"
-                                        PointerPressed="OnArmBoxPlacementPressed" />
+                                <Button x:Name="AddBoxButton" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Margin="0,0,4,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.ToolBox}" />
                                 <!-- TX editor gap-items plan, line element — same draw-to-place
                                      reasoning as the AddText button above. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                        Content="{loc:Translate Panes.TxImageEditor.ToolLine}"
-                                        PointerPressed="OnArmLinePlacementPressed" />
+                                <Button x:Name="AddLineButton" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                        Content="{loc:Translate Panes.TxImageEditor.ToolLine}" />
                             </UniformGrid>
                             <ItemsControl ItemsSource="{Binding OverlayElements}">
                                 <!-- Phase 1: polymorphic per-type DataTemplates (same technique as the

@@ -122,6 +122,8 @@ public sealed partial class OptionsSettingsService
         CwToneFrequencyHz: new StationIdSettings().CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
         FskIdTxEnabled: new StationIdSettings().FskIdTxEnabled,
         FskIdRxEnabled: new StationIdSettings().FskIdRxEnabled,
+        CwIdRxEnabled: new StationIdSettings().CwIdRxEnabled,
+        CwIdRxWindowSeconds: new StationIdSettings().CwIdRxWindowSeconds ?? StationIdSettings.DefaultCwIdRxWindowSeconds,
         NrRstEnabled: new StationIdSettings().NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
         NrRstText: new StationIdSettings().NrRstText,
         SoundFileMmvPath: new StationIdSettings().SoundFileMmvPath,
@@ -213,6 +215,8 @@ public sealed partial class OptionsSettingsService
             CwToneFrequencyHz: stationId.CwToneFrequencyHz ?? StationIdSettings.DefaultCwToneFrequencyHz,
             FskIdTxEnabled: stationId.FskIdTxEnabled,
             FskIdRxEnabled: stationId.FskIdRxEnabled,
+            CwIdRxEnabled: stationId.CwIdRxEnabled,
+            CwIdRxWindowSeconds: stationId.CwIdRxWindowSeconds ?? StationIdSettings.DefaultCwIdRxWindowSeconds,
             NrRstEnabled: stationId.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
             NrRstText: stationId.NrRstText,
             SoundFileMmvPath: stationId.SoundFileMmvPath,
@@ -394,6 +398,8 @@ public sealed partial class OptionsSettingsService
                     CwToneFrequencyHz = snapshot.CwToneFrequencyHz,
                     FskIdTxEnabled = snapshot.FskIdTxEnabled,
                     FskIdRxEnabled = snapshot.FskIdRxEnabled,
+                    CwIdRxEnabled = snapshot.CwIdRxEnabled,
+                    CwIdRxWindowSeconds = snapshot.CwIdRxWindowSeconds,
                     // No "?? string.Empty" trap here unlike CwText above: LoadAsync reads
                     // NrRstText raw with no "?? DefaultXxx" fallback (StationIdSettings.NrRstText's
                     // own doc comment -- null/empty both mean "nothing to send," no first-run hint

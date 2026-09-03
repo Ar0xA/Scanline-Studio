@@ -111,6 +111,16 @@ public sealed partial class QsoLinkWindowViewModel : ViewModelBase
         _logger = logger;
         _entry = entry;
 
+        // fsk_cwid.md A-P3b: seed the "create new" fields from the entry's own decoded station-ID,
+        // when present -- previously always null ("today refuses to guess", per the plan's own
+        // wording), even though a real decoded value exists right here on the entry. NewRstReceived
+        // specifically (not NewRstSent) -- DecodedNrRst is what the OTHER station sent US.
+        NewCallsign = string.IsNullOrWhiteSpace(entry.DecodedCallsign) ? null : entry.DecodedCallsign.Trim();
+        // Same whitespace guard as NewCallsign just above -- auditor code-review nit: unreachable
+        // today (RxStationIdAttacher only ever writes "595"+digits, never blank), but a stray
+        // whitespace-only column value must not seed an empty-string RST_RCVD into ADIF.
+        NewRstReceived = string.IsNullOrWhiteSpace(entry.DecodedNrRst) ? null : entry.DecodedNrRst.Trim();
+
         // Best-effort initial load, same fire-and-forget convention as every other pane's
         // construction-time query (e.g. RxHistoryPaneViewModel's own RefreshAsync).
         _ = SearchAsync();

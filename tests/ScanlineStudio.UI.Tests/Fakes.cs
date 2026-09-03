@@ -3,6 +3,7 @@ using System.Reactive.Subjects;
 using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
@@ -395,11 +396,20 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public bool ThrowOnStopReceiving { get; set; }
 
+    /// <summary>fsk_cwid.md §A5: settable directly (unlike the real implementation's own
+    /// <c>_decoder.ReceptionSequence</c> pass-through) so a test can simulate "a ModeDetected fired,
+    /// bumping the reception identity" independently of <see cref="RaiseModeDetected"/> itself, the
+    /// same shape <see cref="FakeReceivedImageBuffer.Generation"/> gave the guard this property
+    /// replaces.</summary>
+    public long CurrentReceptionSequence { get; set; }
+
     public event Action<SstvModeDefinition>? ModeDetected;
 
     public event Action<SstvModeDefinition>? DecodeRestarted;
 
     public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
+    public event Action<CwIdDecodedInfo>? CwIdDecoded;
 
     public event Action<TransmitProgressInfo>? TransmitProgressChanged;
 
@@ -916,6 +926,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public void RaiseDecodeRestarted(SstvModeDefinition mode) => DecodeRestarted?.Invoke(mode);
 
     public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+
+    public void RaiseCwIdDecoded(CwIdDecodedInfo info) => CwIdDecoded?.Invoke(info);
 
     public void RaiseTransmitProgress(TransmitProgressInfo info) => TransmitProgressChanged?.Invoke(info);
 
@@ -1500,6 +1512,16 @@ internal sealed class FakeRxAudioAutoSaver : IRxAudioAutoSaver
     public void RaiseAudioAttached(string entryId, string path) => AudioAttached?.Invoke(entryId, path);
 }
 
+/// <summary>fsk_cwid.md A-P3b, same "minimal fake, only the event is functional" convention as
+/// <see cref="FakeRxAudioAutoSaver"/> immediately above -- RxHistoryPaneViewModel's
+/// IRxStationIdAttacher dependency.</summary>
+internal sealed class FakeRxStationIdAttacher : IRxStationIdAttacher
+{
+    public event Action<string, string?, string?>? StationIdAttached;
+
+    public void RaiseStationIdAttached(string entryId, string? callsign, string? nrRst) => StationIdAttached?.Invoke(entryId, callsign, nrRst);
+}
+
 internal sealed class FakeClipboardImageService : IClipboardImageService
 {
     public List<Bitmap> CopiedImages { get; } = [];
@@ -1870,6 +1892,14 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     {
         SetAudioFilePathCalls.Add((entryId, path));
         return Task.FromResult(TryUpdateEntry(entryId, e => e with { AudioFilePath = path }));
+    }
+
+    public List<(string EntryId, string? Callsign, string? NrRst)> SetDecodedStationIdCalls { get; } = [];
+
+    public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default)
+    {
+        SetDecodedStationIdCalls.Add((entryId, callsign, nrRst));
+        return Task.FromResult(TryUpdateEntry(entryId, e => e with { DecodedCallsign = callsign, DecodedNrRst = nrRst }));
     }
 
     /// <summary>Every <see cref="SetNoteAsync"/> call, in order -- lets a test prove a selection

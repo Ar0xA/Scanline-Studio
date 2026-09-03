@@ -42,7 +42,7 @@ public sealed class SstvSessionServiceRecordPlaybackTests
 
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder,
-            new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+            new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, decoder, waterfall, radioSession);
     }
 

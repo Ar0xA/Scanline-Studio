@@ -60,6 +60,7 @@
     <!-- Same rationale again: Program.cs directly registers AnalogFmSstvDecoder/Encoder,
          ReceivedImageBuffer/ImageFileLoader, RadioController, and RigctldProtocolFactory. -->
     <ProjectReference Include="..\ScanlineStudio.Core.Sstv\ScanlineStudio.Core.Sstv.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Cw\ScanlineStudio.Core.Cw.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Radio\ScanlineStudio.Core.Radio.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />

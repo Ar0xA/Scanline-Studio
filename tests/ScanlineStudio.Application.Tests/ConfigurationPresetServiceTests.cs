@@ -65,7 +65,7 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var sstvSession = new SstvSessionService(audioEngine, enumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        var sstvSession = new SstvSessionService(audioEngine, enumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         var service = new ConfigurationPresetService(presetStore, settingsStore, sstvSession, radioSession, NullLogger<ConfigurationPresetService>.Instance);
 
         return (service, decoder, encoder, sstvSession, settingsStore, radioSession, presetStore, audioEngine);
@@ -412,7 +412,7 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         var encoder = new FakeSstvEncoder { SampleRate = NewSampleRate };
         var waterfall = new FakeWaterfallSource { SampleRate = NewSampleRate };
         var radioSession = new FakeRadioSessionService();
-        var sstvSession = new SstvSessionService(audioEngine, enumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, new FakeReceivedImageBuffer(), radioSession, NullLogger<SstvSessionService>.Instance);
+        var sstvSession = new SstvSessionService(audioEngine, enumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, new FakeReceivedImageBuffer(), radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         var service = new ConfigurationPresetService(presetStore, settingsStore, sstvSession, radioSession, NullLogger<ConfigurationPresetService>.Instance);
 
         // Receiving first -- otherwise ApplyCaptureDeviceLockedAsync's own not-receiving branch only

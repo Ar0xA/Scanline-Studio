@@ -163,6 +163,30 @@ public interface ISstvDecoder
     /// note.</summary>
     long ReceptionSequence { get; }
 
+    /// <summary>fsk_cwid.md §8.2: how far this reception's true image-start audio sample trails
+    /// the audio actually consumed so far, at the moment <see cref="ModeDetected"/> fires --
+    /// captured as <c>TotalSamplesReceived - _consumedSamples</c> immediately before that raise
+    /// (the same corrected line-0 anchor the decoder's own AFC bound is computed from), so a
+    /// caller building a post-image capture window from ITS OWN pushed-sample coordinate space
+    /// can compute <c>imageStart = pushedSampleCount - AnchorLagSamples</c> without needing a
+    /// backfill buffer.
+    ///
+    /// <b>Read-in-callback contract, same as <see cref="ReceptionSequence"/>:</b> only meaningful
+    /// when read from inside the <see cref="ModeDetected"/> callback for the reception it
+    /// describes -- a poll at any other time returns whatever the last completed reception (or
+    /// <c>0</c>, before any lock) happened to leave behind, not a live value. <c>0</c> before any
+    /// reception has ever locked.
+    ///
+    /// A larger lag makes the computed <c>imageStart</c> EARLIER, not later -- the captured
+    /// window then opens sooner, landing partway into this image's own slant-bounded audio tail
+    /// rather than after it. This is bounded and safe by construction, not a caller obligation:
+    /// real SSTV sync pulses are single-length, not the 1:3 dit/dah ratio a CW timing classifier
+    /// requires, so they fail that structural check even if a tone-find step locks onto one.
+    ///
+    /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/>'s own concurrency
+    /// note.</summary>
+    int AnchorLagSamples { get; }
+
     /// <summary>Resets AGC/level-tracking state to its power-on defaults. Legacy calls its equivalent
     /// (<c>CLVL::Init</c>) at every TX&lt;-&gt;RX transition (`Sound.cpp:398,443`) -- callers should
     /// invoke this at the same transition points (ultracode audit finding #6).

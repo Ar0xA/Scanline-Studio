@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
@@ -10,9 +12,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// </summary>
 internal static class FskStationIdWireFormat
 {
-    /// <summary>`sstv.h:718-722` sizes `m_fskcall[20]` etc; legacy aborts RX at 17 chars
-    /// (`sstv.cpp:2478`), so 16 is the real maximum.</summary>
-    public const int MaxCallsignLength = 16;
+    /// <summary>fsk_cwid.md B-P1 layering move: alias, not a second definition --
+    /// <see cref="StationIdCallsignNormalizer.MaxCallsignLength"/> (now in
+    /// <c>ScanlineStudio.Abstractions.Sstv</c>) is the single source of truth, carrying the real
+    /// citation (`sstv.h:718-722` sizes `m_fskcall[20]` etc; legacy aborts RX at 17 chars,
+    /// `sstv.cpp:2478`, so 16 is the real maximum). Kept here too since callers throughout this file
+    /// already reference `FskStationIdWireFormat.MaxCallsignLength` directly.</summary>
+    public const int MaxCallsignLength = StationIdCallsignNormalizer.MaxCallsignLength;
 
     /// <summary>Legacy aborts RX at 9 chars (`sstv.cpp:2518`), so 8 is the real maximum for the
     /// NR/RST STRING sub-form specifically (the compact 2-byte form has no length concept of its
