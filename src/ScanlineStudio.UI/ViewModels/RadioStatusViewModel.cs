@@ -250,10 +250,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// readout swaps.</summary>
     public string TxVolumeDisplay => TxIsMuted ? "\U0001F507" : TxVolumePercent.ToString(CultureInfo.InvariantCulture);
 
-    /// <summary>User-directed redesign (same session): "RX level" is no longer a volume control at
-    /// all -- it's a plain incoming-audio-level meter, same idea as WSJT-X's own RX meter, not a
-    /// slider. Backed by <see cref="ISstvSessionService.RawInputPeakLevel"/> -- the raw captured
-    /// buffer's own peak amplitude, [0.0, 1.0], before any SSTV-specific filtering -- polled on a
+    /// <summary>User-directed redesign (same session): "RX level" is a plain incoming-audio-level
+    /// meter, same idea as WSJT-X's own RX meter, not a slider. Backed by
+    /// <see cref="ISstvSessionService.SignalPeakLevel"/> -- the peak amplitude AFTER the receive
+    /// bandpass filter, [0.0, 1.0] -- not <see cref="ISstvSessionService.RawInputPeakLevel"/> (the
+    /// raw captured buffer's own pre-filter peak). Switched 2026-09-03, user-reported/-directed:
+    /// the raw pre-filter reading includes hum/noise/adjacent-channel energy that never helps a
+    /// decode, so a quiet-but-clean SSTV tone read as an alarmingly low raw percentage even when it
+    /// decoded perfectly fine -- the post-filter value is the actual demodulated tone strength, a
+    /// meaningfully better answer to "does the operator need to change anything." Polled on a
     /// dedicated timer (<see cref="_rxAudioLevelTimer"/>), same 250ms interval
     /// <see cref="ScanlineStudio.UI.ViewModels.RxImagePaneViewModel"/>'s own telemetry timer
     /// already uses.</summary>
@@ -265,7 +270,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     /// <summary>0-100 fill fraction for the meter bar -- a direct percentage of
     /// <see cref="RxAudioPeakLevel"/>'s <c>[0.0, 1.0]</c> range, clamped defensively (that range
-    /// should already be a hard guarantee for <c>RawInputPeakLevel</c>).</summary>
+    /// should already be a hard guarantee for <c>SignalPeakLevel</c>).</summary>
     public double RxLevelFillPercent => Math.Clamp(RxAudioPeakLevel, 0.0, 1.0) * 100.0;
 
     /// <summary>"62" -- a linear amplitude fraction, not a dB value, so a plain 0-100 number is this
@@ -273,24 +278,31 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// the bar itself).</summary>
     public string RxLevelDisplay => $"{RxLevelFillPercent:0}";
 
-    /// <summary>Lower bound of the "good for SSTV decoding" band -- below this, the meter reads
-    /// red (signal too quiet: poor SNR, decode more likely to fail or produce noisy lines). A
-    /// judgment call, not a measured/confirmed WSJT-X threshold -- WSJT-X's own exact percentages
-    /// aren't published/available to cite here; picked to keep the green band wide (most real
-    /// audio levels read green) while still catching a genuinely silent/near-silent input.</summary>
-    private const double RxLevelTooLowThreshold = 0.10;
+    /// <summary>Lower bound of the "good for SSTV decoding" band -- below this, the meter reads red
+    /// (essentially no usable signal: wrong input device, unplugged cable, dead air). Deliberately
+    /// NOT calibrated to "the level below which decode starts failing" -- no such line exists
+    /// anywhere in this codebase or in legacy YONIQ to measure against (neither ever computed an
+    /// SNR/decode-confidence estimate; legacy's own closest analogue, the VIS-sync squelch
+    /// `m_SLvl`/`sstv.cpp:1795-1816`, operates on a Goertzel sync-tone magnitude, a different
+    /// quantity this meter has no access to). User-directed 2026-09-03: FM-SSTV decodes reliably at
+    /// levels far below what looked "alarmingly low" on the meter's own linear scale (e.g. a real
+    /// user report: 3-4% raw input decoded a clean image) -- so this floor is set low enough to
+    /// flag only a near-silent input, not a working-but-quiet one. A judgment call, not a measured
+    /// threshold.</summary>
+    private const double RxLevelTooLowThreshold = 0.01;
 
-    /// <summary>Upper bound of the "good for SSTV decoding" band -- above this, the meter reads
-    /// red (signal too hot: risk of ADC/soundcard-input clipping, which corrupts the decode in a
-    /// way no amount of downstream gain can undo). Same judgment-call caveat as
-    /// <see cref="RxLevelTooLowThreshold"/>.</summary>
-    private const double RxLevelTooHighThreshold = 0.90;
-
-    /// <summary>True (green) when <see cref="RxAudioPeakLevel"/> is within the good-decoding band;
-    /// false (red) when it's too quiet or too hot -- see <see cref="RxLevelTooLowThreshold"/>/
-    /// <see cref="RxLevelTooHighThreshold"/>'s own doc comments for the exact thresholds and their
-    /// judgment-call caveat.</summary>
-    public bool RxLevelInGoodRange => RxAudioPeakLevel >= RxLevelTooLowThreshold && RxAudioPeakLevel <= RxLevelTooHighThreshold;
+    /// <summary>True (green) when <see cref="RxAudioPeakLevel"/> is at or above the "something is
+    /// actually there" floor AND <see cref="ISstvSessionService.IsLevelOverdriven"/> is false; false
+    /// (red) otherwise. The too-hot side reuses <c>IsLevelOverdriven</c> -- legacy's own real,
+    /// already-ported clipping-adjacent threshold (`AnalogFmSstvDecoder.cs`'s doc comment on that
+    /// property, mirroring `Main.cpp:6174`'s `DrawLvl` at 75% of legacy's int16 scale) -- rather
+    /// than a second, independently-calibrated raw-input percentage: one legacy-grounded "too hot"
+    /// concept instead of two differently-calibrated ones (2026-09-03 redesign, same session as the
+    /// too-low floor change above). <see cref="ISstvSessionService.IsLevelOverdriven"/> is read live
+    /// here (not cached/polled into its own field) -- it changes on the same underlying decoder
+    /// state <see cref="RxAudioPeakLevel"/>'s own poll already re-notifies this property from, so no
+    /// separate notification wiring is needed.</summary>
+    public bool RxLevelInGoodRange => RxAudioPeakLevel >= RxLevelTooLowThreshold && !_sstvSession.IsLevelOverdriven;
 
     [ObservableProperty]
     private double _tuneFrequencyHz = 1750;
@@ -483,10 +495,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         // Always running, not gated on IsReceiving -- same "no Start/Stop pairing, runs for this
         // ViewModel's whole lifetime" shape as RxImagePaneViewModel's own telemetry timer. Reads 0
-        // while not actually capturing (RawInputPeakLevel's own contract), which is the correct
-        // "meter shows silence" state, not a special case to gate around.
-        RxAudioPeakLevel = _sstvSession.RawInputPeakLevel;
-        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => RxAudioPeakLevel = _sstvSession.RawInputPeakLevel);
+        // while not actually capturing because StopReceivingLockedAsync calls _decoder.ResetAgc()
+        // on RX stop (SstvSessionService.cs:2244, zeroes LevelAgc._curMax) -- which is the correct
+        // "meter shows silence" state, not a special case to gate around. Code-review nit
+        // (2026-09-03): unlike RawInputPeakLevel (explicitly zeroed at SstvSessionService.cs:2142),
+        // SignalPeakLevel has no capture-state awareness of its own -- this comment records WHERE
+        // the zeroing actually comes from so a future change to ResetAgc's own call site doesn't
+        // silently break this meter's idle-state behavior with nothing here to explain why.
+        RxAudioPeakLevel = _sstvSession.SignalPeakLevel;
+        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => RxAudioPeakLevel = _sstvSession.SignalPeakLevel);
         _rxAudioLevelTimer.Start();
 
         // spec/18-path-to-1.0.md High item 8: Program.cs's own automatic StartReceivingAsync()
