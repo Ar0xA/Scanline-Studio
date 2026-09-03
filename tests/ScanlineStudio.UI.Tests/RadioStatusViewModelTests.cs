@@ -1395,6 +1395,30 @@ public sealed class RadioStatusViewModelTests
         Assert.Null(vm.ErrorMessage);
     }
 
+    /// <summary>2026-09-03: the bandwidth field became an editable ComboBox with quick-pick presets
+    /// (same "ItemsSource + IsEditable" pattern as OptionsWindowView's Sample rate field) -- pins the
+    /// preset list itself, that BandwidthInputHz still defaults to 2400 (an auditor domain-judgment
+    /// review confirmed this is the right default given the CAT layer can only ever set width, never
+    /// passband center/shift), and that a value NOT in the preset list still round-trips through
+    /// SetBandwidthCommand exactly as a NumericUpDown's free entry did -- the list is a convenience,
+    /// not a validation constraint.</summary>
+    [AvaloniaFact]
+    public void AvailableBandwidthPresetsHz_HasThe1800To2800Range_AndAnOutOfListValueStillApplies()
+    {
+        var radioSession = new FakeRadioSessionService { Capabilities = RadioCapabilities.SetBandwidth };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([1800.0, 2400.0, 2800.0], vm.AvailableBandwidthPresetsHz);
+        Assert.Equal(2400.0, vm.BandwidthInputHz);
+
+        vm.BandwidthInputHz = 2200; // not in the preset list
+        vm.SetBandwidthCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([2200], radioSession.SetBandwidthCalls);
+    }
+
     [AvaloniaFact]
     public void SetBandwidthCommand_BackendThrows_SetsErrorMessage()
     {
