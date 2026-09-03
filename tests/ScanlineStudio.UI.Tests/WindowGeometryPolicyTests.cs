@@ -59,4 +59,85 @@ public sealed class WindowGeometryPolicyTests
         // Bounds are exclusive on the far edge (X + Width is one pixel past the last valid column).
         Assert.False(WindowGeometryPolicy.ShouldRestorePosition(new PixelPoint(1920, 100), [PrimaryScreen]));
     }
+
+    /// <summary>User-reported bug (2026-09-03): the exact scenario -- a size saved while the
+    /// taskbar was its DEFAULT ~40px height no longer fits once the operator resizes their real
+    /// Windows taskbar taller (here, a working area 120px shorter than the full 1080px monitor,
+    /// simulating a much taller taskbar). The saved Top-left point (0,0) still validates fine via
+    /// ShouldRestorePosition (that check never looked at Height at all), but the saved Height
+    /// (1080, the FULL old monitor height) now overshoots the new working area's bottom by 120px --
+    /// exactly reproducing "the bottom of the window is below the taskbar."</summary>
+    [Fact]
+    public void ClampToWorkArea_HeightTallerThanCurrentWorkingArea_ShrinksHeightToFit()
+    {
+        var workingArea = new PixelRect(0, 0, 1920, 960); // 120px shorter than PrimaryScreen's 1080 full height
+        var requested = new PixelRect(0, 0, 1920, 1080);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        Assert.Equal(new PixelRect(0, 0, 1920, 960), clamped);
+    }
+
+    [Fact]
+    public void ClampToWorkArea_PositionAboveWorkingArea_MovesDownToFit()
+    {
+        // The other half of the user-reported symptom: a saved Top slightly above the working
+        // area's own top edge (e.g. left over from an earlier bad maximize) -- "the top of the
+        // window is outside of the screen."
+        var workingArea = new PixelRect(0, 40, 1920, 1000); // taskbar reserves the top 40px in this scenario
+        var requested = new PixelRect(0, 0, 800, 600);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        Assert.Equal(new PixelRect(0, 40, 800, 600), clamped);
+    }
+
+    [Fact]
+    public void ClampToWorkArea_PositionBelowAndRightOfWorkingArea_MovesUpAndLeftToFit()
+    {
+        var workingArea = new PixelRect(0, 0, 1920, 1040);
+        var requested = new PixelRect(1800, 1000, 400, 300);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        // Size unchanged (400x300 already fits within 1920x1040); position pulled back so the
+        // clamped rectangle's far edges land exactly on the working area's own far edges.
+        Assert.Equal(new PixelRect(1520, 740, 400, 300), clamped);
+    }
+
+    [Fact]
+    public void ClampToWorkArea_AlreadyFitsEntirely_ReturnsUnchanged()
+    {
+        var workingArea = new PixelRect(0, 0, 1920, 1040);
+        var requested = new PixelRect(100, 100, 800, 600);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        Assert.Equal(requested, clamped);
+    }
+
+    [Fact]
+    public void ClampToWorkArea_LargerThanWorkingAreaOnBothAxes_ShrinksToFillWorkingAreaExactly()
+    {
+        var workingArea = new PixelRect(0, 0, 1920, 960);
+        var requested = new PixelRect(-50, -30, 2200, 1200);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        Assert.Equal(workingArea, clamped);
+    }
+
+    [Fact]
+    public void ClampToWorkArea_SecondScreenWorkingArea_ClampsRelativeToItsOwnOffset()
+    {
+        // Working areas aren't always anchored at (0,0) -- a second monitor to the right of the
+        // primary, per this file's own SecondScreen fixture. The clamp must respect the working
+        // area's own X/Y offset, not assume it starts at the origin.
+        var workingArea = new PixelRect(1920, 0, 1920, 1040);
+        var requested = new PixelRect(1920, 0, 1920, 1080);
+
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+
+        Assert.Equal(new PixelRect(1920, 0, 1920, 1040), clamped);
+    }
 }
