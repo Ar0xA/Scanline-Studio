@@ -201,6 +201,17 @@ public partial class TxImageEditorPaneView : UserControl
         // runs first and marks the event Handled while a placement is armed, so an armed click over
         // an existing element starts a PLACEMENT, not a drag of that element.
         EditorCanvas.AddHandler(PointerPressedEvent, OnArmedPlacementPressed, RoutingStrategies.Tunnel);
+
+        // Real regression found by a code-review pass over TxImageEditorRealUiSmokeTests.cs
+        // (2026-09-02): these 3 buttons used a plain bubbling PointerPressed="..." XAML attribute,
+        // which never fires for a real click. Button.OnPointerPressed (decompiled from the exact
+        // Avalonia 11.3.12 package this project uses) unconditionally sets e.Handled = true on any
+        // left-button press before an instance bubble handler on the same node runs -- confirmed via
+        // ilspycmd, not inferred. Tunnel wiring here runs before that class handler, same fix as
+        // OnArmedPlacementPressed above.
+        AddTextButton.AddHandler(PointerPressedEvent, OnArmTextPlacementPressed, RoutingStrategies.Tunnel);
+        AddBoxButton.AddHandler(PointerPressedEvent, OnArmBoxPlacementPressed, RoutingStrategies.Tunnel);
+        AddLineButton.AddHandler(PointerPressedEvent, OnArmLinePlacementPressed, RoutingStrategies.Tunnel);
     }
 
     private TxImageEditorPaneViewModel? ViewModel => DataContext as TxImageEditorPaneViewModel;
@@ -266,7 +277,10 @@ public partial class TxImageEditorPaneView : UserControl
     /// (sticky placement) is readable from <see cref="PointerPressedEventArgs.KeyModifiers"/> at arm
     /// time -- a plain <c>Click</c> event carries no modifier state. Re-pressing the SAME button
     /// while already armed with that kind disarms instead of re-arming (toggle), matching the
-    /// design's "clicking the button again cancels" requirement.</summary>
+    /// design's "clicking the button again cancels" requirement. Subscribed via
+    /// <c>AddHandler(..., RoutingStrategies.Tunnel)</c> in the constructor, NOT a XAML
+    /// <c>PointerPressed="..."</c> attribute -- see that call site's own comment for why a bubbling
+    /// attribute on a <see cref="Button"/> never fires.</summary>
     private void OnArmTextPlacementPressed(object? sender, PointerPressedEventArgs e) => TogglePlacementArm(PlacementKind.Text, e.KeyModifiers.HasFlag(KeyModifiers.Shift));
 
     /// <summary>Same reasoning as <see cref="OnArmTextPlacementPressed"/> right above, for "Add Box".</summary>

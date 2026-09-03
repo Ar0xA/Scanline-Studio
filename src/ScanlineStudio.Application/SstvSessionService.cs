@@ -1,9 +1,11 @@
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
+using ScanlineStudio.Core.Cw;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
@@ -30,6 +32,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private readonly Action<ReadOnlyMemory<float>> _levelMeterHandler;
     private readonly Action<ReadOnlyMemory<float>> _recordingHandler;
     private readonly Action<ReadOnlyMemory<float>> _audioAutoSaveHandler;
+    private readonly Action<ReadOnlyMemory<float>> _cwIdHandler;
+    private readonly ICwIdDecoder _cwIdDecoder;
 
     // Piece C1 (RX tab Re-decode port): guards _recordingChunks/_recordingPath, contended by the
     // single audio-capture drain thread (inside _recordingHandler, once per captured chunk) and
@@ -206,6 +210,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     private int _waterfallExceptionCount;
     private int _transmitProgressHandlerExceptionCount;
     private int _audioAutoSaveExceptionCount;
+    private int _cwIdExceptionCount;
 
     public SstvSessionService(
         IAudioEngine audioEngine,
@@ -218,9 +223,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
         IWaterfallSource waterfall,
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
+        ICwIdDecoder cwIdDecoder,
         ILogger<SstvSessionService> logger)
         : this(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, macroTextResolver,
-               waterfall, receivedImage, radioSession, logger,
+               waterfall, receivedImage, radioSession, cwIdDecoder, logger,
                cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
                inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null)
     {
@@ -241,6 +247,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         IWaterfallSource waterfall,
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
+        ICwIdDecoder cwIdDecoder,
         ILogger<SstvSessionService> logger,
         TimeSpan? cleanupTimeoutForTests,
         TimeSpan? playbackStopWaitBudgetForTests,
@@ -262,6 +269,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         Waterfall = waterfall;
         ReceivedImage = receivedImage;
         _radioSession = radioSession;
+        _cwIdDecoder = cwIdDecoder;
         _logger = logger;
 
         // Isolated fan-out (Phase-3 plan decision #3): a throwing/slow handler on one target must
@@ -385,6 +393,27 @@ public sealed partial class SstvSessionService : ISstvSessionService
             }
         };
 
+        // fsk_cwid.md §8.2: a 6th fan-out target -- subscribed LAST (see
+        // SstvSessionService.CwId.cs's own OnCwIdSamplesCaptured doc comment for why the ORDER here,
+        // after _decoderHandler, is load-bearing: the chunk-index invariant requires _pushedSampleCount
+        // to already reflect the current chunk by the time this runs). Also called directly from
+        // DecodeFromFileAsync's own chunk loop, same dual-caller shape as _waterfallHandler/_levelMeterHandler.
+        _cwIdHandler = samples =>
+        {
+            try
+            {
+                OnCwIdSamplesCaptured(samples);
+            }
+            catch (Exception ex)
+            {
+                var count = Interlocked.Increment(ref _cwIdExceptionCount);
+                if (count == 1 || count % ExceptionLogEveryN == 0)
+                {
+                    SafeLog(() => Log.CwIdPushSamplesFailed(_logger, count, ex));
+                }
+            }
+        };
+
         // Subscribed unconditionally, for this object's whole lifetime -- these fire regardless of
         // live-capture state (including during a file decode, on the SAME shared _decoder), so this
         // is NOT tied to StartReceivingLockedAsync/StopReceivingLockedAsync the way the SamplesCaptured
@@ -392,6 +421,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // on _fileDecodeInFlight internally -- see their own doc comments.
         _decoder.ModeDetected += OnAudioAutoSaveModeDetected;
         _decoder.DecodeRestarted += OnAudioAutoSaveDecodeRestarted;
+
+        // fsk_cwid.md §8.2: same unconditional-for-the-whole-session-lifetime wiring as the audio
+        // auto-save pair immediately above, EXCEPT this one also fires during a file decode (no
+        // _fileDecodeInFlight gate) -- see SstvSessionService.CwId.cs's own header comment for why.
+        _decoder.ModeDetected += OnCwIdModeDetected;
+        _decoder.DecodeRestarted += OnCwIdDecodeRestarted;
 
         // Ultracode audit finding #34: ISstvDecoderMaintenance is an optional side-channel only
         // RestartableSstvDecoder implements (not on ISstvDecoder itself -- see that interface's own
@@ -456,6 +491,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
             _decoder.RequestAbandonReception();
             _autoDetectPauseDrainPending = true;
             _autoDetectPaused = true;
+
+            // fsk_cwid.md §8.2: SetAutoDetectPaused(true) raises neither AudioCaptureReset nor
+            // DecodeRestarted, so an open CW arm would otherwise sit waiting for chunks that will
+            // never arrive (OnCwIdSamplesCaptured's own _autoDetectPaused gate stops feeding it) until
+            // the NEXT real ModeDetected happens to drop it -- drop it here, at the actual transition,
+            // instead.
+            DropCwArmForCaptureReset();
         }
         else
         {
@@ -1015,6 +1057,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
             _pttLockGate.Release();
         }
     }
+
+    public long CurrentReceptionSequence => _decoder.ReceptionSequence;
 
     public event Action<SstvModeDefinition>? ModeDetected
     {
@@ -1945,6 +1989,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
             ?? new StationIdSettings();
         _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled;
 
+        // fsk_cwid.md §8.2: same "re-read the persisted section, cache into a field" pattern as
+        // FskIdRxEnabled immediately above -- see SstvSessionService.CwId.cs's own _cwIdRxEnabled
+        // field doc comment for why this mirrors that setting's shape rather than SetAutoSaveAudioEnabled's.
+        _cwIdRxEnabled = stationIdSettings.CwIdRxEnabled;
+        _cwIdRxWindowSeconds = stationIdSettings.CwIdRxWindowSeconds ?? StationIdSettings.DefaultCwIdRxWindowSeconds;
+
         await _audioEngine.StartCaptureAsync(
             device, _decoder.SampleRate, settings.CaptureThreadPriority,
             settings.PeriodSizeInFrames, settings.Periods, settings.CaptureChannelSource, ct).ConfigureAwait(false);
@@ -2014,6 +2064,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _audioEngine.SamplesCaptured += _levelMeterHandler;
         _audioEngine.SamplesCaptured += _audioAutoSaveHandler;
+        _audioEngine.SamplesCaptured += _cwIdHandler;
         _isReceiving = true;
         // Configurations-preset backlog, Phase 1 (2026-08-28): latched here, at the exact point
         // capture is confirmed genuinely open -- see this field's own doc comment for why it isn't
@@ -2085,6 +2136,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _audioEngine.SamplesCaptured -= _waterfallHandler;
         _audioEngine.SamplesCaptured -= _levelMeterHandler;
         _audioEngine.SamplesCaptured -= _audioAutoSaveHandler;
+        _audioEngine.SamplesCaptured -= _cwIdHandler;
         // RawInputPeakLevel's own contract: 0.0 whenever capture isn't running, never a stale
         // reading left over from before this stop -- no more buffers will arrive to overwrite it.
         _rawInputPeakLevel = 0f;
@@ -2410,35 +2462,58 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // instance, so its own state runs straight through the identical seam.
                 _decoder.RequestAbandonReception();
 
-                // Runs on a background thread -- PushSamples/decode events are synchronous, so without
-                // this the whole loop would run on whatever thread called this method (the UI thread,
-                // in practice) and block it for the file's full decode duration.
-                await Task.Run(
-                    () =>
-                    {
-                        const int ChunkSize = 4096;
-                        for (var chunkOffset = 0; chunkOffset < samples.Length; chunkOffset += ChunkSize)
+                // fsk_cwid.md §8.2: a NESTED try/finally around the decode loop, not a plain
+                // sequential call after it -- a plain call would never run for a cancelled/faulted
+                // decode (control would jump straight past it to the OUTER finally below). Nesting it
+                // HERE, inside the existing inner try (not before it, and not moved into the outer
+                // finally alongside StartReceivingLockedAsync) means that if FlushOrDropCwArmForEndOfFile
+                // itself throws, the outer finally's StartReceivingLockedAsync/_rxTransitionGate.Release()
+                // still run -- see that method's own doc comment.
+                var completedNormally = false;
+                try
+                {
+                    // Runs on a background thread -- PushSamples/decode events are synchronous, so
+                    // without this the whole loop would run on whatever thread called this method (the
+                    // UI thread, in practice) and block it for the file's full decode duration.
+                    await Task.Run(
+                        () =>
                         {
-                            ct.ThrowIfCancellationRequested();
-                            ObjectDisposedException.ThrowIf(_disposed, this);
+                            const int ChunkSize = 4096;
+                            for (var chunkOffset = 0; chunkOffset < samples.Length; chunkOffset += ChunkSize)
+                            {
+                                ct.ThrowIfCancellationRequested();
+                                ObjectDisposedException.ThrowIf(_disposed, this);
 
-                            var length = Math.Min(ChunkSize, samples.Length - chunkOffset);
-                            var chunk = new ReadOnlyMemory<float>(samples, chunkOffset, length);
+                                var length = Math.Min(ChunkSize, samples.Length - chunkOffset);
+                                var chunk = new ReadOnlyMemory<float>(samples, chunkOffset, length);
 
-                            // Same three fan-out targets live capture feeds (matching legacy's own
-                            // fftIN.CollectFFT reading from the same buffer WaveFile.ReadWrite fills,
-                            // Sound.cpp:368) -- reusing these exact delegate instances, not
-                            // reimplementing their isolation logic. _decoder.PushSamples is
-                            // deliberately NOT wrapped here (unlike the live _decoderHandler) -- a
-                            // decode failure on this explicit, single-shot, user-initiated call should
-                            // propagate, not be silently swallowed the way an ambient hot-path capture
-                            // callback's failure is.
-                            PushSamplesToDecoder(chunk);
-                            _waterfallHandler(chunk);
-                            _levelMeterHandler(chunk);
-                        }
-                    },
-                    ct).ConfigureAwait(false);
+                                // Same three fan-out targets live capture feeds (matching legacy's own
+                                // fftIN.CollectFFT reading from the same buffer WaveFile.ReadWrite
+                                // fills, Sound.cpp:368) -- reusing these exact delegate instances, not
+                                // reimplementing their isolation logic. _decoder.PushSamples is
+                                // deliberately NOT wrapped here (unlike the live _decoderHandler) -- a
+                                // decode failure on this explicit, single-shot, user-initiated call
+                                // should propagate, not be silently swallowed the way an ambient
+                                // hot-path capture callback's failure is.
+                                PushSamplesToDecoder(chunk);
+                                _waterfallHandler(chunk);
+                                _levelMeterHandler(chunk);
+
+                                // fsk_cwid.md §8.2: "re-decode a recording and get its CW ID" is an
+                                // explicit goal -- UNLIKE _audioAutoSaveHandler, which is deliberately
+                                // excluded from this loop (the file itself is already the audio), the
+                                // CW arm needs every chunk to compute its own capture window the same
+                                // way live capture does.
+                                _cwIdHandler(chunk);
+                            }
+                        },
+                        ct).ConfigureAwait(false);
+                    completedNormally = true;
+                }
+                finally
+                {
+                    FlushOrDropCwArmForEndOfFile(completedNormally);
+                }
             }
             finally
             {

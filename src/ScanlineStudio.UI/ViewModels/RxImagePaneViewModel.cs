@@ -5,6 +5,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
@@ -102,6 +103,18 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     private Task _loadQuickModeGridTask = Task.CompletedTask;
     private bool _postScheduled;
 
+    /// <summary>fsk_cwid.md §A5: this pane's own latched "current reception" identity, replacing the
+    /// earlier <see cref="IReceivedImageBuffer.Generation"/>-based stale guard in
+    /// <see cref="ApplyStationIdDecodedAsync"/> -- one source of truth
+    /// (<see cref="ISstvSessionService.CurrentReceptionSequence"/>) instead of a second,
+    /// independently-timed counter. Captured synchronously inside <see cref="OnModeDetected"/>'s own
+    /// handler (the read-in-callback contract that property's doc comment requires), then closed over
+    /// into that method's own <see cref="Dispatcher.UIThread"/> post -- same "no separate lock needed,
+    /// the dispatcher queue itself serializes access" reasoning as every other cross-thread field on
+    /// this class. 0 until the first real <see cref="ISstvSessionService.ModeDetected"/> fires,
+    /// matching <see cref="ISstvSessionService.CurrentReceptionSequence"/>'s own "0 = unset" contract.</summary>
+    private long _currentReceptionSequence;
+
     /// <summary>Path most recently handed to <see cref="OnSaved"/> -- correlation key for
     /// <see cref="OnHistoryRecorded"/> below (see that method's own doc comment for the full
     /// reasoning). UI-thread-only: written and read exclusively from inside a
@@ -149,6 +162,41 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// starts empty on every app launch. See <see cref="AddPreviousFrameAsync"/> for how it's kept
     /// sorted/capped.</summary>
     public ObservableCollection<RxHistoryEntryViewModel> PreviousFrames { get; } = [];
+
+    /// <summary>fsk_cwid.md A4: session-only "Stations heard" rolling list -- mirrors
+    /// <see cref="PreviousFrames"/> in shape and lifetime (in-memory only, starts empty on every app
+    /// launch, capped at <see cref="StationsHeardCapacity"/>, newest first). Deliberately NOT reset
+    /// on <see cref="OnModeDetected"/> -- that is the entire point: unlike <see cref="OverrideCallsign"/>/
+    /// <see cref="DecodedNrRst"/>/<see cref="CwIdText"/> (per-RECEPTION state that a second station's
+    /// ID silently replaces), this list accumulates across the whole session so a second station
+    /// heard right after the first never erases the first from the operator's view. See
+    /// <see cref="AddStationHeard"/> for how entries are added/capped.</summary>
+    public ObservableCollection<StationIdHeardViewModel> StationsHeard { get; } = [];
+
+    // fsk_cwid.md A4: "capacity ~20" -- the plan's own stated figure, distinct from PreviousFramesCapacity
+    // (6) just below, which is a separate, deliberately much smaller strip (Fable operator-perspective
+    // punch list, see that constant's own comment).
+    private const int StationsHeardCapacity = 20;
+
+    /// <summary>fsk_cwid.md A4: inserts newest-first, capped at <see cref="StationsHeardCapacity"/> --
+    /// same insert-at-0/trim-from-the-end shape as <see cref="AddPreviousFrameAsync"/>'s own list
+    /// maintenance, just without that method's DB/thumbnail work (this list's own data is already
+    /// fully in hand from the decode event itself, no async fetch needed). Called from BOTH
+    /// <see cref="ApplyStationIdDecodedAsync"/> and <see cref="ApplyCwIdDecodedAsync"/> as their OWN
+    /// FIRST statement -- before either method's stale-guard or (for FSK callsigns) self-filter check,
+    /// deliberately: this list logs every decode EVENT that actually happened, independent of whether
+    /// the field-level auto-fill below ends up applying it to the CURRENT reception's card row. A
+    /// stale or self-filtered decode is still a real event worth keeping in the log -- the same
+    /// "a second station never silently erases the first" reasoning this list exists for in the first
+    /// place applies equally to "a late-arriving decode never silently vanishes from the log."</summary>
+    private void AddStationHeard(string text, string source, long receptionSequence)
+    {
+        StationsHeard.Insert(0, new StationIdHeardViewModel(text, source, DateTimeOffset.UtcNow, DetectedMode?.Id, receptionSequence));
+        while (StationsHeard.Count > StationsHeardCapacity)
+        {
+            StationsHeard.RemoveAt(StationsHeard.Count - 1);
+        }
+    }
 
     // Fable operator-perspective punch list (2026-09-01), priority #3: legacy kept 32 on the same
     // page; this port's own strip forced a Gallery tab switch after only 2, even though operators
@@ -436,8 +484,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// this port, matching the auto-fill's own gate simplification, see
     /// <see cref="OnStationIdDecoded"/>'s doc comment). Also feeds the read-only "Callsign" row's
     /// <see cref="CallsignDisplay"/> (0.9-beta UI-honesty pass) -- the remaining, still-unseeded
-    /// source is OCR, which that row no longer claims to be (label trimmed from "Callsign · OCR" to
-    /// plain "Callsign" since it now shows the real FSK-decoded value, not an OCR result).</summary>
+    /// source is OCR, which that row no longer claims to be (caption trimmed from "Callsign · OCR" to
+    /// plain "Callsign" since it now shows the real FSK-decoded value, not an OCR result). That plain
+    /// caption itself is untouched by fsk_cwid.md A3 -- see <see cref="CallsignLabelDisplay"/> for the
+    /// separate, SIBLING source/time annotation A3 added next to it.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LookupQrzCommand))]
     [NotifyPropertyChangedFor(nameof(CallsignDisplay))]
@@ -448,6 +498,32 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// <see cref="QthDisplay"/>, added so the card's top "Callsign" row shows the real FSK-decoded
     /// value instead of a hardcoded literal.</summary>
     public string CallsignDisplay => string.IsNullOrWhiteSpace(OverrideCallsign) ? "—" : OverrideCallsign;
+
+    /// <summary>fsk_cwid.md A3: set alongside <see cref="OverrideCallsign"/> ONLY by the auto-fill
+    /// write sites (<see cref="ApplyStationIdDecodedAsync"/>/<see cref="ApplyCwIdDecodedAsync"/>),
+    /// AFTER the property write itself -- <see cref="OnOverrideCallsignChanged"/> clears both fields
+    /// on every real change to <see cref="OverrideCallsign"/> (manual edit included), so a manually-
+    /// typed callsign correctly reverts <see cref="CallsignLabelDisplay"/> to empty (no annotation)
+    /// instead of keeping a stale source claim next to the static caption.</summary>
+    private string? _callsignSource;
+
+    private DateTimeOffset? _callsignDecodedAtUtc;
+
+    /// <summary>fsk_cwid.md A3 auditor code-review finding: a SIBLING annotation next to the static
+    /// "Callsign" caption (its own separate AXAML column), not a replacement for it -- an earlier
+    /// version returned the static caption text as this property's own empty-state fallback, which
+    /// silently overwrote the caption the instant a decode landed; the plan's own wording is "reads
+    /// W1AW WITH a secondary FSK · 14:02:11Z", not "instead of." Empty string (not the caption) is
+    /// this property's own empty-state value now -- "silence is indistinguishable from broken"
+    /// reasoning (same as <see cref="WorkedBeforeDisplay"/>'s own "New station" text) still applies,
+    /// it just applies to whether ANY annotation shows, not to what replaces the caption. Shows e.g.
+    /// "FSK · 14:02:11Z" once a decode has actually auto-filled <see cref="OverrideCallsign"/>,
+    /// reverting to empty otherwise (including after a manual edit -- see <see cref="_callsignSource"/>'s
+    /// own doc comment). Timestamp is UTC, captured at VM receipt (same convention as
+    /// <see cref="StartedDisplay"/>).</summary>
+    public string CallsignLabelDisplay => _callsignSource is { } source && _callsignDecodedAtUtc is { } at
+        ? _localization.GetString("Panes.RxFrameMeta.SourceTimeFormat", source, at.UtcDateTime)
+        : string.Empty;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(WorkedBeforeDisplay))]
@@ -491,6 +567,70 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// below (a separate QRZ lookup). Same "—" empty-state convention as <see cref="NameDisplay"/>/
     /// <see cref="QthDisplay"/>.</summary>
     public string DecodedNrRstDisplay => DecodedNrRst ?? "—";
+
+    /// <summary>fsk_cwid.md A3: set alongside <see cref="DecodedNrRst"/> in <see cref="ApplyDecodedNrRst"/>
+    /// -- unlike <see cref="_callsignSource"/>, no "manual edit" case exists here (no TextBox binds
+    /// to <see cref="DecodedNrRst"/> anywhere), so the source is always "FSK" and there is nothing to
+    /// clear/revert.</summary>
+    private DateTimeOffset? _nrRstDecodedAtUtc;
+
+    /// <summary>fsk_cwid.md A3: same "sibling annotation, empty-string empty-state" shape as
+    /// <see cref="CallsignLabelDisplay"/> (see that property's own doc comment for the auditor
+    /// finding this fixed), for the "NR / RST" row.</summary>
+    public string NrRstLabelDisplay => _nrRstDecodedAtUtc is { } at
+        ? _localization.GetString("Panes.RxFrameMeta.SourceTimeFormat", "FSK", at.UtcDateTime)
+        : string.Empty;
+
+    /// <summary>fsk_cwid.md §9/B-P3: the CW-ID decoder's raw decoded text (e.g. <c>"DE W1AW"</c>),
+    /// auto-filled by <see cref="ApplyCwIdDecodedAsync"/>. A3's row-label annotation (see
+    /// <see cref="CwIdLabelDisplay"/>) landed after B-P3 shipped -- this row's own label now carries
+    /// it too, closing the scope reduction an earlier version of this comment recorded. §9's WPM
+    /// detail (<c>"CW · 14:02:19Z · 28 WPM"</c>) is deliberately NOT included -- A3's own plan text
+    /// only shows WPM as part of an EXAMPLE for the CW row specifically, not a requirement stated for
+    /// any row, and no other row carries a decode-quality figure in its label either; the
+    /// low-confidence hint already carries the CW-specific quality signal, on the VALUE (see
+    /// <see cref="CwIdDisplay"/>), not the label.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
+    private string? _cwIdText;
+
+    /// <summary>Set alongside <see cref="CwIdText"/> in every <see cref="ApplyCwIdDecodedAsync"/>
+    /// write (both come from the same <see cref="CwIdDecodedInfo"/>) -- a plain field, not an
+    /// <c>[ObservableProperty]</c>, since nothing binds to it directly; it only ever changes together
+    /// with <see cref="CwIdText"/>, so that property's own <c>[NotifyPropertyChangedFor]</c> already
+    /// covers <see cref="CwIdDisplay"/>'s dependency on this value too.</summary>
+    private double _cwIdConfidence;
+
+    /// <summary>fsk_cwid.md A3: set alongside <see cref="CwIdText"/>/<see cref="_cwIdConfidence"/> in
+    /// every <see cref="ApplyCwIdDecodedAsync"/> write -- source is always "CW" (this row has no
+    /// other decode source), so there is nothing to clear/revert the way <see cref="_callsignSource"/>
+    /// needs to for a manual edit.</summary>
+    private DateTimeOffset? _cwIdDecodedAtUtc;
+
+    /// <summary>fsk_cwid.md A3: same "sibling annotation, empty-string empty-state" shape as
+    /// <see cref="CallsignLabelDisplay"/> (see that property's own doc comment for the auditor
+    /// finding this fixed), for the "CW ID" row.</summary>
+    public string CwIdLabelDisplay => _cwIdDecodedAtUtc is { } at
+        ? _localization.GetString("Panes.RxFrameMeta.SourceTimeFormat", "CW", at.UtcDateTime)
+        : string.Empty;
+
+    /// <summary>fsk_cwid.md §9: "confidence shown only when below a threshold" -- the decoder's own
+    /// accept floor (<c>ClassicalCwDecoder.MinAcceptableConfidence</c> = 0.4) is the boundary below
+    /// which a result is never raised at all, so this UI-level threshold is deliberately set higher:
+    /// it flags "accepted but marginal" results, not "would have been rejected." Not shared with the
+    /// decoder's own constant (a different layer, a different question -- "should the UI mention
+    /// this" vs. "should this result exist at all").</summary>
+    private const double CwIdLowConfidenceThreshold = 0.6;
+
+    /// <summary>Read-only "CW ID" row, immediately after "NR / RST" (fsk_cwid.md §9). Same "—"
+    /// empty-state convention as the other decoded-from-frame rows. Appends the low-confidence hint
+    /// inline (see <see cref="CwIdLowConfidenceThreshold"/>'s own doc comment for why this isn't the
+    /// row-LABEL annotation §9 describes).</summary>
+    public string CwIdDisplay => CwIdText is { } text
+        ? (_cwIdConfidence < CwIdLowConfidenceThreshold
+            ? $"{text} ({_localization.GetString("Panes.RxFrameMeta.CwId.LowConfidence")})"
+            : text)
+        : "—";
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(NameDisplay))]
@@ -643,6 +783,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.DecodeRestarted += OnDecodeRestarted;
         sstvSession.StationIdDecoded += OnStationIdDecoded;
+        sstvSession.CwIdDecoded += OnCwIdDecoded;
         // Restart-required-settings backlog item 2 (2026-08-27): the ONLY trigger for
         // RefreshRxBpfPresetFromSession -- see that method's own doc comment for why a pull-based
         // Options-Closed refresh (like AutoSlantEnabled/SenseLevel above use) would be redundant here.
@@ -1445,9 +1586,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
 
     private void OnModeDetected(SstvModeDefinition mode)
     {
+        // fsk_cwid.md §A5: read-in-callback, synchronously on the decode thread -- ISstvSessionService
+        // .CurrentReceptionSequence's own doc comment requires this, not a lazy read from inside the
+        // Post below, which could observe a THIRD reception's value under back-to-back ModeDetected
+        // events.
+        var receptionSequence = _sstvSession.CurrentReceptionSequence;
         Log.ModeDetected(_logger, mode.Id);
         Dispatcher.UIThread.Post(() =>
         {
+            _currentReceptionSequence = receptionSequence;
             DetectedMode = mode;
             StartedAt = DateTimeOffset.UtcNow;
             FileSizeBytes = null;
@@ -1503,6 +1650,20 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // card row (2026-08-26, see DecodedNrRstDisplay's own doc comment) -- this reset is
             // load-bearing, not just future-proofing.
             DecodedNrRst = null;
+            // fsk_cwid.md A3: _nrRstDecodedAtUtc joins this reset -- same per-RECEPTION category,
+            // and unlike _cwIdConfidence below, NOT inert if left stale: NrRstLabelDisplay reads it
+            // independently of DecodedNrRst's own null-ness (there is no "only shown when non-null"
+            // guard on the label the way CwIdDisplay's VALUE has for confidence).
+            _nrRstDecodedAtUtc = null;
+            OnPropertyChanged(nameof(NrRstLabelDisplay));
+            // fsk_cwid.md §9: CwIdText joins this reset list -- same per-RECEPTION "who is this
+            // station" category as DecodedNrRst just above. _cwIdConfidence is deliberately left
+            // untouched: CwIdDisplay only reads it when CwIdText is non-null, so a stale confidence
+            // value behind a null text is inert. _cwIdDecodedAtUtc (fsk_cwid.md A3) is NOT inert the
+            // same way (same reasoning as _nrRstDecodedAtUtc just above) and is reset explicitly.
+            CwIdText = null;
+            _cwIdDecodedAtUtc = null;
+            OnPropertyChanged(nameof(CwIdLabelDisplay));
             // Tier B audit finding: these three are per-RECEPTION error/status text, same category as
             // Note/IsFlagged above, but weren't cleared here -- a QRZ lookup failure or a stale
             // "entry no longer exists" from the PREVIOUS frame kept showing on the RxFrameMeta card
@@ -1574,6 +1735,31 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// every <c>[ObservableProperty]</c> touch remains UI-thread-only.</summary>
     private async Task ApplyStationIdDecodedAsync(FskStationIdDecodedInfo info)
     {
+        // fsk_cwid.md A4: logged first, unconditionally -- see AddStationHeard's own doc comment for
+        // why this runs before the stale-guard/self-filter checks below.
+        AddStationHeard(
+            info switch
+            {
+                { Callsign: { } callsign } => callsign,
+                { CompactNr: { } compactNr } => $"595{compactNr.ToString("D3", CultureInfo.InvariantCulture)}",
+                { NrText: { } nrText } => $"595{nrText}",
+                _ => "—",
+            },
+            "FSK",
+            info.ReceptionSequence);
+
+        // fsk_cwid.md §A5 code-review nit: hoisted here (in ADDITION to the callsign branch's own
+        // post-await re-check below, not instead of it -- that one guards a real race THIS check
+        // cannot, see its own comment) so the CompactNr/NrText branches -- also per-reception state,
+        // OnModeDetected's own reset above -- get the SAME "already stale on arrival" protection the
+        // callsign branch has always had. Free: a pure comparison, no capture-before-await needed for
+        // branches with no await at all.
+        if (info.ReceptionSequence != _currentReceptionSequence)
+        {
+            Log.StationIdDroppedStale(_logger, info.ReceptionSequence, _currentReceptionSequence);
+            return;
+        }
+
         if (info.Callsign is { } decodedCallsign)
         {
             // Tier B audit finding: GetOperatorCallsignAsync's own await genuinely yields the UI
@@ -1582,9 +1768,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // OnSaved's own doc comment already calls "the likely interleaving, not an edge case"),
             // station B's ModeDetected/OverrideCallsign=null reset can land in this exact window,
             // after which the write below would silently re-apply station A's now-stale callsign onto
-            // B's current frame. Same class OnSaved already guards via IReceivedImageBuffer.Generation
-            // (see that method's own doc comment); this write site didn't have the equivalent.
-            var generation = _receivedImage.Generation;
+            // B's current frame.
             string? ownCallsign;
             try
             {
@@ -1598,21 +1782,34 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
                 return;
             }
 
-            if (_receivedImage.Generation != generation)
+            // fsk_cwid.md §A5: re-check AFTER the await -- the entry-time check at the top of this
+            // method already covers "already stale on arrival"; this second check (same identity
+            // comparison, against _currentReceptionSequence, this pane's own latch -- see that
+            // field's own doc comment) is the one that actually matters here, since
+            // GetOperatorCallsignAsync's own await can let a NEW reception's ModeDetected land in
+            // the window between entry and now. Replaces an earlier IReceivedImageBuffer.Generation-diff
+            // guard: a direct identity match is the "one source of truth" the plan calls for, and
+            // naturally covers a late arrival even if MORE THAN ONE newer reception has started since,
+            // not just "did generation change at all."
+            if (info.ReceptionSequence != _currentReceptionSequence)
             {
                 // A new reception has started while the settings read above was in flight -- this
-                // callsign belongs to the frame that's no longer current. Drop it rather than write a
+                // callsign belongs to a frame that's no longer current. Drop it rather than write a
                 // stale value onto the new one.
+                Log.StationIdDroppedStale(_logger, info.ReceptionSequence, _currentReceptionSequence);
                 return;
             }
 
-            // Self-filter (Main.cpp:3628's strcmp): exact, case-sensitive match against the
-            // OPERATOR's own callsign -- NOT the same thing as the structurally-impossible "decoded
-            // my own live TX" case (RX is paused during TX, see this method's own doc comment);
-            // this instead guards against auto-filling "his callsign" with the operator's own when
-            // ANOTHER station's transmission happens to reference/repeat it.
-            if (string.Equals(decodedCallsign, ownCallsign, StringComparison.Ordinal))
+            // fsk_cwid.md §A5: shared self-filter (Main.cpp:3628's strcmp) -- exact, case-sensitive
+            // match against the OPERATOR's own callsign, routed through the ONE comparison every
+            // decode source must use (StationIdCallsignNormalizer.IsOwnCallsign's own doc comment) --
+            // NOT the same thing as the structurally-impossible "decoded my own live TX" case (RX is
+            // paused during TX, see this method's own doc comment); this instead guards against
+            // auto-filling "his callsign" with the operator's own when ANOTHER station's transmission
+            // happens to reference/repeat it.
+            if (StationIdCallsignNormalizer.IsOwnCallsign(decodedCallsign, ownCallsign))
             {
+                Log.StationIdDroppedAsOwnCallsign(_logger, info.ReceptionSequence);
                 return;
             }
 
@@ -1621,6 +1818,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // no-ops (skips the field write and PropertyChanged/CanExecuteChanged raises) when the
             // new value equals the current one, matching legacy's own behavior for free.
             OverrideCallsign = decodedCallsign;
+            // fsk_cwid.md A3: set AFTER the write above -- OnOverrideCallsignChanged (fired
+            // synchronously by that setter, on a real change) already cleared these; this re-sets
+            // them for the auto-fill case specifically. See _callsignSource's own doc comment.
+            _callsignSource = "FSK";
+            _callsignDecodedAtUtc = DateTimeOffset.UtcNow;
+            OnPropertyChanged(nameof(CallsignLabelDisplay));
+            Log.StationIdDecoded(_logger, decodedCallsign, info.ReceptionSequence);
         }
         else if (info.CompactNr is { } compactNr)
         {
@@ -1630,11 +1834,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // %03u exactly for this value's range (always < CompactNrUpperBound=4096, so never more
             // than 4 digits either way, same as %03u's own "pad to minimum width, never truncate"
             // behavior).
-            ApplyDecodedNrRst(compactNr.ToString("D3", CultureInfo.InvariantCulture));
+            var nrRst = compactNr.ToString("D3", CultureInfo.InvariantCulture);
+            ApplyDecodedNrRst(nrRst);
+            Log.StationIdNrRstDecoded(_logger, nrRst, info.ReceptionSequence);
         }
         else if (info.NrText is { } nrText)
         {
             ApplyDecodedNrRst(nrText);
+            Log.StationIdNrRstDecoded(_logger, nrText, info.ReceptionSequence);
         }
     }
 
@@ -1648,6 +1855,110 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     private void ApplyDecodedNrRst(string decodedText)
     {
         DecodedNrRst = $"595{decodedText}";
+        // fsk_cwid.md A3: no clear/revert case here -- see _nrRstDecodedAtUtc's own doc comment.
+        _nrRstDecodedAtUtc = DateTimeOffset.UtcNow;
+        OnPropertyChanged(nameof(NrRstLabelDisplay));
+    }
+
+    /// <summary>fsk_cwid.md §9/B-P3: same trivial-dispatch shape as <see cref="OnStationIdDecoded"/>
+    /// -- <see cref="ISstvSessionService.CwIdDecoded"/>'s own doc comment gives the same "raised from
+    /// a background continuation, never assume a UI-thread caller" contract.</summary>
+    private void OnCwIdDecoded(CwIdDecodedInfo info)
+    {
+        Dispatcher.UIThread.Post(() => _ = ApplyCwIdDecodedAsync(info));
+    }
+
+    /// <summary>fsk_cwid.md §9's routing rule: the CW ID row itself is filled unconditionally (once
+    /// past the stale guard) -- "show CW text in its own row" even when FSK is authoritative and a
+    /// disagreement is logged instead of applied. <see cref="OverrideCallsign"/> is filled from
+    /// <see cref="CwIdDecodedInfo.Callsign"/> ONLY if it is still empty for this reception -- FSK is
+    /// authoritative and is NEVER overwritten by CW (CTC/ML decoders can hallucinate plausible
+    /// callsigns, `decoder_quality_improvement.md` §9.5's same warning for ML restoration). Routes
+    /// through <see cref="ApplyStationIdDecodedAsync"/>'s own shared self-filter/stale-guard
+    /// machinery, not a reimplementation.</summary>
+    private async Task ApplyCwIdDecodedAsync(CwIdDecodedInfo info)
+    {
+        // fsk_cwid.md A4: logged first, unconditionally -- same reasoning as
+        // ApplyStationIdDecodedAsync's own AddStationHeard call. One row per CwIdDecodedInfo receipt
+        // (not split into a separate row for info.Callsign) -- unlike FSK's callsign packet and
+        // NR/RST sub-packet (two genuinely separate wire transmissions), CW-ID's Text and Callsign
+        // both come from the SAME single decode event.
+        AddStationHeard(info.Text, "CW", info.ReceptionSequence);
+
+        if (info.ReceptionSequence != _currentReceptionSequence)
+        {
+            Log.CwIdDroppedStale(_logger, info.ReceptionSequence, _currentReceptionSequence);
+            return;
+        }
+
+        // _cwIdConfidence set BEFORE CwIdText -- CwIdText's own [NotifyPropertyChangedFor(nameof(CwIdDisplay))]
+        // is the single notification for both (see _cwIdConfidence's own doc comment); setting it
+        // first means CwIdDisplay's getter sees the correct confidence by the time that notification
+        // fires.
+        _cwIdConfidence = info.Confidence;
+        // fsk_cwid.md A3: set before CwIdText for the same reason _cwIdConfidence is -- CwIdText's
+        // own notification is the single trigger for both CwIdDisplay and CwIdLabelDisplay.
+        _cwIdDecodedAtUtc = DateTimeOffset.UtcNow;
+        CwIdText = info.Text;
+        OnPropertyChanged(nameof(CwIdLabelDisplay));
+        Log.CwIdDecoded(_logger, info.Text, info.Confidence, info.ReceptionSequence);
+
+        if (info.Callsign is not { } decodedCallsign)
+        {
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(OverrideCallsign))
+        {
+            if (!string.Equals(OverrideCallsign, decodedCallsign, StringComparison.Ordinal))
+            {
+                Log.CwIdCallsignDisagreesWithFsk(_logger, OverrideCallsign, decodedCallsign, info.ReceptionSequence);
+            }
+
+            return;
+        }
+
+        string? ownCallsign;
+        try
+        {
+            ownCallsign = await _sstvSession.GetOperatorCallsignAsync().ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Log.GetOperatorCallsignFailed(_logger, ex);
+            return;
+        }
+
+        // Re-check both conditions after the await, split (not combined) so each drop reason gets
+        // its own log line -- auditor code-review nit: the FSK sibling logs every drop reason at
+        // Debug, this path silently returned. Same reasoning as ApplyStationIdDecodedAsync's own
+        // post-await re-check either way: a new reception's ModeDetected, or an FSK-decoded
+        // callsign, can land in the window this settings read was in flight.
+        if (info.ReceptionSequence != _currentReceptionSequence)
+        {
+            Log.CwIdDroppedStale(_logger, info.ReceptionSequence, _currentReceptionSequence);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(OverrideCallsign))
+        {
+            Log.CwIdCallsignSkippedFskAlreadySet(_logger, info.ReceptionSequence);
+            return;
+        }
+
+        if (StationIdCallsignNormalizer.IsOwnCallsign(decodedCallsign, ownCallsign))
+        {
+            Log.CwIdDroppedAsOwnCallsign(_logger, info.ReceptionSequence);
+            return;
+        }
+
+        OverrideCallsign = decodedCallsign;
+        // fsk_cwid.md A3: same "set after the write, OnOverrideCallsignChanged already cleared them"
+        // shape as ApplyStationIdDecodedAsync's own FSK write -- see _callsignSource's own doc
+        // comment. Source is "CW" here, not "FSK".
+        _callsignSource = "CW";
+        _callsignDecodedAtUtc = DateTimeOffset.UtcNow;
+        OnPropertyChanged(nameof(CallsignLabelDisplay));
     }
 
     /// <summary>Auditor round 2 finding: a round-1 version of this staleness guard captured its OWN
@@ -2070,6 +2381,17 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // latch a stale Found/None onto the new, unrelated state.
         _workedBeforeCts?.Cancel();
 
+        // fsk_cwid.md A3: unconditionally cleared here too, for the SAME reason -- ANY real change to
+        // OverrideCallsign (auto-fill OR a manual edit) must not keep showing a stale source/time
+        // claim for a value that's no longer accurate. ApplyStationIdDecodedAsync/ApplyCwIdDecodedAsync
+        // re-set both fields immediately AFTER their own OverrideCallsign write (this handler runs
+        // synchronously as part of that same write, so by the time control returns to them, the
+        // clear below has already happened); a manual edit has no such re-set, so the label correctly
+        // reverts to plain "Callsign" until the next real decode.
+        _callsignSource = null;
+        _callsignDecodedAtUtc = null;
+        OnPropertyChanged(nameof(CallsignLabelDisplay));
+
         if (string.IsNullOrWhiteSpace(newValue))
         {
             WorkedBeforeStatus = WorkedBeforeStatus.Unknown;
@@ -2458,6 +2780,42 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "Reading the operator's own callsign (for the decoded station-ID self-filter) failed")]
         public static partial void GetOperatorCallsignFailed(ILogger logger, Exception ex);
 
+        // fsk_cwid.md A3 (logging half, bundled into A-P1): today there is nothing to diagnose "my
+        // ID never shows" from -- this decode event was previously silent end to end.
+        [LoggerMessage(Level = LogLevel.Information, Message = "FSK station ID decoded: callsign={Callsign} receptionSequence={ReceptionSequence}")]
+        public static partial void StationIdDecoded(ILogger logger, string callsign, long receptionSequence);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "FSK station ID decoded: nrRst={NrRst} receptionSequence={ReceptionSequence}")]
+        public static partial void StationIdNrRstDecoded(ILogger logger, string nrRst, long receptionSequence);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoded station ID dropped: matches the operator's own callsign, receptionSequence={ReceptionSequence}")]
+        public static partial void StationIdDroppedAsOwnCallsign(ILogger logger, long receptionSequence);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoded station ID dropped: stale relative to the current reception, receptionSequence={ReceptionSequence} currentReceptionSequence={CurrentReceptionSequence}")]
+        public static partial void StationIdDroppedStale(ILogger logger, long receptionSequence, long currentReceptionSequence);
+
+        // fsk_cwid.md B-P3: same "nothing to diagnose this from before" reasoning as StationIdDecoded above.
+        [LoggerMessage(Level = LogLevel.Information, Message = "CW ID decoded: text=\"{Text}\" confidence={Confidence} receptionSequence={ReceptionSequence}")]
+        public static partial void CwIdDecoded(ILogger logger, string text, double confidence, long receptionSequence);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoded CW ID dropped: stale relative to the current reception, receptionSequence={ReceptionSequence} currentReceptionSequence={CurrentReceptionSequence}")]
+        public static partial void CwIdDroppedStale(ILogger logger, long receptionSequence, long currentReceptionSequence);
+
+        // fsk_cwid.md §9: FSK is authoritative and is never overwritten by a CW-decoded callsign --
+        // this is the one case worth a Warning, since a genuine mismatch (not just CW's own decode
+        // noise) is diagnostically useful and otherwise invisible.
+        [LoggerMessage(Level = LogLevel.Warning, Message = "CW-decoded callsign disagrees with the already-set FSK callsign, keeping FSK: fskCallsign={FskCallsign} cwCallsign={CwCallsign} receptionSequence={ReceptionSequence}")]
+        public static partial void CwIdCallsignDisagreesWithFsk(ILogger logger, string fskCallsign, string cwCallsign, long receptionSequence);
+
+        // Auditor code-review nit: the FSK sibling (StationIdDroppedAsOwnCallsign/StationIdDroppedStale
+        // above) logs every drop reason at Debug; this path's self-filter/post-await-FSK-arrived drops
+        // silently returned. Same diagnostic value, same level.
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoded CW ID callsign dropped: matches the operator's own callsign, receptionSequence={ReceptionSequence}")]
+        public static partial void CwIdDroppedAsOwnCallsign(ILogger logger, long receptionSequence);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoded CW ID callsign skipped: an FSK-decoded callsign was already set while the operator-callsign read was in flight, receptionSequence={ReceptionSequence}")]
+        public static partial void CwIdCallsignSkippedFskAlreadySet(ILogger logger, long receptionSequence);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetNoteAsync failed for entry {EntryId}")]
         public static partial void SetNoteFailed(ILogger logger, string entryId, Exception ex);
 
@@ -2491,4 +2849,25 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: mode {ModeId} is already used by a different slot than {SlotIndex}")]
         public static partial void ReassignQuickModeSlotAlreadyUsedElsewhere(ILogger logger, int slotIndex, string modeId);
     }
+}
+
+/// <summary>fsk_cwid.md A4: one row in <see cref="RxImagePaneViewModel.StationsHeard"/> -- one per
+/// decode EVENT (a callsign packet, an NR/RST sub-packet, or a CW-ID decode are three separate
+/// events, even when they belong to the same reception), not one per reception. <see cref="ModeId"/>
+/// is a best-effort snapshot of <see cref="RxImagePaneViewModel.DetectedMode"/> at insertion time,
+/// NOT looked up for the specific reception this row belongs to -- for a late/stale-arriving decode
+/// (see <see cref="RxImagePaneViewModel.AddStationHeard"/>'s own doc comment for why those are still
+/// logged), this can show a NEWER reception's mode than the one that actually decoded. Acceptable:
+/// this list is a session-only convenience log, not the authoritative record (persistence is A2/
+/// <c>RxStationIdAttacher</c>); <see cref="ReceptionSequence"/> is the field a future click-to-select
+/// integration (fsk_cwid.md A4's own "once A2 exists" note) would actually key off.</summary>
+public sealed record StationIdHeardViewModel(string Text, string Source, DateTimeOffset DecodedAtUtc, string? ModeId, long ReceptionSequence)
+{
+    /// <summary>The compact list's own one-line-per-row text -- e.g. "W1AW · FSK · 14:02:11Z ·
+    /// Martin M1". Not run through <c>ILocalizationService</c> (this record has no reference to one,
+    /// and every other "compact list" precedent in this pane -- <see cref="RxImagePaneViewModel.PreviousFrames"/>'s
+    /// own captions -- is similarly a plain, untranslated timestamp format); the field NAMES this
+    /// implicitly carries ("FSK"/"CW") are already untranslated protocol abbreviations, same as the
+    /// row labels' own "FSK ·"/"CW ·" prefixes (fsk_cwid.md A3).</summary>
+    public string Display => $"{Text} · {Source} · {DecodedAtUtc:HH:mm:ss}Z{(ModeId is { } modeId ? $" · {modeId}" : string.Empty)}";
 }

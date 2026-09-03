@@ -409,16 +409,24 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     /// (<c>RxImagePaneViewModel.LookupName</c>/<c>LookupQth</c>/<c>LookupGrid</c>); dropping them
     /// would silently discard a lookup the user already did and make them repeat it on this tab.
     ///
-    /// <paramref name="defaultRst"/> (RST default plan, 2026-09-01): seeds BOTH
-    /// <see cref="FormRstSent"/> and <see cref="FormRstReceived"/> from this one value -- SSTV's
-    /// real-world convention doesn't distinguish direction, see <c>OperatorSettings.DefaultRst</c>'s
-    /// own doc comment for why "595", not ham radio's classic "599". Deliberately NOT seeded from
-    /// <c>RxImagePaneViewModel.DecodedNrRst</c> -- that field is "595" plus a hardcoded 3-digit
-    /// picture number, never an actually-decoded RST, so it would be wrong-shaped here.
+    /// <paramref name="defaultRst"/> (RST default plan, 2026-09-01): seeds <see cref="FormRstSent"/>
+    /// -- SSTV's real-world convention doesn't distinguish direction, see
+    /// <c>OperatorSettings.DefaultRst</c>'s own doc comment for why "595", not ham radio's classic
+    /// "599". <paramref name="decodedRstReceived"/> (fsk_cwid.md A-P3b) is a SEPARATE value for
+    /// <see cref="FormRstReceived"/> specifically -- the other station's own decoded FSK NR/RST
+    /// sub-packet (<c>RxImagePaneViewModel.DecodedNrRst</c>), i.e. what THEY actually sent, not our
+    /// own default guess; falls back to <paramref name="defaultRst"/> when no decode exists for this
+    /// reception. An earlier version of this method deliberately did NOT seed FormRstReceived from
+    /// the decoded value, reasoning the "595" prefix plus trailing digits was "never an actually-
+    /// decoded RST" -- superseded (user decision, 2026-09-03): the trailing digits ARE genuinely
+    /// decoded from the wire (whatever the other station's own operator configured in their NR/RST
+    /// TX field), not fabricated by this codebase; only the "595" prefix itself is a fixed,
+    /// legacy-faithful convention (`Main.cpp:3648`).
     /// </summary>
     public void PrefillForNewEntry(
         string? callsign, string? sstvModeId, DateTimeOffset startUtc, string? name, string? qth, string? gridSquare,
-        long? frequencyHz = null, RadioMode? radioMode = null, string? receivedImageId = null, string? defaultRst = null)
+        long? frequencyHz = null, RadioMode? radioMode = null, string? receivedImageId = null, string? defaultRst = null,
+        string? decodedRstReceived = null)
     {
         Log.PrefillForNewEntryInvoked(_logger, callsign, sstvModeId);
         _formGeneration++;
@@ -433,7 +441,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         FormFrequencyHz = frequencyHz;
         FormMode = radioMode;
         FormRstSent = defaultRst;
-        FormRstReceived = defaultRst;
+        FormRstReceived = decodedRstReceived ?? defaultRst;
         // Fable UX-review finding, 2026-08-30: set AFTER ResetForm() above (which clears this to
         // null) -- LogAsync's BuildRecordFromForm call reads it, so a QSO logged from this prefill
         // now links back to the frame it came from, the same way an edited existing entry already

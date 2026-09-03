@@ -876,7 +876,7 @@
                          card) is the row's only remaining occupant, so it gets a plain "*" row and
                          a plain Grid.Row="1", no RowSpan needed and no Auto/Star sizing mismatch
                          to reason about. -->
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
@@ -890,7 +890,12 @@
                                          "EA7KDT" literal. Label trimmed to plain "Callsign" — the
                                          value no longer comes from OCR (which still doesn't exist),
                                          so keeping "· OCR" in the label would misattribute the source. -->
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding CallsignDisplay}" /></Grid></Border>
+                                    <!-- fsk_cwid.md A3 auditor code-review finding: the annotation is a SIBLING of the
+                                         static caption (Column 0), not a replacement for it — an earlier version
+                                         overwrote the caption, losing this row's own identity the instant it had
+                                         content, contradicting the plan's own "reads W1AW WITH a secondary FSK ·
+                                         14:02:11Z" wording. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.Callsign}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Margin="4,0,0,0" Text="{Binding CallsignLabelDisplay}" /><TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding CallsignDisplay}" /></Grid></Border>
                                     <!-- Worked-before plan (2026-09-01): a logbook-query result, not
                                          decoded from the frame like the rows around it — kept here
                                          anyway (Fable design review) so it reads together with the
@@ -907,7 +912,15 @@
                                          moved 2026-08-27 to sit under the Lookup QRZ button instead of
                                          here, so it reads as the lookup's OWN result, not more decoded
                                          frame data (direct user request). -->
-                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NrRst}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DecodedNrRstDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.NrRst}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Margin="4,0,0,0" Text="{Binding NrRstLabelDisplay}" /><TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding DecodedNrRstDisplay}" /></Grid></Border>
+                                    <!-- fsk_cwid.md §9/B-P3: "CW ID" row, immediately after "NR / RST" — both are
+                                         decoded-from-frame station-ID rows, unlike Name/QTH/Grid below (a separate
+                                         QRZ lookup). Source/time label annotation (fsk_cwid.md A3) is wired below. -->
+                                    <!-- Auditor code-review nit (A3 round 2): TextTrimming — the 3-column layout
+                                         leaves less width for the value than the old 2-column one did, and
+                                         CwIdDisplay can carry the low-confidence suffix, same trimming precedent
+                                         as the Name/QTH rows below. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.CwId}" /><TextBlock Grid.Column="1" Classes="IndustryRowLabel" Margin="4,0,0,0" Text="{Binding CwIdLabelDisplay}" /><TextBlock Grid.Column="2" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding CwIdDisplay}" /></Grid></Border>
                                     <!-- ui_transition_plan.md step 6 (T2-4): LATCHED, not live — this
                                          used to bind $parent[Window].DataContext.RadioStatus.
                                          FrequencyDisplayOrPlaceholder (an ancestor-relative binding
@@ -996,6 +1009,34 @@
                              frame log design. Moved to spec/14-roadmap.md's "Explicitly deferred
                              beyond v1" list rather than left as UI stubs with no backing design. -->
 
+                        <!-- fsk_cwid.md A4: "Stations heard" — a compact, session-only rolling list,
+                             directly under the RxFrameMeta card (its own separate Industry group-box,
+                             not merged into that card), same theme. Auto-height row (RowDefinitions
+                             above) so an empty/short list doesn't steal space from the Decoder Trace
+                             plot below it, which gets the remaining "*" row. Collapsed to a single
+                             placeholder row when empty, same IsVisible="{Binding !X.Count}" shape as
+                             the "Previous frames" strip's own NoHistoryYet placeholder above. -->
+                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                            <HeaderedContentControl.Header>
+                                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.StationsHeardHeader}" />
+                            </HeaderedContentControl.Header>
+                            <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
+                                <TextBlock Classes="IndustryRowValue" Text="{loc:Translate Panes.RxFrameMeta.StationsHeardEmpty}" IsVisible="{Binding !StationsHeard.Count}" />
+                                <!-- Auditor code-review nit: !! (not a bare int->bool), matching this
+                                     codebase's own in-tree precedent for the positive form
+                                     (OptionsWindowView.axaml's AdifUdpDestinations.Count binding). -->
+                                <ScrollViewer MaxHeight="120" IsVisible="{Binding !!StationsHeard.Count}">
+                                    <ItemsControl ItemsSource="{Binding StationsHeard}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:StationIdHeardViewModel">
+                                                <TextBlock Classes="IndustryRowValue" Text="{Binding Display}" />
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </ScrollViewer>
+                            </StackPanel>
+                        </HeaderedContentControl>
+
                         <!-- Un-stub-RX-tab Piece B2: real Decoder Trace oscilloscope, moved here
                              2026-08-25 (user-suggested layout fix, live-observed) from a squeezed
                              250px sub-column inside the Decode Activity card. This column's own
@@ -1008,8 +1049,9 @@
                              plus pan/zoom/gain buttons (legacy's real LeftBtn/RightBtn/SBUpW/SBDownW/
                              UpBtn/DownBtn, Scope.cpp:247-324, exact step math ported in
                              DecoderTracePaneViewModel, not invented) plus the two-channel trace plot
-                             itself (DecoderTraceControl). -->
-                        <HeaderedContentControl Grid.Row="1" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
+                             itself (DecoderTraceControl). fsk_cwid.md A4: Grid.Row bumped from 1 to 2
+                             — the new Stations Heard card above now occupies row 1. -->
+                        <HeaderedContentControl Grid.Row="2" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingWide}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDecodeLog.TraceHeader}" />
                             </HeaderedContentControl.Header>
@@ -1274,6 +1316,14 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
+                                    </Grid></Border>
+                                    <!-- fsk_cwid.md §9/A-P3b: "Callsign · FSK" row — only shown when this entry
+                                         actually has a decoded callsign (ReceiveHistoryEntry.DecodedCallsign,
+                                         written by RxStationIdAttacher), same visible-only-when-present shape as
+                                         the "Log entry" row below. -->
+                                    <Border Classes="IndustryRow" IsVisible="{Binding SelectedEntry.Entry.DecodedCallsign, Converter={x:Static ObjectConverters.IsNotNull}}"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.CallsignFskLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.DecodedCallsign}" />
                                     </Grid></Border>
                                     <!-- Grid/dist row removed outright 2026-08-26 (user decision, "maybe
                                          one day") — was a static two-dashes-both-sides placeholder

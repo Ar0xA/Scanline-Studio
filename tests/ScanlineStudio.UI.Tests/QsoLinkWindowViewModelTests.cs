@@ -27,6 +27,31 @@ public sealed class QsoLinkWindowViewModelTests
         new(id, "N0CALL", DateTimeOffset.UtcNow, null, null, null, "robot36", null, null, null, null, null, null, null, null, false, false);
 
     [AvaloniaFact]
+    public void Constructor_EntryHasDecodedCallsignAndNrRst_SeedsNewCallsignAndNewRstReceived()
+    {
+        // fsk_cwid.md A-P3b: "seed ... in the Gallery's Log-entry flow when no QSO is linked (today
+        // both refuse to guess -- with a real decoded value there is no guessing)".
+        var entry = SampleEntry with { DecodedCallsign = "W1AW", DecodedNrRst = "595001" };
+        var vm = CreateVm(entry: entry);
+
+        Assert.Equal("W1AW", vm.NewCallsign);
+        Assert.Equal("595001", vm.NewRstReceived);
+        Assert.Null(vm.NewRstSent);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_EntryHasNoDecodedStationId_LeavesNewCallsignAndNewRstReceivedNull()
+    {
+        // Regression pin for the "no guess" behavior this seeding must not break -- an entry with
+        // nothing decoded still leaves the create-new fields genuinely empty, not some fabricated
+        // value.
+        var vm = CreateVm();
+
+        Assert.Null(vm.NewCallsign);
+        Assert.Null(vm.NewRstReceived);
+    }
+
+    [AvaloniaFact]
     public async Task LinkSelectedAsync_ExistingQso_LinksEntryBeforeUpdatingReverseFk_RaisesLinkedAndRequestClose()
     {
         // FakeLogbookSessionService.UpdateQsoAsync silently no-ops if the record's Id isn't already in

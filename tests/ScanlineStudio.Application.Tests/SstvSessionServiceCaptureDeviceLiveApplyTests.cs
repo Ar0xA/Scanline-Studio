@@ -41,7 +41,7 @@ public sealed class SstvSessionServiceCaptureDeviceLiveApplyTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, enumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, enumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, enumerator, settingsStore);
     }
 

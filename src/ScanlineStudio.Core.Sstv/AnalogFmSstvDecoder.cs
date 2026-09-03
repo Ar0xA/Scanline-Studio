@@ -1535,6 +1535,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>See <see cref="ISstvDecoder.ReceptionSequence"/>.</summary>
     public long ReceptionSequence => Interlocked.Read(ref _receptionSequence);
 
+    // ISstvDecoder.AnchorLagSamples's backing field -- Volatile, not a plain int, for the same
+    // any-thread-read reason as _receptionSequence immediately above (int reads/writes are
+    // atomic on every supported platform, but Volatile is still needed for cross-thread
+    // visibility of the write in FinalizeAnchorAndStartDecoding without a full fence).
+    private int _anchorLagSamples;
+
+    /// <summary>See <see cref="ISstvDecoder.AnchorLagSamples"/>.</summary>
+    public int AnchorLagSamples => Volatile.Read(ref _anchorLagSamples);
+
     /// <summary>See <see cref="ISstvDecoder.ResetAgc"/> for the full concurrency contract (D0-audit
     /// round-6 finding: this is the one public mutator on this class that writes DSP state directly
     /// and synchronously instead of through a deferred flag <see cref="PushSamples"/> consumes --
@@ -4129,8 +4138,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             // to `bound`, exactly like the "unregistered mode code" case below already does.
             if (result.Value.ModeCode is null)
             {
+                // fsk_cwid.md A1 / auditor code-review finding: stamped here too, not just by
+                // RestartableSstvDecoder -- Program.cs only ever registers the wrapper today, so this
+                // class's own stamp is currently overwritten unconditionally before any real
+                // subscriber sees it, but leaving it at the default "unset" sentinel would be a latent
+                // trap for any future direct ISstvDecoder consumer of this class (A2/A5 both correlate
+                // on this field). Interlocked.Read matches this class's own ReceptionSequence property
+                // getter above.
                 RaiseSubscribers(StationIdDecoded, new FskStationIdDecodedInfo(
-                    result.Value.StationIdCallsign, result.Value.StationIdCompactNr, result.Value.StationIdNrText));
+                    result.Value.StationIdCallsign, result.Value.StationIdCompactNr, result.Value.StationIdNrText,
+                    Interlocked.Read(ref _receptionSequence)));
                 continue;
             }
 
@@ -4955,6 +4972,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
         InitializeAfc(matched);
         InitializeSlant(matched);
+
+        // ISstvDecoder.AnchorLagSamples: captured BEFORE the raise below, from the exact same
+        // corrected _consumedSamples anchor _afcBoundSample above was just computed from -- see
+        // that property's own doc comment (fsk_cwid.md §8.2) for why this is the single point
+        // where the lag is knowable without a caller-side backfill buffer.
+        Volatile.Write(ref _anchorLagSamples, TotalSamplesReceived - _consumedSamples);
 
         // ISstvDecoder.ReceptionSequence: bumped BEFORE the raise below, at the single true
         // ModeDetected raise site in this class -- see that property's own doc comment for why this

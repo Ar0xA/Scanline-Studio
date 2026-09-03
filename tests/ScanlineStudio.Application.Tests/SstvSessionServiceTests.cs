@@ -64,7 +64,7 @@ public sealed class SstvSessionServiceTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, decoder, waterfall, radioSession, settingsStore, deviceMuteQuery);
     }
 
@@ -554,7 +554,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = null, PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         await service.StartReceivingAsync();
 
@@ -577,7 +577,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = null, SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -614,7 +614,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-a", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         await service.TransmitAsync(TestMode, TestImage);
         Assert.Equal("playback-a", audioEngine.LastRequestedPlaybackDevice?.Id);
@@ -650,7 +650,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-vanished", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         await service.TransmitAsync(TestMode, TestImage);
 
@@ -681,7 +681,7 @@ public sealed class SstvSessionServiceTests
                 new AudioDeviceSettings { CaptureDeviceId = "capture-vanished", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                 AudioSettingsJsonContext.Default.AudioDeviceSettings),
         };
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         await service.StartReceivingAsync();
 
@@ -1122,7 +1122,7 @@ public sealed class SstvSessionServiceTests
         };
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
-            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         var percent = await service.GetTxVolumePercentAsync();
 
@@ -1343,7 +1343,7 @@ public sealed class SstvSessionServiceTests
         var settingsStore = new FakeSettingsStore { Settings = new AppSettings() };
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
-            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
         var result = service.CaptureOverrunCount;
 

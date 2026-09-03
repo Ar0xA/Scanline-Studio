@@ -412,7 +412,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         IUrlLauncher urlLauncher,
         IClipboardImageService clipboardImageService,
         ILogger<ImageViewerWindowViewModel> imageViewerLogger,
-        IRxAudioAutoSaver audioAutoSaver)
+        IRxAudioAutoSaver audioAutoSaver,
+        IRxStationIdAttacher stationIdAttacher)
     {
         _historyStore = historyStore;
         _localization = localization;
@@ -433,6 +434,19 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // own doc comment for why every OTHER in-place patch in this class already does the same
         // (AudioAttached's own contract also documents it can fire on an arbitrary background thread).
         audioAutoSaver.AudioAttached += (entryId, path) => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { AudioFilePath = path }));
+
+        // A-P3b auditor code-review finding: same missing-subscriber bug as AudioAttached above, for
+        // IRxStationIdAttacher.StationIdAttached -- without this, a just-received frame's decoded
+        // callsign/NR-RST never reached this pane's in-memory entry until some unrelated later
+        // refresh re-queried the DB, silently defeating the new "Callsign · FSK" row and its
+        // Send-to-TX/Log-entry seeding for the one frame anyone actually uses them on. Legacy updates
+        // HisCall/MyRST on screen the instant the ID decodes (Main.cpp:3632/3650) -- this closes the
+        // same gap for the Gallery. Wholesale overwrite (both fields, every call) matches
+        // StationIdAttached's own "always the FULL current values" contract. Marshaled through
+        // Dispatcher for the same reason as AudioAttached just above -- this event can also fire on
+        // an arbitrary background thread (see IRxStationIdAttacher.StationIdAttached's own doc
+        // comment).
+        stationIdAttacher.StationIdAttached += (entryId, callsign, nrRst) => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { DecodedCallsign = callsign, DecodedNrRst = nrRst }));
 
         Entries.CollectionChanged += (_, _) =>
         {
@@ -1104,9 +1118,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// frame as a fresh base image, not an overlay. Captures <c>entry</c> BEFORE the QSO lookup's own
     /// await (same discipline <see cref="ExportFrameAsync"/>'s own doc comment describes) and never
     /// reads <see cref="SelectedEntry"/> again afterward.
-    /// <para>Contact-seed only when <see cref="ReceiveHistoryEntry.LinkedQsoId"/> is actually set --
-    /// unlike Copy-to-TX (which reads the LIVE RX pane's own current callsign/grid), a history entry
-    /// carries no callsign/grid of its own, so guessing would violate the same "absent, never blank"
+    /// <para>Contact-seed prefers <see cref="ReceiveHistoryEntry.LinkedQsoId"/>'s own logged
+    /// callsign/grid when set (the authoritative, human-confirmed source); falls back to
+    /// <see cref="ReceiveHistoryEntry.DecodedCallsign"/> (fsk_cwid.md A-P3b) only when no QSO is
+    /// linked -- unlike Copy-to-TX (which reads the LIVE RX pane's own current callsign/grid), never
+    /// a guess: either a real logged value or a real decoded one. Same "absent, never blank"
     /// convention <c>TxControlsPaneViewModel.BuildCurrentContactVariables</c>'s own doc comment
     /// states: a blank/whitespace-only value stays unseeded, not seeded as "".</para></summary>
     [RelayCommand(CanExecute = nameof(CanSendSelectedEntryToTx))]
@@ -1148,6 +1164,14 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
                     (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_grid"] = qso.GridSquare.Trim();
                 }
             }
+        }
+        else if (!string.IsNullOrWhiteSpace(entry.Entry.DecodedCallsign))
+        {
+            // fsk_cwid.md A-P3b: only when no QSO is linked -- a linked QSO's own callsign (above)
+            // is the logged, authoritative one; DecodedCallsign is a fallback for exactly the case
+            // the plan calls out ("today refuses to guess" -- with a real decoded value there is no
+            // guessing left to refuse).
+            (contactVariables ??= new Dictionary<string, string>(StringComparer.Ordinal))["his_call"] = entry.Entry.DecodedCallsign.Trim();
         }
 
         if (SendToTxRequested is null)

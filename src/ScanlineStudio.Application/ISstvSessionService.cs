@@ -1,3 +1,4 @@
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
@@ -102,6 +103,19 @@ public interface ISstvSessionService : IAsyncDisposable
     /// Any other caller that forces a mode while paused should do the same.</summary>
     void SetAutoDetectPaused(bool paused);
 
+    /// <summary>fsk_cwid.md §A5: pass-through of
+    /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ReceptionSequence"/> — the "one
+    /// source of truth" reception identity a <c>ScanlineStudio.UI</c> subscriber reads to build its
+    /// own "current reception" latch, replacing an earlier <c>IReceivedImageBuffer.Generation</c>-based
+    /// stale guard (<see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ReceptionSequence"/>'s
+    /// own doc comment: 0 = unset, first real value 1, bumped only on <see cref="ModeDetected"/>,
+    /// never on <see cref="DecodeRestarted"/>). Same "read-in-callback" contract as the property it
+    /// forwards — meaningful only when read synchronously from inside a <see cref="ModeDetected"/>
+    /// handler (or later, once latched from that read); reading it lazily from inside an already-posted
+    /// UI-thread continuation risks observing a THIRD reception's value if events pile up faster than
+    /// the UI thread drains its queue.</summary>
+    long CurrentReceptionSequence { get; }
+
     event Action<SstvModeDefinition>? ModeDetected;
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.DecodeRestarted"/>
@@ -130,8 +144,20 @@ public interface ISstvSessionService : IAsyncDisposable
     /// that distinction.</summary>
     event Action<FskStationIdDecodedInfo>? StationIdDecoded;
 
+    /// <summary>fsk_cwid.md §8.2/§9: raised once per reception with a non-empty CW-ID decode, from a
+    /// background <see cref="Task.Run(Action)"/> continuation AFTER the post-image capture window
+    /// closes and the decode completes -- NEVER on the audio drain thread, same contract
+    /// <see cref="AudioSliceReady"/> already documents ("raised only AFTER the background encode+write
+    /// completes"). Structurally late relative to <see cref="StationIdDecoded"/>: window close alone
+    /// is up to <see cref="ScanlineStudio.Core.Sstv.StationIdSettings.MaxCwIdRxWindowSeconds"/> after the image's own end, plus
+    /// decode time -- a subscriber correlating this to the CURRENT reception (not a stale one) must
+    /// check <see cref="CwIdDecodedInfo.ReceptionSequence"/> against its own latched "current
+    /// reception" id, captured at <see cref="ModeDetected"/> time, not assume this always describes
+    /// whatever reception is displayed right now.</summary>
+    event Action<CwIdDecodedInfo>? CwIdDecoded;
+
     /// <summary>The operator's own configured callsign (<c>OperatorSettings.Callsign</c>), run
-    /// through <c>ScanlineStudio.Core.Sstv.StationIdCallsignNormalizer.Normalize</c> (uppercase/trim/
+    /// through <c>ScanlineStudio.Abstractions.Sstv.StationIdCallsignNormalizer.Normalize</c> (uppercase/trim/
     /// 16-char cap, <c>Option.cpp:445-448</c>) -- exists so a <c>ScanlineStudio.UI</c> consumer (e.g.
     /// a decoded-station-ID self-filter, avoiding auto-filling "his callsign" with the operator's
     /// own) can read it without referencing <c>ScanlineStudio.Settings.ISettingsStore</c> directly,

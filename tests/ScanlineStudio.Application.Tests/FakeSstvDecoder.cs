@@ -40,6 +40,11 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
 
     public long ReceptionSequence { get; private set; }
 
+    // fsk_cwid.md B-P2: settable (not derived from any other fake state) so a test can simulate
+    // whatever lag it needs -- unlike ReceptionSequence, the real decoder's AnchorLagSamples isn't
+    // a simple per-raise counter a fake can auto-increment.
+    public int AnchorLagSamples { get; set; }
+
     public int ResetAgcCallCount { get; private set; }
 
     public void ResetAgc() => ResetAgcCallCount++;
@@ -206,7 +211,13 @@ internal sealed class FakeSstvDecoder : ISstvDecoder, ISstvDecoderMaintenance, I
         ModeDetected?.Invoke(mode);
     }
 
-    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+    // fsk_cwid.md A1: auto-stamps from the fake's OWN current ReceptionSequence, matching the real
+    // RestartableSstvDecoder.OnStationIdDecoded's unconditional read-then-forward -- a test wanting
+    // to simulate a stale/late-arriving decode should call RaiseModeDetected again (bumping the
+    // sequence) before this call, the same real-world ordering that produces a stale stamp in
+    // production, rather than passing an explicit override value this fake would then have to
+    // special-case.
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info with { ReceptionSequence = ReceptionSequence });
 
     public void RaiseLineDecoded(DecodedImageUpdate update) => LineDecoded?.Invoke(update);
 

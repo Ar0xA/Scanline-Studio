@@ -15,3 +15,10 @@ using System.Runtime.CompilerServices;
 // composition root (not just inside CreateInner's periodic-restart rebuild) would leave that
 // suite green while a user's Options > Decode setting silently never took effect at all.
 [assembly: InternalsVisibleTo("ScanlineStudio.Host.Tests")]
+
+// fsk_cwid.md B-P1: ScanlineStudio.Core.Cw.Tests needs CwMorseGenerator.Generate (internal, already
+// a verified port of legacy WriteCWID) to synthesize realistic CW test audio for ClassicalCwDecoder
+// -- re-implementing tone-segment generation independently in the test project would risk a SECOND,
+// unverified encoder that could silently drift from the real one, undermining the exact
+// "round-trip alone can pass while both halves are wrong" risk CLAUDE.md §4 exists to guard against.
+[assembly: InternalsVisibleTo("ScanlineStudio.Core.Cw.Tests")]

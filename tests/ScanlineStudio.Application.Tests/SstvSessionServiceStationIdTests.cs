@@ -52,7 +52,7 @@ public sealed class SstvSessionServiceStationIdTests
 
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(),
-            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), NullLogger<SstvSessionService>.Instance);
+            new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         return (service, encoder, decoder, settingsStore);
     }
 

@@ -1265,6 +1265,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // editor was active before, out of sync with IsEditorOpen now being false.
             Log.LoadTxSourceImageFailed(_logger, fileName, ex);
             IsEditorOpen = false;
+            _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
@@ -1416,6 +1417,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // same fix here.
             Log.OpenTxEditorFailed(_logger, fileName, ex);
             IsEditorOpen = false;
+            _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
@@ -1439,6 +1441,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         SelectedFileName = fileName;
         ErrorMessage = null;
         IsEditorOpen = false;
+        _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
@@ -1504,10 +1507,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// source instead, since it would flicker the UI through an unwanted intermediate blank editor).
     /// Doesn't unsubscribe the discarded editor's own Applied/Cancelled/PropertyChanged handlers --
     /// same accepted precedent as every other editor-discard path in this class (nothing will ever
-    /// invoke them again once the View swaps <c>ActiveEditor</c> to the new instance).</summary>
+    /// invoke them again once the View swaps <c>ActiveEditor</c> to the new instance). DOES call
+    /// <see cref="TxImageEditorPaneViewModel.Dispose"/> on it now (Tier-0 audit follow-up,
+    /// production_audit.md) -- releases the discarded editor's own pooled bitmaps and every live
+    /// element's canvas bitmap without waiting on GC/finalization; see that method's own doc
+    /// comment for its UI-thread requirement, which this call site (a synchronous method on the UI
+    /// thread) satisfies.</summary>
     private void CloseBlankEditorForReplacement()
     {
         IsEditorOpen = false;
+        _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
         EditorClosed?.Invoke();
@@ -1516,6 +1525,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private void OnEditorCancelled()
     {
         IsEditorOpen = false;
+        _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
         EditorClosed?.Invoke();
@@ -1653,6 +1663,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // same fix here.
             Log.OpenTxEditorFailed(_logger, SelectedFileName ?? "(re-edit)", ex);
             IsEditorOpen = false;
+            _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");

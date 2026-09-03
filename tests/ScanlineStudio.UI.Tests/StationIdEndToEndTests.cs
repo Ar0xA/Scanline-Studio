@@ -47,6 +47,26 @@ public sealed class StationIdEndToEndTests
     private static ArrayImageSource CreateSolidImage(int width, int height) =>
         new(width, height, Enumerable.Repeat(new Rgb24(128, 64, 200), width * height).ToArray());
 
+    /// <summary>fsk_cwid.md §A5: the real decoder stamps <c>decodedEvents</c> with its own real
+    /// (nonzero) <c>ReceptionSequence</c>, so <see cref="RxImagePaneViewModel"/>'s stale guard needs
+    /// a matching latch before those events are raised -- in production a real
+    /// <see cref="ISstvSessionService.ModeDetected"/> always fires before <c>StationIdDecoded</c> for
+    /// the same reception, latching <c>RxImagePaneViewModel._currentReceptionSequence</c> (see that
+    /// field's own doc comment). Setting <see cref="FakeSstvSessionService.CurrentReceptionSequence"/>
+    /// alone is NOT sufficient -- the VM only ever reads it synchronously from inside its own
+    /// <c>OnModeDetected</c> handler, never lazily, so a real <c>ModeDetected</c> raise (plus a
+    /// dispatcher pump to run the posted latch) is required here too.</summary>
+    private static void LatchReceptionSequence(FakeSstvSessionService sstvSession, long receptionSequence)
+    {
+        sstvSession.CurrentReceptionSequence = receptionSequence;
+        var mode = new SstvModeDefinition(
+            Id: "mn73", DisplayName: "Martin M1 (narrow)", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+    }
+
     /// <summary>Real-encode-then-real-decode: operator A's configured TX options, run through the
     /// same <see cref="AnalogFmSstvEncoder"/>/<see cref="AnalogFmSstvDecoder"/> production types
     /// used everywhere else, narrow mode (Mn73) to keep this test fast.</summary>
@@ -85,6 +105,8 @@ public sealed class StationIdEndToEndTests
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" }; // operator B, different from A
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
 
+        LatchReceptionSequence(sstvSession, decodedEvents[0].ReceptionSequence);
+
         foreach (var info in decodedEvents)
         {
             sstvSession.RaiseStationIdDecoded(info);
@@ -113,8 +135,15 @@ public sealed class StationIdEndToEndTests
         };
         var decodedEvents = await EncodeThenDecodeAsync(stationId);
 
+        // Unlike the sibling test above (whose Assert.Contains calls already fail clearly on an
+        // empty decode), this test has no earlier assert -- guard the indexer below explicitly so a
+        // decode regression here surfaces as a clean failure, not an IndexOutOfRangeException.
+        Assert.NotEmpty(decodedEvents);
+
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" }; // same operator as TX
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        LatchReceptionSequence(sstvSession, decodedEvents[0].ReceptionSequence);
 
         foreach (var info in decodedEvents)
         {

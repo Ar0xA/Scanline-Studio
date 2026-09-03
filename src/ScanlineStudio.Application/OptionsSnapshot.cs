@@ -72,6 +72,8 @@ public sealed record OptionsSnapshot(
     double CwToneFrequencyHz,
     bool FskIdTxEnabled,
     bool FskIdRxEnabled,
+    bool CwIdRxEnabled,
+    int CwIdRxWindowSeconds,
     bool NrRstEnabled,
     string? NrRstText,
     string? SoundFileMmvPath,

@@ -710,6 +710,44 @@ public class RestartableSstvDecoderTests
     }
 
     [Fact]
+    public void StationIdDecoded_AcrossBackToBackTransmissions_StampsEachWithItsOwnReceptionSequence()
+    {
+        // fsk_cwid.md A1: FskStationIdDecodedInfo.ReceptionSequence must identify WHICH reception a
+        // decoded station ID belongs to -- this is the one property persistence/correlation (A2) and
+        // the RX pane's stale guard (A5) both depend on. The ordering assumption this pins (fsk_cwid.md's
+        // own words): "the FSK ID is transmitted after the image (Main.cpp:7016-7019), and the scan
+        // loop processes samples in order with TryNarrowFskScan called before the header scan in the
+        // same push (AnalogFmSstvDecoder.cs:3759), so the station-ID raise for reception A should
+        // always precede B's ModeDetected" -- exercised end to end (real encode -> real decode -> the
+        // wrapper's own forwarded/stamped event), not asserted from source reading alone.
+        const int sampleRate = 11025;
+        var mode = SstvModeRegistry.Robot36;
+        var stationIdA = new StationIdTransmitOptions { FskIdEnabled = true, Callsign = "W1AW" };
+        var stationIdB = new StationIdTransmitOptions { FskIdEnabled = true, Callsign = "K2ABC" };
+        var samplesA = EncodeRealTransmission(mode, out _, stationIdA);
+        var samplesB = EncodeRealTransmission(mode, out _, stationIdB);
+        var combined = samplesA.Concat(samplesB).Concat(new float[sampleRate * 2]).ToArray();
+
+        var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue, stationIdDecodeEnabled: true);
+        var modeSequences = new List<long>();
+        var stationIdEvents = new List<FskStationIdDecodedInfo>();
+        decoder.ModeDetected += _ => modeSequences.Add(decoder.ReceptionSequence);
+        decoder.StationIdDecoded += info => stationIdEvents.Add(info);
+
+        decoder.PushSamples(combined);
+
+        Assert.Equal(2, modeSequences.Count);
+        Assert.Equal(2, stationIdEvents.Count);
+        Assert.Equal("W1AW", stationIdEvents[0].Callsign);
+        Assert.Equal("K2ABC", stationIdEvents[1].Callsign);
+        // The core assertion: each station ID is stamped with ITS OWN reception's sequence, not
+        // swapped and not both carrying the same (e.g. final) value.
+        Assert.Equal(modeSequences[0], stationIdEvents[0].ReceptionSequence);
+        Assert.Equal(modeSequences[1], stationIdEvents[1].ReceptionSequence);
+        Assert.NotEqual(stationIdEvents[0].ReceptionSequence, stationIdEvents[1].ReceptionSequence);
+    }
+
+    [Fact]
     public void ForceMode_ForwardsToTheCurrentInner()
     {
         var decoder = new RestartableSstvDecoder(afcEnabled: true, warningThresholdSamples: long.MaxValue, criticalThresholdSamples: long.MaxValue);

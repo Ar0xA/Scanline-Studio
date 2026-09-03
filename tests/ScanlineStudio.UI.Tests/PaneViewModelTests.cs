@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
@@ -1199,6 +1200,217 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RxImagePaneViewModel_CallsignLabelDisplay_NoDecodeYet_IsEmpty()
+    {
+        // fsk_cwid.md A3 auditor code-review finding: this is a SIBLING annotation next to the
+        // static "Callsign" caption (its own separate AXAML column, always bound to the static
+        // loc:Translate key directly) -- not a replacement for it, so the empty state is an empty
+        // string, not the caption text.
+        var localization = new FakeLocalizationService();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal(string.Empty, vm.CallsignLabelDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_FillsCallsign_CallsignLabelDisplayShowsFskSource()
+    {
+        // fsk_cwid.md A3: "the card reads e.g. W1AW with a secondary FSK · 14:02:11Z".
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.CallsignLabelDisplay);
+        Assert.Equal("FSK", localization.LastArgs?[0]);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_FillsCallsign_CallsignLabelDisplayShowsCwSource()
+    {
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.CallsignLabelDisplay);
+        Assert.Equal("CW", localization.LastArgs?[0]);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_OverrideCallsignManuallyEdited_CallsignLabelDisplayRevertsToEmpty()
+    {
+        // fsk_cwid.md A3: a manual edit is not attributable to any decode source -- the label must
+        // not keep claiming a stale "FSK · <old time>" for a value the operator just typed over.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.CallsignLabelDisplay);
+
+        vm.OverrideCallsign = "N0CALL";
+
+        Assert.Equal(string.Empty, vm.CallsignLabelDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStaleCallsignNrRstAndCwIdLabels()
+    {
+        // fsk_cwid.md A3: pins the "stale label survives past a value reset" bug class -- the label
+        // fields are independent of the VALUE fields' own null-ness, so each needs its own explicit
+        // reset in OnModeDetected, not just an inert-behind-a-null-value assumption.
+        var localization = new FakeLocalizationService();
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "0012"));
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE K1ABC", Callsign: null, Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.CallsignLabelDisplay);
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.NrRstLabelDisplay);
+        Assert.Equal("Panes.RxFrameMeta.SourceTimeFormat", vm.CwIdLabelDisplay);
+
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(string.Empty, vm.CallsignLabelDisplay);
+        Assert.Equal(string.Empty, vm.NrRstLabelDisplay);
+        Assert.Equal(string.Empty, vm.CwIdLabelDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationsHeard_StartsEmpty()
+    {
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Empty(vm.StationsHeard);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignAndNrRst_EachAddOwnStationsHeardRow()
+    {
+        // fsk_cwid.md A4: "one row per decode event" -- a callsign packet and an NR/RST sub-packet
+        // are two separate wire transmissions, so they get two separate rows, newest first.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC", ReceptionSequence: 1));
+        Dispatcher.UIThread.RunJobs();
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 12, ReceptionSequence: 1));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2, vm.StationsHeard.Count);
+        Assert.Equal("595012", vm.StationsHeard[0].Text);
+        Assert.Equal("FSK", vm.StationsHeard[0].Source);
+        Assert.Equal("K1ABC", vm.StationsHeard[1].Text);
+        Assert.Equal("FSK", vm.StationsHeard[1].Source);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_AddsOneStationsHeardRowWithCwSource()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        var heard = Assert.Single(vm.StationsHeard);
+        Assert.Equal("DE W1AW", heard.Text);
+        Assert.Equal("CW", heard.Source);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_OwnCallsignSelfFiltered_StillAddsAStationsHeardRow()
+    {
+        // fsk_cwid.md A4 design decision (this row's own doc comment): the self-filter only gates
+        // OverrideCallsign, not the log -- another station transmitting the operator's own callsign
+        // is still a real decode event worth keeping in the session log.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+        var heard = Assert.Single(vm.StationsHeard);
+        Assert.Equal("W1AW", heard.Text);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_ForAnOlderReception_StillAddsAStationsHeardRow()
+    {
+        // fsk_cwid.md A4 design decision: the stale guard only gates the card row, not the log -- a
+        // late-arriving decode from a superseded reception is still a real event that happened.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC", ReceptionSequence: 1));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.CallsignDisplay);
+        var heard = Assert.Single(vm.StationsHeard);
+        Assert.Equal("K1ABC", heard.Text);
+        Assert.Equal(1, heard.ReceptionSequence);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_DoesNotClearStationsHeard()
+    {
+        // fsk_cwid.md A4: "Not reset on ModeDetected -- that is the point" -- a second station's ID
+        // must never silently erase the first from this list, unlike OverrideCallsign/DecodedNrRst/
+        // CwIdText (all per-RECEPTION state that IS reset here).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Single(vm.StationsHeard);
+
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(vm.StationsHeard);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationsHeard_CappedAtTwenty_EvictsTheOldest()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        for (var i = 1; i <= 21; i++)
+        {
+            sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: (uint)i));
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.Equal(20, vm.StationsHeard.Count);
+        Assert.Equal("595021", vm.StationsHeard[0].Text);
+        Assert.Equal("595002", vm.StationsHeard[19].Text);
+    }
+
+    [AvaloniaFact]
     public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignMatchesOwnExactly_DoesNotAutoFill()
     {
         // Main.cpp:3628's strcmp self-filter -- exact, case-sensitive match against the operator's
@@ -1296,25 +1508,277 @@ public sealed class PaneViewModelTests
     {
         // Tier B audit finding: GetOperatorCallsignAsync's own await is a real, uncached settings
         // disk read (JsonSettingsStore.LoadAsync has no cache) -- during a bulk-WAV-decode's
-        // back-to-back transmissions, a NEW reception's ModeDetected/Generation bump can land in
-        // that exact window, after which the write below would silently re-apply the OLD reception's
-        // decoded callsign onto the NEW one now on screen. Same class OnSaved's own
-        // IReceivedImageBuffer.Generation guard already covers (see that method's doc comment); this
-        // write site didn't have the equivalent before this fix.
+        // back-to-back transmissions, a NEW reception's ModeDetected/reception-sequence bump can land
+        // in that exact window, after which the write below would silently re-apply the OLD
+        // reception's decoded callsign onto the NEW one now on screen. fsk_cwid.md §A5: guard is now
+        // ReceptionSequence-identity-based, not IReceivedImageBuffer.Generation-based -- this test
+        // simulates the race by bumping CurrentReceptionSequence and raising a real ModeDetected
+        // (the actual production trigger for the guard's own latch to move) while the settings read
+        // is still in flight.
         var gate = new TaskCompletionSource<string?>();
         var sstvSession = new FakeSstvSessionService { OperatorCallsignGate = gate };
         var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
-        var buffer = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
 
-        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC", ReceptionSequence: 1));
         Dispatcher.UIThread.RunJobs();
         Assert.Null(vm.OverrideCallsign);
 
-        buffer.Generation++; // a new reception starts while the settings read is still in flight
+        // A new reception starts while the settings read above is still in flight.
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
         gate.SetResult("W1AW");
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_ForAnOlderReception_DropsTheStaleWrite_WithNoRaceRequired()
+    {
+        // fsk_cwid.md §A5's own suggested test: "ID for reception A arrives after B's ModeDetected"
+        // asserting a drop, with NO in-flight-await race needed at all (unlike the sibling test
+        // above): reception B's ModeDetected has already fully landed, including its own
+        // OverrideCallsign=null reset, by the time reception A's late decode event arrives. This
+        // pins the guard's own identity-comparison logic in isolation -- it does NOT reproduce a
+        // known real-world trigger for a late reception-A event (auditor code-review finding on an
+        // earlier version of this comment: both real stamp sites, RestartableSstvDecoder and
+        // AnalogFmSstvDecoder, read ReceptionSequence at forward/current time, not at the reception
+        // the decoded bits actually belong to, so a lagging narrow-FSK scan bound would stamp the
+        // NEWER sequence, not an older one -- a genuinely late-A-after-B event is not known to be
+        // reachable from any current code path).
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // Reception A (sequence 1) decodes late, after reception B (sequence 2) is already current.
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC", ReceptionSequence: 1));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_StationIdDecodedEvent_CompactNrForAnOlderReception_DropsTheStaleWrite()
+    {
+        // fsk_cwid.md §A5 code-review nit: the stale guard is hoisted above the whole Callsign/
+        // CompactNr/NrText dispatch, not just inside the Callsign branch -- pins that CompactNr (also
+        // per-reception state, same as OverrideCallsign) gets the same protection.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // Reception A (sequence 1) decodes late, after reception B (sequence 2) is already current.
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 12, ReceptionSequence: 1));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.DecodedNrRst);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_FillsCwIdDisplay()
+    {
+        // fsk_cwid.md §9/B-P3: the CW ID row shows the decoder's raw text.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Equal("—", vm.CwIdDisplay);
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("DE W1AW", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_LowConfidence_AppendsHintToCwIdDisplay()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.5, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("DE W1AW (Panes.RxFrameMeta.CwId.LowConfidence)", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_HighConfidence_NoHintOnCwIdDisplay()
+    {
+        // Mutation-relevant boundary check: 0.6 itself (the threshold) must NOT trigger the hint --
+        // pins the guard's "<" (strictly below), not "<=".
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.6, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("DE W1AW", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_CallsignFillsOverrideCallsignWhenEmpty()
+    {
+        // fsk_cwid.md §9's routing rule: fills OverrideCallsign when it's still empty.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        Assert.Null(vm.OverrideCallsign);
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("W1AW", vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_CallsignDoesNotOverwriteAnAlreadySetFskCallsign()
+    {
+        // fsk_cwid.md §9: "an FSK-decoded callsign is authoritative and is never overwritten by CW"
+        // -- FSK arrives first and fills OverrideCallsign, then CW decodes a DIFFERENT callsign for
+        // the same reception; FSK's value must survive, and the CW text still fills its own row.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("W1AW", vm.OverrideCallsign);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE K9XYZ", Callsign: "K9XYZ", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("W1AW", vm.OverrideCallsign);
+        Assert.Equal("DE K9XYZ", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_CallsignMatchesOwnExactly_DoesNotAutoFill()
+    {
+        // Same self-filter as the FSK path, routed through the same shared comparison (A5).
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+        Assert.Equal("DE W1AW", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_ForAnOlderReception_DropsTheStaleWrite()
+    {
+        // fsk_cwid.md §9/B-P3's own hard prerequisite: A5's guard rejects a late CW decode from a
+        // previous reception -- CW results are structurally late (window close + background decode),
+        // so this is the realistic trigger A5's own sibling test doesn't claim to be.
+        var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        // Reception A (sequence 1)'s CW ID decodes late, well after reception B (sequence 2) is current.
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 1, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.CwIdDisplay);
+        Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_CwIdDecodedEvent_NewReceptionStartsWhileAwaitingOwnCallsign_DropsTheStaleWrite()
+    {
+        // Auditor code-review nit (B-P3): the FSK sibling test of the same name exercises the
+        // post-await re-check via OperatorCallsignGate; the CW path's own post-await re-check
+        // (ApplyCwIdDecodedAsync's split stale/FSK-already-set checks) had no equivalent -- covered
+        // only incidentally by synchronous-fake timing until now.
+        var gate = new TaskCompletionSource<string?>();
+        var sstvSession = new FakeSstvSessionService { OperatorCallsignGate = gate };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE K1ABC", Callsign: "K1ABC", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.OverrideCallsign);
+
+        // A new reception starts while the settings read above is still in flight.
+        sstvSession.CurrentReceptionSequence = 2;
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        gate.SetResult("W1AW");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.OverrideCallsign);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStaleCwIdText()
+    {
+        // fsk_cwid.md §9: "CwIdText joins the OnModeDetected reset list" -- same per-RECEPTION
+        // category as DecodedNrRst.
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("DE W1AW", vm.CwIdDisplay);
+
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.CwIdDisplay);
+    }
+
+    [AvaloniaFact]
+    public void RxImagePaneViewModel_ModeDetectedEvent_ClearsStaleCwIdText_EvenAfterALowConfidenceHint()
+    {
+        // Mutation-relevant: a stale _cwIdConfidence surviving the reset would be inert as long as
+        // CwIdText is null (CwIdDisplay only reads confidence when text is non-null) -- pins that a
+        // reset after a LOW-confidence decode still renders the plain "—" placeholder, not a
+        // leftover "— (low confidence)".
+        var sstvSession = new FakeSstvSessionService();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.5, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("DE W1AW (Panes.RxFrameMeta.CwId.LowConfidence)", vm.CwIdDisplay);
+
+        var mode = new SstvModeDefinition(
+            Id: "m1", DisplayName: "Martin M1", VisCode: 44, ImageWidth: 320, ImageHeight: 256,
+            ColorEncoding: ColorEncoding.RgbSequential,
+            LineSegments: [new ScanSegment("R", 146.432)]);
+        sstvSession.RaiseModeDetected(mode);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("—", vm.CwIdDisplay);
     }
 
     [AvaloniaFact]
@@ -4396,6 +4860,143 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CancellingEditor_DisposesTheDiscardedEditor()
+    {
+        // Tier-0 audit follow-up (production_audit.md): TxImageEditorPaneViewModel.Dispose() is now
+        // wired into all 6 of this class's own editor-discard sites (previously dead code). Proxy for
+        // "Dispose() actually ran": WorkingCopyBitmap is fed by _workingCopyPool, which
+        // WriteableBitmapPool.Dispose() disposes SYNCHRONOUSLY (no Dispatcher.UIThread.Post needed
+        // for this one, unlike each element's own bitmap) -- Lock() on the captured reference throws
+        // the instant Dispose() has run. WriteableBitmapPoolTests' own established convention:
+        // NullReferenceException (Dispose() nulls the internal platform impl), not
+        // ObjectDisposedException.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        var discardedBitmap = editor.WorkingCopyBitmap;
+        Assert.NotNull(discardedBitmap);
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ApplyingEditor_DisposesTheAppliedEditor()
+    {
+        // Same Dispose()-wiring follow-up as the Cancel test above, for the OnEditorApplied discard
+        // site -- the more common real-world path (Apply, not Cancel). PreviewImage (also derived
+        // from _loadedImage's own ToBitmap conversion, NOT from the pool) stays valid after Apply --
+        // only the discarded EDITOR's own WorkingCopyBitmap must be gone.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var appliedEditorBitmap = editor.WorkingCopyBitmap;
+        Assert.NotNull(appliedEditorBitmap);
+
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)appliedEditorBitmap!).Lock());
+        Assert.False(vm.IsEditorOpen);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ReplacingABlankEditorWithARealPick_DisposesTheDiscardedBlankEditor()
+    {
+        // Same Dispose()-wiring follow-up, for the CloseBlankEditorForReplacement discard site -- a
+        // DIFFERENT code path from Cancel/Apply above (no EditorClosed-triggered auto-reopen; the
+        // caller immediately opens a replacement editor instead).
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var blankEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        var discardedBitmap = blankEditor.WorkingCopyBitmap;
+        Assert.NotNull(discardedBitmap);
+
+        var realEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.NotSame(blankEditor, realEditor);
+        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_CancellingEditorWithAnImageElement_DisposesTheElementsOwnBitmapToo()
+    {
+        // Auditor code-review nit (Tier-0 audit follow-up, production_audit.md): the 3 Dispose()-
+        // wiring tests above only prove the pool half (WorkingCopyBitmap/PreviewImage) -- none of them
+        // add an OverlayElements entry, so the new foreach-dispose loop in
+        // TxImageEditorPaneViewModel.Dispose() went unexercised. This one adds a real
+        // ImageElementViewModel first. ImageElementViewModel.Dispose() defers its own
+        // CanvasBitmap.Dispose() via Dispatcher.UIThread.Post (Background priority, same as the
+        // editor's own pool disposal after the auditor's deferred-dispose fix) -- RunJobs() flushes
+        // both.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(2, 2, new Rgb24[4]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, loader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), picker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        await editor.AddImageFromFileCommand.ExecuteAsync(null);
+        var element = (ImageElementViewModel)Assert.Single(editor.OverlayElements);
+        var elementBitmap = element.CanvasBitmap;
+
+        // Adding an image element sets HasUnsavedEdits, so Cancel's own arm/confirm gate
+        // (IsCancelArmed) needs 2 clicks here, unlike the untouched-blank-editor Cancel tests above.
+        editor.CancelCommand.Execute(null);
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Throws<NullReferenceException>(() => elementBitmap.Lock());
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ImageLoadCompletingAfterEditorIsDisposed_DoesNotResumeThePreviewPipeline()
+    {
+        // Auditor code-review blocker (Tier-0 audit follow-up, production_audit.md): before
+        // RecomputePreview()/NotifyWorkingCopyGeometryChanged() gained their own _disposed guards, an
+        // await-crossing operation still in flight when Dispose() ran (here: AddImageFromFileAsync's
+        // own await on the image loader) would resume into RecomputePreviewPipeline() ->
+        // _previewPool.Blit() against an already-disposed pool -- wasted work against a discarded
+        // instance at best, an unhandled WriteableBitmap crash on a real (non-headless) render target
+        // at worst, since Cancel has no busy gate to block a still-loading Add-image click.
+        //
+        // Asserted via PreviewImage's own object IDENTITY, not a thrown exception -- confirmed by
+        // direct experiment that a thrown-exception assertion here would NOT be mutation-sensitive:
+        // WriteableBitmapPool.Dispose()'s own idempotency fix (nulls _a/_b after disposing, see that
+        // method's own comment) means EnsureSized's `slot is not null` check is false post-dispose, so
+        // Blit() silently REALLOCATES a fresh bitmap instead of touching (and crashing on) the
+        // disposed one -- removing ONLY the guards here, with that nulling fix still in place, produces
+        // no exception at all, just a silent, wrong reassignment. Identity is the one signal that
+        // catches that: the guard's early-return is what keeps PreviewImage from being reassigned to a
+        // different reference once the late continuation resumes; without it, PreviewImage silently
+        // "resurrects" content on a discarded editor even though nothing crashes.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { UseManualGating = true };
+        var vm = new TxControlsPaneViewModel(sstvSession, loader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), picker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        var previewBeforeDispose = editor.PreviewImage;
+
+        // FakeFilePickerService.PickImageFileAsync completes synchronously (its own established
+        // convention), so by the time ExecuteAsync returns control here (unawaited), execution has
+        // already run synchronously through to the genuinely-gated loader call below.
+        var addTask = editor.AddImageFromFileCommand.ExecuteAsync(null);
+        var pending = Assert.Single(loader.PendingLoads);
+
+        editor.CancelCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        pending.SetResult(new ArrayImageSource(2, 2, new Rgb24[4]));
+        await addTask;
+
+        Assert.Same(previewBeforeDispose, editor.PreviewImage);
+    }
+
+    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_QuickSelectMode_AllowedWhileTheBlankPlaceholderEditorIsOpenAndUntouched()
     {
         // AskUserQuestion decision (2026-08-17, recommended option): a BLANK auto-opened editor is
@@ -6106,6 +6707,67 @@ public sealed class PaneViewModelTests
         Assert.Null(vm.ErrorMessage);
     }
 
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_NoLinkedQsoButDecodedCallsign_SeedsHisCallFromDecodedCallsign()
+    {
+        // fsk_cwid.md A-P3b: "seed his_call from DecodedCallsign in SendSelectedEntryToTxAsync ...
+        // when no QSO is linked" -- only when no QSO is linked (LinkedQsoId null); a linked QSO's own
+        // callsign, tested above, is the authoritative source and takes precedence.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, DecodedCallsign: "W1AW")],
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        RxHistoryPaneViewModel.SendToTxRequest? captured = null;
+        vm.SendToTxRequested = request =>
+        {
+            captured = request;
+            return Task.FromResult(true);
+        };
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.NotNull(captured!.ContactVariables);
+        Assert.Equal("W1AW", captured.ContactVariables!["his_call"]);
+        Assert.False(captured.ContactVariables!.ContainsKey("his_grid"));
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SendSelectedEntryToTx_LinkedQsoAndDecodedCallsign_QsoTakesPrecedence()
+    {
+        // Auditor code-review nit (A-P3b): the two "no QSO" / "has QSO" tests above never construct
+        // an entry with BOTH present -- a mutated `else if` -> `if` (decoded callsign always applied
+        // regardless of a linked QSO) survives the whole suite without this. Pins that the linked
+        // QSO's own callsign, not DecodedCallsign, wins when both exist.
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", "qso-1", ReceiveDecodeState.Completed, DecodedCallsign: "K9XYZ")],
+        };
+        var logbookSession = new FakeLogbookSessionService
+        {
+            Records = { new QsoRecord("qso-1", "W1AW", DateTimeOffset.UtcNow, null, null, null, null, null, null, null, null, "FN31pr", null, null, null, false, false) },
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, logbookSession: logbookSession);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+
+        RxHistoryPaneViewModel.SendToTxRequest? captured = null;
+        vm.SendToTxRequested = request =>
+        {
+            captured = request;
+            return Task.FromResult(true);
+        };
+
+        await vm.SendSelectedEntryToTxCommand.ExecuteAsync(null);
+
+        Assert.Equal("W1AW", captured!.ContactVariables!["his_call"]);
+    }
+
     /// <summary>Mirrors <c>TxControlsPaneViewModel_CopyReceivedImageToTx_SeedsHisCallAndHisGridFromCurrentContactRequested</c>'s
     /// own "absent, never blank" convention -- a linked QSO's callsign/grid seed the same
     /// his_call/his_grid keys Copy-to-TX uses, so the same template resolves the same way regardless
@@ -6621,6 +7283,35 @@ public sealed class PaneViewModelTests
         Assert.True(vm.OpenAudioFileLocationCommand.CanExecute(null));
     }
 
+    /// <summary>fsk_cwid.md A-P3b auditor-caught BLOCKER (same class as the AudioAttached one just
+    /// above): IRxStationIdAttacher.StationIdAttached had ZERO subscribers anywhere in the app -- a
+    /// just-received frame's decoded callsign/NR-RST never reached this pane's in-memory entry until
+    /// some unrelated later refresh re-queried the DB, silently defeating the "Callsign · FSK" row
+    /// and its Send-to-TX/Log-entry seeding for the one frame anyone actually uses them on. Pins that
+    /// subscribing IRxStationIdAttacher.StationIdAttached actually patches the live, already-held
+    /// entry in place.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_StationIdAttachedEvent_PatchesTheAlreadyHeldEntryInPlace()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var stationIdAttacher = new FakeRxStationIdAttacher();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, stationIdAttacher: stationIdAttacher);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.Entries[0].Entry.DecodedCallsign);
+        Assert.Null(vm.Entries[0].Entry.DecodedNrRst);
+
+        stationIdAttacher.RaiseStationIdAttached("1", "W1AW", "595001");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("W1AW", vm.Entries[0].Entry.DecodedCallsign);
+        Assert.Equal("595001", vm.Entries[0].Entry.DecodedNrRst);
+    }
+
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_OpenAudioFileLocationCommand_CanExecute_MatchesAudioFilePathPresence()
     {
@@ -7105,7 +7796,8 @@ public sealed class PaneViewModelTests
         FakeClipboardImageService? clipboardImageService = null,
         FakeRxAudioAutoSaver? audioAutoSaver = null,
         FakeLogbookSessionService? logbookSession = null,
-        FakeLocalizationService? localization = null) =>
+        FakeLocalizationService? localization = null,
+        FakeRxStationIdAttacher? stationIdAttacher = null) =>
         new(
             historyStore,
             localization ?? new FakeLocalizationService(),
@@ -7118,7 +7810,8 @@ public sealed class PaneViewModelTests
             urlLauncher ?? new FakeUrlLauncher(),
             clipboardImageService ?? new FakeClipboardImageService(),
             NullLogger<ImageViewerWindowViewModel>.Instance,
-            audioAutoSaver ?? new FakeRxAudioAutoSaver());
+            audioAutoSaver ?? new FakeRxAudioAutoSaver(),
+            stationIdAttacher ?? new FakeRxStationIdAttacher());
 
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_NoFilterActive_FilteredEntriesMatchesEntries()
@@ -8028,8 +8721,8 @@ public sealed class PaneViewModelTests
         Assert.Equal("14.230000", vm.FormFrequencyMhzText);
     }
 
-    /// <summary>RST default plan (2026-09-01): both fields seed from the ONE passed value -- SSTV's
-    /// real-world convention doesn't distinguish direction.</summary>
+    /// <summary>RST default plan (2026-09-01): both fields seed from the ONE passed value when no
+    /// decoded RST is available -- SSTV's real-world convention doesn't distinguish direction.</summary>
     [AvaloniaFact]
     public void LogbookPaneViewModel_PrefillForNewEntry_WithDefaultRst_SetsBothRstFields()
     {
@@ -8039,6 +8732,33 @@ public sealed class PaneViewModelTests
         vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null, defaultRst: "595");
 
         Assert.Equal("595", vm.FormRstSent);
+        Assert.Equal("595", vm.FormRstReceived);
+    }
+
+    /// <summary>fsk_cwid.md A-P3b: FormRstReceived prefers the OTHER station's own decoded FSK
+    /// NR/RST over the operator's own default when both are present -- FormRstSent (what WE sent)
+    /// stays the operator's own default regardless, since decodedRstReceived only ever describes
+    /// what the other station reported to US.</summary>
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_WithDecodedRstReceived_PrefersItOverDefaultRst_ForReceivedOnly()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null, defaultRst: "595", decodedRstReceived: "595001");
+
+        Assert.Equal("595", vm.FormRstSent);
+        Assert.Equal("595001", vm.FormRstReceived);
+    }
+
+    [AvaloniaFact]
+    public void LogbookPaneViewModel_PrefillForNewEntry_WithNoDecodedRstReceived_FallsBackToDefaultRst()
+    {
+        var vm = CreateLogbookPaneViewModel(new FakeLogbookSessionService());
+        Dispatcher.UIThread.RunJobs();
+
+        vm.PrefillForNewEntry("W1AW", "martin1", DateTimeOffset.UtcNow, null, null, null, defaultRst: "595", decodedRstReceived: null);
+
         Assert.Equal("595", vm.FormRstReceived);
     }
 

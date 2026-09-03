@@ -80,6 +80,31 @@ public sealed record StationIdSettings
     /// <see cref="ScanlineStudio.Core.Sstv.AnalogFmSstvDecoder.StationIdDecodeEnabled"/>.</summary>
     public bool FskIdRxEnabled { get; init; }
 
+    /// <summary>fsk_cwid.md §8.3: new capability, no legacy equivalent (YONIQ never decoded CW on
+    /// receive). Default false, matching <see cref="FskIdRxEnabled"/>'s own off-by-default posture
+    /// and fsk_cwid.md §12's explicit "not default-on before the classical decoder has been
+    /// exercised on the legacy fixture" rule. Plain non-nullable, no STJ trap. Consumed by
+    /// <see cref="ScanlineStudio.Application.SstvSessionService"/>'s CW-ID capture arm.</summary>
+    public bool CwIdRxEnabled { get; init; }
+
+    /// <summary>fsk_cwid.md §8.2: how many seconds of post-image audio the CW-ID capture window
+    /// spans. Nullable per this record's own doc comment -- <see langword="null"/> means "apply
+    /// <see cref="DefaultCwIdRxWindowSeconds"/>." Clamped to <see cref="MinCwIdRxWindowSeconds"/>-
+    /// <see cref="MaxCwIdRxWindowSeconds"/> at the read site, not here (this record does no
+    /// validation of its own, matching every other field's "validate at the boundary" convention).</summary>
+    public int? CwIdRxWindowSeconds { get; init; }
+
+    /// <summary>fsk_cwid.md §8.1: "DE W1AW" is ~2.4s at 28 WPM, ~6.7s at 10 WPM; "DE W1AW/M" at
+    /// 10 WPM approaches 9s; FSK ID with NR/RST precedes it by ~1-2s. 12s covers every realistic
+    /// ID with margin.</summary>
+    public const int DefaultCwIdRxWindowSeconds = 12;
+
+    /// <summary>fsk_cwid.md §8.2's own stated floor.</summary>
+    public const int MinCwIdRxWindowSeconds = 5;
+
+    /// <summary>fsk_cwid.md §8.1: matches DeepCW's own stated max window (§6).</summary>
+    public const int MaxCwIdRxWindowSeconds = 20;
+
     /// <summary><c>Log.m_LogSet.m_FSKNR</c>. Nullable per this record's own doc comment --
     /// <see langword="null"/> means "apply <see cref="DefaultNrRstEnabled"/> (true)."</summary>
     public bool? NrRstEnabled { get; init; }

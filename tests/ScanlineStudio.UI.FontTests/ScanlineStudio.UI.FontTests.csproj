@@ -31,6 +31,26 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ScanlineStudio.UI\ScanlineStudio.UI.csproj" />
+    <!-- Perspective-transform corner-drag verification: needs the REAL TransmitImagePreparer (not a
+         fake) to exercise the actual warp render path. ScanlineStudio.UI deliberately does NOT
+         reference Core.Imaging (UiLayeringArchitectureTests enforces this), so this test-only
+         reference is scoped to this project, matching ScanlineStudio.UI.Tests's own identical
+         reference for the same reason. -->
+    <ProjectReference Include="..\..\src\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Shared-compile, not a second hand-written copy: ScanlineStudio.UI.Tests's Fakes.cs already
+         has every fake this project's perspective-drag tests need (FakeLocalizationService,
+         FakeFilePickerService, FakeImageFileLoader, FakeRadioSessionService, FakeReceivedImageBuffer,
+         FakeReceiveHistoryStore, FakeTemplateStore, FakeImageSourceWriter). Confirmed self-contained
+         (only external deps: Abstractions/Application/Settings/ScanlineStudio.UI.Services, all
+         already referenced) before wiring this — a hand-duplicated copy of ~2300 lines including
+         two large-interface stubs (IRadioSessionService, IReceiveHistoryStore) would be a real,
+         ongoing drift risk this avoids entirely; each project gets its own internal-scoped compiled
+         copy from the one source file, so a change in one project's tests can't silently diverge from
+         the other's. -->
+    <Compile Include="..\ScanlineStudio.UI.Tests\Fakes.cs" Link="Fakes.cs" />
   </ItemGroup>
 
 </Project>

@@ -2860,11 +2860,12 @@ public sealed class TxImageEditorPaneViewModelTests
     [AvaloniaFact]
     public async Task RefreshRxHistoryPickerAsync_PopulatesEntriesFromTheStoreWithThumbnails()
     {
+        var receivedAt = new DateTimeOffset(2026, 9, 2, 14, 30, 0, TimeSpan.Zero);
         var historyStore = new FakeReceiveHistoryStore
         {
             EntriesToReturn =
             [
-                new ReceiveHistoryEntry("entry-1", DateTimeOffset.UtcNow, "PD120", "/tmp/rx1.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("entry-1", receivedAt, "PD120", "/tmp/rx1.png", null, ReceiveDecodeState.Completed),
             ],
             ThumbnailToReturn = CreateSource(1, 1),
         };
@@ -2874,6 +2875,10 @@ public sealed class TxImageEditorPaneViewModelTests
 
         var entry = Assert.Single(vm.RxHistoryPickerEntries);
         Assert.Equal("entry-1", entry.Id);
+        // UX friction fix (Fable operator-perspective review): the AXAML row displays ReceivedAt, not
+        // the raw Id, so a real regression here would leave the picker showing GUID-shaped strings
+        // again -- this pins that the VM actually carries the value through, not just that Id survives.
+        Assert.Equal(receivedAt, entry.ReceivedAt);
         Assert.Equal("/tmp/rx1.png", entry.FilePath);
         Assert.NotNull(entry.Thumbnail);
         // SelectCommand is parent-pushed (same pattern as ITemplateElementViewModel.RemoveCommand)
@@ -2906,7 +2911,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var fullResSource = CreateSource(6, 6);
         var loader = new FakeImageFileLoader { ResultToReturn = fullResSource };
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer, new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
-        var entry = new TxImageEditorPaneViewModel.RxHistoryPickerEntry("entry-1", "/tmp/rx1.png", null, null);
+        var entry = new TxImageEditorPaneViewModel.RxHistoryPickerEntry("entry-1", DateTimeOffset.Now, "/tmp/rx1.png", null, null);
 
         await vm.AddImageFromRxHistoryCommand.ExecuteAsync(entry);
 
@@ -3269,6 +3274,46 @@ public sealed class TxImageEditorPaneViewModelTests
         var reloaded = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
         Assert.True(reloaded.IsBackground);
         Assert.True(reloaded.Locked);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_PreFillsNewTemplateNameWithTheLoadedTemplatesOwnName()
+    {
+        // UX friction fix (Fable operator-perspective review): "template-name retyping" -- loading a
+        // template used to leave the Save-template name field exactly as SaveTemplateAsync's own
+        // success path left it (blank), so tweaking a just-loaded template and re-saving required
+        // retyping its full name from scratch, even though SaveTemplateAsync's own overwrite-by-
+        // matching-name logic would have happily overwritten it in place if the name field had been
+        // right.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
+            new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Contest Exchange";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        Assert.Equal(string.Empty, vm.NewTemplateName);
+
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        // This VM already has an unsaved edit on it (the AddOverlayElementCommand above), so the
+        // FIRST click only arms the recall-overwrite confirm gate (OnReadyRackTemplateSelected's own
+        // HasUnsavedEdits check) -- the SECOND click actually loads, same established
+        // arm-then-confirm shape LoadTemplate_BoxGradientFill_RehydratesIntoALiveElementWithMatchingValues
+        // uses (that test's own comment explains why ITS single click is enough: a fresh editor with
+        // no prior edits skips the gate entirely).
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Contest Exchange", vm.NewTemplateName);
+        Assert.True(vm.SaveTemplateCommand.CanExecute(null));
     }
 
     [AvaloniaFact]
