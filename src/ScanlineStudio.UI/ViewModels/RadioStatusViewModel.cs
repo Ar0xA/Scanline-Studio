@@ -447,10 +447,30 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="TuneFrequencyHz"/>/<see cref="TuneCommand"/> above (plan-review finding: a
     /// live-bound Hz field would fight this VM's own 250ms poll write-back the way a naively-bound
     /// numeric field would, unlike a 3-way segment toggle where a poll write-back is idempotent).
-    /// 2400 Hz is a common SSB voice-bandwidth default -- not read from anywhere, purely a reasonable
-    /// starting point for the control.</summary>
+    /// 2400 Hz default confirmed sound by an auditor domain-judgment review, 2026-09-03 (not a
+    /// legacy port -- legacy YONIQ has no CAT bandwidth control at all to be equivalent to): this
+    /// app can only ever set WIDTH via CAT, never the rig's own passband CENTER/shift
+    /// (<see cref="IRadioSessionService.SetBandwidthAsync"/>'s own doc comment -- no shift/passband-
+    /// center command exists anywhere in this codebase's CAT layer), so a wide-ish default is what
+    /// actually tolerates an unknown/uncontrolled center offset -- narrowing below ~2400 Hz without
+    /// also shifting risks clipping SSTV's own ~2300 Hz white tone at the filter's skirt, a worse
+    /// result than the extra QRM a wider filter admits. 2400 Hz also maps to a filter width most HF
+    /// rigs genuinely have as a real preset, unlike an oddball wider value a CAT backend might
+    /// silently re-snap.</summary>
     [ObservableProperty]
     private double _bandwidthInputHz = 2400;
+
+    /// <summary>User-directed 2026-09-03: quick-pick presets alongside the still-freely-editable
+    /// <see cref="BandwidthInputHz"/> field (same "ItemsSource + IsEditable ComboBox, Text bound to
+    /// the real numeric property" pattern already established for
+    /// <c>OptionsWindowViewModel.AvailableSampleRates</c>/<c>SampleRate</c> -- an out-of-list value
+    /// still round-trips, this is a convenience list, not a validation constraint). 1800/2400/2800 Hz
+    /// bracket the practical range a ham operator would actually reach for: 1800 Hz is the narrowed
+    /// choice some operators use (normally paired with IF shift, which this app can't send -- see
+    /// <see cref="BandwidthInputHz"/>'s own doc comment for why that makes 1800 Hz a riskier pick
+    /// here specifically), 2400 Hz is the recommended default, 2800 Hz is a wider standard SSB
+    /// filter width for operators who'd rather trade QRM rejection for zero clipping risk.</summary>
+    public IReadOnlyList<double> AvailableBandwidthPresetsHz { get; } = [1800, 2400, 2800];
 
     /// <summary>Raw Hz mirror of <see cref="FrequencyDisplay"/> -- that property is a formatted
     /// string, not round-trippable, so <see cref="StoreCurrentPresetAsync"/> needs its own copy of
