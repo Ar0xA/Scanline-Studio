@@ -1,6 +1,7 @@
 using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
@@ -35,6 +36,10 @@ public partial class MainWindow : Window
     // only ever assigned once), same "field survives a second firing, a local wouldn't" reasoning
     // as _isPopulatingConfigurationsMenu above -- just never back-applied to this handler itself.
     private bool _wired;
+
+    // User-reported bug (2026-09-03), Windows only: re-entrancy guard for the maximize-bounds
+    // recovery handler below -- see that handler's own doc comment.
+    private bool _isRecoveringMaximizedBounds;
 
     public MainWindow()
     {
@@ -153,6 +158,70 @@ public partial class MainWindow : Window
                 }
             }
         };
+
+        // User-reported bug (2026-09-03), Windows only: a freshly-maximized window can render
+        // slightly wrong -- the top sits a bit too high and the bottom extends below the taskbar
+        // (worse with a taller-than-default taskbar) -- requiring the operator to manually drag
+        // the window and re-maximize to correct it. This is a known Avalonia-on-Windows class of
+        // issue, not something this app's own code was previously getting wrong (no custom window
+        // chrome/decorations exist anywhere in this codebase, and maximize was purely native
+        // Avalonia WindowState handling before this fix) -- see AvaloniaUI/Avalonia#19434, whose
+        // own maintainer comment states outright that "things inside Screens.Primary doesn't work
+        // well" on Windows; the native WM_GETMINMAXINFO-derived maximize bounds there can be
+        // computed against a stale/wrong work area. The operator's own manual drag-then-re-maximize
+        // already forces Windows to recompute against the CURRENT monitor correctly -- this
+        // automates exactly that recompute instead of requiring it by hand: on transitioning INTO
+        // Maximized, toggle back to Normal and immediately re-request Maximized on a posted
+        // continuation (so the Normal transition's own native resize has already been processed
+        // before Maximized is re-requested) -- same "toggle to force a recompute" shape as the
+        // dirty fix documented in that same GitHub issue, applied to a different trigger (every
+        // maximize, not just a live DPI/resolution change). _isRecoveringMaximizedBounds guards
+        // against this handler re-entering itself on the SECOND (post-toggle) transition back into
+        // Maximized -- without it, this would toggle forever. Not reproducible/testable from this
+        // Linux dev environment -- needs real hands-on Windows confirmation; genuinely uncertain
+        // this even fixes the underlying issue (the operator's own working fix included a DRAG, not
+        // just a state toggle -- if Avalonia derives the wrong bounds from Screens.Primary rather
+        // than the window's actual current monitor, a same-position toggle recomputes the same
+        // wrong answer). Code-review hardening (2026-09-03): the posted continuation re-checks
+        // WindowState is still Normal before re-maximizing (a user who minimizes/restores in the
+        // gap before this runs must not have that overridden), and both statements are wrapped in
+        // try/finally so a thrown exception can't leave the guard latched true forever (recovery
+        // silently dead for the window's life) NOR escape unhandled on the UI thread -- every other
+        // handler in this file is try/caught; this one was the one outlier before this fix.
+        if (OperatingSystem.IsWindows())
+        {
+            PropertyChanged += (_, e) =>
+            {
+                if (e.Property != WindowStateProperty || WindowState != WindowState.Maximized || _isRecoveringMaximizedBounds)
+                {
+                    return;
+                }
+
+                _isRecoveringMaximizedBounds = true;
+                WindowState = WindowState.Normal;
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (WindowState == WindowState.Normal)
+                        {
+                            WindowState = WindowState.Maximized;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.MaximizedBoundsRecoveryFailed(logger, ex);
+                        }
+                    }
+                    finally
+                    {
+                        _isRecoveringMaximizedBounds = false;
+                    }
+                }, DispatcherPriority.Background);
+            };
+        }
 
         DataContextChanged += (_, _) =>
         {
@@ -939,6 +1008,9 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to save window geometry on close")]
         public static partial void WindowGeometrySaveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Windows maximize-bounds recovery toggle failed")]
+        public static partial void MaximizedBoundsRecoveryFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "OptionsWindowView failed to open or show")]
         public static partial void OptionsWindowFailed(ILogger logger, Exception ex);
