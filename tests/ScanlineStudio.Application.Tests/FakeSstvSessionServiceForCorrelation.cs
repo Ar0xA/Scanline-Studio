@@ -13,8 +13,9 @@ namespace ScanlineStudio.Application.Tests;
 /// starting at 1). Originally only <see cref="AudioSliceReady"/>/<see cref="TrySaveReceptionAudioAsync"/>
 /// were functional; <see cref="StationIdDecoded"/>/<see cref="GetOperatorCallsignAsync"/> are now ALSO
 /// functional (fsk_cwid.md §5 A2, shared with <see cref="RxStationIdAttacherTests"/> -- see those two
-/// members' own doc comments). Every other member still throws, matching this project's sibling-fake
-/// convention for members "not exercised by" the test suite that owns the fake.</summary>
+/// members' own doc comments), and so is <see cref="CwIdDecoded"/> (fsk_cwid.md B-P5, same test
+/// suite). Every other member still throws, matching this project's sibling-fake convention for
+/// members "not exercised by" the test suite that owns the fake.</summary>
 internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 {
     private static NotSupportedException NotExercised() => new("Not exercised by RxAudioAutoSaverTests's or RxStationIdAttacherTests's coverage.");
@@ -98,7 +99,12 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
         return OperatorCallsignToReturn;
     }
 
-    public event Action<CwIdDecodedInfo>? CwIdDecoded { add => throw NotExercised(); remove => throw NotExercised(); }
+    // fsk_cwid.md B-P5: functional, same "RxStationIdAttacher's own constructor subscribes to this
+    // directly, so a throwing `add` would make constructing one against this fake impossible"
+    // reasoning as StationIdDecoded above.
+    public event Action<CwIdDecodedInfo>? CwIdDecoded;
+
+    public void RaiseCwIdDecoded(CwIdDecodedInfo info) => CwIdDecoded?.Invoke(info);
 
     public event Action<TransmitProgressInfo>? TransmitProgressChanged { add => throw NotExercised(); remove => throw NotExercised(); }
 
