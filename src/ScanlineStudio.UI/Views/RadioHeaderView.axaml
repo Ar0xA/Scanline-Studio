@@ -160,8 +160,21 @@
                                  — both are inert against the "Industry IndustryInput" style class's own
                                  MinHeight/FontSize setters (Atoms.axaml), which clamp/override a local
                                  value the same way; the old attributes were dead weight, not a real
-                                 override, on this same control before this change too. -->
-                            <ComboBox Classes="Industry IndustryInput" Width="86"
+                                 override, on this same control before this change too.
+                                 User-reported bug (2026-09-03): the old NumericUpDown's Width="86" was
+                                 carried over onto this ComboBox, but a ComboBox's dropdown-chevron
+                                 chrome eats more of that width than the stepper arrows did — the
+                                 editable inner TextBox scrolled to keep the caret at the end of "2400"
+                                 after each bound update, showing "400" with the leading digit clipped
+                                 off-view. Widened to 108 (with real slack, not the bare minimum) so a
+                                 5-digit value stays fully visible too, not just the 4-digit defaults —
+                                 the old NumericUpDown's Maximum="20000" spinner range is NOT
+                                 reintroduced here (RadioStatusViewModel.SetBandwidthAsync's own doc
+                                 comment: sends the value as-typed, deliberately no VM-side clamp, a
+                                 rig that rejects an out-of-range value already surfaces that as a real
+                                 error), so 20000 is chosen as a realistic "wide enough to matter"
+                                 sizing target, not an enforced ceiling. -->
+                            <ComboBox Classes="Industry IndustryInput" Width="108"
                                       ItemsSource="{Binding AvailableBandwidthPresetsHz}"
                                       Text="{Binding BandwidthInputHz}" IsEditable="True"
                                       IsVisible="{Binding CanSetBandwidth}"
