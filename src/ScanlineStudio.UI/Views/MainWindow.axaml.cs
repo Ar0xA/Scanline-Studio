@@ -41,10 +41,19 @@ public partial class MainWindow : Window
     // recovery handler below -- see that handler's own doc comment.
     private bool _isRecoveringMaximizedBounds;
 
-    // Code-review finding (2026-09-03): set only when the constructor's own restore-geometry
-    // branch actually ran (see the Opened handler below for why this needs to be re-checked once
-    // the window is shown).
+    // Code-review finding (2026-09-03): set whenever the constructor took manual control of
+    // Position/Width/Height -- both the real-restore branch AND the computed-default branch (root
+    // cause #3) -- see the Opened handler below for why this needs to be re-checked once the
+    // window is shown.
     private bool _restoredWindowGeometryThisLaunch;
+
+    // User-reported bug (2026-09-03), root cause #3: kept in sync BY HAND with
+    // MainWindow.axaml's own Width="1920" Height="1032" -- no shared resource exists for this
+    // (same "no single shared resource, both are literals" situation RadioHeaderView.axaml's own
+    // band-height comment already documents for a different pair of duplicated literals). Used as
+    // the fallback requested size whenever there's no usable persisted geometry to restore.
+    private const double DefaultWidth = 1920;
+    private const double DefaultHeight = 1032;
 
     public MainWindow()
     {
@@ -83,81 +92,147 @@ public partial class MainWindow : Window
         {
             var geometry = Task.Run(() => _settingsStore.LoadAsync()).GetAwaiter().GetResult()
                 .GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
-            if (geometry is { RememberWindowPosition: true, Left: { } left, Top: { } top, Width: { } width, Height: { } height })
+
+            // User-reported bug (2026-09-03), root cause #3, found only after the first two fixes
+            // (the restore-time clamp below, and the maximize-toggle fix elsewhere in this file)
+            // both failed to help a real user: an operator who ALWAYS closes from Maximized --
+            // "what else is the maximize button there for," an entirely ordinary habit, not an
+            // edge case -- never triggers so much as ONE Normal-state Closing save (that handler's
+            // own doc comment: intentionally matches legacy's wsNormal-gated save,
+            // Main.cpp:2214-2224). On such an install `geometry` has Left/Top/Width/Height ALL
+            // null FOREVER, even with RememberWindowPosition=true, so the pattern match below
+            // never matches and NOTHING downstream of it -- including the clamp this same comment
+            // block used to describe -- ever runs. Every launch fell straight through to this
+            // file's own AXAML-declared Width="1920" Height="1032" with WindowStartupLocation=
+            // "CenterScreen" and ZERO clamping: Avalonia's CenterScreen only centers, it never
+            // resizes, so a Height taller than the ACTUAL current work area (this default was
+            // sized assuming roughly a 48px taskbar, per its own AXAML comment) overflows the work
+            // area SYMMETRICALLY once centered -- title bar pushed above the screen, status bar
+            // pushed below the taskbar by roughly equal amounts -- reproducing the exact reported
+            // symptom on EVERY SINGLE LAUNCH for this usage pattern, regardless of anything the
+            // first two fixes changed. Fixed by no longer requiring restored geometry to reach the
+            // clamp at all: a genuinely-unset Left/Top/Width/Height now falls back to
+            // DefaultWidth/DefaultHeight, manually centered on the CURRENT primary screen's own
+            // WorkingArea (not Avalonia's own CenterScreen, which this constructor overrides to
+            // Manual below regardless of which branch is taken) -- still run through the exact
+            // SAME live-work-area clamp as a genuine restore, rather than left unclamped.
+            // RememberWindowPosition=false still means "don't persist a resize" (unchanged, see
+            // the Closing handler below) but no longer means "skip this baseline fits-on-screen
+            // guarantee too" -- those are two different promises.
+            double left;
+            double top;
+            double width;
+            double height;
+            bool isRestoredGeometry;
+            if (geometry is { RememberWindowPosition: true, Left: { } restoredLeft, Top: { } restoredTop, Width: { } restoredWidth, Height: { } restoredHeight })
             {
-                // Tier C audit finding (risk): applied with zero bounds validation before this fix --
-                // a position persisted while on a since-removed monitor (unplugged second display, a
-                // resolution change) restored to coordinates with no display behind them. Windows
-                // does not clamp this, so the app appeared not to start, and the only recovery was
-                // hand-deleting settings.json (the Options toggle to turn this off lives inside the
-                // invisible window). `Screens.All` may not be reliably populated this early in every
-                // Avalonia configuration -- if the list comes back empty, fall back to trusting the
-                // persisted value rather than disabling the whole feature; only reject when a screen
-                // list IS available and genuinely none of them contain this position.
-                var restoredPosition = new PixelPoint((int)left, (int)top);
-                var screenBounds = Screens.All.Select(s => s.Bounds).ToList();
-                if (WindowGeometryPolicy.ShouldRestorePosition(restoredPosition, screenBounds))
+                left = restoredLeft;
+                top = restoredTop;
+                width = restoredWidth;
+                height = restoredHeight;
+                isRestoredGeometry = true;
+            }
+            else
+            {
+                width = DefaultWidth;
+                height = DefaultHeight;
+                isRestoredGeometry = false;
+                var primaryScreen = Screens.Primary;
+                if (primaryScreen is not null)
                 {
-                    // User-reported bug (2026-09-03): the check above only ever validated the
-                    // top-left POINT, never whether the saved Width/Height actually fit the
-                    // CURRENT work area (screen minus taskbar) -- a size that fit a previous
-                    // session's taskbar/monitor/DPI restored verbatim even once it no longer fit
-                    // (worse with a taller-than-default taskbar), with no code path that ever
-                    // re-corrected it: the Closing handler below only persists geometry while
-                    // WindowState is Normal (matching legacy's own wsNormal-gated save,
-                    // Main.cpp:2214-2224), so a user who always closes from Maximized never
-                    // overwrites a stale bad Normal-state size -- it would otherwise restore
-                    // wrong on every single launch, forever. Clamped here instead, unconditionally,
-                    // on every restore -- see WindowGeometryPolicy.ClampToWorkArea's own doc
-                    // comment for why this re-derives against the LIVE work area every time rather
-                    // than trusting a fixed persisted value (the work area can change for many
-                    // reasons: a different monitor, a different taskbar size, a DPI/resolution
-                    // change). ClampToWorkArea operates in PHYSICAL pixels (Screen.WorkingArea's
-                    // own unit); Width/Height are DIP-valued Window properties, so this converts
-                    // through the TARGET screen's own Scaling factor both ways -- using the target
-                    // screen found via ScreenFromPoint, not this.RenderScaling, since the window
-                    // hasn't been shown/assigned to a real screen yet at this point in the
-                    // constructor.
-                    //
-                    // Code-review blocker (2026-09-03): MainWindow.axaml's own
-                    // WindowStartupLocation="CenterScreen" runs AFTER the constructor, inside
-                    // Avalonia's own Show() sequence -- it RE-CENTERS on the working area and
-                    // discards whatever Position was just set here, making the clamp above dead
-                    // code for POSITION specifically (Width/Height still stick, since centering
-                    // only touches Position). This actually explains the user's reported symptom
-                    // shape better than a stale Top ever did: centering an over-tall/over-wide
-                    // window overflows SYMMETRICALLY -- title bar pushed above the screen, bottom
-                    // pushed below the taskbar by roughly equal amounts, exactly what the
-                    // Parsec-captured screenshot showed. Switching to Manual here (only on THIS
-                    // restore path, not globally in the AXAML) preserves CenterScreen for every
-                    // other case that never reaches this branch (first launch, "remember position"
-                    // turned off, a since-removed monitor rejected by ShouldRestorePosition above).
-                    WindowStartupLocation = WindowStartupLocation.Manual;
-                    _restoredWindowGeometryThisLaunch = true;
-                    var targetScreen = Screens.ScreenFromPoint(restoredPosition) ?? Screens.Primary;
-                    if (targetScreen is not null)
-                    {
-                        var scaling = targetScreen.Scaling;
-                        var requested = new PixelRect(restoredPosition, new PixelSize((int)Math.Round(width * scaling), (int)Math.Round(height * scaling)));
-                        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, targetScreen.WorkingArea);
-                        Position = clamped.Position;
-                        Width = clamped.Width / scaling;
-                        Height = clamped.Height / scaling;
-                    }
-                    else
-                    {
-                        // No screen info available at all (same "trust the persisted value"
-                        // fallback ShouldRestorePosition's own doc comment already established
-                        // for this early-startup case) -- restore verbatim, unclamped.
-                        Position = restoredPosition;
-                        Width = width;
-                        Height = height;
-                    }
+                    var centered = WindowGeometryPolicy.CenterInWorkArea(primaryScreen.WorkingArea, width, height, primaryScreen.Scaling);
+                    left = centered.X;
+                    top = centered.Y;
                 }
-                else if (logger is not null)
+                else
                 {
-                    Log.RestoredWindowPositionOffScreen(logger, restoredPosition.X, restoredPosition.Y);
+                    // No screen info at all this early (same "empty screen list" edge case
+                    // ShouldRestorePosition's own doc comment below already covers) -- (0,0) is a
+                    // harmless placeholder; the clamp below is skipped entirely in that same case
+                    // (targetScreen also resolves to null), same as it would have been before this
+                    // fix existed.
+                    left = 0;
+                    top = 0;
                 }
+            }
+
+            // Tier C audit finding (risk): applied with zero bounds validation before this fix --
+            // a position persisted while on a since-removed monitor (unplugged second display, a
+            // resolution change) restored to coordinates with no display behind them. Windows
+            // does not clamp this, so the app appeared not to start, and the only recovery was
+            // hand-deleting settings.json (the Options toggle to turn this off lives inside the
+            // invisible window). `Screens.All` may not be reliably populated this early in every
+            // Avalonia configuration -- if the list comes back empty, fall back to trusting the
+            // persisted value rather than disabling the whole feature; only reject when a screen
+            // list IS available and genuinely none of them contain this position.
+            //
+            // Code-review blocker (2026-09-03): this check must ONLY gate a REAL persisted
+            // position (isRestoredGeometry) -- it exists to reject a STALE position that might
+            // belong to a since-removed monitor, and rejects any negative X/Y as "off-screen" by
+            // construction. The COMPUTED default position (the else branch above,
+            // WindowGeometryPolicy.CenterInWorkArea's own doc comment) can be legitimately
+            // negative whenever the default size is larger than the actual current work area --
+            // exactly the condition that motivated this whole fix (a taller-than-default taskbar,
+            // or >100% DPI scaling) -- so gating that computed position through this same check
+            // would reject it in precisely the case it exists to fix, silently falling all the way
+            // back through to Avalonia's own unclamped CenterScreen and reproducing the original
+            // bug. The computed position is trustworthy by construction (derived from the CURRENT
+            // screen's own live bounds, not a stale persisted value) and goes straight to the
+            // clamp below regardless of this check's result.
+            var startPosition = new PixelPoint((int)left, (int)top);
+            var screenBounds = Screens.All.Select(s => s.Bounds).ToList();
+            if (!isRestoredGeometry || WindowGeometryPolicy.ShouldRestorePosition(startPosition, screenBounds))
+            {
+                // User-reported bug (2026-09-03): ShouldRestorePosition above only ever validated
+                // the top-left POINT, never whether the saved/default Width/Height actually fit
+                // the CURRENT work area (screen minus taskbar) -- a size that fit a previous
+                // session's taskbar/monitor/DPI (or this file's own default, sized for a roughly
+                // 48px taskbar) restored/applied verbatim even once it no longer fit (worse with a
+                // taller-than-default taskbar). Clamped here instead, unconditionally, on every
+                // launch -- see WindowGeometryPolicy.ClampToWorkArea's own doc comment for why
+                // this re-derives against the LIVE work area every time rather than trusting a
+                // fixed value (the work area can change for many reasons: a different monitor, a
+                // different taskbar size, a DPI/resolution change). ClampToWorkArea operates in
+                // PHYSICAL pixels (Screen.WorkingArea's own unit); Width/Height are DIP-valued
+                // Window properties, so this converts through the TARGET screen's own Scaling
+                // factor both ways -- using the target screen found via ScreenFromPoint, not
+                // this.RenderScaling, since the window hasn't been shown/assigned to a real screen
+                // yet at this point in the constructor.
+                //
+                // Code-review blocker (2026-09-03): MainWindow.axaml's own
+                // WindowStartupLocation="CenterScreen" runs AFTER the constructor, inside
+                // Avalonia's own Show() sequence -- it RE-CENTERS on the working area and
+                // discards whatever Position was just set here, making the clamp above dead
+                // code for POSITION specifically (Width/Height still stick, since centering
+                // only touches Position). Switching to Manual here (on this whole branch, covering
+                // both a real restore AND the computed default above) preserves CenterScreen only
+                // for the narrow leftover case that never reaches this branch at all (a
+                // since-removed monitor rejected by ShouldRestorePosition above).
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                _restoredWindowGeometryThisLaunch = true;
+                var targetScreen = Screens.ScreenFromPoint(startPosition) ?? Screens.Primary;
+                if (targetScreen is not null)
+                {
+                    var scaling = targetScreen.Scaling;
+                    var requested = new PixelRect(startPosition, new PixelSize((int)Math.Round(width * scaling), (int)Math.Round(height * scaling)));
+                    var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, targetScreen.WorkingArea);
+                    Position = clamped.Position;
+                    Width = clamped.Width / scaling;
+                    Height = clamped.Height / scaling;
+                }
+                else
+                {
+                    // No screen info available at all (same "trust the persisted value"
+                    // fallback ShouldRestorePosition's own doc comment already established
+                    // for this early-startup case) -- restore verbatim, unclamped.
+                    Position = startPosition;
+                    Width = width;
+                    Height = height;
+                }
+            }
+            else if (logger is not null)
+            {
+                Log.RestoredWindowPositionOffScreen(logger, startPosition.X, startPosition.Y);
             }
         }
 
@@ -169,11 +244,11 @@ public partial class MainWindow : Window
         // physical px on Windows) is added on top -- a smaller residual version of the exact
         // symptom this whole fix targets. Re-clamps once, right after the window is actually shown
         // and FrameSize becomes real, using the true frame-vs-client delta this time. Scoped to
-        // _restoredWindowGeometryThisLaunch -- the default/first-launch CenterScreen path never
-        // sets that flag and is left alone (Avalonia's own built-in centering already accounts for
-        // its own frame size correctly; this is only correcting the MANUAL-position restore path
-        // above, the one thing Avalonia's own startup-location logic doesn't help with anymore
-        // once switched to Manual).
+        // _restoredWindowGeometryThisLaunch -- set by BOTH the real-restore branch and the
+        // computed-default branch above (root cause #3), since this file now takes manual control
+        // of Position/Width/Height on both paths; only left unset in the one remaining case that
+        // still reaches Avalonia's own unclamped CenterScreen (a genuinely stale/off-screen
+        // persisted position, rejected by ShouldRestorePosition).
         Opened += (_, _) =>
         {
             if (!_restoredWindowGeometryThisLaunch || WindowState != WindowState.Normal || FrameSize is not { } frameSize)
