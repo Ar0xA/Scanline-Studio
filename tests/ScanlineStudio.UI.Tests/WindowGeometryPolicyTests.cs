@@ -140,4 +140,60 @@ public sealed class WindowGeometryPolicyTests
 
         Assert.Equal(new PixelRect(1920, 0, 1920, 1040), clamped);
     }
+
+    /// <summary>User-reported bug (2026-09-03), root cause #3, code-review blocker (2026-09-03):
+    /// pins the exact scenario that made round 3's first attempt a no-op on the reporting user's
+    /// own machine -- centering a default size TALLER than the actual current work area (a taller-
+    /// than-default Windows taskbar, here 1000px of usable height against MainWindow's own 1032
+    /// default) produces a NEGATIVE Y. This is the CORRECT, expected output of centering an
+    /// oversized rectangle, not a bug in CenterInWorkArea itself -- the bug this test really guards
+    /// against lives at the CALL SITE in MainWindow.axaml.cs, which used to feed this negative
+    /// value into ShouldRestorePosition (a check that always rejects negative Y/X) and silently
+    /// fell back to Avalonia's own unclamped CenterScreen as a result. This test only pins
+    /// CenterInWorkArea's own contract; MainWindow.axaml.cs's own fix is that this result must go
+    /// straight to ClampToWorkArea, never through ShouldRestorePosition.</summary>
+    [Fact]
+    public void CenterInWorkArea_DefaultSizeTallerThanWorkingArea_ReturnsNegativeY()
+    {
+        var workingArea = new PixelRect(0, 0, 1920, 1000); // shorter than the 1032 default height
+        var centered = WindowGeometryPolicy.CenterInWorkArea(workingArea, widthDip: 1920, heightDip: 1032, scaling: 1.0);
+
+        Assert.True(centered.Y < 0, $"Expected a negative Y centering an oversized rectangle, got {centered.Y}.");
+        // Confirm it's the CORRECT negative value, not just any negative: (1000 - 1032) / 2 = -16.
+        Assert.Equal(-16, centered.Y);
+        // Also confirm the follow-up clamp actually recovers a valid, on-screen result from it --
+        // this is the exact two-step pipeline MainWindow.axaml.cs's constructor now runs.
+        var requested = new PixelRect(centered, new PixelSize(1920, 1032));
+        var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, workingArea);
+        Assert.Equal(workingArea, clamped);
+    }
+
+    [Fact]
+    public void CenterInWorkArea_DefaultSizeFitsWithinWorkingArea_CentersWithoutGoingNegative()
+    {
+        var workingArea = new PixelRect(0, 0, 2560, 1440);
+        var centered = WindowGeometryPolicy.CenterInWorkArea(workingArea, widthDip: 1920, heightDip: 1032, scaling: 1.0);
+
+        Assert.Equal(new PixelPoint(320, 204), centered);
+    }
+
+    [Fact]
+    public void CenterInWorkArea_NonUnitScaling_ConvertsDipsToPhysicalPixelsBeforeCentering()
+    {
+        // 125% scaling: the 1920x1032 DIP default is 2400x1290 physical -- taller AND wider than a
+        // 1920x1040 physical working area, so both axes go negative.
+        var workingArea = new PixelRect(0, 0, 1920, 1040);
+        var centered = WindowGeometryPolicy.CenterInWorkArea(workingArea, widthDip: 1920, heightDip: 1032, scaling: 1.25);
+
+        Assert.Equal(new PixelPoint(-240, -125), centered);
+    }
+
+    [Fact]
+    public void CenterInWorkArea_SecondScreenWorkingArea_CentersRelativeToItsOwnOffset()
+    {
+        var workingArea = new PixelRect(1920, 0, 1920, 1040);
+        var centered = WindowGeometryPolicy.CenterInWorkArea(workingArea, widthDip: 800, heightDip: 600, scaling: 1.0);
+
+        Assert.Equal(new PixelPoint(1920 + 560, 220), centered);
+    }
 }

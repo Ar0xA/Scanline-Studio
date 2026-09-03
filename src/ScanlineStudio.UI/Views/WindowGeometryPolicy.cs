@@ -68,4 +68,30 @@ public static class WindowGeometryPolicy
         var y = Math.Clamp(requested.Y, workingArea.Y, workingArea.Y + workingArea.Height - height);
         return new PixelRect(x, y, width, height);
     }
+
+    /// <summary>User-reported bug (2026-09-03), root cause #3: <see cref="MainWindow"/>'s own
+    /// fallback default size (no usable persisted geometry -- see that class's own doc comment on
+    /// its <c>DefaultWidth</c>/<c>DefaultHeight</c> constants for why this is reachable on an
+    /// entirely ordinary install, not an edge case) needs a starting POSITION before
+    /// <see cref="ClampToWorkArea"/> can run at all. Centers <paramref name="widthDip"/>/
+    /// <paramref name="heightDip"/> (DIPs, e.g. <c>Window.Width</c>/<c>Height</c>'s own unit) within
+    /// <paramref name="workingArea"/> (physical pixels, same <c>Screen.WorkingArea</c> contract as
+    /// <see cref="ClampToWorkArea"/>'s own <paramref name="workingArea"/>) via <paramref name="scaling"/>
+    /// (the target screen's own <c>Scaling</c> factor) -- same physical-pixels-throughout convention
+    /// as the rest of this class, DIP arguments converted internally rather than left to the
+    /// caller. Deliberately allowed to return a NEGATIVE X/Y (when the requested size is larger
+    /// than the working area itself -- centering an oversized rectangle mathematically requires it)
+    /// -- callers must NOT reject that as "off-screen" the way <see cref="ShouldRestorePosition"/>
+    /// would (that check exists to reject a STALE persisted position that might belong to a
+    /// since-removed monitor, not to gate a position this function just computed live against the
+    /// CURRENT screen's own bounds -- it is by construction on-screen, just centered around an
+    /// oversized rectangle). Pass the result straight to <see cref="ClampToWorkArea"/> instead,
+    /// which correctly pulls a negative position back onto the working area as part of its own
+    /// clamp.</summary>
+    public static PixelPoint CenterInWorkArea(PixelRect workingArea, double widthDip, double heightDip, double scaling)
+    {
+        var x = workingArea.X + ((workingArea.Width - (widthDip * scaling)) / 2);
+        var y = workingArea.Y + ((workingArea.Height - (heightDip * scaling)) / 2);
+        return new PixelPoint((int)x, (int)y);
+    }
 }
