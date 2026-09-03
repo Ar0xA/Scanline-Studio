@@ -10,6 +10,7 @@
     <ProjectReference Include="..\ScanlineStudio.Core.Radio.Rigctld\ScanlineStudio.Core.Radio.Rigctld.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Audio\ScanlineStudio.Core.Audio.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Sstv\ScanlineStudio.Core.Sstv.csproj" />
+    <ProjectReference Include="..\ScanlineStudio.Core.Cw\ScanlineStudio.Core.Cw.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Imaging\ScanlineStudio.Core.Imaging.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Logbook\ScanlineStudio.Core.Logbook.csproj" />
     <ProjectReference Include="..\ScanlineStudio.Core.Localization\ScanlineStudio.Core.Localization.csproj" />

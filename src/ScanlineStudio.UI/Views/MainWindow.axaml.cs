@@ -405,6 +405,9 @@ public partial class MainWindow : Window
                     // (LoadOperatorSettingsAsync), refreshed at startup/Options-close/Configurations-
                     // switch like Callsign already is -- "?? OperatorSettings.DefaultRstFallback" only
                     // covers the narrow window before that first load completes.
+                    // fsk_cwid.md A-P3b: vm.RxImage.DecodedNrRst (the other station's own decoded
+                    // FSK NR/RST) is passed separately -- PrefillForNewEntry's own doc comment for
+                    // why this seeds FormRstReceived specifically, not FormRstSent.
                     vm.Logbook.PrefillForNewEntry(
                         vm.RxImage.OverrideCallsign,
                         vm.RxImage.DetectedMode?.Id,
@@ -415,7 +418,8 @@ public partial class MainWindow : Window
                         vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
                         vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull,
                         vm.RxImage.CurrentEntryId,
-                        vm.DefaultRst ?? OperatorSettings.DefaultRstFallback);
+                        vm.DefaultRst ?? OperatorSettings.DefaultRstFallback,
+                        vm.RxImage.DecodedNrRst);
                     vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
                 };
 

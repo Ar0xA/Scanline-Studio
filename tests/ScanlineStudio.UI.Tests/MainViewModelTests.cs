@@ -65,7 +65,8 @@ public sealed class MainViewModelTests
             new FakeUrlLauncher(),
             new FakeClipboardImageService(),
             NullLogger<ImageViewerWindowViewModel>.Instance,
-            new FakeRxAudioAutoSaver());
+            new FakeRxAudioAutoSaver(),
+            new FakeRxStationIdAttacher());
 
         // AvailableModes MUST be seeded -- an empty default leaves TxControlsPaneViewModel's own
         // SelectedMode null, which silently early-returns OpenBlankEditorAsync before it ever

@@ -71,7 +71,14 @@ public sealed class WriteableBitmapPool : IDisposable
 
     public void Dispose()
     {
+        // Auditor code-review finding (Tier-0 audit follow-up, production_audit.md): null the slots
+        // after disposing, not just dispose -- a caller wired into a real discard path can now be
+        // called twice in principle (IDisposable's own contract), and a second call without this would
+        // double-dispose the same WriteableBitmap. Matches the "guarded against a second call"
+        // convention every element VM's own Dispose() already follows.
         _a?.Dispose();
+        _a = null;
         _b?.Dispose();
+        _b = null;
     }
 }

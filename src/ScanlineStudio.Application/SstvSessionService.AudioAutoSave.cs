@@ -162,10 +162,19 @@ public sealed partial class SstvSessionService
     /// specific call sites individually and missed one). Bumped BEFORE the push, matching
     /// <see cref="ISstvDecoder.ReceptionSequence"/>'s own "bump before raise" shape -- any
     /// <see cref="ISstvDecoder.ModeDetected"/>/<see cref="ISstvDecoder.DecodeRestarted"/> this call
-    /// synchronously raises will observe the NEW epoch value.</summary>
+    /// synchronously raises will observe the NEW epoch value.
+    ///
+    /// fsk_cwid.md §8.2: also increments <c>_pushedSampleCount</c> by this chunk's own length, BEFORE
+    /// the push, for the identical reason -- <c>SstvSessionService.CwId.cs</c>'s own arm/capture logic
+    /// (<c>OnCwIdModeDetected</c>/<c>OnCwIdSamplesCaptured</c>) reads it synchronously from inside
+    /// <see cref="ISstvDecoder.ModeDetected"/>/the SamplesCaptured fan-out and needs it to already
+    /// include the chunk in flight. This is the "single funnel for live and file audio" §8.2 names --
+    /// both <c>_decoderHandler</c> and <see cref="DecodeFromFileAsync"/>'s own chunk loop call ONLY
+    /// this method, never <c>_decoder.PushSamples</c> directly.</summary>
     private void PushSamplesToDecoder(ReadOnlyMemory<float> samples)
     {
         Interlocked.Increment(ref _pushEpoch);
+        Interlocked.Add(ref _pushedSampleCount, samples.Length);
         _decoder.PushSamples(samples);
     }
 
@@ -300,6 +309,11 @@ public sealed partial class SstvSessionService
             _audioPreRollFilledCount = 0;
         }
 
+        // fsk_cwid.md §8.2: same "discard, don't close-and-emit" reasoning as the audio-auto-save arm
+        // immediately above, for the CW-ID capture window -- a SEPARATE lock (_cwCaptureLock), so a
+        // dedicated call, not inline here.
+        DropCwArmForCaptureReset();
+
         RaiseAudioCaptureReset();
     }
 
@@ -316,8 +330,10 @@ public sealed partial class SstvSessionService
         // earlier prose wrongly grouped MC into this doubling family; SstvModeRegistry.
         // CreateMcFamilyMode actually declares ColorEncoding.RgbSequential with a literal
         // ImageHeight, not transmissionUnits * 2. See the plan doc's Capacity section for the full
-        // correction.
-        var rowsPerTransmissionLine = mode.ColorEncoding is ColorEncoding.YCbCrLinePaired or ColorEncoding.MonoAveragedPaired ? 2 : 1;
+        // correction. Shared with SstvSessionService.CwId.cs's own OnCwIdModeDetected via
+        // RowsPerTransmissionLine (defined in that file), not duplicated -- this calculation must
+        // stay correct in exactly one place.
+        var rowsPerTransmissionLine = RowsPerTransmissionLine(mode);
         var transmissionLineCount = mode.ImageHeight / rowsPerTransmissionLine;
         var closeThresholdSamples = (long)Math.Round((transmissionLineCount + AudioCloseThresholdMarginLines) * mode.LineDurationMs / 1000.0 * sampleRate);
 

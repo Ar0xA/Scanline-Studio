@@ -7,6 +7,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
@@ -15,6 +16,7 @@ using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
+using ScanlineStudio.Core.Cw;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Logbook;
@@ -212,6 +214,17 @@ internal static partial class Program
         catch (Exception ex)
         {
             Log.RxAudioAutoSaverResolveFailed(logger, ex);
+        }
+
+        // fsk_cwid.md §5 A2: same "eagerly resolved so its constructor's event subscriptions
+        // actually happen" reasoning as the two calls immediately above.
+        try
+        {
+            host.Services.GetRequiredService<RxStationIdAttacher>();
+        }
+        catch (Exception ex)
+        {
+            Log.RxStationIdAttacherResolveFailed(logger, ex);
         }
 
         // Tier C audit finding (blocker): restoring a persisted non-English culture was never
@@ -902,6 +915,17 @@ internal static partial class Program
         services.AddSingleton<RxAudioAutoSaver>();
         services.AddSingleton<IRxAudioAutoSaver>(sp => sp.GetRequiredService<RxAudioAutoSaver>());
 
+        // fsk_cwid.md §5 A2: same "eagerly resolved, singleton forwarded through the interface"
+        // shape as RxAudioAutoSaver immediately above, for the same reason -- its constructor's
+        // ISstvSessionService/IReceiveHistoryStore event subscriptions must start even if nothing
+        // else in the DI graph ever asks for it directly. fsk_cwid.md A-P3b: RxHistoryPaneViewModel
+        // now ALSO depends on it (via IRxStationIdAttacher, auditor-caught: without a live
+        // StationIdAttached subscriber, a just-received frame's decoded callsign/NR-RST never
+        // reached the Gallery's in-memory entry) -- same "forwards to this SAME singleton instance"
+        // shape RxAudioAutoSaver's own comment describes.
+        services.AddSingleton<RxStationIdAttacher>();
+        services.AddSingleton<IRxStationIdAttacher>(sp => sp.GetRequiredService<RxStationIdAttacher>());
+
         // QSO logbook backend (spec/08-logging.md + the accompanying plan file) -- SQLite storage
         // (same history.db file as RX history above), ADIF import/export, ADIF-over-UDP streaming
         // (generalized 2026-08-15 from a GridTracker-only streamer to fan the same WSJT-X
@@ -1066,6 +1090,9 @@ internal static partial class Program
         services.AddSingleton<ISstvDecoder>(CreateSstvDecoder);
         services.AddSingleton<ISstvEncoder>(CreateSstvEncoder);
         services.AddSingleton<IWaterfallSource>(CreateWaterfallSource);
+        // fsk_cwid.md §8.3: the v1 (and, per §7.1, the only planned) ICwIdDecoder backend -- own
+        // code, no license question (deepcw-engine ruled out for bundling; see that section for why).
+        services.AddSingleton<ICwIdDecoder, ClassicalCwDecoder>();
     }
 
     internal static RestartableSstvDecoder CreateSstvDecoder(IServiceProvider services)
@@ -1166,6 +1193,9 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve RxAudioAutoSaver; RX audio will not be attached to history entries")]
         public static partial void RxAudioAutoSaverResolveFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve RxStationIdAttacher; decoded FSK-ID station IDs will not be attached to history entries")]
+        public static partial void RxStationIdAttacherResolveFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Avalonia lifetime started")]
         public static partial void AvaloniaLifetimeStarted(ILogger logger);

@@ -45,7 +45,7 @@ public sealed class RxAudioAutoSaverTests
 
         var service = new SstvSessionService(
             audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder,
-            new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+            new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         service.SetAutoSaveAudioEnabled(true);
         var scratchAudioDirectory = Path.Combine(Path.GetTempPath(), "scanlinestudio-rxaudioautosaver-tests", Guid.NewGuid().ToString("N"));
         service.SetAudioDirectory(scratchAudioDirectory);
@@ -267,6 +267,9 @@ public sealed class RxAudioAutoSaverTests
             LastSetAudioFilePath = path;
             return Task.FromResult(true);
         }
+
+        public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default) =>
+            throw new NotSupportedException("Not exercised by RxAudioAutoSaverTests.");
 
         public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default) =>
             throw new NotSupportedException("Not exercised by RxAudioAutoSaverTests.");

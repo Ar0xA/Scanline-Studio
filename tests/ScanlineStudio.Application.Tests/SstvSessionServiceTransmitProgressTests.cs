@@ -59,7 +59,7 @@ public sealed class SstvSessionServiceTransmitProgressTests
         var receivedImage = new FakeReceivedImageBuffer();
         var radioSession = new FakeRadioSessionService();
 
-        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, NullLogger<SstvSessionService>.Instance);
+        var service = new SstvSessionService(audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, decoder, encoder, new MacroTextResolver(), waterfall, receivedImage, radioSession, new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
         return (service, audioEngine, encoder);
     }
 

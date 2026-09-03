@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
@@ -61,7 +62,7 @@ public sealed class SstvSessionServicePttSafetyTests
         // production values (5s/5s/3s) would make this file take far too long to run.
         var service = new SstvSessionService(
             engine, deviceEnumerator, deviceMuteQuery, settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(),
-            new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), radio, logger,
+            new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), radio, new FakeCwIdDecoder(), logger,
             cleanupTimeoutForTests: cleanupTimeout ?? TimeSpan.FromMilliseconds(300),
             playbackStopWaitBudgetForTests: playbackStopWaitBudget ?? TimeSpan.FromMilliseconds(200),
             inFlightKeyedTransmitWaitForTests: inFlightKeyedTransmitWait ?? TimeSpan.FromMilliseconds(500),
@@ -94,6 +95,7 @@ public sealed class SstvSessionServicePttSafetyTests
         services.AddSingleton<IWaterfallSource>(new FakeWaterfallSource());
         services.AddSingleton<IReceivedImageBuffer>(new FakeReceivedImageBuffer());
         services.AddSingleton<IRadioSessionService>(new FakeRadioSessionService());
+        services.AddSingleton<ICwIdDecoder>(new FakeCwIdDecoder());
         services.AddLogging();
         services.AddSingleton<ISstvSessionService, SstvSessionService>();
 

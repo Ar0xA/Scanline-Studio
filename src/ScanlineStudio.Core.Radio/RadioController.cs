@@ -194,6 +194,21 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
             await DisconnectLockedAsync().ConfigureAwait(false);
 
+            // Tier-0 audit follow-up (production_audit.md): rechecked HERE too, immediately after
+            // this await -- a concurrent DisposeAsync call CAN claim _disposeClaimed (IsDisposed
+            // reads true) while this await is in flight: DisposeAsync's own claim happens BEFORE it
+            // tries to acquire _lifecycleLock, which this method already holds, so DisposeAsync can
+            // mark itself disposed even though its own teardown is still queued behind this call.
+            // Without this recheck, a quit-mid-startup-connect race would let this method go on to
+            // resolve a protocol and start a poll loop that DisposeAsync's own queued teardown then
+            // immediately tears back down the instant this method releases the lock -- not a
+            // permanent leak (DisconnectLockedAsync runs right after either way), just wasted
+            // connect work during shutdown. Same recheck-after-await shape as
+            // SstvSessionService.StartReceivingLockedAsync's own established pattern. No event is
+            // published on this path, matching the early-disposed check above's own "never publish
+            // for an already-disposed call" contract.
+            ObjectDisposedException.ThrowIf(IsDisposed, this);
+
             PublishConnectionEvent(RadioConnectionState.Connecting, reason: null, error: null);
 
             IRadioProtocol resolved;

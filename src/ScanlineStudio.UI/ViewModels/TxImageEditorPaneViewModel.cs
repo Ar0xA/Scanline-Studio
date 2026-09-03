@@ -390,10 +390,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // every Recompute/rotate -- see WriteableBitmapPool's own doc comment. Kept SEPARATE (not one
     // shared pool): WorkingCopyBitmap (canvas scale) and PreviewImage (preview-panel scale) can
     // genuinely differ in size at the same time, and resizing one must not invalidate the other's
-    // buffers. No Dispose() call is wired anywhere new (plan-review decision) -- this VM is not a
-    // DI singleton and has 5 separate discard paths with no shared teardown hook today; both pools
-    // simply live for the editor session's natural lifetime, reclaimed once this VM itself becomes
-    // unreachable. IDisposable below exists only to satisfy CA1001 (owns disposable fields).
+    // buffers. Follow-up to the Tier-0 audit (production_audit.md): Dispose() is now wired into
+    // all 6 of TxControlsPaneViewModel's own editor-discard sites -- see Dispose()'s own doc
+    // comment below for what it releases and its UI-thread requirement.
     private readonly WriteableBitmapPool _workingCopyPool = new();
     private readonly WriteableBitmapPool _previewPool = new();
 
@@ -696,18 +695,62 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RecomputePreview();
     }
 
-    // T0-11: satisfies CA1001 (owns disposable fields, _workingCopyPool/_previewPool) -- see
-    // those fields' own comment for why nothing new is wired to actually call this. Safe either
-    // way: this VM is not a DI singleton, so a real caller COULD call this at any of its own 5
-    // existing discard paths in a later pass; today none of them do, matching the plan's own
-    // scope decision.
+    // T0-11 follow-up (production_audit.md): releases _workingCopyPool/_previewPool and every
+    // live OverlayElements entry's own bitmap resources. Wired into all 6 of
+    // TxControlsPaneViewModel's own editor-discard sites (CloseBlankEditorForReplacement,
+    // OnEditorCancelled, OnEditorApplied, and the 3 construction-failure catches) via a uniform
+    // "_currentEditor?.Dispose(); _currentEditor = null;" -- see that class's own comments at each
+    // site. Deliberately does NOT unsubscribe this instance's own Applied/Cancelled/
+    // DirectFireRequested/PropertyChanged handlers -- unchanged, already-documented precedent
+    // (CloseBlankEditorForReplacement's own doc comment): nothing will ever invoke them again once
+    // the caller swaps to a different editor instance, disposed or not.
+    //
+    // MUST BE CALLED ON THE UI THREAD. Every wired call site in TxControlsPaneViewModel reaches this
+    // on the UI thread today -- the 3 normal-close sites (CloseBlankEditorForReplacement,
+    // OnEditorCancelled, OnEditorApplied) are synchronous CommunityToolkit [RelayCommand]/event-
+    // handler methods, and the 3 construction-failure catches are reached via `await`s with no
+    // ConfigureAwait(false) anywhere in their chains, so Avalonia's captured SynchronizationContext
+    // resumes them on the UI thread too (NOT because those catches contain no background dispatch --
+    // auditor code-review correction, Tier-0 audit follow-up).
     public void Dispose()
     {
+        // Idempotency guard, matching ImageElementViewModel.Dispose()'s own "guarded against a second
+        // call" convention -- auditor code-review finding: WriteableBitmapPool.Dispose() doesn't null
+        // its own slots, so a second call here would double-dispose the same WriteableBitmap. Not
+        // reachable today (every call site nulls _currentEditor atomically right after calling this),
+        // but IDisposable's own contract expects it regardless.
+        if (_disposed)
+        {
+            return;
+        }
+
         // T0-12: _disposed guards RecomputePreviewCoalesced's deferred Dispatcher.UIThread.Post
-        // continuation -- today this can't actually fire post-teardown (nothing calls Dispose()
-        // yet), but the moment a future discard path IS wired here, an unguarded continuation would
-        // Lock() an already-disposed pooled WriteableBitmap and NRE.
+        // continuation, and (auditor code-review finding, Tier-0 audit follow-up) RecomputePreview's/
+        // NotifyWorkingCopyGeometryChanged's own new guards above -- without those, an await-crossing
+        // operation still in flight when Dispose() runs (Cancel/Apply have no busy gate) would Lock()
+        // an already-disposed pooled WriteableBitmap and NRE on the UI thread with no observer.
         _disposed = true;
+
+        foreach (var element in OverlayElements)
+        {
+            if (element is IDisposable disposableElement)
+            {
+                disposableElement.Dispose();
+            }
+        }
+
+        // SYNCHRONOUS, not deferred -- unlike each element VM's own Dispose() (which defers via
+        // Dispatcher.UIThread.Post specifically because ITS bitmap is still reachable through a live
+        // OverlayElements-bound DataTemplate until the View's own next layout pass), the pool's 2
+        // bitmaps back WorkingCopyBitmap/PreviewImage, which nothing renders once EditorClosed fires
+        // right after this returns -- an established, already-reviewed T0-11 choice, unchanged here.
+        // A prior draft of this fix deferred this too, "for symmetry" -- reverted: it doesn't actually
+        // prevent the crash the _disposed guards above exist for (verified empirically: with those
+        // guards removed, a deferred dispose delays the underlying bitmap's own disposal past the
+        // point an await-crossing operation's Blit() call would hit it, so the crash silently stops
+        // reproducing in a test without being fixed), and it defeats the whole point of wiring
+        // Dispose() into a real discard path -- reclaiming native bitmap memory PROMPTLY, not whenever
+        // a Background-priority job happens to run.
         _workingCopyPool.Dispose();
         _previewPool.Dispose();
     }
@@ -2122,8 +2165,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <c>$parent[ItemsControl].((vm:TxImageEditorPaneViewModel)DataContext).AddImageFromRxHistoryCommand</c>
     /// binding path, which this codebase has already hit as a real
     /// <c>ArgumentException: Unable to resolve type</c> at first DataTemplate realization elsewhere
-    /// (see <see cref="ITemplateElementViewModel.RemoveCommand"/>'s own doc comment).</summary>
-    public sealed record RxHistoryPickerEntry(string Id, string FilePath, Bitmap? Thumbnail, IRelayCommand<RxHistoryPickerEntry>? SelectCommand);
+    /// (see <see cref="ITemplateElementViewModel.RemoveCommand"/>'s own doc comment).
+    /// <see cref="ReceivedAt"/> (UX friction fix, Fable operator-perspective review): the AXAML row
+    /// used to display <see cref="Id"/> raw (a GUID-shaped string, meaningless to an operator picking
+    /// between up to <see cref="RxHistoryPickerMaxEntries"/> recent receptions) -- already
+    /// local-offset (<c>DateTimeOffset.Now</c> at write time, see
+    /// <c>ReceiveHistoryRecorder.RecordCompletedImageAsync</c>), same as <c>MainWindow.axaml</c>'s
+    /// own established <c>ReceivedAt</c> display convention, so no extra conversion needed here.</summary>
+    public sealed record RxHistoryPickerEntry(string Id, DateTimeOffset ReceivedAt, string FilePath, Bitmap? Thumbnail, IRelayCommand<RxHistoryPickerEntry>? SelectCommand);
 
     [ObservableProperty]
     private ObservableCollection<RxHistoryPickerEntry> _rxHistoryPickerEntries = [];
@@ -2172,7 +2221,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 Log.RxHistoryThumbnailLoadFailed(_logger, entry.Id, ex);
             }
 
-            picked.Add(new RxHistoryPickerEntry(entry.Id, entry.FilePath, thumbnail, AddImageFromRxHistoryCommand));
+            picked.Add(new RxHistoryPickerEntry(entry.Id, entry.ReceivedAt, entry.FilePath, thumbnail, AddImageFromRxHistoryCommand));
         }
 
         RxHistoryPickerEntries = new ObservableCollection<RxHistoryPickerEntry>(picked);
@@ -3182,6 +3231,41 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         LoadTemplateIntoLiveEditor(snapshots);
+
+        // UX friction fix (Fable operator-perspective review): pre-fills the Save-template name field
+        // with the just-loaded template's OWN name, so a "tweak then re-save" workflow doesn't need
+        // the operator to retype it from scratch -- SaveTemplateAsync's own existing
+        // overwrite-by-matching-name lookup (right above) then does the rest. _templateStore.ListAsync()
+        // is deliberately used here, not ReadyRack.AllTemplates -- SaveTemplateAsync's own doc comment
+        // right above already documents why AllTemplates can be a stale, possibly-empty in-memory
+        // projection (Tier B audit finding), and this same class of staleness would apply here too.
+        //
+        // Auditor code-review findings, all fixed here: (1) the generation re-check right below is
+        // NOT redundant with the one above -- this ListAsync() await is itself a suspension point, so
+        // a newer load (which bumps _templateLoadGeneration and sets its OWN NewTemplateName) can
+        // finish first; without re-checking, this call's OWN continuation would resume afterward and
+        // clobber the newer template's name onto the newer canvas, corrupting the next Save. (2) a
+        // miss (loadedMetadata null -- a mid-flight rename/delete, or a manifest ListAsync's own
+        // per-template catch skipped) now clears the field instead of leaving it holding whatever
+        // OTHER template's name was there before, which SaveTemplateAsync's overwrite-by-matching-name
+        // logic would otherwise silently apply to the wrong template on the next save. (3) this lookup
+        // is cosmetic, not load-critical -- a failure here must not surface as "Load template failed"
+        // for a load that in fact succeeded (OnReadyRackTemplateSelected's catch) or abort an
+        // already-fired Ctrl+N direct-fire (OnReadyRackDirectFireRequested's catch), so it gets its
+        // own try/catch and its own, accurately-worded log message instead of reusing LoadTemplateFailed.
+        try
+        {
+            var loadedMetadata = (await _templateStore.ListAsync()).FirstOrDefault(t => t.Id == templateId);
+            if (generation == _templateLoadGeneration)
+            {
+                NewTemplateName = loadedMetadata?.Name ?? string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.TemplateNamePrefillFailed(_logger, templateId, ex);
+        }
+
         return true;
     }
 
@@ -5365,6 +5449,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// WorkingCopyWidth/Height and have no notification of their own).</summary>
     private void NotifyWorkingCopyGeometryChanged()
     {
+        // Auditor-found blocker (Tier-0 audit follow-up, production_audit.md): without this guard,
+        // an await-crossing operation still in flight when Dispose() runs (e.g. AddImageFromPathAsync/
+        // FlattenElementAsync resuming after Cancel/Apply was clicked, neither gated busy) reaches
+        // _workingCopyPool.Blit() against an already-disposed pool -- wasted work against a discarded
+        // instance at best, an unhandled WriteableBitmap crash on a real (non-headless) render target
+        // at worst. Same shape as RecomputePreviewCoalesced's own existing _disposed guard (see this
+        // file's Dispose() doc comment).
+        if (_disposed)
+        {
+            return;
+        }
+
         WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
@@ -5882,6 +5978,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// not part of Phase 1's real goal).</summary>
     private void RecomputePreview()
     {
+        // Auditor-found blocker (Tier-0 audit follow-up, production_audit.md): same guard, same
+        // reason, as NotifyWorkingCopyGeometryChanged's own -- this method reaches
+        // RecomputePreviewPipeline()'s own _previewPool.Blit() call, reachable from await-crossing
+        // operations (AddImageFromPathAsync, FlattenElementAsync, and others) still in flight when
+        // Dispose() runs.
+        if (_disposed)
+        {
+            return;
+        }
+
         // See _suspendPreview's own doc comment -- RotateCommand sets this while multiple overlay
         // elements' cascading PropertyChanged events (via OnOverlayElementPropertyChanged) and the
         // CropRect reassignment would otherwise each trigger this full pipeline against transiently
@@ -6702,6 +6808,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "LoadTemplate({TemplateId}) discarded as stale -- a newer template selection superseded it")]
         public static partial void TemplateLoadDiscardedAsStale(ILogger logger, string templateId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "LoadTemplate({TemplateId}) succeeded, but the Save-name prefill lookup failed -- the canvas is loaded, only NewTemplateName is stale/unset")]
+        public static partial void TemplateNamePrefillFailed(ILogger logger, string templateId, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Flatten element invoked: type={ElementType}")]
         public static partial void FlattenElementInvoked(ILogger logger, string elementType);

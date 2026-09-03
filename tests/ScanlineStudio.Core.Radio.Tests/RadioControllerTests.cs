@@ -99,6 +99,60 @@ public class RadioControllerTests
     }
 
     [Fact]
+    public async Task ConnectAsync_DisposedWhileTearingDownPriorSession_ThrowsObjectDisposedException_NeverResolvesNewProtocol()
+    {
+        // Tier-0 audit follow-up (production_audit.md): a concurrent DisposeAsync call can claim
+        // _disposeClaimed (IsDisposed reads true) WHILE a second ConnectAsync's own internal
+        // DisconnectLockedAsync() call is still tearing down the FIRST session -- DisposeAsync's own
+        // claim happens BEFORE it ever tries to acquire _lifecycleLock, which this second ConnectAsync
+        // already holds. Without ConnectAsync's own post-teardown recheck, this second call would go on
+        // to resolve and connect a brand-new protocol that DisposeAsync's own (still-queued) teardown
+        // then immediately tears back down the instant ConnectAsync releases the lock -- a real,
+        // quit-mid-startup-connect race, not just a theoretical one.
+        //
+        // Drives the race deterministically, not via wall-clock timing: the FIRST protocol's own
+        // onDispose hook fires synchronously from INSIDE the second ConnectAsync's own
+        // DisconnectLockedAsync() call (while it still holds _lifecycleLock) and, from there, starts
+        // (does not await) a concurrent DisposeAsync -- its claim (an Interlocked.Exchange, no await
+        // before it) is guaranteed to have already landed by the time control returns to
+        // DisconnectLockedAsync and then back to ConnectAsync's own post-await recheck.
+        RadioController? controller = null;
+        Task? disposeTask = null;
+        var createCount = 0;
+
+        var factory = new FakeProtocolFactory(_ => true, _ =>
+        {
+            createCount++;
+            if (createCount == 1)
+            {
+                return new FakeProtocol(
+                    async ct =>
+                    {
+                        await Task.Delay(Timeout.Infinite, ct);
+                        return FixedStateValue; // unreachable -- cancelled by the second ConnectAsync's own teardown
+                    },
+                    onDispose: () => disposeTask = controller!.DisposeAsync().AsTask());
+            }
+
+            return new FakeProtocol(FixedState);
+        });
+
+        controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        await controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None);
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(
+            () => controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None));
+
+        Assert.NotNull(disposeTask);
+        await disposeTask;
+
+        // The real assertion: the second connect's own protocol resolution never ran -- it was
+        // rejected by the post-teardown recheck before ResolveProtocol/Create was ever reached.
+        Assert.Equal(1, createCount);
+    }
+
+    [Fact]
     public async Task SetFrequencyAsync_ThrowsInvalidOperationException_WhenNotConnected()
     {
         var controller = new RadioController([], NullLogger<RadioController>.Instance);

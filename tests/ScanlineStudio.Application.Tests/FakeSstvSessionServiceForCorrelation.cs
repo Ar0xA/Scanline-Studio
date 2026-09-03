@@ -1,3 +1,4 @@
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
@@ -9,12 +10,14 @@ namespace ScanlineStudio.Application.Tests;
 /// <see cref="ISstvSessionService"/> fake for correlation-only tests that need precise, arbitrary
 /// control over <see cref="AudioSliceReady"/>'s <c>receptionId</c> values -- something a REAL
 /// <see cref="SstvSessionService"/> can't give (its ids are always sequential from its own decoder,
-/// starting at 1). Only <see cref="AudioSliceReady"/>/<see cref="TrySaveReceptionAudioAsync"/> are
-/// functional; every other member throws, matching this project's sibling-fake convention for
-/// members "not exercised by" the test suite that owns the fake.</summary>
+/// starting at 1). Originally only <see cref="AudioSliceReady"/>/<see cref="TrySaveReceptionAudioAsync"/>
+/// were functional; <see cref="StationIdDecoded"/>/<see cref="GetOperatorCallsignAsync"/> are now ALSO
+/// functional (fsk_cwid.md §5 A2, shared with <see cref="RxStationIdAttacherTests"/> -- see those two
+/// members' own doc comments). Every other member still throws, matching this project's sibling-fake
+/// convention for members "not exercised by" the test suite that owns the fake.</summary>
 internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 {
-    private static NotSupportedException NotExercised() => new("Not exercised by RxAudioAutoSaverTests's eviction/race coverage.");
+    private static NotSupportedException NotExercised() => new("Not exercised by RxAudioAutoSaverTests's or RxStationIdAttacherTests's coverage.");
 
     public event Action<long, int>? AudioSliceReady;
 
@@ -44,11 +47,58 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public bool IsAudioAutoSaveActive => throw NotExercised();
 
+    public long CurrentReceptionSequence => throw NotExercised();
+
     public event Action<SstvModeDefinition>? ModeDetected { add => throw NotExercised(); remove => throw NotExercised(); }
 
     public event Action<SstvModeDefinition>? DecodeRestarted { add => throw NotExercised(); remove => throw NotExercised(); }
 
-    public event Action<FskStationIdDecodedInfo>? StationIdDecoded { add => throw NotExercised(); remove => throw NotExercised(); }
+    // fsk_cwid.md §5 A2: functional, unlike most members on this fake -- RxStationIdAttacher's own
+    // constructor subscribes to this directly, so a throwing `add` would make constructing one
+    // against this fake impossible. RxAudioAutoSaverTests (the fake's original owner) never touches
+    // this member at all, so making it functional doesn't change that suite's own behavior.
+    public event Action<FskStationIdDecodedInfo>? StationIdDecoded;
+
+    public void RaiseStationIdDecoded(FskStationIdDecodedInfo info) => StationIdDecoded?.Invoke(info);
+
+    /// <summary>Same functional-not-throwing reasoning as <see cref="StationIdDecoded"/> above --
+    /// RxStationIdAttacher's own self-filter calls this. Defaults to <see langword="null"/> (no
+    /// operator callsign configured), matching a fresh install; set <see cref="OperatorCallsignToReturn"/>
+    /// to simulate a configured one.</summary>
+    public string? OperatorCallsignToReturn { get; set; }
+
+    /// <summary>Deterministic-gate hook (this project's own "deterministic gates, not shared race"
+    /// convention) for tests that need to prove a specific arrival order against the background
+    /// dispatch in <c>RxStationIdAttacher.OnStationIdDecoded</c>. When set, <see cref="GetOperatorCallsignAsync"/>
+    /// awaits this instead of returning immediately, so a test can raise <c>StationIdDecoded</c>,
+    /// wait for this read to actually start (proving that side's processing is underway), raise the
+    /// other event, then release the gate -- rather than assuming ordering from a sleep.</summary>
+    public TaskCompletionSource<string?>? GetOperatorCallsignAsyncGate { get; set; }
+
+    /// <summary>Completes once <see cref="GetOperatorCallsignAsync"/> has been entered, i.e. the
+    /// background dispatch reached its self-filter read -- the actual "processing has started"
+    /// signal a test awaits before raising the event that must arrive second.</summary>
+    public TaskCompletionSource<bool> GetOperatorCallsignAsyncEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Fires every call, unlike <see cref="GetOperatorCallsignAsyncEntered"/> (which only
+    /// ever latches once) -- lets a test serialize a whole SEQUENCE of raised events by awaiting one
+    /// signal per call instead of assuming unenforced thread-pool dispatch order.</summary>
+    public event Action? GetOperatorCallsignAsyncCalled;
+
+    public async Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default)
+    {
+        GetOperatorCallsignAsyncEntered.TrySetResult(true);
+        GetOperatorCallsignAsyncCalled?.Invoke();
+
+        if (GetOperatorCallsignAsyncGate is { } gate)
+        {
+            return await gate.Task.ConfigureAwait(false);
+        }
+
+        return OperatorCallsignToReturn;
+    }
+
+    public event Action<CwIdDecodedInfo>? CwIdDecoded { add => throw NotExercised(); remove => throw NotExercised(); }
 
     public event Action<TransmitProgressInfo>? TransmitProgressChanged { add => throw NotExercised(); remove => throw NotExercised(); }
 
@@ -109,8 +159,6 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
     public (VisHeaderKind Kind, int Value) GetVisHeaderInfo(SstvModeDefinition mode) => throw NotExercised();
 
     public void SetAutoDetectPaused(bool paused) => throw NotExercised();
-
-    public Task<string?> GetOperatorCallsignAsync(CancellationToken ct = default) => throw NotExercised();
 
     public Task<string?> GetOperatorGridAsync(CancellationToken ct = default) => throw NotExercised();
 
