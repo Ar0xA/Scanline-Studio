@@ -48,7 +48,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, DecodedCallsign, DecodedNrRst FROM ReceiveHistory WHERE 1 = 1";
+        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId FROM ReceiveHistory WHERE 1 = 1";
 
         if (filter.ModeId is not null)
         {
@@ -90,7 +90,9 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 reader.IsDBNull(9) ? null : ParseRigMode(reader.GetString(9)),
                 reader.IsDBNull(10) ? null : reader.GetString(10),
                 reader.IsDBNull(11) ? null : reader.GetString(11),
-                reader.IsDBNull(12) ? null : reader.GetString(12)));
+                reader.IsDBNull(12) ? null : reader.GetString(12),
+                reader.IsDBNull(13) ? null : reader.GetString(13),
+                reader.IsDBNull(14) ? null : reader.GetString(14)));
         }
 
         return results;
@@ -147,8 +149,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst)
-            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst)
+            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId)
+            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId)
             """;
         command.Parameters.AddWithValue("$id", entry.Id);
         command.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
@@ -173,6 +175,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         // hardcoded DBNull.Value" reasoning as AudioFilePath above.
         command.Parameters.AddWithValue("$decodedCallsign", (object?)entry.DecodedCallsign ?? DBNull.Value);
         command.Parameters.AddWithValue("$decodedNrRst", (object?)entry.DecodedNrRst ?? DBNull.Value);
+        // fsk_cwid.md B-P5: same "always null at write time in production, still taken from the
+        // entry rather than hardcoded DBNull.Value" reasoning as DecodedCallsign/DecodedNrRst above --
+        // RxStationIdAttacher's join (now also covering CwIdDecoded) always completes AFTER this row
+        // already exists.
+        command.Parameters.AddWithValue("$decodedCallsignSource", (object?)entry.DecodedCallsignSource ?? DBNull.Value);
+        command.Parameters.AddWithValue("$decodedCwId", (object?)entry.DecodedCwId ?? DBNull.Value);
 
         await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
 
@@ -262,18 +270,21 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default) =>
         ExecuteUpdateAsync("UPDATE ReceiveHistory SET AudioFilePath = $audioFilePath WHERE Id = $id", entryId, "$audioFilePath", path, ct);
 
-    /// <summary>See <see cref="IReceiveHistoryStore.SetDecodedStationIdAsync"/> for the "both columns
-    /// written exactly as given, no leave-unchanged semantics" contract. A dedicated two-value
-    /// implementation, not <see cref="ExecuteUpdateAsync"/> (that helper is single-value only).</summary>
-    public async Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default)
+    /// <summary>See <see cref="IReceiveHistoryStore.SetDecodedStationIdAsync"/> for the "all four
+    /// columns written exactly as given, no leave-unchanged semantics" contract. A dedicated
+    /// four-value implementation, not <see cref="ExecuteUpdateAsync"/> (that helper is single-value
+    /// only).</summary>
+    public async Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         var command = connection.CreateCommand();
-        command.CommandText = "UPDATE ReceiveHistory SET DecodedCallsign = $decodedCallsign, DecodedNrRst = $decodedNrRst WHERE Id = $id";
+        command.CommandText = "UPDATE ReceiveHistory SET DecodedCallsign = $decodedCallsign, DecodedCallsignSource = $decodedCallsignSource, DecodedNrRst = $decodedNrRst, DecodedCwId = $decodedCwId WHERE Id = $id";
         command.Parameters.AddWithValue("$decodedCallsign", (object?)callsign ?? DBNull.Value);
+        command.Parameters.AddWithValue("$decodedCallsignSource", (object?)callsignSource ?? DBNull.Value);
         command.Parameters.AddWithValue("$decodedNrRst", (object?)nrRst ?? DBNull.Value);
+        command.Parameters.AddWithValue("$decodedCwId", (object?)cwId ?? DBNull.Value);
         command.Parameters.AddWithValue("$id", entryId);
 
         var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
@@ -567,11 +578,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// <summary>Creates the table on a fresh DB, and migrates an existing pre-`Note`/`IsFlagged`/
     /// `DecodeState` DB in place -- the first schema change this store has ever needed. Lightweight
     /// `PRAGMA table_info` probe + `ALTER TABLE ADD COLUMN` (NOT a versioned-migration framework --
-    /// proportionate to a single 14-column table; do not "improve" this without a real second table
+    /// proportionate to a single 16-column table; do not "improve" this without a real second table
     /// to justify it). `CREATE TABLE`'s own column definitions carry the identical `DEFAULT`s the
-    /// `ALTER TABLE` statements below use, AND the 9 `ALTER TABLE ADD COLUMN`s below run in the
+    /// `ALTER TABLE` statements below use, AND the 11 `ALTER TABLE ADD COLUMN`s below run in the
     /// same order `CREATE TABLE` declares them (`DecodeState`, `Note`, `IsFlagged`, `FrequencyHz`,
-    /// `RigMode`, `AudioFilePath`, `ReceivedAtUtc`, `DecodedCallsign`, `DecodedNrRst`) --
+    /// `RigMode`, `AudioFilePath`, `ReceivedAtUtc`, `DecodedCallsign`, `DecodedNrRst`,
+    /// `DecodedCallsignSource`, `DecodedCwId`) --
     /// deliberate, not incidental: SQLite's `ADD COLUMN` always appends, so a migrated DB's column
     /// ORDER would otherwise permanently diverge from a fresh DB's the moment this ships (code-level
     /// audit finding -- harmless today, since no query anywhere uses `SELECT *`, but a real,
@@ -630,7 +642,9 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 AudioFilePath TEXT NULL,
                 ReceivedAtUtc TEXT NULL,
                 DecodedCallsign TEXT NULL,
-                DecodedNrRst TEXT NULL
+                DecodedNrRst TEXT NULL,
+                DecodedCallsignSource TEXT NULL,
+                DecodedCwId TEXT NULL
             )
             """;
         createCommand.ExecuteNonQuery();
@@ -715,6 +729,23 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         if (!existingColumns.Contains("DecodedNrRst"))
         {
             ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN DecodedNrRst TEXT NULL");
+        }
+
+        // fsk_cwid.md B-P5: the 10th and 11th ALTER TABLE blocks, appended AFTER DecodedNrRst -- same
+        // "always appends, never reorders" reasoning as every column above. A pre-existing row simply
+        // has no CW-ID decode (NULL, correctly meaning "none ever attached" -- CW-ID persistence is
+        // new capability this row predates, not backfilled/guessed). A row whose DecodedCallsign was
+        // already set by a pre-B-P5 build correctly gets DecodedCallsignSource = NULL here (not
+        // "FSK") -- see that field's own doc comment on ReceiveHistoryEntry for why a NULL source is
+        // read back as FSK without needing a real backfill value.
+        if (!existingColumns.Contains("DecodedCallsignSource"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN DecodedCallsignSource TEXT NULL");
+        }
+
+        if (!existingColumns.Contains("DecodedCwId"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN DecodedCwId TEXT NULL");
         }
 
         // Backfill ONLY when DecodeState was newly added THIS pass -- never on subsequent startups,

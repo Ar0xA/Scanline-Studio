@@ -268,7 +268,7 @@ public sealed class RxAudioAutoSaverTests
             return Task.FromResult(true);
         }
 
-        public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default) =>
+        public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default) =>
             throw new NotSupportedException("Not exercised by RxAudioAutoSaverTests.");
 
         public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default) =>

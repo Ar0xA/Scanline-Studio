@@ -49,14 +49,36 @@ public enum ReceiveDecodeState
 ///
 /// <see cref="ReceptionId"/> is TRANSIENT, not persisted -- see that property's own doc comment.
 ///
-/// <see cref="DecodedCallsign"/>/<see cref="DecodedNrRst"/> (fsk_cwid.md §5 A2): the FSK-ID-decoded
+/// <see cref="DecodedCallsign"/>/<see cref="DecodedNrRst"/> (fsk_cwid.md §5 A2): the decoded
 /// callsign/NR-RST attached to this entry after the fact, via <see cref="IReceiveHistoryStore.SetDecodedStationIdAsync"/>
-/// once <c>RxStationIdAttacher</c>'s join with <see cref="ISstvSessionService.StationIdDecoded"/>
-/// (`ScanlineStudio.Application`) completes -- the 4 existing construction sites never set these
-/// (always <see langword="null"/> at <see cref="RecordAsync"/> time; the FSK ID transmits AFTER the
-/// image, so it cannot be known yet). <see cref="DecodedNrRst"/> already carries the "595" RST-default
-/// prefix, matching what the live pane shows for the same decode (<c>RxImagePaneViewModel.ApplyDecodedNrRst</c>'s
-/// own convention) -- not a raw on-air fragment.</summary>
+/// once <c>RxStationIdAttacher</c>'s join with <see cref="ISstvSessionService.StationIdDecoded"/>/
+/// <see cref="ISstvSessionService.CwIdDecoded"/> (`ScanlineStudio.Application`) completes -- the 4
+/// original construction sites never set these (always <see langword="null"/> at
+/// <see cref="RecordAsync"/> time; both the FSK ID and the CW ID transmit AFTER the image, so neither
+/// can be known yet). <see cref="DecodedNrRst"/> already carries the "595" RST-default prefix, matching
+/// what the live pane shows for the same decode (<c>RxImagePaneViewModel.ApplyDecodedNrRst</c>'s own
+/// convention) -- not a raw on-air fragment. <see cref="DecodedNrRst"/> is FSK-only (CW-ID carries no
+/// NR/RST sub-packet), so it has no matching source field.
+///
+/// <see cref="DecodedCallsign"/> can come from EITHER source -- <see cref="DecodedCallsignSource"/>
+/// (fsk_cwid.md B-P5) records which one, using <see cref="StationIdSources.Fsk"/>/
+/// <see cref="StationIdSources.Cw"/>, so the Gallery can show a truthful label instead of a hardcoded
+/// "FSK" one. <see langword="null"/> means "not yet decoded" OR "decoded by a pre-B-P5 build" (every
+/// row that predates this field only ever got a callsign from FSK, since <c>RxStationIdAttacher</c>
+/// didn't subscribe to <see cref="ISstvSessionService.CwIdDecoded"/> before B-P5) -- a reader falling
+/// back to <see cref="StationIdSources.Fsk"/> for a <see langword="null"/> source is therefore correct,
+/// not a guess. <c>RxStationIdAttacher</c>'s own merge priority (mirroring the live pane's already-
+/// shipped <c>RxImagePaneViewModel.ApplyStationIdDecodedAsync</c>/<c>ApplyCwIdDecodedAsync</c> rule
+/// exactly): FSK always overwrites regardless of what's already attached; CW only attaches when no
+/// FSK-sourced callsign is already present for this reception. See <c>RxStationIdAttacher.ApplyUpdate</c>'s
+/// own doc comment for the four documented divergences between this DB-side rule and the live pane's
+/// UI-side one (the pane's gate is the user-editable <c>OverrideCallsign</c> field, not this source
+/// tag).
+///
+/// <see cref="DecodedCwId"/> (fsk_cwid.md B-P5): the CW-ID decoder's raw decoded text (e.g.
+/// <c>"DE W1AW"</c>), always attached when a CW-ID window decodes for this reception -- independent of
+/// whether a callsign was extracted from it (a CW-ID with no callsign-shaped token still fills this
+/// field). Mirrors <c>RxImagePaneViewModel.CwIdText</c>'s own live-pane value for the same event.</summary>
 public sealed record ReceiveHistoryEntry(
     string Id,
     DateTimeOffset ReceivedAt,
@@ -70,7 +92,9 @@ public sealed record ReceiveHistoryEntry(
     RadioMode? RigMode = null,
     string? AudioFilePath = null,
     string? DecodedCallsign = null,
-    string? DecodedNrRst = null)
+    string? DecodedNrRst = null,
+    string? DecodedCallsignSource = null,
+    string? DecodedCwId = null)
 {
     /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): the reception identity
     /// (<c>ISstvDecoder.ReceptionSequence</c>'s value at this reception's arm) an in-memory
@@ -95,6 +119,16 @@ public sealed record ReceiveHistoryEntry(
 }
 
 public sealed record ReceiveHistoryFilter(string? ModeId = null, DateTimeOffset? From = null, DateTimeOffset? To = null);
+
+/// <summary>fsk_cwid.md B-P5, auditor plan-review finding: shared constants for
+/// <see cref="ReceiveHistoryEntry.DecodedCallsignSource"/> so the value <c>RxStationIdAttacher</c>
+/// writes to the DB and the value <c>RxImagePaneViewModel</c> shows in its own "Callsign · source"
+/// annotation can never drift apart via an independently-typed string literal on either side.</summary>
+public static class StationIdSources
+{
+    public const string Fsk = "FSK";
+    public const string Cw = "CW";
+}
 
 /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio) -- the resolved (never raw/possibly-
 /// null) settings pair, same "resolved, not raw" contract as <see cref="IReceiveHistoryStore.GetImagesDirectoryAsync"/>.
@@ -187,20 +221,22 @@ public interface IReceiveHistoryStore
     /// <see cref="SetNoteAsync"/>.</summary>
     Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default);
 
-    /// <summary>Sets <see cref="ReceiveHistoryEntry.DecodedCallsign"/>/<see cref="ReceiveHistoryEntry.DecodedNrRst"/>
+    /// <summary>Sets <see cref="ReceiveHistoryEntry.DecodedCallsign"/>/<see cref="ReceiveHistoryEntry.DecodedCallsignSource"/>/
+    /// <see cref="ReceiveHistoryEntry.DecodedNrRst"/>/<see cref="ReceiveHistoryEntry.DecodedCwId"/>
     /// on an existing entry, once <c>RxStationIdAttacher</c>'s join completes -- a plain
     /// <c>UPDATE</c>, deliberately NOT re-raising <see cref="Recorded"/>, same contract as
     /// <see cref="SetAudioFilePathAsync"/> (a live pane instead patches its already-held in-memory
     /// entry directly via <c>IRxStationIdAttacher.StationIdAttached</c>). Unlike
-    /// <see cref="SetAudioFilePathAsync"/>'s single value, BOTH columns are written on every call,
+    /// <see cref="SetAudioFilePathAsync"/>'s single value, ALL FOUR columns are written on every call,
     /// exactly as given -- <see langword="null"/> writes <see langword="null"/>, it does not leave a
-    /// previously-set column unchanged. `RxStationIdAttacher` accounts for this itself: callsign and
-    /// NR/RST can decode at different times for the same reception (`FskStationIdEncoder.Generate`'s
-    /// own two-sub-packet shape), so it always calls this with its own full current accumulator (the
-    /// newest-known value for whichever of the two has decoded so far, never a value it hasn't
+    /// previously-set column unchanged. `RxStationIdAttacher` accounts for this itself: callsign,
+    /// NR/RST, and CW-ID text can each decode at a different time for the same reception
+    /// (`FskStationIdEncoder.Generate`'s own two-sub-packet shape, plus the independently-timed CW-ID
+    /// capture window), so it always calls this with its own full current accumulator (the
+    /// newest-known value for whichever of the three has decoded so far, never a value it hasn't
     /// actually seen). Same missing-<paramref name="entryId"/> contract as
     /// <see cref="SetAudioFilePathAsync"/>.</summary>
-    Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default);
+    Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default);
 
     /// <summary>Sets (or clears, via <see langword="null"/>) the Gallery frame metadata card's
     /// user-entered note on an existing entry. Returns <see langword="false"/> (not an exception)
