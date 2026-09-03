@@ -68,7 +68,7 @@ internal sealed class FakeReceiveHistoryStoreForLogbook : IReceiveHistoryStore
     public Task<bool> SetAudioFilePathAsync(string entryId, string path, CancellationToken ct = default) =>
         throw new NotSupportedException("Not exercised by LogbookSessionServiceTests.");
 
-    public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default) =>
+    public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default) =>
         throw new NotSupportedException("Not exercised by LogbookSessionServiceTests.");
 
     public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default) =>

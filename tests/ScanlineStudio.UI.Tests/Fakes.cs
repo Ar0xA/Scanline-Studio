@@ -1517,9 +1517,14 @@ internal sealed class FakeRxAudioAutoSaver : IRxAudioAutoSaver
 /// IRxStationIdAttacher dependency.</summary>
 internal sealed class FakeRxStationIdAttacher : IRxStationIdAttacher
 {
-    public event Action<string, string?, string?>? StationIdAttached;
+    public event Action<StationIdAttachment>? StationIdAttached;
 
-    public void RaiseStationIdAttached(string entryId, string? callsign, string? nrRst) => StationIdAttached?.Invoke(entryId, callsign, nrRst);
+    // fsk_cwid.md B-P5, code-review nit: parameter order matches StationIdAttachment's own property
+    // order exactly (EntryId, Callsign, CallsignSource, NrRst, CwId) -- the record itself exists to
+    // remove a positional-transposition hazard; a differently-ordered helper here would silently
+    // reintroduce it for any future positional (not named) call.
+    public void RaiseStationIdAttached(string entryId, string? callsign, string? callsignSource = null, string? nrRst = null, string? cwId = null) =>
+        StationIdAttached?.Invoke(new StationIdAttachment(entryId, callsign, callsignSource, nrRst, cwId));
 }
 
 internal sealed class FakeClipboardImageService : IClipboardImageService
@@ -1896,10 +1901,10 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public List<(string EntryId, string? Callsign, string? NrRst)> SetDecodedStationIdCalls { get; } = [];
 
-    public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default)
+    public Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default)
     {
         SetDecodedStationIdCalls.Add((entryId, callsign, nrRst));
-        return Task.FromResult(TryUpdateEntry(entryId, e => e with { DecodedCallsign = callsign, DecodedNrRst = nrRst }));
+        return Task.FromResult(TryUpdateEntry(entryId, e => e with { DecodedCallsign = callsign, DecodedCallsignSource = callsignSource, DecodedNrRst = nrRst, DecodedCwId = cwId }));
     }
 
     /// <summary>Every <see cref="SetNoteAsync"/> call, in order -- lets a test prove a selection

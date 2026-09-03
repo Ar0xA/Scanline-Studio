@@ -1821,7 +1821,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // fsk_cwid.md A3: set AFTER the write above -- OnOverrideCallsignChanged (fired
             // synchronously by that setter, on a real change) already cleared these; this re-sets
             // them for the auto-fill case specifically. See _callsignSource's own doc comment.
-            _callsignSource = "FSK";
+            _callsignSource = StationIdSources.Fsk;
             _callsignDecodedAtUtc = DateTimeOffset.UtcNow;
             OnPropertyChanged(nameof(CallsignLabelDisplay));
             Log.StationIdDecoded(_logger, decodedCallsign, info.ReceptionSequence);
@@ -1956,7 +1956,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // fsk_cwid.md A3: same "set after the write, OnOverrideCallsignChanged already cleared them"
         // shape as ApplyStationIdDecodedAsync's own FSK write -- see _callsignSource's own doc
         // comment. Source is "CW" here, not "FSK".
-        _callsignSource = "CW";
+        _callsignSource = StationIdSources.Cw;
         _callsignDecodedAtUtc = DateTimeOffset.UtcNow;
         OnPropertyChanged(nameof(CallsignLabelDisplay));
     }

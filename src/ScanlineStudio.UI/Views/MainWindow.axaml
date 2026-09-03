@@ -1317,13 +1317,21 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.FreqTimeLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
                                     </Grid></Border>
-                                    <!-- fsk_cwid.md §9/A-P3b: "Callsign · FSK" row — only shown when this entry
-                                         actually has a decoded callsign (ReceiveHistoryEntry.DecodedCallsign,
-                                         written by RxStationIdAttacher), same visible-only-when-present shape as
-                                         the "Log entry" row below. -->
-                                    <Border Classes="IndustryRow" IsVisible="{Binding SelectedEntry.Entry.DecodedCallsign, Converter={x:Static ObjectConverters.IsNotNull}}"><Grid ColumnDefinitions="Auto,*">
-                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.CallsignFskLabel}" />
-                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.DecodedCallsign}" />
+                                    <!-- fsk_cwid.md §9/A-P3b, source annotation added at B-P5: "Callsign" row —
+                                         only shown when this entry actually has a decoded callsign
+                                         (ReceiveHistoryEntry.DecodedCallsign, written by RxStationIdAttacher),
+                                         same visible-only-when-present shape as the "Log entry" row below. The
+                                         source annotation (same 3-column Auto,Auto,* shape as the Receive tab's
+                                         own "NR / RST" row, RxImagePaneViewModel's NrRstLabelDisplay) shows which
+                                         decoder attached it — computed VM-side by SelectedEntryCallsignSourceDisplay,
+                                         not an AXAML StringFormat/TargetNullValue combo (that combo does not
+                                         compose the way it looks: StringFormat runs BEFORE TargetNullValue's own
+                                         null-check, so a null DecodedCallsignSource would never reach it — see
+                                         that VM property's own doc comment). -->
+                                    <Border Classes="IndustryRow" IsVisible="{Binding SelectedEntry.Entry.DecodedCallsign, Converter={x:Static ObjectConverters.IsNotNull}}"><Grid ColumnDefinitions="Auto,Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.CallsignLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowLabel" Margin="4,0,0,0" Text="{Binding SelectedEntryCallsignSourceDisplay}" />
+                                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.DecodedCallsign}" />
                                     </Grid></Border>
                                     <!-- Grid/dist row removed outright 2026-08-26 (user decision, "maybe
                                          one day") — was a static two-dashes-both-sides placeholder

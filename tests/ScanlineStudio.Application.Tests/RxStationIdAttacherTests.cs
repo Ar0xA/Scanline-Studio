@@ -1,13 +1,15 @@
 using Microsoft.Extensions.Logging.Abstractions;
+using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
 namespace ScanlineStudio.Application.Tests;
 
-/// <summary>fsk_cwid.md §5 A2 -- <see cref="RxStationIdAttacher"/>'s per-reception accumulator join.
-/// Uses <see cref="FakeSstvSessionServiceForCorrelation"/> (no real arm/close state machine needed --
-/// unlike <c>RxAudioAutoSaverTests</c>, <see cref="ISstvSessionService.StationIdDecoded"/> is a plain,
-/// directly-raisable event with no window-timing behavior behind it).</summary>
+/// <summary>fsk_cwid.md §5 A2 (B-P5 added the CW-ID cases) -- <see cref="RxStationIdAttacher"/>'s
+/// per-reception accumulator join. Uses <see cref="FakeSstvSessionServiceForCorrelation"/> (no real
+/// arm/close state machine needed -- unlike <c>RxAudioAutoSaverTests</c>,
+/// <see cref="ISstvSessionService.StationIdDecoded"/>/<see cref="ISstvSessionService.CwIdDecoded"/>
+/// are plain, directly-raisable events with no window-timing behavior behind them).</summary>
 public sealed class RxStationIdAttacherTests
 {
     private static (RxStationIdAttacher Attacher, FakeSstvSessionServiceForCorrelation SessionService, FakeReceiveHistoryStoreForStationIdCorrelation HistoryStore) CreateAttacher(string? ownCallsign = null)
@@ -18,13 +20,13 @@ public sealed class RxStationIdAttacherTests
         return (attacher, sessionService, historyStore);
     }
 
-    private static Task<(string EntryId, string? Callsign, string? NrRst)> StartWaitingForStationIdAttached(RxStationIdAttacher attacher, int timeoutMs = 2000)
+    private static Task<StationIdAttachment> StartWaitingForStationIdAttached(RxStationIdAttacher attacher, int timeoutMs = 2000)
     {
-        var tcs = new TaskCompletionSource<(string, string?, string?)>(TaskCreationOptions.RunContinuationsAsynchronously);
-        void Handler(string entryId, string? callsign, string? nrRst)
+        var tcs = new TaskCompletionSource<StationIdAttachment>(TaskCreationOptions.RunContinuationsAsynchronously);
+        void Handler(StationIdAttachment attachment)
         {
             attacher.StationIdAttached -= Handler;
-            tcs.TrySetResult((entryId, callsign, nrRst));
+            tcs.TrySetResult(attachment);
         }
 
         attacher.StationIdAttached += Handler;
@@ -44,11 +46,13 @@ public sealed class RxStationIdAttacherTests
 
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW", ReceptionSequence: 1));
 
-        var (attachedEntryId, callsign, nrRst) = await attachedTask;
-        Assert.Equal("entry-1", attachedEntryId);
-        Assert.Equal("W1AW", callsign);
-        Assert.Null(nrRst);
-        Assert.Equal(("entry-1", "W1AW", (string?)null), historyStore.LastSetDecodedStationId);
+        var attachment = await attachedTask;
+        Assert.Equal("entry-1", attachment.EntryId);
+        Assert.Equal("W1AW", attachment.Callsign);
+        Assert.Equal(StationIdSources.Fsk, attachment.CallsignSource);
+        Assert.Null(attachment.NrRst);
+        Assert.Null(attachment.CwId);
+        Assert.Equal(("entry-1", "W1AW", StationIdSources.Fsk, (string?)null, (string?)null), historyStore.LastSetDecodedStationId);
     }
 
     [Fact]
@@ -74,9 +78,9 @@ public sealed class RxStationIdAttacherTests
 
         gate.SetResult(null);
 
-        var (attachedEntryId, callsign, _) = await attachedTask;
-        Assert.Equal("entry-2", attachedEntryId);
-        Assert.Equal("W1AW", callsign);
+        var attachment = await attachedTask;
+        Assert.Equal("entry-2", attachment.EntryId);
+        Assert.Equal("W1AW", attachment.Callsign);
     }
 
     [Fact]
@@ -89,18 +93,18 @@ public sealed class RxStationIdAttacherTests
 
         var firstAttachedTask = StartWaitingForStationIdAttached(attacher);
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW", ReceptionSequence: 3));
-        var (_, firstCallsign, firstNrRst) = await firstAttachedTask;
-        Assert.Equal("W1AW", firstCallsign);
-        Assert.Null(firstNrRst); // NR/RST hasn't decoded yet -- this write must not have invented one.
+        var first = await firstAttachedTask;
+        Assert.Equal("W1AW", first.Callsign);
+        Assert.Null(first.NrRst); // NR/RST hasn't decoded yet -- this write must not have invented one.
 
         // The NR/RST sub-packet decodes separately (FskStationIdEncoder.Generate's own two-sub-packet
         // shape) -- the resulting SECOND write must carry the callsign FORWARD, not drop it just
         // because this event didn't carry one.
         var secondAttachedTask = StartWaitingForStationIdAttached(attacher);
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 1, ReceptionSequence: 3));
-        var (_, secondCallsign, secondNrRst) = await secondAttachedTask;
-        Assert.Equal("W1AW", secondCallsign);
-        Assert.Equal("595001", secondNrRst);
+        var second = await secondAttachedTask;
+        Assert.Equal("W1AW", second.Callsign);
+        Assert.Equal("595001", second.NrRst);
     }
 
     [Fact]
@@ -113,8 +117,8 @@ public sealed class RxStationIdAttacherTests
         var attachedTask = StartWaitingForStationIdAttached(attacher);
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 7, ReceptionSequence: 4));
 
-        var (_, _, nrRst) = await attachedTask;
-        Assert.Equal("595007", nrRst);
+        var attachment = await attachedTask;
+        Assert.Equal("595007", attachment.NrRst);
     }
 
     [Fact]
@@ -127,8 +131,8 @@ public sealed class RxStationIdAttacherTests
         var attachedTask = StartWaitingForStationIdAttached(attacher);
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(NrText: "UT4", ReceptionSequence: 5));
 
-        var (_, _, nrRst) = await attachedTask;
-        Assert.Equal("595UT4", nrRst);
+        var attachment = await attachedTask;
+        Assert.Equal("595UT4", attachment.NrRst);
     }
 
     [Fact]
@@ -139,7 +143,7 @@ public sealed class RxStationIdAttacherTests
         historyStore.RaiseRecorded(entry);
 
         var attached = false;
-        attacher.StationIdAttached += (_, _, _) => attached = true;
+        attacher.StationIdAttached += _ => attached = true;
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K2ABC", ReceptionSequence: 6));
 
         await Task.Delay(100); // grace window, not a wait-for-positive-signal
@@ -160,8 +164,8 @@ public sealed class RxStationIdAttacherTests
         var attachedTask = StartWaitingForStationIdAttached(attacher);
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW", ReceptionSequence: 7));
 
-        var (_, callsign, _) = await attachedTask;
-        Assert.Equal("W1AW", callsign);
+        var attachment = await attachedTask;
+        Assert.Equal("W1AW", attachment.Callsign);
     }
 
     [Fact]
@@ -170,7 +174,7 @@ public sealed class RxStationIdAttacherTests
         var (attacher, _, historyStore) = CreateAttacher();
 
         var attached = false;
-        attacher.StationIdAttached += (_, _, _) => attached = true;
+        attacher.StationIdAttached += _ => attached = true;
 
         // ReceptionId defaults to 0 -- a disk-reconciled/backfilled entry, per ISstvDecoder.
         // ReceptionSequence's own contract ("0 means unset"), same as RxAudioAutoSaver's own guard.
@@ -191,7 +195,7 @@ public sealed class RxStationIdAttacherTests
         historyStore.RaiseRecorded(entry);
 
         var attached = false;
-        attacher.StationIdAttached += (_, _, _) => attached = true;
+        attacher.StationIdAttached += _ => attached = true;
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW", ReceptionSequence: 0));
 
         await Task.Delay(100);
@@ -221,7 +225,7 @@ public sealed class RxStationIdAttacherTests
 
         // The oldest (reception 1) must have been evicted -- its entry arriving now must NOT attach.
         var neverAttachedForOldest = false;
-        attacher.StationIdAttached += (entryId, _, _) => neverAttachedForOldest |= entryId == "entry-1";
+        attacher.StationIdAttached += attachment => neverAttachedForOldest |= attachment.EntryId == "entry-1";
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry-1", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-1.png", null, ReceiveDecodeState.Completed) { ReceptionId = 1 });
         await Task.Delay(50);
         Assert.False(neverAttachedForOldest);
@@ -229,9 +233,9 @@ public sealed class RxStationIdAttacherTests
         // The newest (reception 9) must still be retained -- its entry arriving must attach successfully.
         var attachedTask = StartWaitingForStationIdAttached(attacher);
         historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry-9", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-9.png", null, ReceiveDecodeState.Completed) { ReceptionId = 9 });
-        var (attachedEntryId, callsign, _) = await attachedTask;
-        Assert.Equal("entry-9", attachedEntryId);
-        Assert.Equal("CALL9", callsign);
+        var attachment = await attachedTask;
+        Assert.Equal("entry-9", attachment.EntryId);
+        Assert.Equal("CALL9", attachment.Callsign);
     }
 
     [Fact]
@@ -271,8 +275,8 @@ public sealed class RxStationIdAttacherTests
         // Exactly one MORE write lands after the gate releases, carrying the fully-merged snapshot.
         await Task.Delay(150);
         Assert.Equal(2, historyStore.SetDecodedStationIdCalls.Count);
-        Assert.Equal(("entry-cw", "W1AW", (string?)null), historyStore.SetDecodedStationIdCalls[0]);
-        Assert.Equal(("entry-cw", "W1AW", "595001"), historyStore.SetDecodedStationIdCalls[1]);
+        Assert.Equal(("entry-cw", "W1AW", StationIdSources.Fsk, (string?)null, (string?)null), historyStore.SetDecodedStationIdCalls[0]);
+        Assert.Equal(("entry-cw", "W1AW", StationIdSources.Fsk, "595001", (string?)null), historyStore.SetDecodedStationIdCalls[1]);
 
         // Auditor code-review nit: nothing above pins that WriteLoopInFlight is actually CLEARED once
         // the loop exits -- a mutation that forgets to clear it would leave every FUTURE write for
@@ -282,7 +286,155 @@ public sealed class RxStationIdAttacherTests
         sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(CompactNr: 2, ReceptionSequence: 42));
         await Task.Delay(150);
         Assert.Equal(3, historyStore.SetDecodedStationIdCalls.Count);
-        Assert.Equal(("entry-cw", "W1AW", "595002"), historyStore.SetDecodedStationIdCalls[2]);
+        Assert.Equal(("entry-cw", "W1AW", StationIdSources.Fsk, "595002", (string?)null), historyStore.SetDecodedStationIdCalls[2]);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: CwIdDecodedInfo.Text is always attached, even when the CW-ID had no
+    /// callsign-shaped token -- the "not enough to write yet" gate in ApplyUpdate must treat a
+    /// non-null CW-ID text as sufficient reason to write on its own, not just callsign/NR-RST.</summary>
+    [Fact]
+    public async Task CwIdWithNoCallsign_StillAttachesTheRawText()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        var entry = new ReceiveHistoryEntry("entry-cw1", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw1.png", null, ReceiveDecodeState.Completed) { ReceptionId = 10 };
+        historyStore.RaiseRecorded(entry);
+
+        var attachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 10, Text: "599 599", Callsign: null, Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+
+        var attachment = await attachedTask;
+        Assert.Equal("entry-cw1", attachment.EntryId);
+        Assert.Equal("599 599", attachment.CwId);
+        Assert.Null(attachment.Callsign);
+        Assert.Null(attachment.CallsignSource);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: a CW-decoded callsign attaches into the SAME DecodedCallsign slot
+    /// FSK uses, tagged with CallsignSource = "CW" -- when FSK hasn't already claimed this
+    /// reception.</summary>
+    [Fact]
+    public async Task CwIdWithCallsign_NoPriorFsk_AttachesAsCwSourced()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        var entry = new ReceiveHistoryEntry("entry-cw2", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw2.png", null, ReceiveDecodeState.Completed) { ReceptionId = 11 };
+        historyStore.RaiseRecorded(entry);
+
+        var attachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 11, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+
+        var attachment = await attachedTask;
+        Assert.Equal("W1AW", attachment.Callsign);
+        Assert.Equal(StationIdSources.Cw, attachment.CallsignSource);
+        Assert.Equal("DE W1AW", attachment.CwId);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: the DB-side mirror of RxImagePaneViewModel.ApplyStationIdDecodedAsync's
+    /// own unconditional OverrideCallsign write -- FSK arriving AFTER a CW-sourced callsign has
+    /// already attached must still overwrite it (FSK is authoritative).</summary>
+    [Fact]
+    public async Task CwThenFsk_ForTheSameReception_FskOverwritesTheCwCallsign()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        var entry = new ReceiveHistoryEntry("entry-cw3", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw3.png", null, ReceiveDecodeState.Completed) { ReceptionId = 12 };
+        historyStore.RaiseRecorded(entry);
+
+        var firstAttachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 12, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        var first = await firstAttachedTask;
+        Assert.Equal("W1AW", first.Callsign);
+        Assert.Equal(StationIdSources.Cw, first.CallsignSource);
+
+        var secondAttachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K9XYZ", ReceptionSequence: 12));
+        var second = await secondAttachedTask;
+        Assert.Equal("K9XYZ", second.Callsign);
+        Assert.Equal(StationIdSources.Fsk, second.CallsignSource);
+        // The raw CW-ID text must survive FSK's own write untouched -- FSK carries no cwId of its own.
+        Assert.Equal("DE W1AW", second.CwId);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: the DB-side mirror of RxImagePaneViewModel.ApplyCwIdDecodedAsync's
+    /// own "only if OverrideCallsign is still empty" guard -- CW arriving AFTER an FSK-sourced
+    /// callsign has already attached must NOT overwrite it, even though CW's own raw text still
+    /// attaches.</summary>
+    [Fact]
+    public async Task FskThenCw_ForTheSameReception_CwDoesNotOverwriteTheFskCallsign()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        var entry = new ReceiveHistoryEntry("entry-cw4", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw4.png", null, ReceiveDecodeState.Completed) { ReceptionId = 13 };
+        historyStore.RaiseRecorded(entry);
+
+        var firstAttachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K9XYZ", ReceptionSequence: 13));
+        var first = await firstAttachedTask;
+        Assert.Equal("K9XYZ", first.Callsign);
+        Assert.Equal(StationIdSources.Fsk, first.CallsignSource);
+
+        var secondAttachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 13, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+        var second = await secondAttachedTask;
+        // The callsign column stays FSK's, not overwritten by CW -- only the raw CW-ID text and the
+        // (unchanged) source actually moved between these two writes.
+        Assert.Equal("K9XYZ", second.Callsign);
+        Assert.Equal(StationIdSources.Fsk, second.CallsignSource);
+        Assert.Equal("DE W1AW", second.CwId);
+    }
+
+    /// <summary>fsk_cwid.md B-P5, auditor plan-review finding: a GetOperatorCallsignAsync failure on
+    /// the CW path must not drop the whole update the way it does on the FSK path -- info.Text still
+    /// needs to reach the DB even when the self-filter's settings read itself fails.</summary>
+    [Fact]
+    public async Task CwIdWithCallsign_GetOperatorCallsignFails_StillAttachesTheRawText()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        sessionService.GetOperatorCallsignAsyncGate = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        sessionService.GetOperatorCallsignAsyncGate.SetException(new InvalidOperationException("settings unavailable"));
+
+        var entry = new ReceiveHistoryEntry("entry-cw5", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw5.png", null, ReceiveDecodeState.Completed) { ReceptionId = 14 };
+        historyStore.RaiseRecorded(entry);
+
+        var attachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 14, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+
+        var attachment = await attachedTask;
+        Assert.Equal("DE W1AW", attachment.CwId);
+        Assert.Null(attachment.Callsign);
+        Assert.Null(attachment.CallsignSource);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: same self-filter CwIdCallsignExtractor output goes through as FSK's
+    /// own -- a CW-decoded callsign matching the operator's own must not attach as a callsign, but
+    /// (unlike FSK's own OwnCallsign_IsSelfFiltered_NeverAttaches test) the raw CW-ID text still
+    /// must, since the self-filter only judges the extracted callsign, not the whole event.</summary>
+    [Fact]
+    public async Task CwIdWithOwnCallsign_SelfFiltered_StillAttachesTheRawText()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher(ownCallsign: "K2ABC");
+        var entry = new ReceiveHistoryEntry("entry-cw6", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw6.png", null, ReceiveDecodeState.Completed) { ReceptionId = 15 };
+        historyStore.RaiseRecorded(entry);
+
+        var attachedTask = StartWaitingForStationIdAttached(attacher);
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 15, Text: "DE K2ABC", Callsign: "K2ABC", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+
+        var attachment = await attachedTask;
+        Assert.Equal("DE K2ABC", attachment.CwId);
+        Assert.Null(attachment.Callsign);
+        Assert.Null(attachment.CallsignSource);
+    }
+
+    [Fact]
+    public async Task CwIdDecoded_WithReceptionSequenceZero_NeverAttaches()
+    {
+        var (attacher, sessionService, historyStore) = CreateAttacher();
+        var entry = new ReceiveHistoryEntry("entry-cw7", DateTimeOffset.UtcNow, "robot36", "/tmp/entry-cw7.png", null, ReceiveDecodeState.Completed) { ReceptionId = 0 };
+        historyStore.RaiseRecorded(entry);
+
+        var attached = false;
+        attacher.StationIdAttached += _ => attached = true;
+        sessionService.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 700, Wpm: 20, Backend: CwDecoderBackend.Classical));
+
+        await Task.Delay(100);
+        Assert.False(attached);
     }
 
     /// <summary>Minimal <see cref="IReceiveHistoryStore"/> fake -- only the members
@@ -294,13 +446,13 @@ public sealed class RxStationIdAttacherTests
         public event Action<ReceiveHistoryEntry>? Recorded;
         public event Action<ReceiveHistoryEntry>? Deleted;
 
-        public (string EntryId, string? Callsign, string? NrRst)? LastSetDecodedStationId { get; private set; }
+        public (string EntryId, string? Callsign, string? CallsignSource, string? NrRst, string? CwId)? LastSetDecodedStationId { get; private set; }
 
         /// <summary>A-P3b coalescing-writer test support: every call, in the order actually made --
         /// unlike <see cref="LastSetDecodedStationId"/> (only the most recent), this lets a test
         /// assert the exact WRITE COUNT and per-call content, both load-bearing for proving writes
         /// are serialized rather than racing.</summary>
-        public List<(string EntryId, string? Callsign, string? NrRst)> SetDecodedStationIdCalls { get; } = [];
+        public List<(string EntryId, string? Callsign, string? CallsignSource, string? NrRst, string? CwId)> SetDecodedStationIdCalls { get; } = [];
 
         /// <summary>When set, the FIRST call to <see cref="SetDecodedStationIdAsync"/> parks on this
         /// (after being recorded/counted) until the test releases it -- lets a test prove a SECOND,
@@ -323,11 +475,11 @@ public sealed class RxStationIdAttacherTests
         /// fakes.</summary>
         public void RaiseDeleted(ReceiveHistoryEntry entry) => Deleted?.Invoke(entry);
 
-        public async Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? nrRst, CancellationToken ct = default)
+        public async Task<bool> SetDecodedStationIdAsync(string entryId, string? callsign, string? callsignSource, string? nrRst, string? cwId, CancellationToken ct = default)
         {
             var callNumber = Interlocked.Increment(ref _callCount);
-            SetDecodedStationIdCalls.Add((entryId, callsign, nrRst));
-            LastSetDecodedStationId = (entryId, callsign, nrRst);
+            SetDecodedStationIdCalls.Add((entryId, callsign, callsignSource, nrRst, cwId));
+            LastSetDecodedStationId = (entryId, callsign, callsignSource, nrRst, cwId);
 
             if (callNumber == 1)
             {

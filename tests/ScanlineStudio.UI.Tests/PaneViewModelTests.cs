@@ -7286,7 +7286,7 @@ public sealed class PaneViewModelTests
     /// <summary>fsk_cwid.md A-P3b auditor-caught BLOCKER (same class as the AudioAttached one just
     /// above): IRxStationIdAttacher.StationIdAttached had ZERO subscribers anywhere in the app -- a
     /// just-received frame's decoded callsign/NR-RST never reached this pane's in-memory entry until
-    /// some unrelated later refresh re-queried the DB, silently defeating the "Callsign · FSK" row
+    /// some unrelated later refresh re-queried the DB, silently defeating the "Callsign" row
     /// and its Send-to-TX/Log-entry seeding for the one frame anyone actually uses them on. Pins that
     /// subscribing IRxStationIdAttacher.StationIdAttached actually patches the live, already-held
     /// entry in place.</summary>
@@ -7305,11 +7305,73 @@ public sealed class PaneViewModelTests
         Assert.Null(vm.Entries[0].Entry.DecodedCallsign);
         Assert.Null(vm.Entries[0].Entry.DecodedNrRst);
 
-        stationIdAttacher.RaiseStationIdAttached("1", "W1AW", "595001");
+        stationIdAttacher.RaiseStationIdAttached("1", "W1AW", nrRst: "595001");
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("W1AW", vm.Entries[0].Entry.DecodedCallsign);
         Assert.Equal("595001", vm.Entries[0].Entry.DecodedNrRst);
+    }
+
+    /// <summary>fsk_cwid.md B-P5: same shape as the test just above, for the 2 fields added at B-P5 --
+    /// pins that a CW-sourced attach patches BOTH DecodedCallsignSource and DecodedCwId onto the
+    /// live, already-held entry (not just the original DecodedCallsign/DecodedNrRst pair).</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_StationIdAttachedEvent_PatchesCallsignSourceAndCwId()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var stationIdAttacher = new FakeRxStationIdAttacher();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, stationIdAttacher: stationIdAttacher);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(vm.Entries[0].Entry.DecodedCallsignSource);
+        Assert.Null(vm.Entries[0].Entry.DecodedCwId);
+
+        stationIdAttacher.RaiseStationIdAttached("1", "W1AW", nrRst: null, callsignSource: StationIdSources.Cw, cwId: "DE W1AW");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("W1AW", vm.Entries[0].Entry.DecodedCallsign);
+        Assert.Equal(StationIdSources.Cw, vm.Entries[0].Entry.DecodedCallsignSource);
+        Assert.Equal("DE W1AW", vm.Entries[0].Entry.DecodedCwId);
+    }
+
+    /// <summary>fsk_cwid.md B-P5, code-review finding: pins SelectedEntryCallsignSourceDisplay's
+    /// actual GetString call for the 2 reachable DecodedCallsignSource states -- an earlier
+    /// AXAML-only approach (StringFormat + TargetNullValue) looked correct but could never fire
+    /// TargetNullValue (StringFormat runs first as a converter), which this VM-side computation
+    /// replaced. FakeLocalizationService returns the raw key, not a formatted string (this project's
+    /// own convention -- see that fake's own doc comment), so this asserts the key/args CALLER
+    /// passed, not a rendered "· CW"/"· FSK" string.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_SelectedEntryCallsignSourceDisplay_PassesCwAndFallsBackToFskForNull()
+    {
+        var localization = new FakeLocalizationService();
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, DecodedCallsign: "W1AW", DecodedCallsignSource: StationIdSources.Cw),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed, DecodedCallsign: "K9XYZ"),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore, localization: localization);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        _ = vm.SelectedEntryCallsignSourceDisplay;
+        Assert.Equal("Panes.RxHistory.CallsignSourceFormat", localization.LastKey);
+        Assert.Equal([StationIdSources.Cw], localization.LastArgs);
+
+        // DecodedCallsignSource is null here -- either a pre-B-P5 row, or (as constructed) never set
+        // by this test either way; both reachable cases fall back to FSK, never a dangling "· ".
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+        _ = vm.SelectedEntryCallsignSourceDisplay;
+        Assert.Equal([StationIdSources.Fsk], localization.LastArgs);
     }
 
     [AvaloniaFact]

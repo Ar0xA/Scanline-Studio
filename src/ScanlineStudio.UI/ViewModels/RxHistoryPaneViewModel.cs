@@ -138,7 +138,27 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     private CancellationTokenSource? _notePersistCts;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedEntryCallsignSourceDisplay))]
     private RxHistoryEntryViewModel? _selectedEntry;
+
+    /// <summary>fsk_cwid.md B-P5, code-review finding: the Gallery Callsign row's source annotation --
+    /// computed VM-side rather than an AXAML <c>StringFormat</c>/<c>TargetNullValue</c> combo, which
+    /// does not compose the way it looks: Avalonia applies <c>StringFormat</c> as an inner converter
+    /// BEFORE <c>TargetNullValue</c>'s own null-check runs, so a null <c>DecodedCallsignSource</c>
+    /// never reaches <c>TargetNullValue</c> and instead formats as a dangling "· " for every pre-B-P5
+    /// row. <c>DecodedCallsignSource</c> is null for both "not decoded yet" (the row is hidden either
+    /// way -- see the Gallery row's own <c>IsVisible</c>) and every pre-B-P5 row (FSK was the only
+    /// possible source before B-P5 existed) -- <see cref="StationIdSources.Fsk"/> is the correct
+    /// fallback in both reachable cases, not a guess (same reasoning as
+    /// <see cref="ReceiveHistoryEntry.DecodedCallsignSource"/>'s own doc comment). Re-evaluated
+    /// whenever <see cref="SelectedEntry"/> changes, including an in-place patch from
+    /// <see cref="IRxStationIdAttacher.StationIdAttached"/> (<see cref="UpdateEntryInPlace"/> always
+    /// assigns a NEW <see cref="RxHistoryEntryViewModel"/> instance to a still-selected entry, so the
+    /// generated property-changed raise on <see cref="SelectedEntry"/> is never skipped as a
+    /// no-op).</summary>
+    public string SelectedEntryCallsignSourceDisplay => _localization.GetString(
+        "Panes.RxHistory.CallsignSourceFormat",
+        SelectedEntry?.Entry.DecodedCallsignSource ?? StationIdSources.Fsk);
 
     [ObservableProperty]
     private Bitmap? _previewImage;
@@ -438,15 +458,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // A-P3b auditor code-review finding: same missing-subscriber bug as AudioAttached above, for
         // IRxStationIdAttacher.StationIdAttached -- without this, a just-received frame's decoded
         // callsign/NR-RST never reached this pane's in-memory entry until some unrelated later
-        // refresh re-queried the DB, silently defeating the new "Callsign · FSK" row and its
+        // refresh re-queried the DB, silently defeating the new "Callsign" row and its
         // Send-to-TX/Log-entry seeding for the one frame anyone actually uses them on. Legacy updates
         // HisCall/MyRST on screen the instant the ID decodes (Main.cpp:3632/3650) -- this closes the
-        // same gap for the Gallery. Wholesale overwrite (both fields, every call) matches
+        // same gap for the Gallery. Wholesale overwrite (all fields, every call) matches
         // StationIdAttached's own "always the FULL current values" contract. Marshaled through
         // Dispatcher for the same reason as AudioAttached just above -- this event can also fire on
         // an arbitrary background thread (see IRxStationIdAttacher.StationIdAttached's own doc
-        // comment).
-        stationIdAttacher.StationIdAttached += (entryId, callsign, nrRst) => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { DecodedCallsign = callsign, DecodedNrRst = nrRst }));
+        // comment). fsk_cwid.md B-P5: DecodedCallsignSource/DecodedCwId added alongside the original
+        // 2 fields -- same wholesale-overwrite contract.
+        stationIdAttacher.StationIdAttached += attachment => Dispatcher.UIThread.Post(() => UpdateEntryInPlace(attachment.EntryId, e => e with { DecodedCallsign = attachment.Callsign, DecodedCallsignSource = attachment.CallsignSource, DecodedNrRst = attachment.NrRst, DecodedCwId = attachment.CwId }));
 
         Entries.CollectionChanged += (_, _) =>
         {
