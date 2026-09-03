@@ -29,4 +29,18 @@ public sealed record WindowGeometrySettings
     public double? Width { get; init; }
 
     public double? Height { get; init; }
+
+    /// <summary>User-directed 2026-09-03 ("how hard is it to set the window to maximized if
+    /// that's what we closed with"): whether the window was maximized at the moment it closed.
+    /// Legacy has no equivalent (this whole section is new-to-the-port UX, not a port) -- this
+    /// field is this port's own addition. Independent of <see cref="Left"/>/<see cref="Top"/>/
+    /// <see cref="Width"/>/<see cref="Height"/>, which always mean "the Normal-state size/position
+    /// to fall back to" (the size the window RESTORES to when un-maximized), never the maximized
+    /// bounds themselves -- <c>MainWindow</c>'s own Closing handler leaves those four
+    /// fields untouched when closing from Maximized (matching legacy's own wsNormal-gated save for
+    /// THOSE fields specifically), so a user who has only ever closed maximized can still have all
+    /// four null while this field is <see langword="true"/> -- that combination is valid and
+    /// expected, not corrupt data; the restore path falls back to a computed default size before
+    /// applying Maximized on top of it.</summary>
+    public bool? WasMaximized { get; init; }
 }
