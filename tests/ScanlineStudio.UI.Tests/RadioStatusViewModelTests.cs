@@ -679,9 +679,9 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
-    public void RxLevelDisplay_ReflectsRawInputPeakLevel_AsPlainNumber()
+    public void RxLevelDisplay_ReflectsSignalPeakLevel_AsPlainNumber()
     {
-        var sstvSession = new FakeSstvSessionService { RawInputPeakLevel = 0.5 };
+        var sstvSession = new FakeSstvSessionService { SignalPeakLevel = 0.5 };
         var vm = CreateViewModel(sstvSession: sstvSession);
         Dispatcher.UIThread.RunJobs();
 
@@ -689,15 +689,24 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal(50.0, vm.RxLevelFillPercent);
     }
 
+    /// <summary>2026-09-03 redesign: the meter switched from RawInputPeakLevel (raw pre-filter) to
+    /// SignalPeakLevel (post-bandpass) as its source, and RxLevelInGoodRange's too-low floor dropped
+    /// from a fixed 10% to 1% -- a real user report showed a 3-4% raw reading decoding a clean
+    /// image, so the old 10% floor was flagging working signals as red. The too-hot side no longer
+    /// has its own independently-calibrated raw-percentage threshold at all -- it now reuses
+    /// IsLevelOverdriven (legacy's own real, already-ported clipping threshold) directly, so this
+    /// theory drives that fake bool instead of a second peak-level percentage.</summary>
     [AvaloniaTheory]
-    [InlineData(0.0, false)]  // too quiet -- red
-    [InlineData(0.05, false)] // too quiet -- red
-    [InlineData(0.5, true)]   // good -- green
-    [InlineData(0.95, false)] // too hot -- red
-    [InlineData(1.0, false)]  // too hot -- red
-    public void RxLevelInGoodRange_ReflectsWhetherLevelIsWithinTheGoodDecodingBand(double rawInputPeakLevel, bool expectedInGoodRange)
+    [InlineData(0.0, false, false)]  // near-silent -- red
+    [InlineData(0.005, false, false)] // near-silent -- red
+    [InlineData(0.01, false, true)]  // exactly at the floor -- >=, not >, so this is green
+    [InlineData(0.03, false, true)]  // quiet but real (the user-reported case) -- green
+    [InlineData(0.5, false, true)]   // good -- green
+    [InlineData(0.95, true, false)]  // legacy overdrive threshold tripped -- red
+    [InlineData(0.5, true, false)]   // overdrive can trip regardless of the peak-level reading -- red
+    public void RxLevelInGoodRange_ReflectsSignalPeakLevelFloorAndLegacyOverdriveThreshold(double signalPeakLevel, bool isLevelOverdriven, bool expectedInGoodRange)
     {
-        var sstvSession = new FakeSstvSessionService { RawInputPeakLevel = rawInputPeakLevel };
+        var sstvSession = new FakeSstvSessionService { SignalPeakLevel = signalPeakLevel, IsLevelOverdriven = isLevelOverdriven };
         var vm = CreateViewModel(sstvSession: sstvSession);
         Dispatcher.UIThread.RunJobs();
 

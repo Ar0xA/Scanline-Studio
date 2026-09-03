@@ -376,10 +376,13 @@
                     <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="9" RowSpacing="3">
                         <TextBlock Grid.Row="0" Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.RxLevelLabel}" VerticalAlignment="Center" />
                         <!-- WSJT-X-style level meter, not a slider: fill width tracks RxLevelFillPercent
-                             (0-100, from ISstvSessionService.RawInputPeakLevel), fill color switches
-                             green/red off RxLevelInGoodRange. DoubleToStarGridLengthConverter drives
-                             both the fill and its complementary remainder column off the SAME source
-                             value (same technique WaterfallViewModeToColumnWidthConverter uses). -->
+                             (0-100, from ISstvSessionService.SignalPeakLevel — the post-bandpass-filter
+                             tone strength, not the raw pre-filter input, since 2026-09-03), fill color
+                             switches green/red off RxLevelInGoodRange (red only for a near-silent input
+                             or legacy's own IsLevelOverdriven clipping threshold — see that property's
+                             own doc comment in RadioStatusViewModel.cs). DoubleToStarGridLengthConverter
+                             drives both the fill and its complementary remainder column off the SAME
+                             source value (same technique WaterfallViewModeToColumnWidthConverter uses). -->
                         <Grid Grid.Row="0" Grid.Column="1" Classes="IndustryMeter" VerticalAlignment="Center">
                             <Border Classes="IndustryMeterTrack" Height="8" />
                             <Grid>
