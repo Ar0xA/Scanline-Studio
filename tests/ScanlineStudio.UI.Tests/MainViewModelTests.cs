@@ -36,7 +36,7 @@ public sealed class MainViewModelTests
         Id: "test", DisplayName: "Test", VisCode: 0, ImageWidth: 1, ImageHeight: 1,
         ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
 
-    private static (MainViewModel ViewModel, FakeSstvSessionService SstvSession, FakeReceivedImageBuffer ReceivedImage, FakeReceiveHistoryStore ReceiveHistoryStore, FakeFilePickerService FilePicker)
+    private static (MainViewModel ViewModel, FakeSstvSessionService SstvSession, FakeReceivedImageBuffer ReceivedImage, FakeReceiveHistoryStore ReceiveHistoryStore, FakeFilePickerService FilePicker, FakeUrlLauncher UrlLauncher)
         CreateMainViewModel()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
@@ -104,6 +104,7 @@ public sealed class MainViewModelTests
 
         var waterfall = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
         var decoderTrace = new DecoderTracePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var urlLauncher = new FakeUrlLauncher();
 
         var viewModel = new MainViewModel(
             waterfall,
@@ -117,12 +118,12 @@ public sealed class MainViewModelTests
             new FakeLocalizationService(),
             new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
             settingsStore,
-            new FakeUrlLauncher(),
+            urlLauncher,
             new FakeServiceProvider(),
             NullLogger<MainViewModel>.Instance,
             NullLogger<RadioStatusViewModel>.Instance);
 
-        return (viewModel, sstvSession, (FakeReceivedImageBuffer)sstvSession.ReceivedImage, receiveHistoryStore, filePicker);
+        return (viewModel, sstvSession, (FakeReceivedImageBuffer)sstvSession.ReceivedImage, receiveHistoryStore, filePicker, urlLauncher);
     }
 
     [AvaloniaFact]
@@ -131,7 +132,7 @@ public sealed class MainViewModelTests
         // The empirical check this whole file's design depends on -- see the class doc comment.
         // No await, no Dispatcher pump: if the auto-open chain genuinely completed synchronously,
         // ActiveEditor is already populated the instant the constructor call returns.
-        var (viewModel, _, _, _, _) = CreateMainViewModel();
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel();
 
         Assert.NotNull(viewModel.ActiveEditor);
     }
@@ -139,7 +140,7 @@ public sealed class MainViewModelTests
     [AvaloniaFact]
     public void SaveOrApply_TransmitTabWithActiveEditor_RunsEditorApply_NotSaveFrame()
     {
-        var (viewModel, _, _, _, _) = CreateMainViewModel();
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel();
         var editor = viewModel.ActiveEditor!;
         var applyInvoked = false;
         editor.Applied += _ => applyInvoked = true;
@@ -166,7 +167,7 @@ public sealed class MainViewModelTests
         // regression the audit is about: Ctrl+S on the Receive tab with an editor still open (e.g.
         // left over from a prior Transmit-tab visit) must save the RX frame, not silently Apply
         // the editor instead.
-        var (viewModel, sstvSession, receivedImage, _, filePicker) = CreateMainViewModel();
+        var (viewModel, sstvSession, receivedImage, _, filePicker, _) = CreateMainViewModel();
         var editor = viewModel.ActiveEditor!;
         var applyInvoked = false;
         editor.Applied += _ => applyInvoked = true;
@@ -187,7 +188,7 @@ public sealed class MainViewModelTests
     {
         // The original bug's exact fallthrough: Ctrl+S with no editor open must still save the RX
         // frame.
-        var (viewModel, sstvSession, receivedImage, _, filePicker) = CreateMainViewModel();
+        var (viewModel, sstvSession, receivedImage, _, filePicker, _) = CreateMainViewModel();
         filePicker.SaveImagePathToReturn = ("/tmp/chosen.png", ImageExportFormat.Png);
         // Setting ActiveEditor directly desyncs from TxControls' own internal IsEditorOpen/
         // _currentEditor state -- fine for this pure dispatch-logic test (SaveOrApply's own
@@ -211,7 +212,7 @@ public sealed class MainViewModelTests
         // Only covers the SaveFrameCommand-false half of "either branch with CanExecute == false"
         // -- ApplyCommand has no CanExecute guard today (TxImageEditorPaneViewModel's own Apply is
         // a bare [RelayCommand]), so that half is not reachable, not omitted by oversight.
-        var (viewModel, _, receivedImage, _, filePicker) = CreateMainViewModel();
+        var (viewModel, _, receivedImage, _, filePicker, _) = CreateMainViewModel();
         filePicker.SaveImagePathToReturn = ("/tmp/chosen.png", ImageExportFormat.Png);
         viewModel.ActiveEditor = null;
         viewModel.SelectedTabIndex = MainViewModel.TransmitTabIndex;
@@ -229,7 +230,7 @@ public sealed class MainViewModelTests
     {
         // Scoped to the tab-index wiring specifically -- ReconcileDiskThenRefreshAsync's own
         // once-per-session guard is already covered directly by PaneViewModelTests.cs.
-        var (viewModel, _, _, receiveHistoryStore, _) = CreateMainViewModel();
+        var (viewModel, _, _, receiveHistoryStore, _, _) = CreateMainViewModel();
 
         // Code-review finding: selecting a NON-Gallery tab first and asserting the count stays 0
         // closes a surviving mutant -- without this, dropping OnSelectedTabIndexChanged's own
@@ -248,6 +249,16 @@ public sealed class MainViewModelTests
         viewModel.SelectedTabIndex = MainViewModel.LogbookTabIndex;
         viewModel.SelectedTabIndex = MainViewModel.GalleryTabIndex;
         Assert.Equal(1, receiveHistoryStore.ReconcileCallCount);
+    }
+
+    [AvaloniaFact]
+    public void OpenWebsiteCommand_OpensTheAppWebsite()
+    {
+        var (viewModel, _, _, _, _, urlLauncher) = CreateMainViewModel();
+
+        viewModel.OpenWebsiteCommand.Execute(null);
+
+        Assert.Equal(["https://scanlinestudio.app"], urlLauncher.OpenedUrls);
     }
 
     private sealed class FakeServiceProvider : IServiceProvider
