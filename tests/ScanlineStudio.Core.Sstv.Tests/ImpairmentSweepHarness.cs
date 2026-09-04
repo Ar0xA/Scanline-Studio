@@ -9,14 +9,11 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// <summary>
 /// A reusable, persistent "did this change help or hurt decode quality" instrument -- decoupled
 /// entirely from legacy parity. Measures this port's decode against the SOURCE IMAGE (the one ground
-/// truth nobody disputes) at a sweep of controlled, exactly-known noise levels, for every mode that
-/// has a real golden-vector source image already in this repo. Extends
-/// <see cref="NoiseRobustnessTests"/>'s own calibrated-noise-injection technique (which this file
-/// duplicates rather than shares, matching this test suite's own established small-duplication
-/// convention -- see that file's own `AddNoiseAtSnr`/`ComputeRms`/`NextGaussian`) from 2 modes and
-/// console-only output to 13 modes (8 with real golden-vector source images, 5 synthetic -- the other
-/// narrow MN/MC modes, added after mn110's own noise floor came back dramatically worse than every
-/// other tested mode) and a persisted, diffable report.
+/// truth nobody disputes) at a sweep of controlled, exactly-known noise levels, across ALL 43
+/// registered SSTV modes. Extends <see cref="NoiseRobustnessTests"/>'s own calibrated-noise-injection
+/// technique (which this file duplicates rather than shares, matching this test suite's own
+/// established small-duplication convention -- see that file's own
+/// `AddNoiseAtSnr`/`ComputeRms`/`NextGaussian`).
 ///
 /// Why this exists: the H3/HBPFN parity item (decoder_quality_improvement.md §5.1) shipped a full
 /// review pass and only got measured against legacy's own decode after the fact -- and that
@@ -25,20 +22,41 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// run it again after, diff the two reports. A curve that moves toward zero at more SNR levels is a
 /// real quality improvement; legacy's own behavior is not part of the comparison at all.
 ///
+/// Full 43-mode coverage (decoder_quality_improvement.md §13 addendum, and direct user instruction):
+/// the H3 item showed a whole mode FAMILY (MN/MC) can have a dramatically different noise-tolerance
+/// profile than modes already covered -- a future DSP change could just as easily help or hurt one
+/// family and not another, and there is no way to know without testing broadly. Real over-the-air
+/// audio only exists for 8 modes (the ones with existing golden-vector fixtures) -- rare modes are
+/// genuinely hard to capture on-air, so the other 35 use a synthetic gradient test image at each
+/// mode's own canvas size instead (same technique <see cref="NoiseRobustnessTests"/> already
+/// established), not a new methodology.
+///
+/// Two independent noise seeds per SNR point (§13 addendum: a single noise realization can misrepresent
+/// a mode's real behavior), reported as the mean delta -- if either seed fails to decode correctly, the
+/// whole point is recorded as a failure rather than averaging a real failure against a real success.
+///
+/// Noise-floor fix (§13 addendum, and confirmed directly in the pre-fix code): the sweep only updates
+/// the recorded floor while every higher-SNR point in the same run was ALSO usable -- a later,
+/// non-monotonic "pass" at a worse SNR can no longer silently overwrite an earlier real failure. The
+/// full curve (including points after the first failure) is still recorded for visibility; only the
+/// FLOOR calculation stops advancing.
+///
 /// Gated behind an explicit env var, not directory presence (unlike <see cref="OtaBaselineHarness"/>):
-/// this harness is fully synthetic (no external local files needed) and deliberately slow (8 modes x
-/// 10 SNR levels = up to 80 encode+decode passes), so it must not silently run on every ordinary test
-/// pass -- mirrors <c>RequiresTxFixtureRegenerationFactAttribute</c>'s explicit-opt-in convention.
+/// this harness is fully synthetic (no external local files needed) and deliberately slow (43 modes x
+/// 10 SNR levels x 2 seeds = up to 860 encode+decode passes), so it must not silently run on every
+/// ordinary test pass -- mirrors <c>RequiresTxFixtureRegenerationFactAttribute</c>'s explicit-opt-in
+/// convention.
 /// </summary>
 public sealed class ImpairmentSweepHarness
 {
     private const string FixtureDir = "Fixtures/GoldenVectors";
     private static readonly JsonSerializerOptions ReportJsonOptions = new() { WriteIndented = true };
 
-    // Same 8 modes as GoldenVectorTests.Fixtures -- real source images already exist in this repo at
-    // the exact canvas size each mode needs, more representative than a fresh gradient per mode, and
-    // keeps this harness's mode set intuitively cross-referenceable against the golden-vector suite.
-    private static readonly (string ModeId, string SourceBmp, int PictureHeight)[] Modes =
+    // Real golden-vector source images -- more representative than a fresh gradient, and keeps this
+    // harness's mode set intuitively cross-referenceable against GoldenVectorTests. PictureHeight is
+    // the same "real content" crop each fixture already uses there (legacy padding/row-doubling
+    // quirks some canvases have) -- see GoldenVectorTests.Fixtures for the same table.
+    private static readonly (string ModeId, string SourceBmp, int PictureHeight)[] RealFixtureModes =
     [
         ("robot-36", "robot36.bmp", 240),
         ("martin-m1", "martin-m1.bmp", 256),
@@ -50,20 +68,12 @@ public sealed class ImpairmentSweepHarness
         ("avt", "avt.bmp", 240),
     ];
 
-    // The other 5 narrow (MN/MC) modes -- mn110's noise floor came back dramatically worse than every
-    // other tested mode (20dB vs 0-3dB), and every mode in this family shares the same current code
-    // path (no H3/HBPFN, permanently on the wide H2 search filter even post-lock), so the natural
-    // question is whether this is an mn110-specific artifact or a whole-family characteristic. No real
-    // golden-vector source bmp exists for any of these 5 (only mn110 has a real capture), so these use
-    // a synthetic gradient image at each mode's own canvas size instead -- same technique
-    // NoiseRobustnessTests already uses, not a new methodology.
-    // All 5 share ImageWidth=320/ImageHeight=256 (SstvModeRegistry's CreateMnFamilyMode/
-    // CreateMcFamilyMode -- confirmed directly, not assumed), full canvas is real content, no crop.
-    private static readonly string[] SyntheticNarrowModeIds = ["mn73", "mn140", "mc110", "mc140", "mc180"];
-
-    // Same sweep as NoiseRobustnessTests -- descending SNR, deterministic seed.
+    // Same sweep as NoiseRobustnessTests -- descending SNR.
     private static readonly double[] SnrLevelsDb = [40.0, 30.0, 25.0, 20.0, 16.0, 12.0, 9.0, 6.0, 3.0, 0.0];
-    private const int NoiseSeed = 12345;
+
+    // Two seeds, not one (§13 addendum) -- averaged per point, not a bigger single sweep, to keep the
+    // reported number meaning "typical," not "this exact noise draw."
+    private static readonly int[] NoiseSeeds = [12345, 67890];
 
     [RequiresImpairmentSweepFact]
     public async Task RunImpairmentSweep_ProducesBaselineReport()
@@ -71,22 +81,34 @@ public sealed class ImpairmentSweepHarness
         var runDir = Path.Combine(FindRepoRoot(), "impairment-reports", DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture));
         Directory.CreateDirectory(runDir);
 
+        var realFixtureModeIds = RealFixtureModes.Select(m => m.ModeId).ToHashSet();
         var reports = new List<ImpairmentModeReport>();
-        foreach (var (modeId, sourceBmp, pictureHeight) in Modes)
+
+        foreach (var (modeId, sourceBmp, pictureHeight) in RealFixtureModes)
         {
-            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] starting {modeId}...");
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] starting {modeId} (real fixture)...");
             var source = BmpFile.Read(Path.Combine(FixtureDir, sourceBmp));
             reports.Add(await MeasureModeAsync(modeId, source, pictureHeight));
             Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] finished {modeId}.");
         }
 
-        foreach (var modeId in SyntheticNarrowModeIds)
+        // Every other registered mode -- synthetic gradient at the mode's own full canvas size, no
+        // crop needed since this harness generates the source image itself at exactly that size
+        // (unlike the real fixtures above, whose bmp files predate this harness and were sized to
+        // legacy's own "real content" height, not the full padded canvas).
+        foreach (var mode in SstvModeRegistry.All.Where(m => !realFixtureModeIds.Contains(m.Id)))
         {
-            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] starting {modeId}...");
-            var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
-            var source = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
-            reports.Add(await MeasureModeAsync(modeId, source, mode.ImageHeight));
-            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] finished {modeId}.");
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] starting {mode.Id} (synthetic)...");
+            // A mono-only mode (rm8/rm12's ColorEncoding.MonoAveragedPaired) structurally cannot
+            // reproduce a colored source -- decoding it correctly still collapses to R=G=B, so the
+            // RGB color gradient used for every other mode would show a large, mostly noise-independent
+            // delta that measures color loss, not decode/noise quality. A grayscale gradient keeps the
+            // same per-channel delta metric meaningful for these modes too.
+            var source = mode.ColorEncoding == ColorEncoding.MonoAveragedPaired
+                ? CreateGrayscaleGradientTestImage(mode.ImageWidth, mode.ImageHeight)
+                : CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+            reports.Add(await MeasureModeAsync(mode.Id, source, mode.ImageHeight));
+            Console.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}] finished {mode.Id}.");
         }
 
         var json = JsonSerializer.Serialize(reports, ReportJsonOptions);
@@ -188,32 +210,57 @@ public sealed class ImpairmentSweepHarness
 
         var points = new List<ImpairmentPoint>();
         double? noiseFloorDb = null;
+        // Once a point fails, no LATER (worse-SNR) point may resurrect the floor, even if that later
+        // point happens to decode correctly -- a real, previously-unfixed bug (§13 addendum): the
+        // floor must be the lowest SNR in an UNBROKEN run of usability from the top, not just "the
+        // last usable point seen while iterating." The full curve is still recorded either way.
+        var stillUnbrokenFromTop = true;
+
         foreach (var snrDb in SnrLevelsDb)
         {
-            var noisySamples = AddNoiseAtSnr(cleanSamples, snrDb, NoiseSeed);
+            double deltaSum = 0;
+            var allSeedsDecodedCorrectly = true;
+            foreach (var seed in NoiseSeeds)
+            {
+                var noisySamples = AddNoiseAtSnr(cleanSamples, snrDb, seed);
 
-            var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
-            SstvModeDefinition? detectedMode = null;
-            IImageSource? decodedImage = null;
-            decoder.ModeDetected += m => detectedMode = m;
-            decoder.LineDecoded += update => decodedImage = update.Image;
-            decoder.PushSamples(noisySamples);
+                var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+                SstvModeDefinition? detectedMode = null;
+                IImageSource? decodedImage = null;
+                decoder.ModeDetected += m => detectedMode = m;
+                decoder.LineDecoded += update => decodedImage = update.Image;
+                decoder.PushSamples(noisySamples);
 
-            var decodedCorrectly = detectedMode is not null && detectedMode.Id == mode.Id && decodedImage is not null;
-            if (!decodedCorrectly)
+                var decodedCorrectly = detectedMode is not null && detectedMode.Id == mode.Id && decodedImage is not null;
+                if (!decodedCorrectly)
+                {
+                    allSeedsDecodedCorrectly = false;
+                    break;
+                }
+
+                var actual = CropToTop(decodedImage!, pictureHeight);
+                deltaSum += MeasureAveragePerChannelDelta(source, actual, pictureHeight);
+            }
+
+            if (!allSeedsDecodedCorrectly)
             {
                 points.Add(new ImpairmentPoint(snrDb, double.NaN, false));
+                stillUnbrokenFromTop = false;
                 continue;
             }
 
-            var actual = CropToTop(decodedImage!, pictureHeight);
-            var delta = MeasureAveragePerChannelDelta(source, actual, pictureHeight);
+            var delta = deltaSum / NoiseSeeds.Length;
             points.Add(new ImpairmentPoint(snrDb, delta, true));
 
             // Same "usable decode" bar as NoiseRobustnessTests, kept in sync deliberately -- this
             // harness's "noise floor" should mean the same thing that file's already-established one
             // does, not a second, differently-calibrated number with the same name.
-            if (delta <= 30.0)
+            var usable = delta <= 30.0;
+            if (!usable)
+            {
+                stillUnbrokenFromTop = false;
+            }
+            else if (stillUnbrokenFromTop)
             {
                 noiseFloorDb = snrDb;
             }
@@ -316,6 +363,24 @@ public sealed class ImpairmentSweepHarness
         return new ArrayImageSource(width, height, pixels);
     }
 
+    // Same shape/gradient as CreateGradientTestImage, but R=G=B -- fair for a mono-only encoding
+    // (rm8/rm12), where a colored source would always show a large, noise-independent delta from
+    // color loss alone.
+    private static ArrayImageSource CreateGrayscaleGradientTestImage(int width, int height)
+    {
+        var pixels = new Rgb24[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var gray = (byte)(((x * 255 / Math.Max(1, width - 1)) + (y * 255 / Math.Max(1, height - 1))) / 2);
+                pixels[(y * width) + x] = new Rgb24(R: gray, G: gray, B: gray);
+            }
+        }
+
+        return new ArrayImageSource(width, height, pixels);
+    }
+
     private static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -347,7 +412,7 @@ public sealed class RequiresImpairmentSweepFactAttribute : FactAttribute
     {
         if (Environment.GetEnvironmentVariable("SCANLINE_RUN_IMPAIRMENT_SWEEP") != "1")
         {
-            Skip = "Set SCANLINE_RUN_IMPAIRMENT_SWEEP=1 to run the (slow, ~80 encode+decode passes) impairment sweep.";
+            Skip = "Set SCANLINE_RUN_IMPAIRMENT_SWEEP=1 to run the (slow, up to 860 encode+decode passes) impairment sweep.";
         }
     }
 }
