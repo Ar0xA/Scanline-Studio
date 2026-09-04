@@ -1198,20 +1198,22 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Mirrors _agcSamples' own established forward-fill pattern: computed at most once per index
     // regardless of call order.
     //
-    // Band-1 item 4b: useLocked is `_mode is not null && _mode.NarrowModeCode is null &&
-    // thisIndex >= _bandpassLockedFromSample`, evaluated once, at THIS SAME index's own first-
+    // Band-1 item 4b / H3 item (decoder_quality_improvement.md §5.1): useLocked is `_mode is not null
+    // && thisIndex >= _bandpassLockedFromSample`, evaluated once, at THIS SAME index's own first-
     // computation time (never re-evaluated -- the cache never recomputes an index once set; code-review
     // note, round 4: "thisIndex" here is _bandpassFilteredProcessedUpTo, the index actually being
     // computed by this loop iteration -- deliberately NOT this method's own `index` parameter, which is
     // only the caller's requested upper bound and may already have been satisfied by earlier iterations
     // computing lower indices first). `_mode is not null` excludes both "never locked yet" (field still
     // int.MaxValue) and the between-images gap (EndOfImage resets both _mode and
-    // _bandpassLockedFromSample) -- narrow mode's H3/HBPFN stays out of scope (see class doc comment),
-    // so `_mode.NarrowModeCode is null` keeps narrow modes on H2 always. `thisIndex >=
+    // _bandpassLockedFromSample). useLocked does not exclude narrow modes -- legacy's own gate
+    // (`m_Sync || m_SyncMode>=3`, sstv.cpp:1827) never consults narrow-ness for the locked/search
+    // decision either, only for WHICH locked table applies (mirrored below via useNarrow, same shape as
+    // DemodulatedFrequencyAt's own already-established `isNarrow` local). `thisIndex >=
     // _bandpassLockedFromSample`, NOT live state alone, is what makes this chunk-invariant AND correct
     // for the handful of samples strictly before the lock anchor that item 4a's fix means get computed
     // AFTER Commit() already fired (auditor code-level review of item 4a, round 3) -- those must stay H2
-    // like legacy, not flip to H1 just because _mode happens to be set by the time they're computed.
+    // like legacy, not flip to H1/H3 just because _mode happens to be set by the time they're computed.
     //
     // RX BPF subsystem Phase 2: `_searchBandpassFilter?.ProcessSample(...) ?? FilteredRawSampleAt(...)`
     // is RxBpfPreset.Off's bypass -- matching legacy's `if(m_bpf){...}` gate (sstv.cpp:1826-1833) where
@@ -1232,14 +1234,15 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         for (; _bandpassFilteredProcessedUpTo <= index; _bandpassFilteredProcessedUpTo++)
         {
             var thisIndex = _bandpassFilteredProcessedUpTo;
-            var useLocked = _mode is not null && _mode.NarrowModeCode is null && thisIndex >= _bandpassLockedFromSample;
+            var useLocked = _mode is not null && thisIndex >= _bandpassLockedFromSample;
+            var useNarrow = useLocked && _mode!.NarrowModeCode is not null;
             if (useLocked)
             {
                 FirstLockedBandpassIndex ??= thisIndex; // diagnostic-only, see its own doc comment
             }
 
             var rawFiltered = FilteredRawSampleAt(thisIndex);
-            _bandpassFilteredSamples.Add(_searchBandpassFilter?.ProcessSample(rawFiltered, useLocked) ?? rawFiltered);
+            _bandpassFilteredSamples.Add(_searchBandpassFilter?.ProcessSample(rawFiltered, useLocked, useNarrow) ?? rawFiltered);
         }
 
         return _bandpassFilteredSamples[Rel(index)];
@@ -4841,6 +4844,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         RaiseSubscribers(LockAnchorCommitted, _consumedSamples);
         _bandpassLockedFromSample = _consumedSamples; // Band-1 item 4b -- see field's own doc comment
         _mode = effectiveMode;
+        // H3/HBPFN item (decoder_quality_improvement.md §5.1): mirrors legacy's Start()-time
+        // `if( m_fNarrow ) CalcNarrowBPF(HBPFN, m_bpftap, m_bpf, SSTVSET.m_Mode)` (sstv.cpp:1745-1746)
+        // exactly -- built from EFFECTIVEMODE, not `matched`, since the `_lockedMode` substitution
+        // above can turn a non-narrow `matched` into a narrow `effectiveMode` (or vice versa); using
+        // the wrong one would build the wrong mode's band. `_mode` has exactly one non-null-assigning
+        // statement in this whole file (this one) -- SearchBandpassFilter.ProcessSample's own
+        // useNarrow=true path can never run before this call has already built H3 for that same mode.
+        if (effectiveMode.NarrowModeCode is not null)
+        {
+            _searchBandpassFilter?.BuildNarrowLockedFilter(effectiveMode);
+        }
+
         _lineDecoder = ScanlineCodecFactory.CreateDecoder(effectiveMode.ColorEncoding);
         _pixels = new Rgb24[effectiveMode.ImageWidth * effectiveMode.ImageHeight];
         _nextLine = 0;

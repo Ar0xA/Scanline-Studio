@@ -58,3 +58,11 @@ Thumbs.db
 # Python bytecode cache (any Python dev tooling)
 __pycache__/
 *.pyc
+
+# Manually-captured over-the-air recordings for RX decode testing/improvement -- not
+# build inputs, not licensed for the repo, kept local only.
+/ota-recordings/
+
+# Regeneratable synthetic decode-quality sweep reports (ImpairmentSweepHarness) -- not build inputs,
+# not source data, kept local only.
+/impairment-reports/

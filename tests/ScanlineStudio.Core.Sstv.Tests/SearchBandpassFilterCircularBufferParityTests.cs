@@ -123,7 +123,11 @@ public class SearchBandpassFilterCircularBufferParityTests
             var input = (random.NextDouble() - 0.5) * 20000.0;
             var useLocked = i % 3 != 0; // exercises both H1 and H2 coefficient tables, not just one
 
-            var candidateOutput = candidate.ProcessSample(input, useLocked);
+            // useNarrow: false throughout -- this test's own scope is the delay-line/circular-buffer
+            // addressing shared by H1/H2/H3 alike (class doc comment), not H3's own coefficient
+            // correctness, which SearchBandpassFilterTests.cs's dedicated BuildNarrowLockedFilter tests
+            // cover instead.
+            var candidateOutput = candidate.ProcessSample(input, useLocked, useNarrow: false);
             var referenceOutput = reference.ProcessSample(input, useLocked);
 
             Assert.Equal(referenceOutput, candidateOutput); // bit-exact -- no precision/tolerance argument

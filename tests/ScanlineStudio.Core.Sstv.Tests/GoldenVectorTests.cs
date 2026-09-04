@@ -471,10 +471,12 @@ public class GoldenVectorTests
     // catch a decoder-wiring regression (e.g. Off's buffer-trim-cursor fix silently reverting), not to
     // validate the DSP math itself.
     //
-    // mn110 (narrow-width) specifically exercises a real, in-scope effect even though narrow modes
-    // never reach H1/H3 (SearchBandpassFilter's own doc comment, H3/HBPFN out of scope): H2's tap
-    // count still scales with the selected preset (24/64/96 x rate), so Narrow/VeryNarrow are NOT
-    // no-ops for narrow-signal decodes -- worth confirming here, not assuming away.
+    // mn110 (narrow-width) specifically exercises a real, in-scope effect: since the H3/HBPFN item
+    // (decoder_quality_improvement.md §5.1), Narrow/VeryNarrow now select a mode-tuned H3 once locked,
+    // not just a wider/narrower H2 -- so these three arms are the only place H3's own preset-dependent
+    // (fcl offset, att) actually differs from Wide's. Off remains a free negative control: no filter
+    // runs under Off regardless of H3, so its delta must stay bit-identical to what it measured before
+    // this item landed -- worth confirming here, not assuming away.
     public static readonly TheoryData<string, string, string, RxBpfPreset> RxBpfDecoderFixtures = new()
     {
         { "martin-m1", "martin-m1.mmv", "martin-m1.bmp", RxBpfPreset.Off },
