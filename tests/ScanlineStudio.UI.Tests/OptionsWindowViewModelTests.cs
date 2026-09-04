@@ -4582,6 +4582,110 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("/images/real-current-value", historyStore.ImagesDirectory);
     }
 
+    // Phase 1 dark mode: AppTheme is deliberately NOT part of OptionsSnapshot (see AppTheme's own
+    // doc comment) -- same "load/save directly via _settingsStore" shape as RememberWindowPosition.
+
+    [AvaloniaFact]
+    public void Constructor_LoadsPersistedAppTheme()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AppearanceSettings.SectionKey,
+                new AppearanceSettings { Theme = AppTheme.Dark },
+                AppearanceSettingsJsonContext.Default.AppearanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AppTheme.Dark, vm.AppTheme);
+        Assert.True(vm.IsAppThemeDarkSelected);
+        Assert.False(vm.IsAppThemeLightSelected);
+        Assert.False(vm.IsAppThemeSystemSelected);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_NoPersistedAppTheme_FallsBackToLight()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AppTheme.Light, vm.AppTheme);
+        Assert.True(vm.IsAppThemeLightSelected);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(AppTheme.Light)]
+    [InlineData(AppTheme.Dark)]
+    [InlineData(AppTheme.System)]
+    public async Task SaveAsync_PersistsAppTheme(AppTheme theme)
+    {
+        // Code-review nit: this Save's own live-apply block also mutates the process-global
+        // Avalonia.Application.Current.RequestedThemeVariant -- restore it, same reasoning as
+        // AppearanceThemeResolutionTests's own doc comment (ScanlineStudio.UI.FontTests).
+        var originalVariant = Avalonia.Application.Current!.RequestedThemeVariant;
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+            Dispatcher.UIThread.RunJobs();
+
+            vm.AppTheme = theme;
+            await vm.SaveCommand.ExecuteAsync(null);
+
+            var saved = settingsStore.Settings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+            Assert.Equal(theme, saved?.Theme);
+        }
+        finally
+        {
+            Avalonia.Application.Current!.RequestedThemeVariant = originalVariant;
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task SaveAsync_AppliesTheThemeLive_OnApplicationCurrent()
+    {
+        // Proves live-switching, not just a startup-time read -- the plan's own central requirement
+        // (user decision: live theme switching, not restart-required).
+        var originalVariant = Avalonia.Application.Current!.RequestedThemeVariant;
+        try
+        {
+            var settingsStore = new FakeSettingsStore();
+            var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+            Dispatcher.UIThread.RunJobs();
+
+            Avalonia.Application.Current!.RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Light;
+            vm.AppTheme = AppTheme.Dark;
+            await vm.SaveCommand.ExecuteAsync(null);
+
+            Assert.Equal(Avalonia.Styling.ThemeVariant.Dark, Avalonia.Application.Current.RequestedThemeVariant);
+        }
+        finally
+        {
+            Avalonia.Application.Current!.RequestedThemeVariant = originalVariant;
+        }
+    }
+
+    [AvaloniaFact]
+    public void ResetAppearanceToDefault_ResetsToLight()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AppearanceSettings.SectionKey,
+                new AppearanceSettings { Theme = AppTheme.Dark },
+                AppearanceSettingsJsonContext.Default.AppearanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(AppTheme.Dark, vm.AppTheme);
+
+        vm.ResetAppearanceToDefaultCommand.Execute(null);
+
+        Assert.Equal(AppTheme.Light, vm.AppTheme);
+    }
+
     /// <summary>Forces the real <see cref="OptionsSettingsService.SaveAsync"/>/
     /// <see cref="ISettingsStore.SaveAsync"/> path to fail, so <see cref="OptionsWindowViewModel.SaveCoreAsync"/>
     /// (private, exercised only through <see cref="OptionsWindowViewModel.SaveCommand"/>/the Restart

@@ -13,7 +13,7 @@
     <!-- Minimal OK-only acknowledgement — same shape as HamlibLibraryReloadFailedDialogView.axaml,
          since Text binds to the ViewModel's own Message property instead of a static locale string. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap"
                        Text="{Binding Message}" />

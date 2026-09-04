@@ -17,7 +17,7 @@
          scope, not a legacy MMSSTV screen — radio-connection UX is a rewrite-only concern, CAT
          control itself is explicitly not ported (CLAUDE.md §2). -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <!-- Code-review finding: Message is an arbitrary-length exception-derived string

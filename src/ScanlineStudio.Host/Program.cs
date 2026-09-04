@@ -4,6 +4,7 @@ using System.Text.Json;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Styling;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
@@ -29,6 +30,7 @@ using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI;
 using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.Host;
@@ -251,6 +253,37 @@ internal static partial class Program
         catch (Exception ex)
         {
             Log.CultureRestoreFailed(logger, ex);
+        }
+
+        // Phase 1 dark mode: same "must run before SetupWithLifetime" reasoning as the
+        // culture-restore block immediately above -- SetupWithLifetime constructs the actual App
+        // instance and starts rendering MainWindow, so applying the theme any later would flash
+        // the wrong theme first. App.RequestedThemeVariant can't be set directly here because App
+        // doesn't exist yet at this point in startup -- writes to the plain static
+        // App.StartupThemeVariant instead (see that field's own doc comment), which
+        // OnFrameworkInitializationCompleted reads once the instance exists, just before
+        // MainWindow is constructed. A missing/unset/corrupt setting leaves StartupThemeVariant
+        // null, which keeps App.axaml's own hardcoded Light default -- same defensive shape as
+        // every other startup step here.
+        try
+        {
+            var appearanceSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
+                .GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+            if (appearanceSettings?.Theme is { } theme)
+            {
+                App.StartupThemeVariant = theme switch
+                {
+                    AppTheme.Light => ThemeVariant.Light,
+                    AppTheme.Dark => ThemeVariant.Dark,
+                    AppTheme.System => ThemeVariant.Default,
+                    _ => null,
+                };
+                Log.AppThemeRestored(logger, theme.ToString());
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.AppThemeRestoreFailed(logger, ex);
         }
 
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
@@ -1235,6 +1268,12 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI culture; continuing in English")]
         public static partial void CultureRestoreFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Restored persisted UI theme '{Theme}'")]
+        public static partial void AppThemeRestored(ILogger logger, string theme);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI theme; continuing with the default")]
+        public static partial void AppThemeRestoreFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to read settings section '{SectionKey}'; using defaults")]
         public static partial void SettingsSectionReadFailed(ILogger logger, string sectionKey, Exception ex);

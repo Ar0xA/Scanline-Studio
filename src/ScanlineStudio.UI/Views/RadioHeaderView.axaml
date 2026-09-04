@@ -26,7 +26,7 @@
          Grid.RowDefinitions row-1 value; there is no single shared resource for it (both are
          literals) since Grid.RowDefinitions can't consume a StaticResource in this Avalonia
          version. -->
-    <Grid Height="102" Background="{StaticResource IndustryBg}">
+    <Grid Height="102" Background="{DynamicResource IndustryBg}">
         <!-- Bottom margin 8, not 7 (design-fidelity round-2 fix): reserves the 1px the new
              band-2 hairline divider (below) needs so the cards stay 87px content-height instead of
              growing when the divider was added as a bare overlay on top of the existing budget. -->
@@ -74,7 +74,7 @@
                                    FontFamily="{StaticResource IndustryMonoFontFamily}"
                                    FontSize="40" FontWeight="Medium"
                                    LetterSpacing="-1.2" LineHeight="41"
-                                   Foreground="{StaticResource IndustryText}"
+                                   Foreground="{DynamicResource IndustryText}"
                                    Margin="0,2,0,0"
                                    Text="{Binding FrequencyDisplay}"
                                    Cursor="Hand"
@@ -127,7 +127,7 @@
                              existing real behavior over exact mockup wording, same precedent as
                              the frequency readout's own deferred ".000" tail-split above. -->
                         <TextBlock Grid.Row="0" Grid.Column="1" FontFamily="{StaticResource IndustryMonoFontFamily}"
-                                   FontSize="15" Foreground="{StaticResource IndustryText}"
+                                   FontSize="15" Foreground="{DynamicResource IndustryText}"
                                    HorizontalAlignment="Right" VerticalAlignment="Center"
                                    Text="{Binding UtcClockDisplay}" />
 
@@ -301,11 +301,11 @@
                                         <StackPanel Spacing="0">
                                             <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}"
                                                        FontSize="12.5" FontWeight="Medium"
-                                                       Foreground="{StaticResource IndustryText}"
+                                                       Foreground="{DynamicResource IndustryText}"
                                                        Text="{Binding FrequencyWithMode}" />
                                             <TextBlock FontFamily="{StaticResource IndustryBodyFontFamily}"
                                                        FontSize="9.5" FontWeight="Normal" LetterSpacing="0.57"
-                                                       Foreground="{StaticResource IndustryLabel}"
+                                                       Foreground="{DynamicResource IndustryLabel}"
                                                        Text="{Binding Label}" />
                                             <!-- .06em * 9.5px = 0.57 device px. -->
                                         </StackPanel>
@@ -340,7 +340,7 @@
                                     Command="{Binding OpenFavouritesEditorCommand}" />
                         </StackPanel>
                         <TextBlock FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
-                                   Foreground="{StaticResource IndustryLabel}" Margin="0,0,5,0"
+                                   Foreground="{DynamicResource IndustryLabel}" Margin="0,0,5,0"
                                    Text="{loc:Translate RadioStatus.FavouritesHint}" VerticalAlignment="Center" />
                     </DockPanel>
                 </StackPanel>
@@ -442,21 +442,21 @@
              been missing entirely — added as a bottom-aligned divider rather than a Border
              BorderThickness on the outer Grid so it doesn't add its own extra pixel on top of the
              already-corrected 102px band height. -->
-        <Border Height="1" VerticalAlignment="Bottom" Background="{StaticResource IndustryChromeBorder}" />
+        <Border Height="1" VerticalAlignment="Bottom" Background="{DynamicResource IndustryChromeBorder}" />
 
         <!-- Overlay row, design doc §0's blocker-2 fix: real, live, visibility-gated messages that
              must coexist with the fixed 102px band without growing it. Bottom-aligned, only
              consumes layout space when actually IsVisible. -->
         <StackPanel VerticalAlignment="Bottom" Margin="9,0,9,2" Spacing="1">
             <TextBlock Text="{Binding ErrorMessage}"
-                       Foreground="{StaticResource IndustryDanger}"
+                       Foreground="{DynamicResource IndustryDanger}"
                        FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
             <!-- Ultracode audit finding #34's automatic-restart mechanism: deliberately a separate
                  binding from ErrorMessage above, not sharing it (see MaintenanceMessage's own doc
                  comment on the ViewModel for why reusing ErrorMessage would be unsafe here). -->
             <TextBlock Text="{Binding MaintenanceMessage}"
-                       Foreground="{StaticResource IndustryDanger}"
+                       Foreground="{DynamicResource IndustryDanger}"
                        FontSize="10" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        IsVisible="{Binding MaintenanceMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </StackPanel>

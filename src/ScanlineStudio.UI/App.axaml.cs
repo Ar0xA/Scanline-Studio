@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
+using Avalonia.Styling;
 using Microsoft.Extensions.DependencyInjection;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
@@ -23,6 +24,15 @@ public partial class App : Avalonia.Application
     // other view-model must use real constructor injection; this is not a general service locator.
     public static IServiceProvider? Services { get; set; }
 
+    // Set by ScanlineStudio.Host's Program.cs, beside its existing culture-restore block, before
+    // BuildAvaloniaApp().Start*() runs -- same hand-off shape as Services above, but a plain static
+    // field rather than an instance property, because Program.cs's read happens BEFORE
+    // SetupWithLifetime constructs this App instance at all; there is no instance to set
+    // RequestedThemeVariant on yet at that point. Null (unset, or the persisted setting failed to
+    // load) means "keep App.axaml's own hardcoded Light default" -- OnFrameworkInitializationCompleted
+    // below only overrides it when this is non-null.
+    public static ThemeVariant? StartupThemeVariant { get; set; }
+
     // Single source of truth for the app's default font family URI: BuildAvaloniaApp below is the
     // actual load-bearing site (a typo here silently falls back to a system font, no exception, no
     // failing build -- ScanlineStudio.UI.FontTests.IndustryFontResolutionTests references THIS
@@ -37,6 +47,11 @@ public partial class App : Avalonia.Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        if (StartupThemeVariant is { } themeVariant)
+        {
+            RequestedThemeVariant = themeVariant;
+        }
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.MainWindow = new MainWindow

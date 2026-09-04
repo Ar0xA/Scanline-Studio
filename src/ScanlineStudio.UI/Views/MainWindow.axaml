@@ -17,7 +17,7 @@
         Width="1920" Height="1032"
         MinWidth="1280" MinHeight="640"
         WindowStartupLocation="CenterScreen"
-        Background="{StaticResource IndustryBg}">
+        Background="{DynamicResource IndustryBg}">
 
     <!-- ui_transition_plan.md step 2 (T1-3): a WINDOW-level gesture, not the File menu's own
          InputGesture, deliberately — SaveOrApplyCommand's routing depends on SelectedTabIndex,
@@ -593,7 +593,7 @@
                             </HeaderedContentControl.Header>
                             <Grid RowDefinitions="Auto,*">
                                 <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
-                                           Foreground="{StaticResource IndustryLabel}" HorizontalAlignment="Right"
+                                           Foreground="{DynamicResource IndustryLabel}" HorizontalAlignment="Right"
                                            Margin="0,0,0,4" Text="{Binding Waterfall.RangeCaptionDisplay}" />
                                 <Grid Grid.Row="1" ColumnSpacing="{StaticResource IndustrySpacingWide}">
                                     <Grid.ColumnDefinitions>
@@ -720,16 +720,16 @@
                                      above (Panes.RxFrameMeta card) — SaveFrameErrorMessage's own doc
                                      comment on RxImagePaneViewModel. -->
                                 <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.SaveFrameErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding RxImage.SaveFrameErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Piece C1/C2: same IsNotNull-gated error-text pattern. -->
                                 <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.RecordErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding RxImage.RecordErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <TextBlock DockPanel.Dock="Bottom" Margin="0,4,0,0" Text="{Binding RxImage.RedecodeErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding RxImage.RedecodeErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <!-- Previous-frames strip relocated here from its own right-column
@@ -807,7 +807,7 @@
                                                                     </Border>
                                                                     <Panel>
                                                                         <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
-                                                                        <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}"
+                                                                        <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}"
                                                                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                                             <TextBlock Text="{Binding Entry.ModeId}" />
                                                                         </Border>
@@ -994,11 +994,11 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.GridDistance}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GridDisplay}" /></Grid></Border>
                                 </StackPanel>
                                 <TextBlock Text="{Binding QrzLookupErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding QrzLookupErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <TextBlock Text="{Binding FrameMetadataErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding FrameMetadataErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                             </StackPanel>
@@ -1237,7 +1237,7 @@
                                                     DoubleTapped="OnGalleryThumbnailDoubleTapped">
                                                 <Panel>
                                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
-                                                    <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
+                                                    <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
                                                         <TextBlock Text="{Binding Entry.ModeId}" />
                                                     </Border>
                                                 </Panel>
@@ -1280,7 +1280,7 @@
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                                 <!-- §7.4 fixed exception: received-frame pane is content, not
                                      UI — ControlBorder (#A0A0A0), not ChromeBorder. -->
-                                <Border BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" Height="190">
+                                <Border BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" Height="190">
                                     <Image Source="{Binding PreviewImage}" Stretch="Uniform" />
                                 </Border>
                                 <StackPanel Classes="Industry IndustryRows">
@@ -1423,7 +1423,7 @@
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary IndustryBtnDanger" Padding="7,0" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.DeleteFrame}" Command="{Binding DeleteSelectedEntryCommand}" />
                                 </WrapPanel>
                                 <TextBlock Text="{Binding ErrorMessage}"
-                                           Foreground="{StaticResource IndustryDanger}"
+                                           Foreground="{DynamicResource IndustryDanger}"
                                            TextWrapping="Wrap"
                                            IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <TextBlock Text="{Binding ExportStatusMessage}"
@@ -1790,8 +1790,8 @@
              request, LAYOUT-SPEC's own static render just doesn't happen to show one) — Phase 7
              ported it 1:1 into Ellipse.IndustryLed/TextBlock.IndustryReadoutSmall (Atoms.axaml),
              same colors, just relocated off the deleted old-design files. -->
-        <Border Grid.Row="3" Height="25" Classes="Industry" Background="{StaticResource IndustryBg}"
-                BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="3" Height="25" Classes="Industry" Background="{DynamicResource IndustryBg}"
+                BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="0,1,0,0">
             <!-- Margin 8,3,8,3 (was 8,4,8,4, 2026-08-14): the new LED+lozenge status chips below
                  are the spec's real 19px (§6), 2px taller than the existing 17px IndustryMini
                  chips — loosened here to fit them without clipping; the 17px chips just sit

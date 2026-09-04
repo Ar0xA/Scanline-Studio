@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
+using Avalonia.Styling;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -92,18 +93,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// generator, so no separate frequency input is exposed here.</summary>
     private const double TuneFrequencyHz = 1750;
 
-    /// <summary>Index of the TX tab (source order: General=0, Audio=1, Radio=2, Tx=3, ...) in this
-    /// dialog's own `TabControl` -- named so the header-row's callsign chip (which jumps straight
-    /// here, since Callsign/OperatorName/OperatorGrid live on this tab) can request it without a
-    /// magic number, same "named constant + a source-order test" pattern as
-    /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel.LogbookTabIndex"/>.</summary>
-    public const int TxTabIndex = 3;
+    /// <summary>Index of the TX tab (source order: General=0, Appearance=1, Audio=2, Radio=3, Tx=4,
+    /// ...) in this dialog's own `TabControl` -- named so the header-row's callsign chip (which
+    /// jumps straight here, since Callsign/OperatorName/OperatorGrid live on this tab) can request
+    /// it without a magic number, same "named constant + a source-order test" pattern as
+    /// <see cref="ScanlineStudio.UI.ViewModels.MainViewModel.LogbookTabIndex"/>. Shifted by 1 when
+    /// the Phase 1 dark mode Appearance tab was inserted right after General.</summary>
+    public const int TxTabIndex = 4;
 
     /// <summary>Index of the Radio (CAT) tab -- named so the radio-connection give-up popup's own
     /// "Config" button (which jumps straight here, since rig/CAT connection settings live on this
     /// tab) can request it without a magic number, same pattern as <see cref="TxTabIndex"/>
     /// above.</summary>
-    public const int RadioTabIndex = 2;
+    public const int RadioTabIndex = 3;
 
     /// <summary>Backs this dialog's own `TabControl`'s `SelectedIndex` (`Mode=TwoWay` -- both
     /// directions matter: the user's own manual tab clicks flow back here, and
@@ -134,6 +136,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// pre-existing (previously disabled) `NumericUpDown` placeholder value.</summary>
     [ObservableProperty]
     private int _jpegQuality = 85;
+
+    /// <summary>Backs the new Appearance tab's theme radio group (Phase 1 dark mode) -- same
+    /// "deliberately NOT part of <see cref="OptionsSnapshot"/>" reasoning as
+    /// <see cref="RememberWindowPosition"/> above: gates a UI-owned settings section
+    /// (<see cref="AppearanceSettings"/>), loaded/saved directly via <see cref="_settingsStore"/>.
+    /// Backed by 3 <c>IsAppThemeXSelected</c> computed properties below, same pattern as
+    /// <see cref="SenseLevel"/>. Default <see cref="AppTheme.Light"/> matches <c>App.axaml</c>'s
+    /// own hardcoded fallback.</summary>
+    [ObservableProperty]
+    private AppTheme _appTheme = AppTheme.Light;
 
     [ObservableProperty]
     private AudioDeviceInfo? _selectedCaptureDevice;
@@ -2234,6 +2246,44 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Backs the Appearance tab's 3-way theme radio group -- same computed-bool-property
+    /// idiom as <see cref="IsSenseLevelVeryLowSelected"/>/etc above.</summary>
+    public bool IsAppThemeLightSelected
+    {
+        get => AppTheme == AppTheme.Light;
+        set
+        {
+            if (value)
+            {
+                AppTheme = AppTheme.Light;
+            }
+        }
+    }
+
+    public bool IsAppThemeDarkSelected
+    {
+        get => AppTheme == AppTheme.Dark;
+        set
+        {
+            if (value)
+            {
+                AppTheme = AppTheme.Dark;
+            }
+        }
+    }
+
+    public bool IsAppThemeSystemSelected
+    {
+        get => AppTheme == AppTheme.System;
+        set
+        {
+            if (value)
+            {
+                AppTheme = AppTheme.System;
+            }
+        }
+    }
+
     /// <summary>Backs the Decode tab's 3-way Demod type radio group -- same computed-bool-property
     /// idiom as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. Item order (0=PLL/1=Zero
     /// crossing/2=Hilbert) matches <c>Option.dfm</c>'s real <c>RGDemType</c> item order and
@@ -2614,6 +2664,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var appSettings = await _settingsStore.LoadAsync();
             RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? true;
             JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
+            AppTheme = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings)?.Theme ?? AppTheme.Light;
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -3480,15 +3531,41 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // concurrent writer of e.g. AudioDeviceSettings.TxVolumePercent in the first place).
             var rememberWindowPosition = RememberWindowPosition;
             var jpegQuality = JpegQuality;
+            var appTheme = AppTheme;
             await _settingsStore.UpdateAsync(appSettings =>
             {
                 var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
                 var updatedAppSettings = appSettings.WithSection(
                     WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = rememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
                 var currentImageExport = appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings) ?? new ImageExportSettings();
-                return updatedAppSettings.WithSection(
+                updatedAppSettings = updatedAppSettings.WithSection(
                     ImageExportSettings.SectionKey, currentImageExport with { JpegQuality = jpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
+                var currentAppearance = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings) ?? new AppearanceSettings();
+                return updatedAppSettings.WithSection(
+                    AppearanceSettings.SectionKey, currentAppearance with { Theme = appTheme }, AppearanceSettingsJsonContext.Default.AppearanceSettings);
             });
+
+            // Phase 1 dark mode: live-apply, own try/catch (same "one field's failure must not
+            // abort the other unrelated writes in this Save" reasoning as the sample-rate/capture-
+            // device live-apply blocks above) -- safe directly on the UI thread, no
+            // ConfigureAwait(false) anywhere in this method (see this method's own doc comment).
+            try
+            {
+                // Fully qualified: bare "Application" is ambiguous with the ScanlineStudio.Application
+                // project's own namespace (this file already references it), same reasoning as
+                // App.axaml.cs's own doc comment on its class declaration.
+                Avalonia.Application.Current!.RequestedThemeVariant = appTheme switch
+                {
+                    AppTheme.Light => ThemeVariant.Light,
+                    AppTheme.Dark => ThemeVariant.Dark,
+                    AppTheme.System => ThemeVariant.Default,
+                    _ => ThemeVariant.Light,
+                };
+            }
+            catch (Exception ex)
+            {
+                Log.AppThemeApplyFailed(_logger, appTheme, ex);
+            }
 
             if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
             {
@@ -3539,6 +3616,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         SelectedCulture = AvailableCultures.FirstOrDefault(c => c.Name == OptionsSettingsService.Defaults.CultureCode) ?? _localization.CurrentCulture;
         RememberWindowPosition = true;
         JpegQuality = 85;
+    }
+
+    /// <summary>Same "deliberately NOT part of OptionsSnapshot/OptionsSettingsService.Defaults"
+    /// reasoning as <see cref="ResetGeneralToDefault"/>'s own RememberWindowPosition/JpegQuality --
+    /// resets to <c>App.axaml</c>'s own hardcoded fallback, not a value read from
+    /// OptionsSettingsService.Defaults (AppTheme has no entry there at all).</summary>
+    [RelayCommand]
+    private void ResetAppearanceToDefault()
+    {
+        Log.ResetSectionInvoked(_logger, "Appearance");
+        AppTheme = AppTheme.Light;
     }
 
     [RelayCommand]
@@ -3792,6 +3880,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsSenseLevelVeryHighSelected));
     }
 
+    partial void OnAppThemeChanged(AppTheme value)
+    {
+        OnPropertyChanged(nameof(IsAppThemeLightSelected));
+        OnPropertyChanged(nameof(IsAppThemeDarkSelected));
+        OnPropertyChanged(nameof(IsAppThemeSystemSelected));
+    }
+
     partial void OnDemodTypeChanged(DemodType value)
     {
         OnPropertyChanged(nameof(IsDemodTypePllSelected));
@@ -3844,6 +3939,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetCultureAsync({Culture}) failed after a successful settings save")]
         public static partial void SetCultureFailed(ILogger logger, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Applying theme {AppTheme} live failed after a successful settings save")]
+        public static partial void AppThemeApplyFailed(ILogger logger, AppTheme appTheme, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz deferred -- a recording is in progress")]
         public static partial void SampleRateChangeDeferred(ILogger logger, int sampleRate);

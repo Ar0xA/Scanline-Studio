@@ -15,7 +15,7 @@
          dialog, same "extrapolate from the established atom set" situation that file's own top
          comment describes for itself. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <ScrollViewer Grid.Row="0">
@@ -83,7 +83,7 @@
                     </HeaderedContentControl>
 
                     <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{StaticResource IndustryDanger}"
+                               Foreground="{DynamicResource IndustryDanger}"
                                TextWrapping="Wrap"
                                IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 </StackPanel>

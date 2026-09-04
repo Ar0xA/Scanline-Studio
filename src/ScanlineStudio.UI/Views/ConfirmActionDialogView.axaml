@@ -20,7 +20,7 @@
          measures, which also scales correctly for a longer configuration name that wraps to 2 lines
          instead of leaving a fixed number wrong in either direction. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding Message}" />
 
