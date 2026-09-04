@@ -21,18 +21,19 @@ Only English ships as a locale today — the runtime language-switching infrastr
 (see [spec/10-localization.md](spec/10-localization.md)) but no second translation has been written
 yet.
 
-See [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md) for the current priority-tiered list of what's
-left before a 1.0 tag (this supersedes `spec/14-roadmap.md`'s older phase-based status, which is now
-historical).
+1.0 and the confirmed 1.1 target (the TX Template Editor redesign, [spec/15-template-designer.md](spec/15-template-designer.md))
+are both complete — see [spec/19-path-to-1.1.md](spec/19-path-to-1.1.md)'s own status banner. No
+milestone doc past 1.1 is open yet; the commit history tracks what has shipped since.
 
 ## Start here
 
 - [spec/00-project-overview.md](spec/00-project-overview.md) — vision, goals, non-goals, license.
 - [spec/01-architecture.md](spec/01-architecture.md) through [spec/15-template-designer.md](spec/15-template-designer.md) — one document per subsystem (radio/CAT layer, rigctld, audio, SSTV DSP, imaging, logbook, UI, localization, plugins, settings, testing).
-- [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md) — current priority-tiered list of what's left
-  before 1.0. [spec/14-roadmap.md](spec/14-roadmap.md) is the older phased delivery plan tying every
-  spec document together; its Tier 2+ backlog (UI placeholders, CAT protocol work, localization,
-  etc.) is still valid, only its Tier 0/1 "done" status is superseded.
+- [spec/16-gui-wiring-survey.md](spec/16-gui-wiring-survey.md), [spec/17-rx-telemetry-feasibility.md](spec/17-rx-telemetry-feasibility.md) — supporting surveys referenced by the milestone docs below.
+- [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md), [spec/19-path-to-1.1.md](spec/19-path-to-1.1.md) —
+  the two milestone docs, both complete (see each one's own status banner).
+  [spec/14-roadmap.md](spec/14-roadmap.md) is the older phased delivery plan tying every spec
+  document together; superseded by 18/19 for status, still useful as a spec-document index.
 - [docs/removed-features.md](docs/removed-features.md) — legacy capabilities dropped or only partially
   replaced in the rewrite, and why.
 - [LICENSES.md](LICENSES.md) — why this project is LGPL-3.0-or-later, and what legacy assets were
