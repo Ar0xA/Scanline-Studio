@@ -183,10 +183,10 @@ public class SearchBandpassFilterTests
         var filter = new SearchBandpassFilter(11025, RxBpfPreset.Wide, syncRestartEnabled: false);
 
         var outputs = new double[tap + 1];
-        outputs[0] = filter.ProcessSample(1.0, useLocked: true);
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true, useNarrow: false);
         for (var n = 1; n <= tap; n++)
         {
-            outputs[n] = filter.ProcessSample(0.0, useLocked: true);
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true, useNarrow: false);
         }
 
         for (var n = 0; n <= tap; n++)
@@ -208,10 +208,10 @@ public class SearchBandpassFilterTests
         var filter = new SearchBandpassFilter(11025, RxBpfPreset.Narrow, syncRestartEnabled: true);
 
         var outputs = new double[tap + 1];
-        outputs[0] = filter.ProcessSample(1.0, useLocked: true);
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true, useNarrow: false);
         for (var n = 1; n <= tap; n++)
         {
-            outputs[n] = filter.ProcessSample(0.0, useLocked: true);
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true, useNarrow: false);
         }
 
         for (var n = 0; n <= tap; n++)
@@ -322,10 +322,10 @@ public class SearchBandpassFilterTests
         var filter = new SearchBandpassFilter(11025, RxBpfPreset.Wide, syncRestartEnabled: true);
 
         var outputs = new double[tap + 1];
-        outputs[0] = filter.ProcessSample(1.0, useLocked); // impulse
+        outputs[0] = filter.ProcessSample(1.0, useLocked, useNarrow: false); // impulse
         for (var n = 1; n <= tap; n++)
         {
-            outputs[n] = filter.ProcessSample(0.0, useLocked); // then zeros
+            outputs[n] = filter.ProcessSample(0.0, useLocked, useNarrow: false); // then zeros
         }
 
         for (var n = 0; n <= tap; n++)
@@ -344,7 +344,7 @@ public class SearchBandpassFilterTests
         // one real input sample, with every "prior" delay-line slot still at its zero-init value.
         var filter = new SearchBandpassFilter(11025, RxBpfPreset.Wide, syncRestartEnabled: true);
 
-        var output = filter.ProcessSample(5.0, useLocked);
+        var output = filter.ProcessSample(5.0, useLocked, useNarrow: false);
         var h = SearchBandpassFilter.MakeFilter(24, 11025.0, useLocked ? 1100.0 : 400.0, useLocked ? 2600.0 : 2500.0, att: 20.0);
         Assert.True(Math.Abs(output - h[0] * 5.0) < 1e-9, $"useLocked={useLocked}: expected {h[0] * 5.0}, got {output}");
     }
@@ -366,11 +366,11 @@ public class SearchBandpassFilterTests
 
         foreach (var input in rawInputs)
         {
-            filter.ProcessSample(input, useLocked: false); // H2, building up shared delay-line history
+            filter.ProcessSample(input, useLocked: false, useNarrow: false); // H2, building up shared delay-line history
         }
 
         var switchInput = 2.0;
-        var actual = filter.ProcessSample(switchInput, useLocked: true); // switch to H1 for this one sample
+        var actual = filter.ProcessSample(switchInput, useLocked: true, useNarrow: false); // switch to H1 for this one sample
 
         // Hand-reconstruct the shared delay line's contents as of this call: newest-first, switchInput
         // then rawInputs reversed, zero-padded to tap+1 -- matches CFIR2::Do's own addressing exactly.
@@ -420,7 +420,7 @@ public class SearchBandpassFilterTests
         for (var i = 0; i < sampleCount; i++)
         {
             var input = amplitude * Math.Sin(2 * Math.PI * toneHz * i / sampleRate);
-            var output = Math.Abs(filter.ProcessSample(input, useLocked: false));
+            var output = Math.Abs(filter.ProcessSample(input, useLocked: false, useNarrow: false));
             if (i >= settleSamples && output > peak)
             {
                 peak = output;
@@ -455,7 +455,7 @@ public class SearchBandpassFilterTests
         for (var i = 0; i < sampleCount; i++)
         {
             var input = amplitude * Math.Sin(2 * Math.PI * toneHz * i / sampleRate);
-            var output = Math.Abs(filter.ProcessSample(input, useLocked: true));
+            var output = Math.Abs(filter.ProcessSample(input, useLocked: true, useNarrow: false));
             if (i >= settleSamples && output > peak)
             {
                 peak = output;
@@ -497,7 +497,7 @@ public class SearchBandpassFilterTests
         for (var i = 0; i < sampleCount; i++)
         {
             var input = amplitude * Math.Sin(2 * Math.PI * toneHz * i / sampleRate);
-            var output = Math.Abs(filter.ProcessSample(input, useLocked: true));
+            var output = Math.Abs(filter.ProcessSample(input, useLocked: true, useNarrow: false));
             if (i >= settleSamples && output > peak)
             {
                 peak = output;
@@ -524,10 +524,10 @@ public class SearchBandpassFilterTests
         var filter = new SearchBandpassFilter(11025, preset, syncRestartEnabled: true);
 
         var outputs = new double[expectedTap + 2];
-        outputs[0] = filter.ProcessSample(1.0, useLocked: true);
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true, useNarrow: false);
         for (var n = 1; n < outputs.Length; n++)
         {
-            outputs[n] = filter.ProcessSample(0.0, useLocked: true);
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true, useNarrow: false);
         }
 
         Assert.NotEqual(0.0, outputs[expectedTap]);
@@ -549,10 +549,10 @@ public class SearchBandpassFilterTests
         var filter = new SearchBandpassFilter(44100, preset, syncRestartEnabled: true);
 
         var outputs = new double[expectedTap + 2];
-        outputs[0] = filter.ProcessSample(1.0, useLocked: true);
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true, useNarrow: false);
         for (var n = 1; n < outputs.Length; n++)
         {
-            outputs[n] = filter.ProcessSample(0.0, useLocked: true);
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true, useNarrow: false);
         }
 
         Assert.NotEqual(0.0, outputs[expectedTap]);
@@ -566,5 +566,99 @@ public class SearchBandpassFilterTests
         // this class must never be constructed for it. Previously unpinned by any test.
         Assert.Throws<ArgumentOutOfRangeException>(
             () => new SearchBandpassFilter(11025, RxBpfPreset.Off, syncRestartEnabled: true));
+    }
+
+    // H3/HBPFN item (decoder_quality_improvement.md §5.1): all 6 registry narrow modes x all 3
+    // presets = 18 cells. Plan-review round 1's own risk finding: only mn110 (band 1600-2500) has any
+    // real fixture anywhere in this suite, so a transposed (1700,2400)/(1650,2500) row would ship
+    // completely unexercised without a dedicated test enumerating every cell -- this table IS that
+    // test. Values are legacy's own CalcNarrowBPF table (sstv.cpp:1556-1591), transcribed directly from
+    // source, not derived from this port's own implementation.
+    public static readonly TheoryData<string, RxBpfPreset, double, double, double> NarrowLockedFilterCells = new()
+    {
+        // mode id, preset, expected fcl, expected fch, expected att
+        { "mn73", RxBpfPreset.Wide, 1400.0, 2500.0, 20.0 },
+        { "mn73", RxBpfPreset.Narrow, 1500.0, 2500.0, 40.0 },
+        { "mn73", RxBpfPreset.VeryNarrow, 1600.0, 2500.0, 50.0 },
+        { "mn110", RxBpfPreset.Wide, 1400.0, 2500.0, 20.0 },
+        { "mn110", RxBpfPreset.Narrow, 1500.0, 2500.0, 40.0 },
+        { "mn110", RxBpfPreset.VeryNarrow, 1600.0, 2500.0, 50.0 },
+        { "mc110", RxBpfPreset.Wide, 1400.0, 2500.0, 20.0 },
+        { "mc110", RxBpfPreset.Narrow, 1500.0, 2500.0, 40.0 },
+        { "mc110", RxBpfPreset.VeryNarrow, 1600.0, 2500.0, 50.0 },
+        { "mn140", RxBpfPreset.Wide, 1500.0, 2400.0, 20.0 },
+        { "mn140", RxBpfPreset.Narrow, 1600.0, 2400.0, 40.0 },
+        { "mn140", RxBpfPreset.VeryNarrow, 1700.0, 2400.0, 50.0 },
+        { "mc180", RxBpfPreset.Wide, 1500.0, 2400.0, 20.0 },
+        { "mc180", RxBpfPreset.Narrow, 1600.0, 2400.0, 40.0 },
+        { "mc180", RxBpfPreset.VeryNarrow, 1700.0, 2400.0, 50.0 },
+        { "mc140", RxBpfPreset.Wide, 1450.0, 2500.0, 20.0 },
+        { "mc140", RxBpfPreset.Narrow, 1550.0, 2500.0, 40.0 },
+        { "mc140", RxBpfPreset.VeryNarrow, 1650.0, 2500.0, 50.0 },
+    };
+
+    [Theory]
+    [MemberData(nameof(NarrowLockedFilterCells))]
+    public void BuildNarrowLockedFilter_AllModesAndPresets_MatchLegacyTable(
+        string modeId, RxBpfPreset preset, double expectedFcl, double expectedFch, double expectedAtt)
+    {
+        var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+        var filter = new SearchBandpassFilter(11025, preset, syncRestartEnabled: true);
+        var tap = preset switch // matches the constructor's own multiplier table exactly (sstv.cpp:1529/1535/1541), at 11025Hz where the /11025.0 scaling is a no-op
+        {
+            RxBpfPreset.Wide => 24,
+            RxBpfPreset.Narrow => 64,
+            RxBpfPreset.VeryNarrow => 96,
+            _ => throw new ArgumentOutOfRangeException(nameof(preset), preset, null),
+        };
+
+        filter.BuildNarrowLockedFilter(mode);
+
+        var expected = SearchBandpassFilter.MakeFilter(tap, 11025, expectedFcl, expectedFch, expectedAtt);
+        var actual = filter.H3ForTests;
+        Assert.NotNull(actual);
+        Assert.Equal(expected.Length, actual!.Length);
+        for (var i = 0; i < expected.Length; i++)
+        {
+            Assert.True(Math.Abs(expected[i] - actual[i]) < 1e-12,
+                $"{modeId}/{preset} index {i}: expected {expected[i]}, got {actual[i]}");
+        }
+    }
+
+    [Fact]
+    public void ProcessSample_UseNarrowTrue_H3CoefficientsActuallyReachBuiltFilter()
+    {
+        // Mirrors Constructor_NarrowPreset_H1CoefficientsActuallyReachBuiltFilter's own causal-impulse
+        // technique: BuildNarrowLockedFilter_AllModesAndPresets_MatchLegacyTable above proves the
+        // TABLE is right, this proves it actually reaches ProcessSample's output when useNarrow=true,
+        // not just that BuildNarrowLockedFilter stored something.
+        var mode = SstvModeRegistry.All.Single(m => m.Id == "mn110");
+        const int tap = 24; // Wide
+        var filter = new SearchBandpassFilter(11025, RxBpfPreset.Wide, syncRestartEnabled: true);
+        filter.BuildNarrowLockedFilter(mode);
+        var expected = SearchBandpassFilter.MakeFilter(tap, 11025, 1400.0, 2500.0, 20.0); // mn110/Wide
+
+        var outputs = new double[tap + 1];
+        outputs[0] = filter.ProcessSample(1.0, useLocked: true, useNarrow: true);
+        for (var n = 1; n <= tap; n++)
+        {
+            outputs[n] = filter.ProcessSample(0.0, useLocked: true, useNarrow: true);
+        }
+
+        for (var n = 0; n <= tap; n++)
+        {
+            Assert.True(Math.Abs(outputs[n] - expected[n]) < 1e-12, $"n={n}: expected {expected[n]}, got {outputs[n]}");
+        }
+    }
+
+    [Fact]
+    public void ProcessSample_UseNarrowTrue_BeforeBuildNarrowLockedFilter_ThrowsInvalidOperation()
+    {
+        // The cross-file invariant that makes this unreachable in production (AnalogFmSstvDecoder.Commit
+        // always builds H3 before any sample can reach useNarrow=true) lives outside this class -- this
+        // pins the guard itself, independent of whether the invariant actually holds in the caller.
+        var filter = new SearchBandpassFilter(11025, RxBpfPreset.Wide, syncRestartEnabled: true);
+
+        Assert.Throws<InvalidOperationException>(() => filter.ProcessSample(1.0, useLocked: true, useNarrow: true));
     }
 }
