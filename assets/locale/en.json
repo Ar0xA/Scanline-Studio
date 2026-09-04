@@ -627,6 +627,7 @@
   "MainWindow.OptionsMenuItem": "Options",
   "MainWindow.CallsignChip.Help": "Set your callsign and grid locator",
   "MainWindow.Menu.Help.About": "About Scanline Studio...",
+  "MainWindow.Menu.Help.OpenWebsite": "Open website",
   "MainWindow.Menu.Help.OpenOnGitHub": "Open on GitHub",
   "MainWindow.Menu.Help.OpenApplicationLog": "Open application log",
   "About.Title": "About Scanline Studio",

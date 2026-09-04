@@ -170,6 +170,7 @@
             <MenuItem Header="{loc:Translate MainWindow.Menu.Help}">
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.UserGuide}" Command="{Binding OpenUserGuideCommand}" />
                 <Separator />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenWebsite}" Command="{Binding OpenWebsiteCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenOnGitHub}" Command="{Binding OpenOnGitHubCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenApplicationLog}" Command="{Binding OpenApplicationLogCommand}" />
                 <!-- About stays the last item, per direct user request (2026-08-26). -->

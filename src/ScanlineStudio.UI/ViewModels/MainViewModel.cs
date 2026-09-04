@@ -54,6 +54,10 @@ public partial class MainViewModel : ViewModelBase
     /// menu's "Open on GitHub" target.</summary>
     private const string RepositoryUrl = "https://github.com/Ar0xA/Scanline-Studio";
 
+    /// <summary>The app's own domain, same URL as <see cref="AboutWindowViewModel.WebsiteDisplay"/>
+    /// -- the Help menu's "Open website" target.</summary>
+    private const string WebsiteUrl = "https://scanlinestudio.app";
+
     /// <summary>The Host project copies the dependency-free HTML guide to this stable location
     /// beside the executable for both build and publish output. Keeping this relative to
     /// <see cref="AppContext.BaseDirectory"/> makes the same command work for framework-dependent,
@@ -324,6 +328,13 @@ public partial class MainViewModel : ViewModelBase
     }
 
     [RelayCommand]
+    private void OpenWebsite()
+    {
+        Log.OpenWebsiteInvoked(_logger);
+        _urlLauncher.Open(WebsiteUrl);
+    }
+
+    [RelayCommand]
     private void OpenApplicationLog()
     {
         Log.OpenApplicationLogInvoked(_logger);
@@ -440,6 +451,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenOnGitHub command invoked")]
         public static partial void OpenOnGitHubInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "OpenWebsite command invoked")]
+        public static partial void OpenWebsiteInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenApplicationLog command invoked")]
         public static partial void OpenApplicationLogInvoked(ILogger logger);
