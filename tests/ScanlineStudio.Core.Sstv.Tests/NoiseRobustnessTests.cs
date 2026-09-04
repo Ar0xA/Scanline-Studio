@@ -80,11 +80,19 @@ public class NoiseRobustnessTests
             cleanSamples.Add(sample);
         }
 
-        // Descending sweep -- stop at the first (highest) SNR that fails the usable-decode bar, since
-        // decode quality degrades monotonically as noise increases (informally; not formally proven,
-        // but true for every SNR tested during this harness's own development).
+        // Descending sweep. Decode quality degrades monotonically as noise increases, informally --
+        // true for every SNR tested during this harness's own development, but not formally proven,
+        // so the floor calculation below does not simply assume it and trust whichever pass happened
+        // last (decoder_quality_improvement.md §13 addendum: a previously-real bug here -- a later,
+        // non-monotonic "pass" at a WORSE SNR could silently overwrite an earlier real failure,
+        // masking it, since this loop never actually stopped on failure despite this comment's own
+        // prior claim that it does). `stillUnbrokenFromTop` fixes that: the floor is the lowest SNR in
+        // an UNBROKEN run of usability starting from the highest SNR, not just "the last usable point
+        // seen." The sweep itself still runs every level (not an early `break`) so the full curve
+        // stays visible in the console output even past the first failure.
         double[] snrLevelsDb = [40.0, 30.0, 25.0, 20.0, 16.0, 12.0, 9.0, 6.0, 3.0, 0.0];
         double? noiseFloorDb = null;
+        var stillUnbrokenFromTop = true;
 
         foreach (var snrDb in snrLevelsDb)
         {
@@ -100,6 +108,7 @@ public class NoiseRobustnessTests
             if (detectedMode is null || detectedMode.Id != mode.Id || decodedImage is null)
             {
                 _output.WriteLine($"[{mode.Id}] SNR={snrDb,5:F1}dB: mode not detected (or wrong mode) -- decode failed outright");
+                stillUnbrokenFromTop = false;
                 continue;
             }
 
@@ -107,7 +116,11 @@ public class NoiseRobustnessTests
             var usable = delta <= UsableDecodeThreshold;
             _output.WriteLine($"[{mode.Id}] SNR={snrDb,5:F1}dB: delta={delta,7:F2} usable={usable}");
 
-            if (usable)
+            if (!usable)
+            {
+                stillUnbrokenFromTop = false;
+            }
+            else if (stillUnbrokenFromTop)
             {
                 noiseFloorDb = snrDb;
             }
