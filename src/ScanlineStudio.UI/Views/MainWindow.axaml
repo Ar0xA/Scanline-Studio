@@ -201,7 +201,7 @@
                doc §1) is 12px with .08em letter-spacing = .08*12 = 0.96 device px, not the
                standard chip size, so set directly on the TextBlock rather than relying on the
                atom's own default Style. -->
-            <TextBlock Text="{Binding CallsignDisplay}" FontWeight="Medium" FontSize="12" LetterSpacing="0.96" />
+            <TextBlock Text="{Binding CallsignDisplay}" FontWeight="Medium" FontSize="{DynamicResource IndustryCallsignChipFontSize}" LetterSpacing="{DynamicResource IndustryCallsignChipLetterSpacing}" />
         </Button>
         </Grid>
 
@@ -242,6 +242,16 @@
                          isn't possible without inventing a fake editable property; same
                          preserve-real-behavior discipline as Phase 2's RX-level meter staying
                          display-only. -->
+                    <!-- Real-window verification finding (Phase 2 font-size presets, not yet
+                         addressed): at Large scale, the Input-chain card's AGC gain/Buffer/Clipping/
+                         Signal-quality rows only became reachable by scrolling this column (they fit
+                         without scrolling at Normal) — the scroll itself works (this ScrollViewer
+                         already exists), but Fluent's default overlay scrollbar gives no persistent
+                         visual affordance that more content exists below the fold, so a user could
+                         miss those rows entirely. Deliberately NOT changed here — scrollbar
+                         visibility is an app-wide styling decision (this dashboard has 3-4 sibling
+                         ScrollViewers in the same layout), out of this phase's own scope to change
+                         unilaterally. Flagged for a follow-up UX pass, not blocking this phase. -->
                     <ScrollViewer Grid.Column="0">
                         <!-- Margin top=6 (not the outer Grid's own padding — this is INSIDE the
                              ScrollViewer): a ScrollViewer necessarily clips its content to its own
@@ -285,6 +295,20 @@
                                        deliberate divergences from legacy this port makes) — QuickModeSlots is
                                        data-driven (RxImagePaneViewModel.QuickModeSlots), replacing what used to be
                                        16 static Buttons with hardcoded CommandParameter/loc-key captions. -->
+                                    <!-- Real-window verification finding (Phase 2 font-size presets):
+                                         "SC2-180" (QuickModeShortNames.cs's own documented widest
+                                         short-name, already at the edge of its cell at Normal size)
+                                         clipped to "SC2-18" at Large even after reducing
+                                         IndustryMiniFontSize's own Large delta from +2 to +1 — this
+                                         UniformGrid divides its own available width evenly across 4
+                                         fixed columns regardless of content, so there was never any
+                                         font-scale lever that could grow the cell itself. Fixed with
+                                         a LOCAL Padding override on just this grid's own Button
+                                         (2,1,2,1, tighter than IndustryMiniPadding's shared 5,1,5,1)
+                                         — a local value always wins over the Style Setter, at both
+                                         Normal and Large, freeing 6px of width per cell without
+                                         touching the shared token every other IndustryMini button in
+                                         the app also uses. -->
                                     <ItemsControl ItemsSource="{Binding QuickModeSlots}">
                                         <ItemsControl.ItemsPanel>
                                             <ItemsPanelTemplate>
@@ -293,7 +317,7 @@
                                         </ItemsControl.ItemsPanel>
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate x:DataType="vm:QuickModeSlotViewModel">
-                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1"
+                                                <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Padding="2,1,2,1"
                                                         Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}"
                                                         ToolTip.Tip="{loc:Translate Panes.RxImage.QuickMode.ReassignHint}">
                                                     <!-- ui_transition_plan.md step 10 (T2-5): "Hold this mode" added as a
@@ -592,7 +616,7 @@
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.Waterfall.CardHeader}" />
                             </HeaderedContentControl.Header>
                             <Grid RowDefinitions="Auto,*">
-                                <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10"
+                                <TextBlock Grid.Row="0" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="{DynamicResource IndustryRangeCaptionFontSize}"
                                            Foreground="{DynamicResource IndustryLabel}" HorizontalAlignment="Right"
                                            Margin="0,0,0,4" Text="{Binding Waterfall.RangeCaptionDisplay}" />
                                 <Grid Grid.Row="1" ColumnSpacing="{StaticResource IndustrySpacingWide}">
@@ -1519,8 +1543,16 @@
                                  template's own 70 (widened to fit "Martin M1"/"Scottie DX" when
                                  that column stopped showing the raw SstvModeId) — was still 55
                                  here, pushing every header caption right of MODE 15px out of
-                                 alignment with its data cells. -->
-                            <Grid DockPanel.Dock="Top" ColumnDefinitions="120,85,70,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,3,0,0">
+                                 alignment with its data cells.
+
+                                 Real-window verification finding (Phase 2 font-size presets):
+                                 columns 3/4 (RST-S/RST-R) widened 45->52 — at Large scale
+                                 IndustryTableHeaderFontSize grows 11->13 and both 5-character
+                                 headers clipped their last letter in the old 45px column. Same
+                                 header/row-template-must-match contract as the Mode-column fix
+                                 above — the sibling Grid at this file's own row-template site
+                                 below was updated identically, or misalignment reappears. -->
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="120,85,70,52,52,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,3,0,0">
                                 <Border Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColUtc}" /></Border>
                                 <Border Grid.Column="1" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColCallsign}" /></Border>
                                 <Border Grid.Column="2" Classes="IndustryTableHeaderRule"><TextBlock Classes="IndustryTableHeader" Text="{loc:Translate Panes.Logbook.ColMode}" /></Border>
@@ -1545,7 +1577,7 @@
                                          BorderThickness="0" Padding="0">
                                     <ListBox.ItemTemplate>
                                         <DataTemplate x:DataType="logbook:QsoRecord">
-                                            <Grid ColumnDefinitions="120,85,70,45,45,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                                            <Grid ColumnDefinitions="120,85,70,52,52,55,90,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                                 <Border Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" Text="{Binding StartUtc, StringFormat={}{0:yyyy-MM-dd HH:mm}}" /></Border>
                                                 <Border Grid.Column="1" Classes="IndustryTableRowRule"><TextBlock Classes="IndustryTableCell" TextTrimming="CharacterEllipsis" Text="{Binding Callsign}" /></Border>
                                                 <!-- Fable UX-review finding, 2026-08-30: was the raw
@@ -1666,7 +1698,7 @@
                                     <TextBox Classes="Industry IndustryInput" Text="{Binding FormQth}" Watermark="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
                                     <TextBox Classes="Industry IndustryInput" Text="{Binding FormGridSquare}" Watermark="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
                                     <TextBox Classes="Industry IndustryInput" Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="60" TextWrapping="Wrap" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="{DynamicResource IndustryLogbookNotesHeight}" TextWrapping="Wrap" />
 
                                     <!-- ui_transition_plan.md step 15, piece (b) — plain booleans
                                          (see QsoRecord.QslSent's own doc comment), same CheckBox
@@ -1735,7 +1767,7 @@
              RxImagePaneViewModel.IsAutoDetectPaused toggle that already lives on that card.
              Removed outright 2026-08-27, same direct user request. -->
         <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top"
-                    Height="26" Margin="0,0,6,0" Spacing="5">
+                    Height="{DynamicResource IndustryTabItemHeight}" Margin="0,0,6,0" Spacing="5">
             <Border Classes="Industry IndustryStatus">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RxImage.DetectedMode, Converter={x:Static ObjectConverters.IsNotNull}}" VerticalAlignment="Center" />

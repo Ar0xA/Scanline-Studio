@@ -6,9 +6,17 @@
         x:Class="ScanlineStudio.UI.Views.OptionsWindowView"
         x:DataType="vm:OptionsWindowViewModel"
         Title="{loc:Translate Options.Title}"
-        Width="720" Height="580"
-        MinWidth="560" MinHeight="420"
+        Width="820" Height="580"
+        MinWidth="660" MinHeight="420"
         WindowStartupLocation="CenterOwner">
+
+    <!-- Real-window verification finding (Phase 2 font-size presets): at Large scale the 10-tab
+         strip (General/Appearance/Audio/Radio·CAT/Station/Decode/Identification/Advanced/QRZ.com/
+         Forwarding) no longer fit the old Width="720"/MinWidth="560" on one row — "Forwarding"
+         wrapped to its own second line. Widened both (was 720/560) to give the wider Large TabItems
+         room; still user-resizable narrower if they want (a TabControl wrapping gracefully at a
+         width the user chose themselves is expected behavior, not a bug — the bug was starting up
+         already wrapped at the window's own default size). -->
 
     <!-- Industry design port (pre-Phase-7): pure 1:1 restyle of the old "card"/"cardInner" chrome
          onto the established Industry atom set (Atoms.axaml) - no ViewModel/binding changes.
@@ -213,6 +221,21 @@
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.Light}" IsChecked="{Binding IsAppThemeLightSelected}" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.Dark}" IsChecked="{Binding IsAppThemeDarkSelected}" />
                                         <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.System}" IsChecked="{Binding IsAppThemeSystemSelected}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </ContentControl>
+
+                            <!-- Phase 2 font-size presets: same RadioButton-group + IsXSelected
+                                 idiom as the theme group above, sharing this tab's own Reset
+                                 button. Applies live on Save — see
+                                 OptionsWindowViewModel.SaveCoreUnguardedAsync's own separate
+                                 live-apply block for FontScale. -->
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Appearance.FontScale}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="FontScale" Content="{loc:Translate Options.Appearance.FontScale.Normal}" IsChecked="{Binding IsFontScaleNormalSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="FontScale" Content="{loc:Translate Options.Appearance.FontScale.Large}" IsChecked="{Binding IsFontScaleLargeSelected}" />
                                     </WrapPanel>
                                 </StackPanel>
                             </ContentControl>
@@ -922,7 +945,7 @@
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Advanced.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
-                            <TextBlock Foreground="{DynamicResource IndustryLabel}" FontFamily="{StaticResource IndustryBodyFontFamily}" FontSize="11" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
+                            <TextBlock Foreground="{DynamicResource IndustryLabel}" FontFamily="{StaticResource IndustryBodyFontFamily}" FontSize="{DynamicResource IndustryOptionsAdvancedCaptionFontSize}" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
 
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>

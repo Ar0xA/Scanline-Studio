@@ -20,7 +20,7 @@
             <ScrollViewer Grid.Row="0">
                 <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
 
-                    <TextBlock Classes="IndustryGbTitle" Text="{Binding ApplicationName}" FontSize="18" HorizontalAlignment="Center" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{Binding ApplicationName}" FontSize="{DynamicResource IndustryAboutTitleFontSize}" HorizontalAlignment="Center" />
 
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate About.VersionLabel}" />
@@ -33,6 +33,16 @@
                                 HorizontalAlignment="Left" HorizontalContentAlignment="Left" Cursor="Hand"
                                 Command="{Binding OpenAuthorQrzCommand}" ToolTip.Tip="{loc:Translate About.Author.Help}">
                             <TextBlock Classes="IndustryRowValue" Text="{x:Static vm:AboutWindowViewModel.AuthorCallsign}"
+                                       Foreground="{DynamicResource IndustryAccent}" TextDecorations="Underline" />
+                        </Button>
+                    </Grid></Border>
+
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate About.WebsiteLabel}" />
+                        <Button Grid.Column="1" Classes="Industry" Background="Transparent" BorderThickness="0" Padding="0"
+                                HorizontalAlignment="Left" HorizontalContentAlignment="Left" Cursor="Hand"
+                                Command="{Binding OpenWebsiteCommand}" ToolTip.Tip="{loc:Translate About.Website.Help}">
+                            <TextBlock Classes="IndustryRowValue" Text="{x:Static vm:AboutWindowViewModel.WebsiteDisplay}"
                                        Foreground="{DynamicResource IndustryAccent}" TextDecorations="Underline" />
                         </Button>
                     </Grid></Border>

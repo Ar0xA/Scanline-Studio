@@ -5,13 +5,17 @@
         x:Class="ScanlineStudio.UI.Views.QuickSwitchFailedDialogView"
         x:DataType="vm:QuickSwitchFailedDialogViewModel"
         Title="{loc:Translate Configurations.QuickSwitchFailedTitle}"
-        Width="420" Height="200"
+        Width="420" SizeToContent="Height"
         MinWidth="320"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
 
     <!-- Minimal OK-only acknowledgement — same shape as HamlibLibraryReloadFailedDialogView.axaml,
-         since Text binds to the ViewModel's own Message property instead of a static locale string. -->
+         since Text binds to the ViewModel's own Message property instead of a static locale string.
+
+         Phase 2 font-size presets: SizeToContent="Height", matching ConfirmActionDialogView's own
+         established precedent (see RestartRequiredDialogView.axaml's own comment for the full
+         reasoning). -->
 
     <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">

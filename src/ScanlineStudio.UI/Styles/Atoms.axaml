@@ -205,10 +205,10 @@
                      assigned; confirmed via a real-window screenshot on the sibling IndustryBtn26
                      case). -->
                 <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
-                <Setter Property="Height" Value="17" />
-                <Setter Property="MinHeight" Value="17" />
+                <Setter Property="Height" Value="{DynamicResource IndustryMiniHeight}" />
+                <Setter Property="MinHeight" Value="{DynamicResource IndustryMiniMinHeight}" />
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontSize" Value="{DynamicResource IndustryMiniFontSize}" />
                 <Setter Property="FontWeight" Value="Medium" />
                 <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
@@ -225,10 +225,10 @@
 
             <ControlTheme x:Key="IndustryMiniToggleTheme" TargetType="ToggleButton">
                 <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
-                <Setter Property="Height" Value="17" />
-                <Setter Property="MinHeight" Value="17" />
+                <Setter Property="Height" Value="{DynamicResource IndustryMiniHeight}" />
+                <Setter Property="MinHeight" Value="{DynamicResource IndustryMiniMinHeight}" />
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontSize" Value="{DynamicResource IndustryMiniFontSize}" />
                 <Setter Property="FontWeight" Value="Medium" />
                 <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
@@ -254,10 +254,10 @@
                  mirrors ToggleButton.IndustryMini:checked exactly (accent fill, IndustryBg text). -->
             <ControlTheme x:Key="IndustryMiniRadioTheme" TargetType="RadioButton">
                 <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
-                <Setter Property="Height" Value="17" />
-                <Setter Property="MinHeight" Value="17" />
+                <Setter Property="Height" Value="{DynamicResource IndustryMiniHeight}" />
+                <Setter Property="MinHeight" Value="{DynamicResource IndustryMiniMinHeight}" />
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-                <Setter Property="FontSize" Value="10" />
+                <Setter Property="FontSize" Value="{DynamicResource IndustryMiniFontSize}" />
                 <Setter Property="FontWeight" Value="Medium" />
                 <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
@@ -282,7 +282,7 @@
                  NoHardcodedAxamlStringsTests reasoning as the stepper/disclosure atoms. -->
             <ControlTheme x:Key="IndustryCheckBoxTheme" TargetType="CheckBox">
                 <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
-                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontSize" Value="{DynamicResource IndustryCheckBoxFontSize}" />
                 <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
                     <ControlTemplate>
@@ -420,14 +420,14 @@
             </ControlTheme>
 
             <ControlTheme x:Key="IndustryStepperTheme" TargetType="NumericUpDown">
-                <Setter Property="MinWidth" Value="90" />
+                <Setter Property="MinWidth" Value="{DynamicResource IndustryStepperMinWidth}" />
                 <!-- 90 = 52 (default value-cell min-width, LAYOUT-SPEC.md:143) + 38 (2x18px
                      buttons + ~2px border). Per-site overrides (value-cell 46/34/24) become 84/72/62
                      as a plain local MinWidth on the NumericUpDown instance at each call site. -->
-                <Setter Property="Height" Value="22" />
+                <Setter Property="Height" Value="{DynamicResource IndustryStepperHeight}" />
                 <!-- MinHeight paired with Height (post-Phase-2-verification fix, same bug class as
                      every other Height-only atom found overflowing in a real composed layout). -->
-                <Setter Property="MinHeight" Value="22" />
+                <Setter Property="MinHeight" Value="{DynamicResource IndustryStepperMinHeight}" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <ButtonSpinner Name="PART_Spinner" Theme="{StaticResource IndustrySpinnerTheme}"
@@ -440,7 +440,7 @@
                                  template-literal value would already have won that fight. -->
                             <TextBox Name="PART_TextBox" Classes="Industry" Background="Transparent" BorderThickness="0"
                                      Padding="{StaticResource IndustryStepperValuePadding}"
-                                     FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="12" FontWeight="Medium"
+                                     FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="{DynamicResource IndustryStepperValueFontSize}" FontWeight="Medium"
                                      TextAlignment="Right" VerticalContentAlignment="Center" />
                         </ButtonSpinner>
                     </ControlTemplate>
@@ -516,7 +516,7 @@
                                 Background="{DynamicResource IndustrySurface}"
                                 BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
-                            <ContentPresenter Content="{TemplateBinding Content}" FontSize="11"
+                            <ContentPresenter Content="{TemplateBinding Content}" FontSize="{DynamicResource IndustrySegFontSize}"
                                                FontFamily="{StaticResource IndustryBodyFontFamily}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                         </Border>
@@ -674,8 +674,8 @@
     <Style Selector="TextBlock.IndustryGbTitle">
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="FontSize" Value="9.5" />
-        <Setter Property="LetterSpacing" Value="1.33" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryGbTitleFontSize}" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryGbTitleLetterSpacing}" />
         <!-- .14em * 9.5px = 1.33 device px (LAYOUT-SPEC §6 pitfall 8). -->
         <!-- 2026-08-14: was IndustryAccent700 (blue) — mockups/colors/SSTV-Color-Scheme.md §2.1
              explicitly assigns "group titles" to LabelBrush (grey), not a hue. Blue is reserved
@@ -688,7 +688,7 @@
          Button/ToggleButton forms (Border form only needs IndustryMini — Border isn't in the old-
          style collision table). -->
     <Style Selector="Border.IndustryMini">
-        <Setter Property="Height" Value="17" />
+        <Setter Property="Height" Value="{DynamicResource IndustryMiniHeight}" />
         <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -705,7 +705,7 @@
          uniformly. -->
     <Style Selector="Border.IndustryMini TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryMiniFontSize}" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
@@ -791,7 +791,7 @@
          ".r2 + .r2" ("rule iff the immediately preceding sibling is ALSO .r2") — item 3's own
          documented caveat. -->
     <Style Selector="Border.IndustryRow">
-        <Setter Property="MinHeight" Value="16.5" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryRowMinHeight}" />
     </Style>
     <!-- design-fidelity-caught fix: CSS's .gb{gap:3px} applies to .r2 rows too, not just
          non-row children, which this atom never set — rows were sitting flush against each
@@ -814,8 +814,8 @@
          and kicker text, reaching hundreds of consumers here via this one shared class. -->
     <Style Selector="TextBlock.IndustryRowLabel">
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
-        <Setter Property="FontSize" Value="11" />
-        <Setter Property="LineHeight" Value="16.5" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryRowLabelFontSize}" />
+        <Setter Property="LineHeight" Value="{DynamicResource IndustryRowLabelLineHeight}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <!-- 2026-08-14, mockups/colors/SSTV-Color-Scheme.md §3: "Every frequency, S-meter, SNR,
@@ -831,10 +831,10 @@
          11 property, not a TemplatedControl-only one. -->
     <Style Selector="TextBlock.IndustryRowValue">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryRowValueFontSize}" />
         <Setter Property="FontWeight" Value="Medium" />
-        <Setter Property="LineHeight" Value="16.5" />
-        <Setter Property="LetterSpacing" Value="-0.22" />
+        <Setter Property="LineHeight" Value="{DynamicResource IndustryRowValueLineHeight}" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryRowValueLetterSpacing}" />
         <!-- -.02em * 11px = -0.22 device px. -->
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
         <Setter Property="HorizontalAlignment" Value="Right" />
@@ -845,8 +845,8 @@
     <!-- 4. Kicker text -->
     <Style Selector="TextBlock.IndustryKicker">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10" />
-        <Setter Property="LetterSpacing" Value="1.4" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryKickerFontSize}" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryKickerLetterSpacing}" />
         <!-- .14em * 10px = 1.4 device px. -->
         <!-- 2026-08-14: was IndustryAccent700 (blue) — user decision, matching group-box titles
              above (same "secondary label" role per the color spec's §2.1 neutrals table; keeping
@@ -854,7 +854,7 @@
         <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <Style Selector="TextBlock.IndustryKicker.wide">
-        <Setter Property="LetterSpacing" Value="1.6" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryKickerWideLetterSpacing}" />
         <!-- .16em * 10px = 1.6 device px — the VFO-only variant. -->
     </Style>
 
@@ -999,34 +999,34 @@
          screenshot showing the Transceiver card's Receiving/Halt buttons and RX/TX level rows
          overflowing their fixed-height container. -->
     <Style Selector="Button.Industry.IndustryBtn36">
-        <Setter Property="Height" Value="36" />
-        <Setter Property="MinHeight" Value="36" />
-        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn36Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn36MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn36FontSize}" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn26">
-        <Setter Property="Height" Value="26" />
-        <Setter Property="MinHeight" Value="26" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn26Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn26MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn26FontSize}" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn25">
-        <Setter Property="Height" Value="25" />
-        <Setter Property="MinHeight" Value="25" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn25Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn25MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn25FontSize}" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn24">
-        <Setter Property="Height" Value="24" />
-        <Setter Property="MinHeight" Value="24" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn24Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn24MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn24FontSize}" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn22">
-        <Setter Property="Height" Value="22" />
-        <Setter Property="MinHeight" Value="22" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn22Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn22MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn22FontSize}" />
     </Style>
     <Style Selector="Button.Industry.IndustryBtn21">
-        <Setter Property="Height" Value="21" />
-        <Setter Property="MinHeight" Value="21" />
-        <Setter Property="FontSize" Value="10.5" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn21Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn21MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn21FontSize}" />
     </Style>
     <!-- Primary/secondary need /template/ ContentPresenter targeting — the same Fluent
          Button.accent-conflict trick ChromeOverrides.axaml already proves for the OLD design's own
@@ -1145,9 +1145,9 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Height" Value="26" />
-        <Setter Property="MinHeight" Value="26" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn26Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn26MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn26FontSize}" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
@@ -1222,10 +1222,10 @@
          etc.) — NOT the read-only TextBlock.IndustryRowValue rows fixed separately above, which
          were never this class to begin with. -->
     <Style Selector="TextBox.Industry.IndustryInput, ComboBox.Industry.IndustryInput, NumericUpDown.Industry.IndustryInput">
-        <Setter Property="Height" Value="24" />
-        <Setter Property="MinHeight" Value="24" />
+        <Setter Property="Height" Value="{DynamicResource IndustryInputHeight}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryInputMinHeight}" />
         <Setter Property="Padding" Value="{StaticResource IndustryStepperValuePadding}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryInputFontSize}" />
         <Setter Property="Background" Value="{DynamicResource IndustryEditField}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
@@ -1255,9 +1255,9 @@
     </Style>
     <!-- Mode <select>, height 26. -->
     <Style Selector="ComboBox.IndustryInput.tall">
-        <Setter Property="Height" Value="26" />
-        <Setter Property="MinHeight" Value="26" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Height" Value="{DynamicResource IndustryInputTallHeight}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryInputTallMinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryInputTallFontSize}" />
     </Style>
     <Style Selector="TextBox.IndustryInput:pointerover, ComboBox.IndustryInput:pointerover, NumericUpDown.IndustryInput:pointerover">
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryInputHoverInk}" />
@@ -1310,8 +1310,8 @@
          consumers and both were already ported to this atom in Phases 3/4. -->
     <Style Selector="TextBlock.IndustryTableHeader">
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
-        <Setter Property="FontSize" Value="11" />
-        <Setter Property="LetterSpacing" Value="0.88" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryTableHeaderFontSize}" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryTableHeaderLetterSpacing}" />
         <!-- .08em * 11px = 0.88 device px (LAYOUT-SPEC §6 pitfall 8). -->
         <!-- 2026-08-14: was IndustryTextMuted62 — same "secondary label" role as row labels/group
              titles per the spec's §2.1 neutrals table. -->
@@ -1332,9 +1332,9 @@
     </Style>
     <Style Selector="TextBlock.IndustryTableCell">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryTableCellFontSize}" />
         <Setter Property="FontWeight" Value="Medium" />
-        <Setter Property="LetterSpacing" Value="-0.22" />
+        <Setter Property="LetterSpacing" Value="{DynamicResource IndustryTableCellLetterSpacing}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="Border.IndustryTableRowRule">
@@ -1390,7 +1390,7 @@
     </Style>
     <Style Selector="TextBlock.IndustryThumbnailCall">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryThumbnailCallFontSize}" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
@@ -1400,18 +1400,18 @@
          inconsistency. Mirrors the already-existing (previously unused) IndustryThumbnailCaption.gallery
          padding variant. -->
     <Style Selector="TextBlock.IndustryThumbnailCall.gallery">
-        <Setter Property="FontSize" Value="11" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryThumbnailCallGalleryFontSize}" />
     </Style>
     <!-- 2026-08-14: was IndustryTextMuted50 — a timestamp under a thumbnail is incidental muted
          data, not a caption/label describing a field, so this maps to MutedTextBrush (spec §2.1:
          "sub-digits, units, placeholder") rather than LabelBrush. -->
     <Style Selector="TextBlock.IndustryThumbnailMeta">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="9" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryThumbnailMetaFontSize}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryMutedText}" />
     </Style>
     <Style Selector="TextBlock.IndustryThumbnailMeta.gallery">
-        <Setter Property="FontSize" Value="9.5" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryThumbnailMetaGalleryFontSize}" />
     </Style>
 
     <!-- 12. Hatch panel — the brush itself (IndustryHatchStripeBrush) lives in AtomsTokens.axaml,
@@ -1446,8 +1446,8 @@
     <Style Selector="ToggleButton.IndustryDisclosure /template/ ContentPresenter">
         <Setter Property="TextBlock.FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
-        <Setter Property="TextBlock.FontSize" Value="9.5" />
-        <Setter Property="TextBlock.LetterSpacing" Value="1.33" />
+        <Setter Property="TextBlock.FontSize" Value="{DynamicResource IndustryDisclosureFontSize}" />
+        <Setter Property="TextBlock.LetterSpacing" Value="{DynamicResource IndustryDisclosureLetterSpacing}" />
         <!-- .14em * 9.5px = 1.33 device px. -->
         <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
@@ -1484,8 +1484,8 @@
              present in the shipped Fluent theme assembly) — this band is now a FIXED 26px row
              (Phase 2's own architectural point), so this can't be left to Fluent's default. Same
              two-Setter pattern this file already uses for the .input atom. -->
-        <Setter Property="Height" Value="26" />
-        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Height" Value="{DynamicResource IndustryMenuHeight}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryMenuMinHeight}" />
         <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
         <Setter Property="Background" Value="{DynamicResource IndustryBg}" />
     </Style>
@@ -1498,7 +1498,7 @@
     <Style Selector="Menu.Industry MenuItem">
         <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryMenuItemFontSize}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="Menu.Industry MenuItem:disabled">
@@ -1526,7 +1526,7 @@
     <Style Selector="ContextMenu.Industry MenuItem">
         <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
-        <Setter Property="FontSize" Value="12" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryContextMenuItemFontSize}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="ContextMenu.Industry MenuItem:disabled">
@@ -1568,18 +1568,18 @@
          for the OLD value (20 vs whatever Fluent's default was, since it visibly worked); it says
          nothing about whether 26 clears the same resource, so pin MinHeight explicitly here too. -->
     <Style Selector="TabItem.Industry">
-        <Setter Property="Height" Value="26" />
-        <Setter Property="MinHeight" Value="26" />
+        <Setter Property="Height" Value="{DynamicResource IndustryTabItemHeight}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryTabItemMinHeight}" />
         <Setter Property="Padding" Value="{StaticResource IndustryTabItemPadding}" />
         <Setter Property="Margin" Value="0" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
-        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryTabItemFontSize}" />
         <!-- LetterSpacing isn't a Control-level property (TabItem doesn't expose it directly,
              unlike FontFamily/FontSize/Foreground which Control itself declares) — set via the
              TextBlock attached property, same mechanism the disclosure-header atom above already
              uses for the same reason. -->
-        <Setter Property="TextBlock.LetterSpacing" Value="1.035" />
+        <Setter Property="TextBlock.LetterSpacing" Value="{DynamicResource IndustryTabItemLetterSpacing}" />
         <!-- .09em * 11.5px = 1.035 device px. -->
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
@@ -1632,7 +1632,7 @@
          (Tokens.axaml) so consumers of this atom no longer need that file loaded. -->
     <Style Selector="TextBlock.IndustryHelpGlyph">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryHelpGlyphFontSize}" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryTextMuted55}" />
         <Setter Property="Cursor" Value="Help" />
     </Style>
@@ -1690,8 +1690,8 @@
          for most states; only the tint variants below light up the lozenge too, reserved for
          states the operator must not miss (spec's own phrasing). -->
     <Style Selector="Border.IndustryStatus">
-        <Setter Property="Height" Value="19" />
-        <Setter Property="MinHeight" Value="19" />
+        <Setter Property="Height" Value="{DynamicResource IndustryStatusHeight}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryStatusMinHeight}" />
         <Setter Property="Padding" Value="7,0,7,0" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
@@ -1707,7 +1707,7 @@
          own inline override (a redundant inline Center is harmless). -->
     <Style Selector="Border.IndustryStatus TextBlock">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
-        <Setter Property="FontSize" Value="10" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryStatusFontSize}" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="Foreground" Value="{DynamicResource IndustryStatusText}" />
         <Setter Property="VerticalAlignment" Value="Center" />

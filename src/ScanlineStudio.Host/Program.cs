@@ -255,21 +255,35 @@ internal static partial class Program
             Log.CultureRestoreFailed(logger, ex);
         }
 
-        // Phase 1 dark mode: same "must run before SetupWithLifetime" reasoning as the
-        // culture-restore block immediately above -- SetupWithLifetime constructs the actual App
-        // instance and starts rendering MainWindow, so applying the theme any later would flash
-        // the wrong theme first. App.RequestedThemeVariant can't be set directly here because App
-        // doesn't exist yet at this point in startup -- writes to the plain static
-        // App.StartupThemeVariant instead (see that field's own doc comment), which
-        // OnFrameworkInitializationCompleted reads once the instance exists, just before
-        // MainWindow is constructed. A missing/unset/corrupt setting leaves StartupThemeVariant
-        // null, which keeps App.axaml's own hardcoded Light default -- same defensive shape as
-        // every other startup step here.
+        // Phase 1 dark mode / Phase 2 font-size presets: same "must run before SetupWithLifetime"
+        // reasoning as the culture-restore block immediately above -- SetupWithLifetime constructs
+        // the actual App instance and starts rendering MainWindow, so applying either later would
+        // flash the wrong appearance first. Neither can be set directly on App here because App
+        // doesn't exist yet at this point in startup -- both write to plain static fields instead
+        // (App.StartupThemeVariant / App.StartupFontScale, see their own doc comments), which
+        // OnFrameworkInitializationCompleted reads once the instance exists, just before MainWindow
+        // is constructed. A missing/unset/corrupt setting leaves the corresponding static field
+        // null, which keeps App.axaml's/App.Initialize()'s own hardcoded defaults (Light /
+        // AppFontScale.Normal) -- same defensive shape as every other startup step here.
+        //
+        // Round-1-plan-review fix (Phase 2): ONE shared settings load for both Theme and FontScale,
+        // not a second independent ISettingsStore.LoadAsync() call -- each field then gets its own
+        // independent try/catch apply block below, matching the existing culture/theme separation,
+        // without re-reading the whole settings document a second time.
+        AppearanceSettings? appearanceSettings = null;
         try
         {
-            var appearanceSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
+            appearanceSettings = host.Services.GetRequiredService<ISettingsStore>().LoadAsync().GetAwaiter().GetResult()
                 .GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
-            if (appearanceSettings?.Theme is { } theme)
+        }
+        catch (Exception ex)
+        {
+            Log.AppearanceSettingsLoadFailed(logger, ex);
+        }
+
+        if (appearanceSettings?.Theme is { } theme)
+        {
+            try
             {
                 App.StartupThemeVariant = theme switch
                 {
@@ -280,10 +294,23 @@ internal static partial class Program
                 };
                 Log.AppThemeRestored(logger, theme.ToString());
             }
+            catch (Exception ex)
+            {
+                Log.AppThemeRestoreFailed(logger, ex);
+            }
         }
-        catch (Exception ex)
+
+        if (appearanceSettings?.FontScale is { } fontScale)
         {
-            Log.AppThemeRestoreFailed(logger, ex);
+            try
+            {
+                App.StartupFontScale = fontScale;
+                Log.FontScaleRestored(logger, fontScale.ToString());
+            }
+            catch (Exception ex)
+            {
+                Log.FontScaleRestoreFailed(logger, ex);
+            }
         }
 
         // Auto-connect from persisted settings at startup -- the radio status strip (step 9) is a
@@ -1274,6 +1301,15 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI theme; continuing with the default")]
         public static partial void AppThemeRestoreFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to load the Appearance settings section; theme and font scale both continue with their defaults")]
+        public static partial void AppearanceSettingsLoadFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Restored persisted UI font scale '{FontScale}'")]
+        public static partial void FontScaleRestored(ILogger logger, string fontScale);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI font scale; continuing with the default")]
+        public static partial void FontScaleRestoreFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to read settings section '{SectionKey}'; using defaults")]
         public static partial void SettingsSectionReadFailed(ILogger logger, string sectionKey, Exception ex);

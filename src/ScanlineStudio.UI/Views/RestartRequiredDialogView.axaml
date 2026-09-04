@@ -5,13 +5,19 @@
         x:Class="ScanlineStudio.UI.Views.RestartRequiredDialogView"
         x:DataType="vm:RestartRequiredDialogViewModel"
         Title="{loc:Translate Options.RestartRequiredDialog.Title}"
-        Width="360" Height="160"
+        Width="360" SizeToContent="Height"
         MinWidth="320"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
 
     <!-- Minimal OK-only acknowledgement — see RestartRequiredDialogViewModel's own doc comment.
-         Modeled on AboutWindowView.axaml's Border/Grid content-footer split. -->
+         Modeled on AboutWindowView.axaml's Border/Grid content-footer split.
+
+         Phase 2 font-size presets: SizeToContent="Height" (not a fixed Height="160"), matching
+         ConfirmActionDialogView's own established precedent — a font-scale-driven content-height
+         change (or simply a longer localized message wrapping to more lines) fits the window to
+         whatever the Grid actually measures, instead of a fixed number clipping or leaving dead
+         space in either direction. -->
 
     <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
