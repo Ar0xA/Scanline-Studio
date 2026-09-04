@@ -13,7 +13,7 @@
     <!-- Minimal OK-only acknowledgement — see RestartRequiredDialogViewModel's own doc comment.
          Modeled on AboutWindowView.axaml's Border/Grid content-footer split. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap"
                        Text="{loc:Translate Options.RestartRequiredDialog.Message}" />

@@ -49,7 +49,7 @@
                  uniform background across the full span in a real-window pixel check. Border wraps
                  the row instead of adding a sibling, so the rule spans the same Padding-inset width
                  the row's own content already does. -->
-            <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{StaticResource IndustryChromeBorder}" Padding="0,0,0,6" Margin="0,0,0,6">
+            <Border Grid.Row="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource IndustryChromeBorder}" Padding="0,0,0,6" Margin="0,0,0,6">
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
             <!-- Backlog item (auditor usability review, 2026-08-17, item 11): "No error surface
                  anywhere in the editor." A dismissible-by-nature banner (it clears itself on the next
@@ -58,12 +58,12 @@
                  arm-confirm surface (items 2/17), placed at the TOP of the editor so it's visible
                  regardless of which inspector tab is open. -->
             <Border Classes="Industry IndustryMini" IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                    Background="{StaticResource IndustryDangerTint}" BorderBrush="{StaticResource IndustryDangerTintBorder}">
-                <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource IndustryDangerTintText}" TextWrapping="Wrap" />
+                    Background="{DynamicResource IndustryDangerTint}" BorderBrush="{DynamicResource IndustryDangerTintBorder}">
+                <TextBlock Text="{Binding StatusMessage}" Foreground="{DynamicResource IndustryDangerTintText}" TextWrapping="Wrap" />
             </Border>
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" VerticalAlignment="Center">
                 <TextBlock Classes="IndustryGbTitle" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ContextBarTitle}" />
-                <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{StaticResource IndustryChromeBorder}" />
+                <Border Grid.Column="1" Width="1" Height="16" Margin="10,0" Background="{DynamicResource IndustryChromeBorder}" />
                 <!-- design-fidelity Phase H (final confirming pass finding #5): IndustryRowValue is
                      a right-aligned, grey-data-field-background atom by design (Atoms.axaml:789-800)
                      — correct for real value cells, wrong for chrome/prose text like this readout,
@@ -79,16 +79,16 @@
                      an unsaved-edits flag needs) rather than Border.IndustryMini.active's own
                      green/healthy tint, which means something else entirely (receiving status). -->
                 <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}"
-                        Background="{StaticResource IndustrySelectTint}" BorderBrush="{StaticResource IndustrySelectTintBorder}">
+                        Background="{DynamicResource IndustrySelectTint}" BorderBrush="{DynamicResource IndustrySelectTintBorder}">
                     <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Border Width="6" Height="6" Background="{StaticResource IndustryAccent}" />
-                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" Foreground="{StaticResource IndustrySelectTintText}" />
+                        <Border Width="6" Height="6" Background="{DynamicResource IndustryAccent}" />
+                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" Foreground="{DynamicResource IndustrySelectTintText}" />
                     </StackPanel>
                 </Border>
                 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding UndoCommand}" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
-                    <Border Width="1" Height="18" Margin="6,0" Background="{StaticResource IndustryChromeBorder}" />
+                    <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
                 </StackPanel>
             </Grid>
@@ -179,7 +179,7 @@
                      clipping), which has no flex/push-to-edge concept the way the mock's own flex:1
                      div does; a divider is the achievable part of "group these visually," not a
                      structural gap in this fix. -->
-                <Border Width="1" Height="18" Margin="6,0" Background="{StaticResource IndustryChromeBorder}" />
+                <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
                 <TextBlock Classes="IndustryKicker" VerticalAlignment="Center" Margin="0,0,4,4" Text="{loc:Translate Panes.TxImageEditor.CropLabel}" />
                 <!-- design-fidelity Phase I (minor #1): Height="26" local override — every other
                      toolbar item in this row is IndustryBtn26 (26px); this chip was the 17px
@@ -277,7 +277,7 @@
                             <!-- Backlog item (auditor usability review, 2026-08-17, item 11): rack-level
                                  error surface (a failed Refresh/Delete) — see
                                  ReadyRackViewModel.StatusMessage's own doc comment. -->
-                            <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                            <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                        Text="{Binding ReadyRack.StatusMessage}"
                                        IsVisible="{Binding ReadyRack.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             <TextBlock Classes="IndustryKicker" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxImageEditor.ReadyRackKeysHint}" />
@@ -316,8 +316,8 @@
                                                      for its other consumers (e.g. the Receive tab's own
                                                      empty session-frames slots). -->
                                                 <Grid IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}">
-                                                    <Rectangle Stroke="{StaticResource IndustryTextMuted55}" StrokeThickness="1" StrokeDashArray="3,2" />
-                                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.EmptySlotGlyph}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource IndustryTextMuted55}" />
+                                                    <Rectangle Stroke="{DynamicResource IndustryTextMuted55}" StrokeThickness="1" StrokeDashArray="3,2" />
+                                                    <TextBlock Text="{loc:Translate Panes.TxImageEditor.EmptySlotGlyph}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{DynamicResource IndustryTextMuted55}" />
                                                 </Grid>
                                                 <Image Source="{Binding Template.Thumbnail}" Stretch="Uniform" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                             </Panel>
@@ -476,7 +476,7 @@
                          Border, not EditorScrollViewer or EditorCanvas, is the right element (it's
                          backgrounded everywhere, unlike the ScrollViewer's own un-backgrounded
                          centering gutter, so it's hit-testable regardless of zoom/scroll position). -->
-                    <Border x:Name="EditorWell" Background="{StaticResource IndustryNeutral200}" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                    <Border x:Name="EditorWell" Background="{DynamicResource IndustryNeutral200}" BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="1"
                             DragDrop.AllowDrop="True" DragDrop.Drop="OnEditorDrop" DragDrop.DragOver="OnEditorDragOver">
                     <Panel>
                     <ScrollViewer x:Name="EditorScrollViewer"
@@ -558,7 +558,7 @@
                                     Canvas.Top="{Binding CropTopPixels}"
                                     Width="{Binding CropWidthPixels}"
                                     Height="{Binding CropHeightPixels}"
-                                    BorderBrush="{StaticResource IndustryAccent}"
+                                    BorderBrush="{DynamicResource IndustryAccent}"
                                     BorderThickness="2"
                                     Background="Transparent"
                                     PointerPressed="OnCropBodyPointerPressed" />
@@ -567,7 +567,7 @@
                                     Canvas.Top="{Binding CropBottomPixels}"
                                     RenderTransform="translate(-5px, -5px)"
                                     Width="10" Height="10"
-                                    Background="{StaticResource IndustryAccent}"
+                                    Background="{DynamicResource IndustryAccent}"
                                     PointerPressed="OnCropHandlePointerPressed" />
 
                             <!-- Safe-area guide: a visual crop-boundary indicator only (dashed
@@ -591,7 +591,7 @@
                                        Width="{Binding SafeAreaWidthPixels}"
                                        Height="{Binding SafeAreaHeightPixels}"
                                        IsVisible="{Binding SafeAreaVisible}"
-                                       Stroke="{StaticResource IndustryAccent}" Opacity="0.55"
+                                       Stroke="{DynamicResource IndustryAccent}" Opacity="0.55"
                                        StrokeThickness="1" StrokeDashArray="4,2" />
 
                             <!-- Backlog item (auditor usability review, 2026-08-17, item 10): "SNAP TO
@@ -619,7 +619,7 @@
                                         <DrawingBrush.Drawing>
                                             <GeometryDrawing>
                                                 <GeometryDrawing.Pen>
-                                                    <Pen Brush="{StaticResource IndustryAccent}" Thickness="1" />
+                                                    <Pen Brush="{DynamicResource IndustryAccent}" Thickness="1" />
                                                 </GeometryDrawing.Pen>
                                                 <GeometryDrawing.Geometry>
                                                     <RectangleGeometry Rect="0,0,1,1" />
@@ -733,8 +733,8 @@
                                                  the whole offscreen sub-bitmap together. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
                                                     RenderTransform="{Binding RotationTransform}"
-                                                    Background="#33FFFFFF"
-                                                    BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
+                                                    Background="{DynamicResource IndustryOverlayFill}"
+                                                    BorderBrush="{DynamicResource IndustryAccent}" BorderThickness="1"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <!-- Task #24 (right-click context menu addendum, plan-reviewed):
                                                      declared INLINE (not a shared resource) so DataContext
@@ -962,49 +962,49 @@
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="TopLeftCorner" Tag="TopLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="TopSide" Tag="Top"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="TopRightCorner" Tag="TopRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="RightSide" Tag="Right"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="BottomRightCorner" Tag="BottomRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="BottomSide" Tag="Bottom"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="BottomLeftCorner" Tag="BottomLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                         </Canvas>
@@ -1129,49 +1129,49 @@
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopLeftCorner" Tag="TopLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopSide" Tag="Top"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopRightCorner" Tag="TopRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="RightSide" Tag="Right"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomRightCorner" Tag="BottomRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomSide" Tag="Bottom"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomLeftCorner" Tag="BottomLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <!-- TX editor gap-items plan, item 3 — 4 perspective-corner
@@ -1184,25 +1184,25 @@
                                             <Border Canvas.Left="{Binding CanvasCorner0Point.X}" Canvas.Top="{Binding CanvasCorner0Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner0"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner1Point.X}" Canvas.Top="{Binding CanvasCorner1Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner1"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner2Point.X}" Canvas.Top="{Binding CanvasCorner2Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner2"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner3Point.X}" Canvas.Top="{Binding CanvasCorner3Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner3"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                         </Canvas>
@@ -1274,13 +1274,13 @@
                                             <Border Canvas.Left="{Binding CanvasStartPoint.X}" Canvas.Top="{Binding CanvasStartPoint.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="Cross" Tag="Endpoint1"
                                                     PointerPressed="OnLineEndpointHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasEndPoint.X}" Canvas.Top="{Binding CanvasEndPoint.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding !Locked}" Cursor="Cross" Tag="Endpoint2"
                                                     PointerPressed="OnLineEndpointHandlePointerPressed" />
                                         </Canvas>
@@ -1312,7 +1312,7 @@
                                                  ImageElementViewModel.BlocksHitTesting's own doc
                                                  comment for the full reasoning. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
-                                                    BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1"
+                                                    BorderBrush="{DynamicResource IndustryAccent}" BorderThickness="1"
                                                     Background="Transparent"
                                                     IsHitTestVisible="{Binding !BlocksHitTesting}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
@@ -1386,49 +1386,49 @@
                                             <Border Canvas.Left="0" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopLeftCorner" Tag="TopLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopSide" Tag="Top"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="0"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="TopRightCorner" Tag="TopRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="RightSide" Tag="Right"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomRightCorner" Tag="BottomRight"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasWidthPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomSide" Tag="Bottom"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="BottomLeftCorner" Tag="BottomLeft"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <Border Canvas.Left="0" Canvas.Top="{Binding CanvasHeightPixels, Converter={x:Static conv:DoubleToHalfConverter.Instance}}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowResizeHandles}" Cursor="LeftSide" Tag="Left"
                                                     PointerPressed="OnElementResizeHandlePointerPressed" />
                                             <!-- TX editor gap-items plan, item 3 — 4 perspective-corner
@@ -1437,25 +1437,25 @@
                                             <Border Canvas.Left="{Binding CanvasCorner0Point.X}" Canvas.Top="{Binding CanvasCorner0Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner0"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner1Point.X}" Canvas.Top="{Binding CanvasCorner1Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner1"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner2Point.X}" Canvas.Top="{Binding CanvasCorner2Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner2"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                             <Border Canvas.Left="{Binding CanvasCorner3Point.X}" Canvas.Top="{Binding CanvasCorner3Point.Y}"
                                                     RenderTransform="translate(-5px, -5px)"
                                                     Width="10" Height="10"
-                                                    Background="{StaticResource IndustryAccent}"
+                                                    Background="{DynamicResource IndustryAccent}"
                                                     IsVisible="{Binding ShowPerspectiveCornerHandles}" Cursor="Cross" Tag="Corner3"
                                                     PointerPressed="OnPerspectiveCornerHandlePointerPressed" />
                                         </Canvas>
@@ -1475,9 +1475,9 @@
                             <Border Canvas.Left="{Binding SelectedOverlayElement.LeftPixels}"
                                     Canvas.Top="{Binding SelectedOverlayElement.TopPixels}"
                                     Margin="0,-20,0,0" Padding="4,2" IsHitTestVisible="False"
-                                    Background="{StaticResource IndustryAccent}"
+                                    Background="{DynamicResource IndustryAccent}"
                                     IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10" Foreground="{StaticResource IndustryBg}" />
+                                <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10" Foreground="{DynamicResource IndustryBg}" />
                             </Border>
 
                             <!-- Follow-up visual-polish pass: live rubber-band preview (draw-to-place)
@@ -1502,7 +1502,7 @@
                                        Width="{Binding PlacementPreviewWidthPixels}"
                                        Height="{Binding PlacementPreviewHeightPixels}"
                                        IsVisible="{Binding IsPlacementPreviewVisible}"
-                                       Stroke="{StaticResource IndustryAccent}" StrokeThickness="2" StrokeDashArray="4,2" />
+                                       Stroke="{DynamicResource IndustryAccent}" StrokeThickness="2" StrokeDashArray="4,2" />
                             <!-- TX editor gap-items plan, line element — the line counterpart to the
                                  rubber-band Rectangle immediately above (see PlacementPreviewLine's
                                  own doc comment on the VM for why a Rectangle can't represent a
@@ -1511,17 +1511,17 @@
                                   StartPoint="{Binding PlacementPreviewLineStart}"
                                   EndPoint="{Binding PlacementPreviewLineEnd}"
                                   IsVisible="{Binding IsPlacementPreviewLineVisible}"
-                                  Stroke="{StaticResource IndustryAccent}" StrokeThickness="2" StrokeDashArray="4,2" />
+                                  Stroke="{DynamicResource IndustryAccent}" StrokeThickness="2" StrokeDashArray="4,2" />
                             <Rectangle IsHitTestVisible="False"
                                        Canvas.Left="{Binding GuideLineXPixels}" Canvas.Top="0"
                                        Width="2" Height="{Binding CanvasDisplayHeight}"
                                        IsVisible="{Binding IsGuideLineXVisible}"
-                                       Fill="{StaticResource IndustryAccent}" />
+                                       Fill="{DynamicResource IndustryAccent}" />
                             <Rectangle IsHitTestVisible="False"
                                        Canvas.Left="0" Canvas.Top="{Binding GuideLineYPixels}"
                                        Width="{Binding CanvasDisplayWidth}" Height="2"
                                        IsVisible="{Binding IsGuideLineYVisible}"
-                                       Fill="{StaticResource IndustryAccent}" />
+                                       Fill="{DynamicResource IndustryAccent}" />
 
                         </Canvas>
 
@@ -1540,7 +1540,7 @@
                              not attempted in this pass). IsHitTestVisible="False" — decorative,
                              must not steal crop/element pointer events. -->
                         <Border Width="{Binding CanvasDisplayWidth}" Height="{Binding CanvasDisplayHeight}"
-                                BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                                BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="1"
                                 IsHitTestVisible="False" />
 
                         </Panel>
@@ -1767,7 +1767,7 @@
                                      already established for "this is currently true." -->
                                 <ItemsControl.Styles>
                                     <Style Selector="Grid.elementRowSelected">
-                                        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
+                                        <Setter Property="Background" Value="{DynamicResource IndustrySelectTint}" />
                                     </Style>
                                 </ItemsControl.Styles>
                                 <ItemsControl.DataTemplates>
@@ -2001,7 +2001,7 @@
                                          the transmitted image silently falls back to the default font
                                          in this case, with nothing else in this panel indicating it. -->
                                     <TextBlock Grid.Column="2" Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontUnavailableGlyph}" Margin="4,0,0,0"
-                                               Foreground="{StaticResource IndustryDanger}"
+                                               Foreground="{DynamicResource IndustryDanger}"
                                                IsVisible="{Binding IsFontUnavailable}"
                                                ToolTip.Tip="{loc:Translate Panes.TxImageEditor.FontUnavailableWarning}" />
                                 </Grid></Border>
@@ -2495,7 +2495,7 @@
                  primary, matching the mock's own APPLY-ONLY/QUEUE-&amp;-TRANSMIT proportions) instead of
                  stacked full-width buttons, plus a compact mode/duration meta line (SWR omitted, see
                  SendMetaText's own doc comment for why). -->
-            <Border Grid.Row="3" Margin="0,8,0,0" Padding="8" Background="{StaticResource IndustryAccent100}" BorderBrush="{StaticResource IndustryAccent}" BorderThickness="1">
+            <Border Grid.Row="3" Margin="0,8,0,0" Padding="8" Background="{DynamicResource IndustryAccent100}" BorderBrush="{DynamicResource IndustryAccent}" BorderThickness="1">
                 <!-- design-fidelity Phase I (minor #3): explicit Auto divider column added (mock's
                      own full-height 1px rule between the two halves, line 251) — ColumnSpacing
                      alone (still kept, for the gap either side of the divider) left no visible rule
@@ -2544,7 +2544,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
-                    <Border Grid.Column="1" Width="1" Background="{StaticResource IndustryChromeBorder}" />
+                    <Border Grid.Column="1" Width="1" Background="{DynamicResource IndustryChromeBorder}" />
                     <StackPanel Grid.Column="2" Spacing="{StaticResource IndustrySpacingTight}">
                         <Grid ColumnDefinitions="Auto,*">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />

@@ -14,10 +14,10 @@
          attribute deliberately shadows a Style setter of the same property, not an
          existing in-repo pattern being reused, so don't go looking for a precedent
          elsewhere in this file. -->
-    <Border Classes="Industry IndustryPlot" BorderBrush="{StaticResource IndustryControlBorder}">
+    <Border Classes="Industry IndustryPlot" BorderBrush="{DynamicResource IndustryControlBorder}">
         <Panel>
             <TextBlock Text="{loc:Translate Panes.RxImage.NoImageYet}"
-                       Foreground="{StaticResource IndustryBg}"
+                       Foreground="{DynamicResource IndustryPlotInk}"
                        Opacity="0.55"
                        IsVisible="{Binding Image, Converter={x:Static ObjectConverters.IsNull}}"
                        HorizontalAlignment="Center"

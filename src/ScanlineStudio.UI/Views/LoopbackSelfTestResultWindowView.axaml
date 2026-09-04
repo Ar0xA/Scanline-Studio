@@ -14,7 +14,7 @@
          No mockup exists (new scope, not a legacy MMSSTV screen), modeled on AboutWindowView's own
          Grid RowDefinitions="*,Auto" content/footer split. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <StackPanel Grid.Row="0" Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
@@ -24,7 +24,7 @@
 
                 <TextBlock Classes="IndustryRowValue" Text="{Binding ModeMismatchWarning}"
                            IsVisible="{Binding ModeMismatchWarning, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                           Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap" HorizontalAlignment="Center" />
+                           Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap" HorizontalAlignment="Center" />
             </StackPanel>
 
             <Grid Grid.Row="1" ColumnDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">

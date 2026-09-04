@@ -26,7 +26,7 @@
          stepper grid made the old floor a real clipping risk; verify via a real-window screenshot at
          both default size and the MinWidth floor, not assumed safe from arithmetic alone. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <TabControl Grid.Row="0" Classes="Industry" SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
@@ -82,7 +82,7 @@
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseImagesDirectoryCommand}" />
                                         </Grid>
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Images.Caption}" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding ImagesDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Text="{Binding ImagesDirectoryErrorMessage}" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding ImagesDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyImagesDirectoryCommand}" />
@@ -102,7 +102,7 @@
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseAudioDirectoryCommand}" />
                                         </Grid>
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Audio.Caption}" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding AudioDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Text="{Binding AudioDirectoryErrorMessage}" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding AudioDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyAudioDirectoryCommand}" />
@@ -125,7 +125,7 @@
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseConfigDirectoryCommand}" />
                                         </Grid>
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Caption}" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding ConfigDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Text="{Binding ConfigDirectoryErrorMessage}" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding ConfigDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyConfigDirectoryCommand}" />
@@ -150,8 +150,8 @@
                                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseDatabaseDirectoryCommand}" />
                                         </Grid>
-                                        <TextBlock Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" FontWeight="Bold" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding DatabaseDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" FontWeight="Bold" Text="{loc:Translate Options.General.Storage.RestartRequiredCaption}" TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding DatabaseDirectoryErrorMessage}" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding DatabaseDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyDatabaseDirectoryCommand}"
@@ -174,7 +174,7 @@
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseLogDirectoryCommand}" />
                                         </Grid>
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Log.Caption}" TextWrapping="Wrap" />
-                                        <TextBlock Text="{Binding LogDirectoryErrorMessage}" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Text="{Binding LogDirectoryErrorMessage}" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    IsVisible="{Binding LogDirectoryErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Left"
                                                 Content="{loc:Translate Options.General.Storage.ApplyButton}" Command="{Binding ApplyLogDirectoryCommand}" />
@@ -195,6 +195,29 @@
                                  docs/removed-features.md's own entry for the full reasoning. -->
 
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetGeneralToDefaultCommand}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+
+                <TabItem Classes="Industry" Header="{loc:Translate Options.Appearance.Tab}">
+                    <ScrollViewer>
+                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
+                            <!-- Phase 1 dark mode: 3-way theme radio group, same RadioButton-group +
+                                 IsXSelected boolean-projection idiom as the Decode tab's SenseLevel
+                                 group. Applies live (no restart, no dialog close/reopen needed) — see
+                                 OptionsWindowViewModel.SaveCoreUnguardedAsync's own live-apply block. -->
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Appearance.Theme}" />
+                                    <WrapPanel>
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.Light}" IsChecked="{Binding IsAppThemeLightSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.Dark}" IsChecked="{Binding IsAppThemeDarkSelected}" />
+                                        <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" Margin="0,0,4,4" GroupName="AppTheme" Content="{loc:Translate Options.Appearance.Theme.System}" IsChecked="{Binding IsAppThemeSystemSelected}" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </ContentControl>
+
+                            <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAppearanceToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>
                 </TabItem>
@@ -614,7 +637,7 @@
                                                 ToolTip.Tip="{loc:Translate Options.Radio.Tune.Help}" />
                                         <TextBlock Classes="IndustryRowValue" VerticalAlignment="Center"
                                                    Text="{Binding TuneErrorMessage}"
-                                                   Foreground="{StaticResource IndustryDanger}"
+                                                   Foreground="{DynamicResource IndustryDanger}"
                                                    IsVisible="{Binding TuneErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                     </StackPanel>
                                 </StackPanel>
@@ -646,7 +669,7 @@
                                     </Grid>
                                     <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
                                                Text="{loc:Translate Options.Radio.SwrCutoffCapabilityHint}"
-                                               Foreground="{StaticResource IndustryDanger}"
+                                               Foreground="{DynamicResource IndustryDanger}"
                                                IsVisible="{Binding ShowSwrCutoffCapabilityHint}" />
                                 </StackPanel>
                             </HeaderedContentControl>
@@ -850,7 +873,7 @@
                                         <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
                                                    Text="{Binding SoundFileIdSuccessMessage}"
                                                    IsVisible="{Binding SoundFileIdSuccessMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                                        <TextBlock Classes="IndustryRowValue" Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap"
+                                        <TextBlock Classes="IndustryRowValue" Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap"
                                                    Text="{Binding SoundFileIdErrorMessage}"
                                                    IsVisible="{Binding SoundFileIdErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                     </StackPanel>
@@ -899,7 +922,7 @@
                 <TabItem Classes="Industry" Header="{loc:Translate Options.Advanced.Tab}">
                     <ScrollViewer>
                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
-                            <TextBlock Foreground="{StaticResource IndustryLabel}" FontFamily="{StaticResource IndustryBodyFontFamily}" FontSize="11" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
+                            <TextBlock Foreground="{DynamicResource IndustryLabel}" FontFamily="{StaticResource IndustryBodyFontFamily}" FontSize="11" TextWrapping="Wrap" Text="{loc:Translate Options.Advanced.Caption}" />
 
                             <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}">
                                 <HeaderedContentControl.Header>
@@ -1190,7 +1213,7 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetAll.ConfirmNo}" Command="{Binding CancelResetAllCommand}" />
                 </StackPanel>
 
-                <TextBlock Grid.Column="1" Classes="IndustryRowLabel" Foreground="{StaticResource IndustryDanger}" Text="{Binding SaveErrorMessage}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="8,0" IsVisible="{Binding SaveErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <TextBlock Grid.Column="1" Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{Binding SaveErrorMessage}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="8,0" IsVisible="{Binding SaveErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
                 <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Cancel}" Command="{Binding CancelCommand}" ToolTip.Tip="{loc:Translate Options.Cancel.Help}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />
                 <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Apply}" Command="{Binding ApplyCommand}" ToolTip.Tip="{loc:Translate Options.Apply.Help}" Margin="0,0,4,0" IsVisible="{Binding !IsConfirmingResetAll}" />

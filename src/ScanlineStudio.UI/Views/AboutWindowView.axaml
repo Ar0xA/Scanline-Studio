@@ -14,7 +14,7 @@
          footer split, RequestClose event wired in the code-behind). No mockup exists for this
          dialog: spec/18-path-to-1.0.md High item 5 is new scope, not a legacy MMSSTV screen. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <ScrollViewer Grid.Row="0">
@@ -33,7 +33,7 @@
                                 HorizontalAlignment="Left" HorizontalContentAlignment="Left" Cursor="Hand"
                                 Command="{Binding OpenAuthorQrzCommand}" ToolTip.Tip="{loc:Translate About.Author.Help}">
                             <TextBlock Classes="IndustryRowValue" Text="{x:Static vm:AboutWindowViewModel.AuthorCallsign}"
-                                       Foreground="{StaticResource IndustryAccent}" TextDecorations="Underline" />
+                                       Foreground="{DynamicResource IndustryAccent}" TextDecorations="Underline" />
                         </Button>
                     </Grid></Border>
 

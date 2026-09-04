@@ -8,7 +8,7 @@
         Width="900" Height="720"
         MinWidth="420" MinHeight="320"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource IndustryBg}">
+        Background="{DynamicResource IndustryBg}">
 
     <!-- ui_transition_plan.md step 3 (T1-5 + T2-6): non-modal (see MainWindow.axaml.cs's own
          ImageViewerRequested handler — Show(owner), not ShowDialog) — an operator inspecting a
@@ -23,7 +23,7 @@
     </Window.KeyBindings>
 
     <Grid RowDefinitions="Auto,*,Auto">
-        <Border Grid.Row="0" Classes="Industry" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,0,0,1" Padding="{StaticResource IndustryPaddingGroup}">
+        <Border Grid.Row="0" Classes="Industry" BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="0,0,0,1" Padding="{StaticResource IndustryPaddingGroup}">
             <Grid ColumnDefinitions="140,Auto,44,Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                 <Grid ColumnDefinitions="*,*">
                     <RadioButton Classes="Industry IndustrySeg stretched" Theme="{StaticResource IndustrySegTheme}" GroupName="ImageViewerZoomMode"
@@ -78,11 +78,11 @@
             <TextBlock Text="{loc:Translate ImageViewer.Loading}" HorizontalAlignment="Center" VerticalAlignment="Center"
                        Classes="IndustryRowLabel" IsVisible="{Binding IsLoading}" />
             <TextBlock Text="{Binding ErrorMessage}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                       Foreground="{StaticResource IndustryDanger}" TextWrapping="Wrap" MaxWidth="400"
+                       Foreground="{DynamicResource IndustryDanger}" TextWrapping="Wrap" MaxWidth="400"
                        IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </Panel>
 
-        <Border Grid.Row="2" Classes="Industry" BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="0,1,0,0" Padding="{StaticResource IndustryPaddingGroup}">
+        <Border Grid.Row="2" Classes="Industry" BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="0,1,0,0" Padding="{StaticResource IndustryPaddingGroup}">
             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                 <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate ImageViewer.Previous}" Command="{Binding PreviousCommand}" />
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="{StaticResource IndustrySpacingGroup}">

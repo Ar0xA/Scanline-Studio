@@ -4,8 +4,10 @@
              xmlns:local="using:ScanlineStudio.UI"
              RequestedThemeVariant="Light">
              <!-- Explicit Light default (not "Default"/follow-system): user preference, confirmed
-                  after actually seeing the app default to dark on a dark-OS-theme machine.
-                  User-overridable theme selection is a future settings-UI item, not built yet. -->
+                  after actually seeing the app default to dark on a dark-OS-theme machine. This is
+                  only the FALLBACK value used before App.axaml.cs's OnFrameworkInitializationCompleted
+                  runs — the real, user-overridable Appearance setting (Light/Dark/System) is applied
+                  there via App.StartupThemeVariant before MainWindow is constructed, see that file. -->
 
     <Application.Resources>
         <ResourceDictionary>

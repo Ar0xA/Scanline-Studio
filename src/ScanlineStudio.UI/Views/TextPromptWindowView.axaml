@@ -16,7 +16,7 @@
          TextBlock shape). First result-returning dialog in this codebase — see
          TextPromptWindowViewModel's own doc comment. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding Message}" />
 
@@ -24,7 +24,7 @@
 
             <TextBlock Grid.Row="2"
                        Text="{Binding ErrorMessage}"
-                       Foreground="{StaticResource IndustryDanger}"
+                       Foreground="{DynamicResource IndustryDanger}"
                        TextWrapping="Wrap"
                        IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
