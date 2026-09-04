@@ -52,12 +52,12 @@
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Grid>
-                            <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                            <Border BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="1"
                                     CornerRadius="0" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter Content="{TemplateBinding Content}"
                                                    ContentTemplate="{TemplateBinding ContentTemplate}" />
                             </Border>
-                            <Border Background="{StaticResource IndustryBg}"
+                            <Border Background="{DynamicResource IndustryBg}"
                                     Padding="{StaticResource IndustryGbtPadding}"
                                     Margin="7,-5,0,0"
                                     HorizontalAlignment="Left" VerticalAlignment="Top">
@@ -91,7 +91,7 @@
                                     IsHitTestVisible="False" IsVisible="False"
                                     UseLayoutRounding="False">
                                 <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      Stroke="{DynamicResource IndustryTextMuted55}"
                                       StrokeThickness="1"
                                       Stretch="None"
                                       UseLayoutRounding="False"
@@ -103,7 +103,7 @@
                                     IsHitTestVisible="False" IsVisible="False"
                                     UseLayoutRounding="False">
                                 <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      Stroke="{DynamicResource IndustryTextMuted55}"
                                       StrokeThickness="1"
                                       Stretch="None"
                                       UseLayoutRounding="False"
@@ -115,7 +115,7 @@
                                     IsHitTestVisible="False" IsVisible="False"
                                     UseLayoutRounding="False">
                                 <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      Stroke="{DynamicResource IndustryTextMuted55}"
                                       StrokeThickness="1"
                                       Stretch="None"
                                       UseLayoutRounding="False"
@@ -127,7 +127,7 @@
                                     IsHitTestVisible="False" IsVisible="False"
                                     UseLayoutRounding="False">
                                 <Path Canvas.Left="0" Canvas.Top="0"
-                                      Stroke="{StaticResource IndustryTextMuted55}"
+                                      Stroke="{DynamicResource IndustryTextMuted55}"
                                       StrokeThickness="1"
                                       Stretch="None"
                                       UseLayoutRounding="False"
@@ -185,7 +185,7 @@
                      site's Theme reference for a purely cosmetic rename, out of scope here. -->
                 <Setter Property="Template">
                     <ControlTemplate>
-                        <Border BorderBrush="{StaticResource IndustryChromeBorder}" BorderThickness="1"
+                        <Border BorderBrush="{DynamicResource IndustryChromeBorder}" BorderThickness="1"
                                 CornerRadius="0" Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                ContentTemplate="{TemplateBinding ContentTemplate}" />
@@ -210,11 +210,11 @@
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
                 <Setter Property="FontSize" Value="10" />
                 <Setter Property="FontWeight" Value="Medium" />
-                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -230,11 +230,11 @@
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
                 <Setter Property="FontSize" Value="10" />
                 <Setter Property="FontWeight" Value="Medium" />
-                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -259,11 +259,11 @@
                 <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
                 <Setter Property="FontSize" Value="10" />
                 <Setter Property="FontWeight" Value="Medium" />
-                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <Border Name="PART_Face" Background="Transparent"
-                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
+                                BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center" />
@@ -283,7 +283,7 @@
             <ControlTheme x:Key="IndustryCheckBoxTheme" TargetType="CheckBox">
                 <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
                 <Setter Property="FontSize" Value="11" />
-                <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+                <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
                 <Setter Property="Template">
                     <ControlTemplate>
                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
@@ -292,10 +292,10 @@
                                  same fix as the editable-field/read-only-data distinction — an
                                  unchecked box should read like it's ready to receive input. -->
                             <Border Name="PART_Box" Width="14" Height="14" VerticalAlignment="Center"
-                                    Background="{StaticResource IndustryEditField}"
-                                    BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0">
+                                    Background="{DynamicResource IndustryEditField}"
+                                    BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0">
                                 <Path Name="PART_Tick" Data="M 2.5,7.5 L 6,11 L 11.5,3.5"
-                                      Stroke="{StaticResource IndustryBg}" StrokeThickness="1.5"
+                                      Stroke="{DynamicResource IndustryBg}" StrokeThickness="1.5"
                                       Stretch="None" IsVisible="False"
                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
@@ -388,7 +388,7 @@
                                          line to the vertical center of it (y=4, not y=0), the same
                                          "give it a real box, don't rely on the geometry's own
                                          bounding box" technique as the blueprint corner-mark fix. -->
-                                    <Path Data="M 0 4 L 8 4" Width="8" Height="8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                    <Path Data="M 0 4 L 8 4" Width="8" Height="8" Stroke="{DynamicResource IndustryAccent700}" StrokeThickness="1.5"
                                           Stretch="None"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </RepeatButton>
@@ -397,7 +397,7 @@
                                               Padding="0" MinWidth="0" MinHeight="0"
                                               HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                               IsVisible="{TemplateBinding ShowButtonSpinner}">
-                                    <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Width="8" Height="8" Stroke="{StaticResource IndustryAccent700}" StrokeThickness="1.5"
+                                    <Path Data="M 0 4 L 8 4 M 4 0 L 4 8" Width="8" Height="8" Stroke="{DynamicResource IndustryAccent700}" StrokeThickness="1.5"
                                           Stretch="None"
                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
                                 </RepeatButton>
@@ -414,7 +414,7 @@
                      anchored on NumericUpDown can never reach them. -->
                 <ControlTheme.Children>
                     <Style Selector="^ /template/ RepeatButton:pointerover">
-                        <Setter Property="Background" Value="{StaticResource IndustryAccent100}" />
+                        <Setter Property="Background" Value="{DynamicResource IndustryAccent100}" />
                     </Style>
                 </ControlTheme.Children>
             </ControlTheme>
@@ -432,7 +432,7 @@
                     <ControlTemplate>
                         <ButtonSpinner Name="PART_Spinner" Theme="{StaticResource IndustrySpinnerTheme}"
                                        AllowSpin="True" ShowButtonSpinner="True"
-                                       BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1">
+                                       BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1">
                             <!-- Classes="Industry" so old Cards.axaml/ChromeOverrides.axaml
                                  TextBox:not(.Industry) selectors (height 19, padding 4,0, Fluent's
                                  own hover tint on Border#PART_BorderElement) don't leak onto this
@@ -456,7 +456,7 @@
                     <ControlTemplate>
                         <Grid VerticalAlignment="Center">
                             <Border Name="PART_TrackWell" Height="4" VerticalAlignment="Center" CornerRadius="0"
-                                    Background="{StaticResource IndustryNeutral300}" />
+                                    Background="{DynamicResource IndustryNeutral300}" />
                             <Track Name="PART_Track" Orientation="Horizontal"
                                    Minimum="{TemplateBinding Minimum}"
                                    Maximum="{TemplateBinding Maximum}"
@@ -466,7 +466,7 @@
                                     <RepeatButton Name="PART_DecreaseButton" Classes="Industry" Height="4" MinWidth="0" MinHeight="0" Padding="0"
                                                   HorizontalAlignment="Stretch" VerticalAlignment="Center"
                                                   Focusable="False" BorderThickness="0" CornerRadius="0"
-                                                  Background="{StaticResource IndustryAccent}" />
+                                                  Background="{DynamicResource IndustryAccent}" />
                                 </Track.DecreaseButton>
                                 <Track.IncreaseButton>
                                     <RepeatButton Name="PART_IncreaseButton" Classes="Industry" Height="4" MinWidth="0" MinHeight="0" Padding="0"
@@ -479,7 +479,7 @@
                                      Background property we set above, so the thumb rendered invisible,
                                      forced visible with a one-Border template bound straight to it. -->
                                 <Thumb Name="PART_Thumb" Width="3" Height="12" Margin="0"
-                                       Background="{StaticResource IndustryAccent800}">
+                                       Background="{DynamicResource IndustryAccent800}">
                                     <Thumb.Template>
                                         <ControlTemplate>
                                             <Border Background="{TemplateBinding Background}" />
@@ -513,8 +513,8 @@
                              only trade-off is a hairline-thicker divider between segments, 2px instead
                              of 1px — not visually meaningful next to a genuinely missing edge). -->
                         <Border Name="PART_Face"
-                                Background="{StaticResource IndustrySurface}"
-                                BorderBrush="{StaticResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
+                                Background="{DynamicResource IndustrySurface}"
+                                BorderBrush="{DynamicResource IndustryControlBorder}" BorderThickness="1" CornerRadius="0"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter Content="{TemplateBinding Content}" FontSize="11"
                                                FontFamily="{StaticResource IndustryBodyFontFamily}"
@@ -549,7 +549,7 @@
                                      and its adjacent header text read as one consistent grey unit,
                                      not a mismatched blue-glyph/grey-text pair. -->
                                 <Path Name="PART_Chevron" Data="M 0 3 L 6 3 M 3 0 L 3 6"
-                                      Stroke="{StaticResource IndustryLabel}" StrokeThickness="1"
+                                      Stroke="{DynamicResource IndustryLabel}" StrokeThickness="1"
                                       Width="6" Height="6" VerticalAlignment="Center" />
                                 <ContentPresenter Content="{TemplateBinding Content}" />
                             </StackPanel>
@@ -681,7 +681,7 @@
              explicitly assigns "group titles" to LabelBrush (grey), not a hue. Blue is reserved
              for selection specifically (spec §1 rule 1: "a hue never does two jobs"); a group-box
              title isn't a selection claim. -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
 
     <!-- 2. .mini chips — 3 forms. Every instance carries Classes="Industry IndustryMini" on the
@@ -690,7 +690,7 @@
     <Style Selector="Border.IndustryMini">
         <Setter Property="Height" Value="17" />
         <Setter Property="Padding" Value="{StaticResource IndustryMiniPadding}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -707,7 +707,7 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <!-- 2026-08-14: recolored blue -> green. Only real consumer is the status bar's "Rx" pill
@@ -720,29 +720,29 @@
          selection/latching-toggle states, e.g. a future AGC/NR/Notch toggle, and are unaffected by
          this change). -->
     <Style Selector="Border.IndustryMini.active">
-        <Setter Property="Background" Value="{StaticResource IndustryHealthyTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryHealthyTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHealthyTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHealthyTintBorder}" />
     </Style>
     <Style Selector="Border.IndustryMini.active TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryHealthyTintText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryHealthyTintText}" />
     </Style>
     <!-- Interaction states, item 18: hover = text-7% mix (NOT IndustryAccent100 — .mini is
          structurally like .btn-secondary/.seg-opt, not the stepper's borderless accent glyphs;
          IndustryAccent100 also breaks the active variant's readability), disabled = 45% opacity. -->
     <Style Selector="Button.IndustryMini:pointerover /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#121D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverInk}" />
     </Style>
     <Style Selector="Button.IndustryMini:pressed /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#241D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPressInk}" />
     </Style>
     <Style Selector="Button.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:pointerover /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#121D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverInk}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:pressed /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#241D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPressInk}" />
     </Style>
     <!-- 2026-08-14, spec §5: "Latching toggles (AGC, NR, NOTCH, SPLIT, AUTO-SAVE): identical to
          segmented-selected when on." Same tint fix as RadioButton.IndustrySeg:checked below —
@@ -750,20 +750,20 @@
          the app's own latching-toggle atom, e.g. TxControlsPaneView's SWR-cutoff toggle, TX
          editor's Snap-grid/Safe-area). -->
     <Style Selector="ToggleButton.IndustryMini:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustrySelectTintText}" />
     </Style>
     <Style Selector="ToggleButton.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:pointerover /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#121D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverInk}" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:pressed /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#241D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPressInk}" />
     </Style>
     <!-- 2026-08-14: same tint fix as the ToggleButton/RadioButton.IndustrySeg variants — this is
          the app's real "mini radio group" selector atom (Options window's SenseLevel/RxBpf/
@@ -771,11 +771,11 @@
          same SELECTION semantics as a segmented control at a more compact size, per spec §5's own
          "Selected = tint, not solid" rule. -->
     <Style Selector="RadioButton.IndustryMini:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustrySelectTintText}" />
     </Style>
     <Style Selector="RadioButton.IndustryMini:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -802,11 +802,11 @@
     </Style>
     <Style Selector="StackPanel.IndustryRows > Border.IndustryRow:not(:nth-child(1)):not(.unruled)">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryRowRule6}" />
     </Style>
     <Style Selector="StackPanel.IndustryRows > Border.IndustryRow.ruled">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryRowRule6}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryRowRule6}" />
     </Style>
     <!-- 2026-08-14: was IndustryTextMuted62 — mockups/colors/SSTV-Color-Scheme.md §2.1's own
          neutrals table assigns "secondary labels" to LabelBrush, the exact role a row label plays
@@ -816,7 +816,7 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
         <Setter Property="FontSize" Value="11" />
         <Setter Property="LineHeight" Value="16.5" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <!-- 2026-08-14, mockups/colors/SSTV-Color-Scheme.md §3: "Every frequency, S-meter, SNR,
          line-count, timer and callsign-of-sender readout is a read-only data field: sunken
@@ -836,9 +836,9 @@
         <Setter Property="LineHeight" Value="16.5" />
         <Setter Property="LetterSpacing" Value="-0.22" />
         <!-- -.02em * 11px = -0.22 device px. -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
         <Setter Property="HorizontalAlignment" Value="Right" />
-        <Setter Property="Background" Value="{StaticResource IndustryDataField}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDataField}" />
         <Setter Property="Padding" Value="4,0,4,0" />
     </Style>
 
@@ -851,7 +851,7 @@
         <!-- 2026-08-14: was IndustryAccent700 (blue) — user decision, matching group-box titles
              above (same "secondary label" role per the color spec's §2.1 neutrals table; keeping
              one blue and one grey for the same semantic role would read as mismatched). -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <Style Selector="TextBlock.IndustryKicker.wide">
         <Setter Property="LetterSpacing" Value="1.6" />
@@ -914,12 +914,12 @@
     <Style Selector="ProgressBar.Industry">
         <Setter Property="Height" Value="6" />
         <Setter Property="MinHeight" Value="6" />
-        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryEditField}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
     <Style Selector="ProgressBar.Industry /template/ Border#PART_Indicator">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
 
@@ -932,12 +932,12 @@
         <Setter Property="Height" Value="4" />
     </Style>
     <Style Selector="Border.IndustryMeterTrack">
-        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryEditField}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
     </Style>
     <Style Selector="Border.IndustryMeterFill">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
         <Setter Property="HorizontalAlignment" Value="Left" />
     </Style>
     <!-- RX level meter's own red/green range indicator (WSJT-X-style "is the incoming audio level
@@ -946,10 +946,10 @@
          semantic IndustryHealthy/IndustryDanger tokens (already used elsewhere for status
          pills/LEDs) rather than inventing new colors. -->
     <Style Selector="Border.IndustryMeterFill.good">
-        <Setter Property="Background" Value="{StaticResource IndustryHealthy}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHealthy}" />
     </Style>
     <Style Selector="Border.IndustryMeterFill.danger">
-        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
     </Style>
     <!-- Marker Height (12) intentionally exceeds the Grid's own Height (4) — confirmed against
          source CSS (SSTV Console.dc.html:41): ".trk b{top:-4px;width:3px;height:12px}" on a 4px
@@ -960,7 +960,7 @@
          centered 12px element inside a Grid whose row/cell height is 4 naturally overflows both
          edges equally, same visual result). -->
     <Style Selector="Border.IndustryMeterMarker">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent800}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent800}" />
         <Setter Property="Width" Value="3" />
         <Setter Property="Height" Value="12" />
         <Setter Property="HorizontalAlignment" Value="Left" />
@@ -1040,16 +1040,16 @@
          Danger button's own comment below) — press happens to equal IndustrySelectSolidBorder, but
          named for what it verifiably IS per the spec (a press state), not reused speculatively. -->
     <Style Selector="Button.IndustryBtnPrimary /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryBg}" />
     </Style>
     <Style Selector="Button.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="#FF1472C0" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPrimaryHover}" />
     </Style>
     <Style Selector="Button.IndustryBtnPrimary:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustrySelectSolidBorder}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectSolidBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustrySelectSolidBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustrySelectSolidBorder}" />
     </Style>
     <!-- 2026-08-14, spec §4 checklist 331: "A disabled primary loses its fill — color means
          available." Was Opacity 0.45 (a faded blue), not the spec's literal disabled-face table
@@ -1058,9 +1058,9 @@
          exception (§7 fixed exception 1, "HALT TX ... solid red in every state, including
          disabled") — deliberately NOT given this treatment below. -->
     <Style Selector="Button.IndustryBtnPrimary:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
     <!-- 2026-08-14, spec §4: "Standard | face #E9E9E9, border #A0A0A0 | The default. Browse,
          Calibrate, Save Frame, Clear, Copy." Was Background="Transparent" with a translucent
@@ -1069,24 +1069,24 @@
          real consumers in the app (Browse/Calibrate/Save-frame-class actions everywhere), so this
          is a genuinely visible change, not a token swap. -->
     <Style Selector="Button.IndustryBtnSecondary /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryControlFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryControlFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="Button.IndustryBtnSecondary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryHoverFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryHoverBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHoverBorder}" />
     </Style>
     <Style Selector="Button.IndustryBtnSecondary:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryPressFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryPressBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPressFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryPressBorder}" />
     </Style>
     <!-- 2026-08-14, spec §4 checklist 331 — same fill-loss fix as Primary above, "any class"
          in the disabled table row's own name includes Standard. -->
     <Style Selector="Button.IndustryBtnSecondary:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
 
     <!-- Danger/destructive variant: recolored 2026-08-14 to spec §4 ("Destructive | solid #B42A2A
@@ -1097,15 +1097,15 @@
          IndustryTxToggle below is a SEPARATE control (the transmit toggle itself, not a plain
          button) and is handled on its own in the next pass — not touched here. -->
     <Style Selector="Button.IndustryBtnDanger /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerSolidBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDangerSolidBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDangerForeground}" />
     </Style>
     <Style Selector="Button.IndustryBtnDanger:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="#FFC93333" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDangerHover}" />
     </Style>
     <Style Selector="Button.IndustryBtnDanger:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDangerSolidBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDangerSolidBorder}" />
     </Style>
     <!-- Fable UX-review finding, 2026-08-30: this class no longer has one real consumer — it now
          also backs Gallery/Logbook Delete and the TX editor's armed-Cancel/pending-delete states,
@@ -1117,9 +1117,9 @@
          selector specificity, so that rule winning depends on staying declared AFTER this one —
          not on carrying two classes in its selector). -->
     <Style Selector="Button.IndustryBtnDanger:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
     <!-- spec §7 fixed exception 1: "HALT TX is solid red in every state, including idle, hover and
          disabled. It is the only action allowed to be red while nothing is wrong." Applied ONLY to
@@ -1128,9 +1128,9 @@
          :disabled rule above so it wins on the two buttons that carry it — every other
          IndustryBtnDanger consumer gets the normal fade above. -->
     <Style Selector="Button.IndustryBtnDanger.IndustryBtnDangerAlwaysOn:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerSolidBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDangerSolidBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDangerForeground}" />
     </Style>
 
 
@@ -1150,21 +1150,21 @@
         <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryBg}" />
     </Style>
     <!-- 2026-08-14: was IndustryAccent600 (tuned for the old #5980A6 base, mismatched now) — same
          spec-literal hover value as Button.IndustryBtnPrimary above. -->
     <Style Selector="ToggleButton.IndustryBtnPrimary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="#FF1472C0" />
-        <Setter Property="BorderBrush" Value="#FF1472C0" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPrimaryHover}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryPrimaryHoverBorder}" />
     </Style>
     <!-- 2026-08-14: same fill-loss fix as Button.IndustryBtnPrimary above (spec §4 checklist 331). -->
     <Style Selector="ToggleButton.IndustryBtnPrimary:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
 
     <!-- Bug fix (found via an automated silent-failure sweep, not a real click): ToggleButton is a
@@ -1176,22 +1176,22 @@
          just silently rendered FluentTheme's default chrome at rest instead of this design system's
          secondary look. Mirrors Button.IndustryBtnSecondary's own 4 states exactly. -->
     <Style Selector="ToggleButton.IndustryBtnSecondary /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryControlFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryControlFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnSecondary:pointerover /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryHoverFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryHoverBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHoverBorder}" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnSecondary:pressed /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryPressFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryPressBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryPressFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryPressBorder}" />
     </Style>
     <Style Selector="ToggleButton.IndustryBtnSecondary:disabled /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDisabledBorder}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDisabledText}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
 
     <!-- TX transmit toggle (Phase 7): ported 1:1 from the old design's ScanlineStudioTxToggleButtonTheme
@@ -1200,9 +1200,9 @@
          "Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" classes for the rest-state look,
          same base as any other secondary toggle; this adds only the :checked override. -->
     <Style Selector="ToggleButton.IndustryTxToggle:checked /template/ ContentPresenter">
-        <Setter Property="Background" Value="{StaticResource IndustryDanger}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDanger}" />
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryDangerForeground}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDanger}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDangerForeground}" />
     </Style>
 
     <!-- 8. .input — a SEPARATE IndustryInput class, distinct from the bare Industry exclusion
@@ -1226,8 +1226,8 @@
         <Setter Property="MinHeight" Value="24" />
         <Setter Property="Padding" Value="{StaticResource IndustryStepperValuePadding}" />
         <Setter Property="FontSize" Value="11" />
-        <Setter Property="Background" Value="{StaticResource IndustryEditField}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryEditField}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -1260,7 +1260,7 @@
         <Setter Property="FontSize" Value="12" />
     </Style>
     <Style Selector="TextBox.IndustryInput:pointerover, ComboBox.IndustryInput:pointerover, NumericUpDown.IndustryInput:pointerover">
-        <Setter Property="BorderBrush" Value="#731D1F20" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryInputHoverInk}" />
         <!-- text-45% mix, item 18. -->
     </Style>
     <Style Selector="TextBox.IndustryInput:disabled, ComboBox.IndustryInput:disabled, NumericUpDown.IndustryInput:disabled">
@@ -1281,7 +1281,7 @@
          simultaneously, so the hover selector must explicitly exclude :checked or it washes ink
          over the accent-filled selected segment). -->
     <Style Selector="RadioButton.IndustrySeg:pointerover:not(:checked) /template/ Border#PART_Face">
-        <Setter Property="Background" Value="#121D1F20" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverInk}" />
     </Style>
     <!-- 2026-08-14, spec §5: "Segmented ... Selected | face #C4DDF5 | border #2A5D8F | text
          #0B3E68, 600." Was a SOLID accent fill with white/bg text — the same visual weight as a
@@ -1290,11 +1290,11 @@
          reporting "this is currently chosen" reads differently from a button reporting "click me to
          commit." -->
     <Style Selector="RadioButton.IndustrySeg:checked /template/ Border#PART_Face">
-        <Setter Property="Background" Value="{StaticResource IndustrySelectTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustrySelectTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustrySelectTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustrySelectTintBorder}" />
     </Style>
     <Style Selector="RadioButton.IndustrySeg:checked /template/ ContentPresenter">
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustrySelectTintText}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustrySelectTintText}" />
         <Setter Property="TextBlock.FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="RadioButton.IndustrySeg:disabled">
@@ -1315,7 +1315,7 @@
         <!-- .08em * 11px = 0.88 device px (LAYOUT-SPEC §6 pitfall 8). -->
         <!-- 2026-08-14: was IndustryTextMuted62 — same "secondary label" role as row labels/group
              titles per the spec's §2.1 neutrals table. -->
-        <Setter Property="Foreground" Value="{StaticResource IndustryLabel}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <!-- Spec §6: "Header row #E4E4E4 on #C8C8C8" — a dedicated value, not either border
          role (#B9B9B9 chrome / #A0A0A0 control); IndustryTableHeaderBorderColor is its own
@@ -1324,7 +1324,7 @@
          — avoids a resource-key/style-class name collision). -->
     <Style Selector="Border.IndustryTableHeaderRule">
         <Setter Property="BorderThickness" Value="0,0,0,1" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryTableHeaderBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryTableHeaderBorder}" />
         <Setter Property="Padding" Value="{StaticResource IndustryTableCellPadding}" />
     </Style>
     <Style Selector="Border.IndustryTableHeaderRule.narrow">
@@ -1335,11 +1335,11 @@
         <Setter Property="FontSize" Value="11" />
         <Setter Property="FontWeight" Value="Medium" />
         <Setter Property="LetterSpacing" Value="-0.22" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="Border.IndustryTableRowRule">
         <Setter Property="BorderThickness" Value="0,0,0,1" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryTableRule8}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryTableRule8}" />
         <Setter Property="Padding" Value="{StaticResource IndustryTableCellPadding}" />
     </Style>
     <Style Selector="Border.IndustryTableRowRule.narrow">
@@ -1351,7 +1351,7 @@
          descendant-selector-across-the-template-boundary technique as the Gallery thumbnail's own
          :selected rule. -->
     <Style Selector="ListBoxItem:selected Border.IndustryTableRowRule">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent100}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent100}" />
     </Style>
 
     <!-- 11. Thumbnail figure — composed from existing atoms (IndustryHatchPanel below for the
@@ -1366,7 +1366,7 @@
          caption lozenge instead; the :selected accent-border rule below predates this
          exception and is a known pre-existing divergence, not fixed here). -->
     <Style Selector="Border.IndustryThumbnail">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -1374,7 +1374,7 @@
          IndustryListBoxItemTheme's own comment) — a plain descendant selector reaches
          into the DataTemplate-generated content across the template boundary. -->
     <Style Selector="ListBoxItem:selected Border.IndustryThumbnail">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />
         <Setter Property="BorderThickness" Value="2" />
     </Style>
     <!-- ControlBorder, not ChromeBorder, matching Border.IndustryThumbnail's own §7.4 fix
@@ -1382,7 +1382,7 @@
          two independently-classified borders (round-2 auditor finding). -->
     <Style Selector="Border.IndustryThumbnailCaption">
         <Setter Property="BorderThickness" Value="0,1,0,0" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
         <Setter Property="Padding" Value="{StaticResource IndustryThumbnailCaptionPadding}" />
     </Style>
     <Style Selector="Border.IndustryThumbnailCaption.gallery">
@@ -1392,7 +1392,7 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <!-- Gallery variant (design-fidelity-agent-caught addition): mock2's own Gallery figure uses
          bare .v2 (11px) for the call line, not the Receive/Transmit thumbnails' own 10px .mini
@@ -1408,7 +1408,7 @@
     <Style Selector="TextBlock.IndustryThumbnailMeta">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="9" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryMutedText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryMutedText}" />
     </Style>
     <Style Selector="TextBlock.IndustryThumbnailMeta.gallery">
         <Setter Property="FontSize" Value="9.5" />
@@ -1419,10 +1419,10 @@
          tokens, not view-shaped like everything else in this file. This is just the bordered panel
          atom that hosts it. -->
     <Style Selector="Border.IndustryHatchPanel">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryChromeBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryChromeBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Background" Value="{StaticResource IndustryHatchStripeBrush}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHatchStripeBrush}" />
     </Style>
 
     <!-- 13. Plot canvas frame (waterfall/spectrum/scope/editor-preview containers) — dark
@@ -1431,10 +1431,10 @@
          first consumer; the plot's OWN pixel content (waterfall gradient, spectrum trace, editor
          canvas) is unaffected — this is only the surrounding frame chrome. -->
     <Style Selector="Border.IndustryPlot">
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryChromeBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryChromeBorder}" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Background" Value="{StaticResource IndustryAccent900}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent900}" />
     </Style>
 
     <!-- 16. Disclosure header — .gbt group-box-title typography (NOT kicker text — item 16's own
@@ -1449,7 +1449,7 @@
         <Setter Property="TextBlock.FontSize" Value="9.5" />
         <Setter Property="TextBlock.LetterSpacing" Value="1.33" />
         <!-- .14em * 9.5px = 1.33 device px. -->
-        <Setter Property="TextBlock.Foreground" Value="{StaticResource IndustryLabel}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryLabel}" />
     </Style>
     <Style Selector="ToggleButton.IndustryDisclosure:checked /template/ Path#PART_Chevron">
         <Setter Property="Data" Value="M 0 3 L 6 3" />
@@ -1487,7 +1487,7 @@
         <Setter Property="Height" Value="26" />
         <Setter Property="MinHeight" Value="26" />
         <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
-        <Setter Property="Background" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryBg}" />
     </Style>
     <!-- Descendant selector (not a direct-child/Classes requirement per item): reaches every
          MenuItem nested anywhere under an Industry-classed Menu, including submenu items, without
@@ -1499,7 +1499,7 @@
         <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="Menu.Industry MenuItem:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -1508,7 +1508,7 @@
          look, which the design doc explicitly said would clash — same descendant-selector,
          no-collision reasoning as the MenuItem rules above. -->
     <Style Selector="Menu.Industry Separator">
-        <Setter Property="Background" Value="{StaticResource IndustryChromeBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryChromeBorder}" />
         <Setter Property="Height" Value="1" />
         <Setter Property="Margin" Value="0,2" />
     </Style>
@@ -1520,14 +1520,14 @@
          codebase to collide with (grepped). OverlayCornerRadius=0 (App.axaml) already squares the
          popup itself; only Background/Padding/MenuItem typography need setting here. -->
     <Style Selector="ContextMenu.Industry">
-        <Setter Property="Background" Value="{StaticResource IndustryBg}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryBg}" />
         <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
     </Style>
     <Style Selector="ContextMenu.Industry MenuItem">
         <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
         <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="ContextMenu.Industry MenuItem:disabled">
         <Setter Property="Opacity" Value="0.45" />
@@ -1582,7 +1582,7 @@
         <Setter Property="TextBlock.LetterSpacing" Value="1.035" />
         <!-- .09em * 11.5px = 1.035 device px. -->
         <Setter Property="Background" Value="Transparent" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
         <Setter Property="BorderThickness" Value="0" />
         <Setter Property="CornerRadius" Value="0" />
     </Style>
@@ -1595,11 +1595,11 @@
     </Style>
     <Style Selector="TabItem.Industry:selected">
         <Setter Property="BorderThickness" Value="0,0,0,2" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryText}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
     </Style>
     <Style Selector="TabItem.Industry:pointerover">
-        <Setter Property="Foreground" Value="{StaticResource IndustryAccent700}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryAccent700}" />
     </Style>
     <!-- Code-review fix: outer strip padding 6,0,6,0 (PADDING-NORMALIZATION.md §3 Band 3) was
          dropped entirely when the old-design :not(.Industry) narrowing removed its own 6px
@@ -1613,14 +1613,14 @@
 
     <!-- 2b. Real CheckBox — interaction states. -->
     <Style Selector="CheckBox.Industry:checked /template/ Border#PART_Box">
-        <Setter Property="Background" Value="{StaticResource IndustryAccent}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAccent}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />
     </Style>
     <Style Selector="CheckBox.Industry:checked /template/ Path#PART_Tick">
         <Setter Property="IsVisible" Value="True" />
     </Style>
     <Style Selector="CheckBox.Industry:pointerover /template/ Border#PART_Box">
-        <Setter Property="BorderBrush" Value="#731D1F20" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryInputHoverInk}" />
         <!-- text-45% mix, item 18 — same hover convention as the .input atom. -->
     </Style>
     <Style Selector="CheckBox.Industry:disabled">
@@ -1633,7 +1633,7 @@
     <Style Selector="TextBlock.IndustryHelpGlyph">
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryTextMuted55}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryTextMuted55}" />
         <Setter Property="Cursor" Value="Help" />
     </Style>
 
@@ -1653,25 +1653,25 @@
     <Style Selector="Rectangle.IndustryLed">
         <Setter Property="Width" Value="8" />
         <Setter Property="Height" Value="8" />
-        <Setter Property="Stroke" Value="#FF6E6E6E" />
+        <Setter Property="Stroke" Value="{DynamicResource IndustryLedOffStroke}" />
         <Setter Property="StrokeThickness" Value="1" />
-        <Setter Property="Fill" Value="#FFC8C8C8" />
+        <Setter Property="Fill" Value="{DynamicResource IndustryLedOffFill}" />
     </Style>
     <Style Selector="Rectangle.IndustryLed.active">
-        <Setter Property="Fill" Value="{StaticResource IndustryHealthy}" />
-        <Setter Property="Stroke" Value="{StaticResource IndustryHealthySolidBorder}" />
+        <Setter Property="Fill" Value="{DynamicResource IndustryHealthy}" />
+        <Setter Property="Stroke" Value="{DynamicResource IndustryHealthySolidBorder}" />
     </Style>
     <Style Selector="Rectangle.IndustryLed.alert">
-        <Setter Property="Fill" Value="{StaticResource IndustryTxLed}" />
-        <Setter Property="Stroke" Value="{StaticResource IndustryDangerSolidBorder}" />
+        <Setter Property="Fill" Value="{DynamicResource IndustryTxLed}" />
+        <Setter Property="Stroke" Value="{DynamicResource IndustryDangerSolidBorder}" />
     </Style>
     <!-- 2026-08-14: added for the TX-error chip (mockups/colors/SSTV-Color-Scheme.md §6's own
          "TX inhibited" row is amber, a distinct concept from the red "fault" row .alert covers).
          Renamed "TX ERROR" 2026-08-26, direct user correction: this indicator never actually
          inhibits/blocks a Transmit, it reports whether the last attempt errored. -->
     <Style Selector="Rectangle.IndustryLed.attention">
-        <Setter Property="Fill" Value="{StaticResource IndustryAttention}" />
-        <Setter Property="Stroke" Value="{StaticResource IndustryAttentionSolidBorder}" />
+        <Setter Property="Fill" Value="{DynamicResource IndustryAttention}" />
+        <Setter Property="Stroke" Value="{DynamicResource IndustryAttentionSolidBorder}" />
     </Style>
 
     <!-- 2026-08-14: LED + lozenge composed status atom, spec §6 ("Every state indicator is the
@@ -1695,8 +1695,8 @@
         <Setter Property="Padding" Value="7,0,7,0" />
         <Setter Property="BorderThickness" Value="1" />
         <Setter Property="CornerRadius" Value="0" />
-        <Setter Property="Background" Value="{StaticResource IndustryDisabledFace}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryControlBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
     </Style>
     <!-- User-reported fix (2026-08-23): no VerticalAlignment here previously — some call sites
          (e.g. the detected-mode lozenge, MainWindow.axaml) already set VerticalAlignment="Center"
@@ -1709,22 +1709,22 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
         <Setter Property="FontSize" Value="10" />
         <Setter Property="FontWeight" Value="Medium" />
-        <Setter Property="Foreground" Value="{StaticResource IndustryStatusText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryStatusText}" />
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="Border.IndustryStatus.healthyTint">
-        <Setter Property="Background" Value="{StaticResource IndustryHealthyTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryHealthyTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryHealthyTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHealthyTintBorder}" />
     </Style>
     <Style Selector="Border.IndustryStatus.healthyTint TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryHealthyTintText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryHealthyTintText}" />
     </Style>
     <Style Selector="Border.IndustryStatus.attentionTint">
-        <Setter Property="Background" Value="{StaticResource IndustryAttentionTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryAttentionTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryAttentionTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAttentionTintBorder}" />
     </Style>
     <Style Selector="Border.IndustryStatus.attentionTint TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryAttentionTintText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryAttentionTintText}" />
     </Style>
     <!-- spec/18-path-to-1.0.md High item 10: filled-lozenge red variant for the new TX-KEYED
          status chip, mockups/colors/SSTV-Color-Scheme.md's own "Transmitting" row (distinct from
@@ -1733,11 +1733,11 @@
          .healthyTint/.attentionTint above, reusing the danger tokens .fault below already
          established (previously text-only, no filled-lozenge consumer existed until now). -->
     <Style Selector="Border.IndustryStatus.dangerTint">
-        <Setter Property="Background" Value="{StaticResource IndustryDangerTint}" />
-        <Setter Property="BorderBrush" Value="{StaticResource IndustryDangerTintBorder}" />
+        <Setter Property="Background" Value="{DynamicResource IndustryDangerTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDangerTintBorder}" />
     </Style>
     <Style Selector="Border.IndustryStatus.dangerTint TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryDangerTintText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryDangerTintText}" />
     </Style>
     <!-- Fault row (spec §6): neutral fill, red TEXT only — "a tinted lozenge is loud, and
          TX-active must be the loudest thing on screen." No real fault-indicator consumer exists
@@ -1745,7 +1745,7 @@
          anywhere), so this variant has no call site today — added for completeness/future use,
          not applied anywhere in this commit. -->
     <Style Selector="Border.IndustryStatus.fault TextBlock">
-        <Setter Property="Foreground" Value="{StaticResource IndustryDangerTintText}" />
+        <Setter Property="Foreground" Value="{DynamicResource IndustryDangerTintText}" />
     </Style>
 
 </Styles>

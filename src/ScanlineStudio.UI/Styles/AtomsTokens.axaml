@@ -75,150 +75,244 @@
                  thumbnail figure (Border.IndustryThumbnail + its IndustryThumbnailCaption
                  divider, kept consistent as one composed content object rather than two
                  independently-classified borders). -->
-            <Color x:Key="IndustryBgColor">#F0F0F0</Color>
-            <Color x:Key="IndustrySurfaceColor">#E9E9EA</Color>
-            <Color x:Key="IndustryTextColor">#101010</Color>
-            <Color x:Key="IndustryAccentColor">#0F62A8</Color>
-            <Color x:Key="IndustryTextMuted42Color">#99999A</Color>
-            <Color x:Key="IndustryTextMuted50Color">#88898A</Color>
-            <Color x:Key="IndustryTextMuted55Color">#7D7E7F</Color>
-            <Color x:Key="IndustryTextMuted62Color">#6E6F70</Color>
-            <Color x:Key="IndustryTextMuted72Color">#595A5B</Color>
-            <Color x:Key="IndustryRowRule7Color">#E3E3E4</Color>
-            <Color x:Key="IndustryRowRule6Color">#E5E5E6</Color>
-            <Color x:Key="IndustryTableRule8Color">#E1E1E2</Color>
-            <!-- Spec §6: "Header row #E4E4E4 on #C8C8C8" — its own value, distinct from
-                 both border roles (§2 ChromeBorder #B9B9B9 / ControlBorder #A0A0A0).
-                 Named "...Border..." rather than "...Rule..." (round-2 auditor nit) to
-                 avoid shadowing the Border.IndustryTableHeaderRule STYLE CLASS name below
-                 that consumes it — they're separate resource namespaces so it would have
-                 built fine, but the name collision invited misreading. -->
-            <Color x:Key="IndustryTableHeaderBorderColor">#C8C8C8</Color>
-            <Color x:Key="IndustryNeutral200Color">#E7E7EA</Color>
-            <Color x:Key="IndustryNeutral300Color">#D4D4D7</Color>
-            <Color x:Key="IndustryAccent100Color">#EEF6FF</Color>
-            <!-- Added during Phase 1 plan-review (not in LAYOUT-SPEC.md §2's own table, which
-                 skips straight from 100 to 700): the primary button's hover state needs this ramp
-                 step specifically, confirmed against the source design-system CSS
-                 (_ds/.../styles.css:29, the accent-600 custom property). Accent700 is already used
-                 for group-box titles elsewhere on the same screen, so reusing it for a hover state
-                 too would be visually ambiguous. -->
-            <Color x:Key="IndustryAccent600Color">#597EA3</Color>
-            <Color x:Key="IndustryAccent700Color">#416180</Color>
-            <Color x:Key="IndustryAccent800Color">#2C455D</Color>
-            <Color x:Key="IndustryAccent900Color">#1D2D3D</Color>
-
-            <!-- Danger/alert red: value corrected 2026-08-14 to the color spec's exact #B42A2A (see
-                 the block comment above) — was ported 1:1 from the old design's
-                 ScanlineStudioTxActiveColor at Phase 7 (#B93636), now superseded. Same real
-                 consumers as before (TX transmit toggle's :checked state, TX/radio-header error
-                 text, destructive buttons), only the value changed. -->
-            <Color x:Key="IndustryDangerColor">#B42A2A</Color>
-            <Color x:Key="IndustryDangerForegroundColor">#FFFFFF</Color>
-            <!-- Spec §2.2: "Red for TX-active LEDs is #D42A2A, not #B42A2A... this is the only
-                 place the two reds differ; do not unify them." Was a bare literal on
-                 Ellipse.IndustryLed.alert (Atoms.axaml); tokenized here, value unchanged. -->
-            <Color x:Key="IndustryTxLedColor">#D42A2A</Color>
-
-            <!-- ============ New spec-exact tokens (additive, mockups/colors/SSTV-Color-Scheme.md) ============ -->
-            <!-- §2.1 neutrals not already covered by a direct rename above. -->
-            <Color x:Key="IndustryControlFaceColor">#E9E9E9</Color>
-            <Color x:Key="IndustryDataFieldColor">#E4E4E4</Color>
-            <Color x:Key="IndustryEditFieldColor">#FFFFFF</Color>
-            <Color x:Key="IndustryDisabledFaceColor">#EDEDED</Color>
-            <Color x:Key="IndustryChromeBorderColor">#B9B9B9</Color>
-            <Color x:Key="IndustryControlBorderColor">#A0A0A0</Color>
-            <Color x:Key="IndustryDisabledBorderColor">#C6C6C6</Color>
-            <Color x:Key="IndustryLabelColor">#454545</Color>
-            <Color x:Key="IndustryMutedTextColor">#8A8A8A</Color>
-            <Color x:Key="IndustryDisabledTextColor">#9A9A9A</Color>
-            <!-- §6 status lozenge neutral text — distinct from every other neutral above (not
-                 TextBrush #101010, not LabelBrush #454545, not MutedTextBrush #8A8A8A). -->
-            <Color x:Key="IndustryStatusTextColor">#3A3A3A</Color>
-            <!-- §2.2 hue tint triads (Select uses IndustryAccentColor above as its base — spec's
-                 "blue" IS the app's one accent now, not a separate hue). -->
-            <Color x:Key="IndustrySelectSolidBorderColor">#0B4C83</Color>
-            <Color x:Key="IndustrySelectTintColor">#C4DDF5</Color>
-            <Color x:Key="IndustrySelectTintBorderColor">#2A5D8F</Color>
-            <Color x:Key="IndustrySelectTintTextColor">#0B3E68</Color>
-            <Color x:Key="IndustryHealthyColor">#2E9E44</Color>
-            <Color x:Key="IndustryHealthySolidBorderColor">#256F33</Color>
-            <Color x:Key="IndustryHealthyTintColor">#DCEFD9</Color>
-            <Color x:Key="IndustryHealthyTintBorderColor">#4E9A4E</Color>
-            <Color x:Key="IndustryHealthyTintTextColor">#14471C</Color>
-            <Color x:Key="IndustryAttentionColor">#C88A00</Color>
-            <Color x:Key="IndustryAttentionSolidBorderColor">#8F6300</Color>
-            <Color x:Key="IndustryAttentionTintColor">#FAECC4</Color>
-            <Color x:Key="IndustryAttentionTintBorderColor">#B0871F</Color>
-            <Color x:Key="IndustryAttentionTintTextColor">#4A3600</Color>
-            <Color x:Key="IndustryDangerSolidBorderColor">#8C1F1F</Color>
-            <Color x:Key="IndustryDangerTintColor">#F3D9D9</Color>
-            <Color x:Key="IndustryDangerTintBorderColor">#B45A5A</Color>
-            <Color x:Key="IndustryDangerTintTextColor">#5A1010</Color>
-            <!-- Interaction-only, not semantic (spec §2.2): hover/press need somewhere to go. -->
-            <Color x:Key="IndustryHoverFaceColor">#DCE9F5</Color>
-            <Color x:Key="IndustryHoverBorderColor">#7EB4EA</Color>
-            <Color x:Key="IndustryPressFaceColor">#C4DDF5</Color>
-            <Color x:Key="IndustryPressBorderColor">#5A9AD4</Color>
-
-            <SolidColorBrush x:Key="IndustryBg" Color="{StaticResource IndustryBgColor}" />
-            <SolidColorBrush x:Key="IndustryDanger" Color="{StaticResource IndustryDangerColor}" />
-            <SolidColorBrush x:Key="IndustryDangerForeground" Color="{StaticResource IndustryDangerForegroundColor}" />
-            <SolidColorBrush x:Key="IndustryTxLed" Color="{StaticResource IndustryTxLedColor}" />
-            <SolidColorBrush x:Key="IndustrySurface" Color="{StaticResource IndustrySurfaceColor}" />
-            <SolidColorBrush x:Key="IndustryText" Color="{StaticResource IndustryTextColor}" />
-            <SolidColorBrush x:Key="IndustryAccent" Color="{StaticResource IndustryAccentColor}" />
-            <SolidColorBrush x:Key="IndustryTextMuted42" Color="{StaticResource IndustryTextMuted42Color}" />
-            <SolidColorBrush x:Key="IndustryTextMuted50" Color="{StaticResource IndustryTextMuted50Color}" />
-            <SolidColorBrush x:Key="IndustryTextMuted55" Color="{StaticResource IndustryTextMuted55Color}" />
-            <SolidColorBrush x:Key="IndustryTextMuted62" Color="{StaticResource IndustryTextMuted62Color}" />
-            <SolidColorBrush x:Key="IndustryTextMuted72" Color="{StaticResource IndustryTextMuted72Color}" />
-            <SolidColorBrush x:Key="IndustryRowRule7" Color="{StaticResource IndustryRowRule7Color}" />
-            <SolidColorBrush x:Key="IndustryRowRule6" Color="{StaticResource IndustryRowRule6Color}" />
-            <SolidColorBrush x:Key="IndustryTableRule8" Color="{StaticResource IndustryTableRule8Color}" />
-            <SolidColorBrush x:Key="IndustryTableHeaderBorder" Color="{StaticResource IndustryTableHeaderBorderColor}" />
-            <SolidColorBrush x:Key="IndustryNeutral200" Color="{StaticResource IndustryNeutral200Color}" />
-            <SolidColorBrush x:Key="IndustryNeutral300" Color="{StaticResource IndustryNeutral300Color}" />
-            <SolidColorBrush x:Key="IndustryAccent100" Color="{StaticResource IndustryAccent100Color}" />
-            <SolidColorBrush x:Key="IndustryAccent600" Color="{StaticResource IndustryAccent600Color}" />
-            <SolidColorBrush x:Key="IndustryAccent700" Color="{StaticResource IndustryAccent700Color}" />
-            <SolidColorBrush x:Key="IndustryAccent800" Color="{StaticResource IndustryAccent800Color}" />
-            <SolidColorBrush x:Key="IndustryAccent900" Color="{StaticResource IndustryAccent900Color}" />
-
-            <SolidColorBrush x:Key="IndustryControlFace" Color="{StaticResource IndustryControlFaceColor}" />
-            <SolidColorBrush x:Key="IndustryDataField" Color="{StaticResource IndustryDataFieldColor}" />
-            <SolidColorBrush x:Key="IndustryEditField" Color="{StaticResource IndustryEditFieldColor}" />
-            <SolidColorBrush x:Key="IndustryDisabledFace" Color="{StaticResource IndustryDisabledFaceColor}" />
-            <SolidColorBrush x:Key="IndustryChromeBorder" Color="{StaticResource IndustryChromeBorderColor}" />
-            <SolidColorBrush x:Key="IndustryControlBorder" Color="{StaticResource IndustryControlBorderColor}" />
-            <SolidColorBrush x:Key="IndustryDisabledBorder" Color="{StaticResource IndustryDisabledBorderColor}" />
-            <SolidColorBrush x:Key="IndustryLabel" Color="{StaticResource IndustryLabelColor}" />
-            <SolidColorBrush x:Key="IndustryMutedText" Color="{StaticResource IndustryMutedTextColor}" />
-            <SolidColorBrush x:Key="IndustryDisabledText" Color="{StaticResource IndustryDisabledTextColor}" />
-            <SolidColorBrush x:Key="IndustryStatusText" Color="{StaticResource IndustryStatusTextColor}" />
-
-            <SolidColorBrush x:Key="IndustrySelectSolidBorder" Color="{StaticResource IndustrySelectSolidBorderColor}" />
-            <SolidColorBrush x:Key="IndustrySelectTint" Color="{StaticResource IndustrySelectTintColor}" />
-            <SolidColorBrush x:Key="IndustrySelectTintBorder" Color="{StaticResource IndustrySelectTintBorderColor}" />
-            <SolidColorBrush x:Key="IndustrySelectTintText" Color="{StaticResource IndustrySelectTintTextColor}" />
-            <SolidColorBrush x:Key="IndustryHealthy" Color="{StaticResource IndustryHealthyColor}" />
-            <SolidColorBrush x:Key="IndustryHealthySolidBorder" Color="{StaticResource IndustryHealthySolidBorderColor}" />
-            <SolidColorBrush x:Key="IndustryHealthyTint" Color="{StaticResource IndustryHealthyTintColor}" />
-            <SolidColorBrush x:Key="IndustryHealthyTintBorder" Color="{StaticResource IndustryHealthyTintBorderColor}" />
-            <SolidColorBrush x:Key="IndustryHealthyTintText" Color="{StaticResource IndustryHealthyTintTextColor}" />
-            <SolidColorBrush x:Key="IndustryAttention" Color="{StaticResource IndustryAttentionColor}" />
-            <SolidColorBrush x:Key="IndustryAttentionSolidBorder" Color="{StaticResource IndustryAttentionSolidBorderColor}" />
-            <SolidColorBrush x:Key="IndustryAttentionTint" Color="{StaticResource IndustryAttentionTintColor}" />
-            <SolidColorBrush x:Key="IndustryAttentionTintBorder" Color="{StaticResource IndustryAttentionTintBorderColor}" />
-            <SolidColorBrush x:Key="IndustryAttentionTintText" Color="{StaticResource IndustryAttentionTintTextColor}" />
-            <SolidColorBrush x:Key="IndustryDangerSolidBorder" Color="{StaticResource IndustryDangerSolidBorderColor}" />
-            <SolidColorBrush x:Key="IndustryDangerTint" Color="{StaticResource IndustryDangerTintColor}" />
-            <SolidColorBrush x:Key="IndustryDangerTintBorder" Color="{StaticResource IndustryDangerTintBorderColor}" />
-            <SolidColorBrush x:Key="IndustryDangerTintText" Color="{StaticResource IndustryDangerTintTextColor}" />
-            <SolidColorBrush x:Key="IndustryHoverFace" Color="{StaticResource IndustryHoverFaceColor}" />
-            <SolidColorBrush x:Key="IndustryHoverBorder" Color="{StaticResource IndustryHoverBorderColor}" />
-            <SolidColorBrush x:Key="IndustryPressFace" Color="{StaticResource IndustryPressFaceColor}" />
-            <SolidColorBrush x:Key="IndustryPressBorder" Color="{StaticResource IndustryPressBorderColor}" />
+            <!-- Phase 1 dark mode: Color+Brush pairs collapsed into one Color-valued SolidColorBrush
+                 per theme branch (their *Color halves had zero external consumers — every reference
+                 was the matching brush definition right below it) — see
+                 ResourceDictionary.ThemeDictionaries below. Light values are unchanged from before
+                 this restructure (pinned by a golden test); Dark values are this phase's own new
+                 design work, a principled first-pass derived via hue-preserving HSL lightness
+                 inversion (accent/semantic families) and light-mode-lerp-fraction reapplication
+                 (muted-text ramp, rule/neutral tones), with a manual contrast boost for
+                 control-face-class surfaces (buttons/fields) — the naive fraction under-contrasts
+                 those specifically, a known dark-theme pitfall. Two tokens are deliberately NOT
+                 inverted between branches (documented per-key below): IndustryAccent900 (the
+                 plot/waterfall canvas background — fixed C#-side pens in
+                 SpectrumTraceControl.cs/DecoderTraceControl.cs are not theme-token-driven and were
+                 tuned against this exact value) and IndustryDangerForeground (white text on solid
+                 red — inverting would make it unreadable). Subject to correction via the real-window
+                 visual-verification gate (plan Process step 4) before this phase ships. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="IndustryBg" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="IndustrySurface" Color="#E9E9EA" />
+                    <SolidColorBrush x:Key="IndustryText" Color="#101010" />
+                    <SolidColorBrush x:Key="IndustryAccent" Color="#0F62A8" />
+                    <SolidColorBrush x:Key="IndustryTextMuted42" Color="#99999A" />
+                    <SolidColorBrush x:Key="IndustryTextMuted50" Color="#88898A" />
+                    <SolidColorBrush x:Key="IndustryTextMuted55" Color="#7D7E7F" />
+                    <SolidColorBrush x:Key="IndustryTextMuted62" Color="#6E6F70" />
+                    <SolidColorBrush x:Key="IndustryTextMuted72" Color="#595A5B" />
+                    <SolidColorBrush x:Key="IndustryRowRule7" Color="#E3E3E4" />
+                    <SolidColorBrush x:Key="IndustryRowRule6" Color="#E5E5E6" />
+                    <SolidColorBrush x:Key="IndustryTableRule8" Color="#E1E1E2" />
+                    <!-- Spec §6: "Header row #E4E4E4 on #C8C8C8" — its own value, distinct from
+                         both border roles (§2 ChromeBorder #B9B9B9 / ControlBorder #A0A0A0). -->
+                    <SolidColorBrush x:Key="IndustryTableHeaderBorder" Color="#C8C8C8" />
+                    <SolidColorBrush x:Key="IndustryNeutral200" Color="#E7E7EA" />
+                    <SolidColorBrush x:Key="IndustryNeutral300" Color="#D4D4D7" />
+                    <SolidColorBrush x:Key="IndustryAccent100" Color="#EEF6FF" />
+                    <SolidColorBrush x:Key="IndustryAccent600" Color="#597EA3" />
+                    <SolidColorBrush x:Key="IndustryAccent700" Color="#416180" />
+                    <SolidColorBrush x:Key="IndustryAccent800" Color="#2C455D" />
+                    <!-- Plot/waterfall canvas background — identical value in both branches, see
+                         the block comment above. -->
+                    <SolidColorBrush x:Key="IndustryAccent900" Color="#1D2D3D" />
+                    <!-- DO NOT INVERT: foreground ink for text/glyphs drawn directly on the
+                         IndustryAccent900 plot canvas (e.g. RxImagePaneView's "No image yet"
+                         placeholder) — that canvas background is itself never inverted (see
+                         above), so an inverting foreground token composited against it goes
+                         near-black-on-near-black in Dark. Code-review finding: an earlier pass
+                         used IndustryBg (which DOES invert) for exactly this and it went
+                         invisible (~1.1:1 contrast) the moment Dark shipped. -->
+                    <SolidColorBrush x:Key="IndustryPlotInk" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="IndustryDanger" Color="#B42A2A" />
+                    <!-- White text on solid red — identical value in both branches, see the block
+                         comment above. -->
+                    <SolidColorBrush x:Key="IndustryDangerForeground" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IndustryTxLed" Color="#D42A2A" />
+                    <SolidColorBrush x:Key="IndustryControlFace" Color="#E9E9E9" />
+                    <SolidColorBrush x:Key="IndustryDataField" Color="#E4E4E4" />
+                    <SolidColorBrush x:Key="IndustryEditField" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IndustryDisabledFace" Color="#EDEDED" />
+                    <SolidColorBrush x:Key="IndustryChromeBorder" Color="#B9B9B9" />
+                    <SolidColorBrush x:Key="IndustryControlBorder" Color="#A0A0A0" />
+                    <SolidColorBrush x:Key="IndustryDisabledBorder" Color="#C6C6C6" />
+                    <SolidColorBrush x:Key="IndustryLabel" Color="#454545" />
+                    <SolidColorBrush x:Key="IndustryMutedText" Color="#8A8A8A" />
+                    <SolidColorBrush x:Key="IndustryDisabledText" Color="#9A9A9A" />
+                    <SolidColorBrush x:Key="IndustryStatusText" Color="#3A3A3A" />
+                    <SolidColorBrush x:Key="IndustrySelectSolidBorder" Color="#0B4C83" />
+                    <SolidColorBrush x:Key="IndustrySelectTint" Color="#C4DDF5" />
+                    <SolidColorBrush x:Key="IndustrySelectTintBorder" Color="#2A5D8F" />
+                    <SolidColorBrush x:Key="IndustrySelectTintText" Color="#0B3E68" />
+                    <SolidColorBrush x:Key="IndustryHealthy" Color="#2E9E44" />
+                    <SolidColorBrush x:Key="IndustryHealthySolidBorder" Color="#256F33" />
+                    <SolidColorBrush x:Key="IndustryHealthyTint" Color="#DCEFD9" />
+                    <SolidColorBrush x:Key="IndustryHealthyTintBorder" Color="#4E9A4E" />
+                    <SolidColorBrush x:Key="IndustryHealthyTintText" Color="#14471C" />
+                    <SolidColorBrush x:Key="IndustryAttention" Color="#C88A00" />
+                    <SolidColorBrush x:Key="IndustryAttentionSolidBorder" Color="#8F6300" />
+                    <SolidColorBrush x:Key="IndustryAttentionTint" Color="#FAECC4" />
+                    <SolidColorBrush x:Key="IndustryAttentionTintBorder" Color="#B0871F" />
+                    <SolidColorBrush x:Key="IndustryAttentionTintText" Color="#4A3600" />
+                    <SolidColorBrush x:Key="IndustryDangerSolidBorder" Color="#8C1F1F" />
+                    <SolidColorBrush x:Key="IndustryDangerTint" Color="#F3D9D9" />
+                    <SolidColorBrush x:Key="IndustryDangerTintBorder" Color="#B45A5A" />
+                    <SolidColorBrush x:Key="IndustryDangerTintText" Color="#5A1010" />
+                    <SolidColorBrush x:Key="IndustryHoverFace" Color="#DCE9F5" />
+                    <SolidColorBrush x:Key="IndustryHoverBorder" Color="#7EB4EA" />
+                    <SolidColorBrush x:Key="IndustryPressFace" Color="#C4DDF5" />
+                    <SolidColorBrush x:Key="IndustryPressBorder" Color="#5A9AD4" />
+                    <!-- The 17 literal-color Setters tokenized this phase (Atoms.axaml hover/press
+                         feedback layer + LED-off + TxImageEditorPaneView's rotation overlay). -->
+                    <SolidColorBrush x:Key="IndustryHoverInk" Color="#121D1F20" />
+                    <SolidColorBrush x:Key="IndustryPressInk" Color="#241D1F20" />
+                    <SolidColorBrush x:Key="IndustryInputHoverInk" Color="#731D1F20" />
+                    <SolidColorBrush x:Key="IndustryPrimaryHover" Color="#FF1472C0" />
+                    <SolidColorBrush x:Key="IndustryPrimaryHoverBorder" Color="#FF1472C0" />
+                    <SolidColorBrush x:Key="IndustryDangerHover" Color="#FFC93333" />
+                    <SolidColorBrush x:Key="IndustryLedOffStroke" Color="#FF6E6E6E" />
+                    <SolidColorBrush x:Key="IndustryLedOffFill" Color="#FFC8C8C8" />
+                    <SolidColorBrush x:Key="IndustryOverlayFill" Color="#33FFFFFF" />
+                    <DrawingBrush x:Key="IndustryHatchStripeBrush" TileMode="Tile"
+                                  SourceRect="0,0,16.9706,16.9706" DestinationRect="0,0,16.9706,16.9706">
+                        <DrawingBrush.Drawing>
+                            <GeometryDrawing Brush="#240F62A8">
+                                <GeometryDrawing.Geometry>
+                                    <GeometryGroup FillRule="NonZero">
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="0,0" IsClosed="True">
+                                                <LineSegment Point="8.4853,0" />
+                                                <LineSegment Point="0,8.4853" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="16.9706,0" IsClosed="True">
+                                                <LineSegment Point="16.9706,8.4853" />
+                                                <LineSegment Point="8.4853,16.9706" />
+                                                <LineSegment Point="0,16.9706" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </GeometryGroup>
+                                </GeometryDrawing.Geometry>
+                            </GeometryDrawing>
+                        </DrawingBrush.Drawing>
+                    </DrawingBrush>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="IndustryBg" Color="#1A1B1C" />
+                    <SolidColorBrush x:Key="IndustrySurface" Color="#242526" />
+                    <SolidColorBrush x:Key="IndustryText" Color="#E7E7E8" />
+                    <SolidColorBrush x:Key="IndustryAccent" Color="#49A5F3" />
+                    <SolidColorBrush x:Key="IndustryTextMuted42" Color="#6A6A6B" />
+                    <SolidColorBrush x:Key="IndustryTextMuted50" Color="#78797A" />
+                    <SolidColorBrush x:Key="IndustryTextMuted55" Color="#828384" />
+                    <SolidColorBrush x:Key="IndustryTextMuted62" Color="#909192" />
+                    <SolidColorBrush x:Key="IndustryTextMuted72" Color="#A3A4A5" />
+                    <SolidColorBrush x:Key="IndustryRowRule7" Color="#2E2F30" />
+                    <SolidColorBrush x:Key="IndustryRowRule6" Color="#2C2D2E" />
+                    <SolidColorBrush x:Key="IndustryTableRule8" Color="#313132" />
+                    <SolidColorBrush x:Key="IndustryTableHeaderBorder" Color="#535455" />
+                    <SolidColorBrush x:Key="IndustryNeutral200" Color="#2C2D2E" />
+                    <SolidColorBrush x:Key="IndustryNeutral300" Color="#414243" />
+                    <SolidColorBrush x:Key="IndustryAccent100" Color="#1B2937" />
+                    <SolidColorBrush x:Key="IndustryAccent600" Color="#95ADC5" />
+                    <SolidColorBrush x:Key="IndustryAccent700" Color="#A7BDD2" />
+                    <SolidColorBrush x:Key="IndustryAccent800" Color="#BACCDE" />
+                    <!-- DO NOT INVERT: plot/waterfall canvas background, see block comment above. -->
+                    <SolidColorBrush x:Key="IndustryAccent900" Color="#1D2D3D" />
+                    <!-- DO NOT INVERT: foreground ink for text on the plot canvas, see block
+                         comment above. -->
+                    <SolidColorBrush x:Key="IndustryPlotInk" Color="#F0F0F0" />
+                    <SolidColorBrush x:Key="IndustryDanger" Color="#DA4E4E" />
+                    <!-- DO NOT INVERT: white text on solid red, see block comment above. -->
+                    <SolidColorBrush x:Key="IndustryDangerForeground" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IndustryTxLed" Color="#E44E4E" />
+                    <SolidColorBrush x:Key="IndustryControlFace" Color="#373839" />
+                    <SolidColorBrush x:Key="IndustryDataField" Color="#2E2F30" />
+                    <!-- Code-review finding (round 1): the original #2E3032 was actually DARKER
+                         than ControlFace/DataField (near-identical to DataField), losing the
+                         "editable one reads lightest" invariant Light enforces hard
+                         (#FFFFFF > #E4E4E4/#E9E9E9). #3D4043 restores that ordering while staying
+                         a deliberately muted (not pure-white) surface — stands in for "the
+                         editable one" semantic role that pure white served in Light mode (spec:
+                         "white always and only means editable"). -->
+                    <SolidColorBrush x:Key="IndustryEditField" Color="#3D4043" />
+                    <SolidColorBrush x:Key="IndustryDisabledFace" Color="#262728" />
+                    <SolidColorBrush x:Key="IndustryChromeBorder" Color="#585859" />
+                    <SolidColorBrush x:Key="IndustryControlBorder" Color="#6C6D6E" />
+                    <SolidColorBrush x:Key="IndustryDisabledBorder" Color="#474849" />
+                    <SolidColorBrush x:Key="IndustryLabel" Color="#AEAEAF" />
+                    <SolidColorBrush x:Key="IndustryMutedText" Color="#8B8B8C" />
+                    <SolidColorBrush x:Key="IndustryDisabledText" Color="#767778" />
+                    <SolidColorBrush x:Key="IndustryStatusText" Color="#BEBEBF" />
+                    <SolidColorBrush x:Key="IndustrySelectSolidBorder" Color="#82C2F7" />
+                    <SolidColorBrush x:Key="IndustrySelectTint" Color="#073C69" />
+                    <SolidColorBrush x:Key="IndustrySelectTintBorder" Color="#0E7EDC" />
+                    <SolidColorBrush x:Key="IndustrySelectTintText" Color="#96CBF8" />
+                    <SolidColorBrush x:Key="IndustryHealthy" Color="#5CCC72" />
+                    <SolidColorBrush x:Key="IndustryHealthySolidBorder" Color="#319B46" />
+                    <SolidColorBrush x:Key="IndustryHealthyTint" Color="#184E23" />
+                    <SolidColorBrush x:Key="IndustryHealthyTintBorder" Color="#33A349" />
+                    <SolidColorBrush x:Key="IndustryHealthyTintText" Color="#AAE4B5" />
+                    <SolidColorBrush x:Key="IndustryAttention" Color="#FFC033" />
+                    <SolidColorBrush x:Key="IndustryAttentionSolidBorder" Color="#D69400" />
+                    <SolidColorBrush x:Key="IndustryAttentionTint" Color="#664600" />
+                    <SolidColorBrush x:Key="IndustryAttentionTintBorder" Color="#E09B00" />
+                    <SolidColorBrush x:Key="IndustryAttentionTintText" Color="#FFDC8F" />
+                    <SolidColorBrush x:Key="IndustryDangerSolidBorder" Color="#A92323" />
+                    <SolidColorBrush x:Key="IndustryDangerTint" Color="#541212" />
+                    <SolidColorBrush x:Key="IndustryDangerTintBorder" Color="#B12525" />
+                    <SolidColorBrush x:Key="IndustryDangerTintText" Color="#ECA2A2" />
+                    <SolidColorBrush x:Key="IndustryHoverFace" Color="#0A4270" />
+                    <SolidColorBrush x:Key="IndustryHoverBorder" Color="#1483E1" />
+                    <SolidColorBrush x:Key="IndustryPressFace" Color="#0D528C" />
+                    <SolidColorBrush x:Key="IndustryPressBorder" Color="#3197ED" />
+                    <!-- Hover/press ink was near-black at low alpha over a LIGHT ground in Light
+                         mode — over a Dark ground a near-black tint composites to nothing, so the
+                         Dark branch uses a near-white tint at the same alpha instead, preserving
+                         "hover/press reads lighter than resting" in both themes. -->
+                    <SolidColorBrush x:Key="IndustryHoverInk" Color="#12E7E7E8" />
+                    <SolidColorBrush x:Key="IndustryPressInk" Color="#24E7E7E8" />
+                    <SolidColorBrush x:Key="IndustryInputHoverInk" Color="#73E7E7E8" />
+                    <SolidColorBrush x:Key="IndustryPrimaryHover" Color="#FF4FA5ED" />
+                    <SolidColorBrush x:Key="IndustryPrimaryHoverBorder" Color="#FF4FA5ED" />
+                    <SolidColorBrush x:Key="IndustryDangerHover" Color="#FFDC7575" />
+                    <!-- Mid-grey works unchanged against both grounds. -->
+                    <SolidColorBrush x:Key="IndustryLedOffStroke" Color="#FF6E6E6E" />
+                    <SolidColorBrush x:Key="IndustryLedOffFill" Color="#FF404040" />
+                    <!-- First-pass value; needs the real-window eyeball check over actual image
+                         content the plan calls for (plan §1) — a flat white wash may read
+                         differently over a dark canvas than it does in Light mode. -->
+                    <SolidColorBrush x:Key="IndustryOverlayFill" Color="#40FFFFFF" />
+                    <DrawingBrush x:Key="IndustryHatchStripeBrush" TileMode="Tile"
+                                  SourceRect="0,0,16.9706,16.9706" DestinationRect="0,0,16.9706,16.9706">
+                        <DrawingBrush.Drawing>
+                            <!-- New Dark accent (#49A5F3) at a higher alpha (0x2E vs Light's 0x24)
+                                 for visibility over a near-black ground. -->
+                            <GeometryDrawing Brush="#2E49A5F3">
+                                <GeometryDrawing.Geometry>
+                                    <GeometryGroup FillRule="NonZero">
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="0,0" IsClosed="True">
+                                                <LineSegment Point="8.4853,0" />
+                                                <LineSegment Point="0,8.4853" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                        <PathGeometry>
+                                            <PathFigure StartPoint="16.9706,0" IsClosed="True">
+                                                <LineSegment Point="16.9706,8.4853" />
+                                                <LineSegment Point="8.4853,16.9706" />
+                                                <LineSegment Point="0,16.9706" />
+                                            </PathFigure>
+                                        </PathGeometry>
+                                    </GeometryGroup>
+                                </GeometryDrawing.Geometry>
+                            </GeometryDrawing>
+                        </DrawingBrush.Drawing>
+                    </DrawingBrush>
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
 
             <!-- ================= Spacing (LAYOUT-SPEC.md §2) =================
                  Real steps are 2, 3, 4, 5, 6, 7, 9, 11, deliberately off a 4px grid, matching the
@@ -303,72 +397,12 @@
             <Thickness x:Key="IndustryThumbnailCaptionPadding">4,2,4,2</Thickness>
             <Thickness x:Key="IndustryThumbnailCaptionPaddingGallery">5,3,5,3</Thickness>
 
-            <!-- ================= Hatch fill brush (LAYOUT-SPEC.md §2, Phase 1) =================
-                 CSS: repeating-linear-gradient(135deg, accent-14% 0 6px, transparent 6px 12px). The
-                 12px period is measured ALONG the gradient axis (perpendicular to the visible
-                 stripes), so an axis-aligned tile reproducing the same visual period via simple
-                 translation needs side length = 12 * sqrt(2) ~= 16.97 (mockups/guidance/
-                 PHASE1-ATOM-DESIGN.md item 12's derivation), NOT a naive 12x12 tile.
-
-                 Implemented as the standard two-shape diagonal-stripe tiling technique (a single
-                 rotated rectangle inside an axis-aligned tile does NOT reliably tile seamlessly at
-                 the tile boundary — rejected during implementation, replaced with this instead):
-                 within one axis-aligned S=16.97 square tile, an NW corner triangle (legs S/2=8.4853,
-                 area S²/8) PLUS the mid-tile quadrilateral immediately below-right of it (area
-                 3S²/8) together cover exactly 50% of the tile — the correct duty cycle for a 6px
-                 stripe over a 12px period. CODE-REVIEW FIX (blocker 3): an earlier pass paired the
-                 NW triangle with an SE corner triangle instead of the mid-tile quadrilateral — same
-                 25% area as the NW triangle alone doubled, but the two triangles only meet at a
-                 single POINT under tiling (opposite tile corners), producing isolated bowtie shapes
-                 at ~17px spacing instead of continuous diagonal bands. The quadrilateral shares a
-                 full edge with the NW triangle of the adjacent tile, which is what actually forms
-                 the continuous band. Direction: this geometry produces "/"-direction bands, which
-                 IS correct for CSS's 135deg gradient axis (135deg points the gradient AXIS to
-                 bottom-right; the visible bands run perpendicular to that, i.e. "/" — an earlier
-                 pass's comment claiming "135deg = \" was backwards, the geometry itself was already
-                 right on this point).
-
-                 Stripe color is genuinely translucent (Accent at 14% = alpha 0x24), NOT an opaque
-                 pre-blend like the hairline/text colors above — this brush is a large fill used
-                 over BOTH the paper IndustryBg ground AND the editor canvas's IndustryNeutral200, so
-                 one pre-blended value can't be correct for both grounds (Phase 0's own §2
-                 translucency rule: opaque for hairlines/text on the paper ground, translucent where
-                 it composites over other content). -->
-            <DrawingBrush x:Key="IndustryHatchStripeBrush" TileMode="Tile"
-                          SourceRect="0,0,16.9706,16.9706" DestinationRect="0,0,16.9706,16.9706">
-                <DrawingBrush.Drawing>
-                    <!-- Accent at 14% alpha (0x24) — updated 2026-08-14 to match IndustryAccentColor's
-                         new value (#0F62A8, was #5980A6); this literal isn't token-referenced since
-                         DrawingBrush geometry needs a genuinely translucent composite, not the
-                         opaque pre-blend the Color/SolidColorBrush tokens above use. -->
-                    <GeometryDrawing Brush="#240F62A8">
-                        <GeometryDrawing.Geometry>
-                            <GeometryGroup FillRule="NonZero">
-                                <!-- NW triangle: (0,0) to (8.4853,0) to (0,8.4853); area S^2/8 -->
-                                <PathGeometry>
-                                    <PathFigure StartPoint="0,0" IsClosed="True">
-                                        <LineSegment Point="8.4853,0" />
-                                        <LineSegment Point="0,8.4853" />
-                                    </PathFigure>
-                                </PathGeometry>
-                                <!-- Mid-tile quadrilateral (NOT a corner triangle): (16.9706,0) ->
-                                     (16.9706,8.4853) -> (8.4853,16.9706) -> (0,16.9706); area
-                                     3*S^2/8. Together with the NW triangle: total S^2/2 = 50%
-                                     coverage, and this shape shares a full edge with the NEXT
-                                     tile's own NW triangle under TileMode="Tile" repetition, forming
-                                     one continuous diagonal band rather than isolated bowties. -->
-                                <PathGeometry>
-                                    <PathFigure StartPoint="16.9706,0" IsClosed="True">
-                                        <LineSegment Point="16.9706,8.4853" />
-                                        <LineSegment Point="8.4853,16.9706" />
-                                        <LineSegment Point="0,16.9706" />
-                                    </PathFigure>
-                                </PathGeometry>
-                            </GeometryGroup>
-                        </GeometryDrawing.Geometry>
-                    </GeometryDrawing>
-                </DrawingBrush.Drawing>
-            </DrawingBrush>
+            <!-- IndustryHatchStripeBrush (LAYOUT-SPEC.md §2, Phase 1 geometry — the diagonal-stripe
+                 tiling derivation, "/"-direction bowtie-bug history, and 16.9706 tile-size math are
+                 all documented once, on the Light branch's copy above) now lives per-branch in
+                 ResourceDictionary.ThemeDictionaries since Phase 1 dark mode needs its own fill
+                 color/alpha over a dark ground — geometry is identical in both branches, only the
+                 GeometryDrawing.Brush differs; a guard test asserts this. -->
 
         </ResourceDictionary>
     </Styles.Resources>

@@ -13,7 +13,7 @@
     <!-- Minimal OK-only acknowledgement — see SampleRateChangeDeferredDialogViewModel's own doc
          comment. Same shape as RestartRequiredDialogView.axaml. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap"
                        Text="{loc:Translate Options.SampleRateChangeDeferredDialog.Message}" />

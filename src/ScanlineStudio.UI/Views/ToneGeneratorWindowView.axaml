@@ -26,7 +26,7 @@
          SstvSessionService, so this value is a deliberate duplicate — keep it in sync if that one
          changes). -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto" Margin="{StaticResource IndustryPaddingGroup}">
 
             <StackPanel Grid.Row="0" Spacing="{StaticResource IndustrySpacingGroup}">
@@ -46,7 +46,7 @@
                 </StackPanel>
 
                 <TextBlock Text="{Binding ErrorMessage}"
-                           Foreground="{StaticResource IndustryDanger}"
+                           Foreground="{DynamicResource IndustryDanger}"
                            TextWrapping="Wrap"
                            IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
             </StackPanel>

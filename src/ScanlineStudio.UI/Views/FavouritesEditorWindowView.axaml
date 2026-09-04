@@ -17,7 +17,7 @@
          mutate it immediately, same as the header's own "Store current" button already does) — a
          "Cancel" label would falsely promise a discard this data model doesn't support. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <ScrollViewer Grid.Row="0">
@@ -47,7 +47,7 @@
                             HorizontalAlignment="Left" />
 
                     <TextBlock Text="{Binding ErrorMessage}"
-                               Foreground="{StaticResource IndustryDanger}"
+                               Foreground="{DynamicResource IndustryDanger}"
                                TextWrapping="Wrap"
                                IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 </StackPanel>

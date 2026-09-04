@@ -315,7 +315,7 @@
                             <Button Command="{Binding SelectCommand}"
                                     CommandParameter="{Binding Entry}"
                                     ToolTip.Tip="{Binding Entry.FileName}"
-                                    Background="Transparent" BorderBrush="{StaticResource IndustryControlBorder}"
+                                    Background="Transparent" BorderBrush="{DynamicResource IndustryControlBorder}"
                                     BorderThickness="1" CornerRadius="0" Padding="0" Margin="1">
                                 <Image Source="{Binding Thumbnail}" Width="64" Height="64" Stretch="Uniform" />
                             </Button>
@@ -353,7 +353,7 @@
         </HeaderedContentControl>
 
         <TextBlock Text="{Binding ErrorMessage}"
-                   Foreground="{StaticResource IndustryDanger}"
+                   Foreground="{DynamicResource IndustryDanger}"
                    TextWrapping="Wrap"
                    IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
@@ -436,7 +436,7 @@
                                                 </Button.Flyout>
                                                 <Image Source="{Binding Thumbnail}" Stretch="Uniform" MaxHeight="120" />
                                             </Button>
-                                            <Border Classes="Industry IndustryMini" Background="{StaticResource IndustryBg}"
+                                            <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}"
                                                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                 <TextBlock Text="{Binding OutcomeLabel}" />
                                             </Border>

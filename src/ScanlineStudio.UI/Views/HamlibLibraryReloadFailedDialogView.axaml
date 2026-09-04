@@ -16,7 +16,7 @@
          since this dialog carries a real per-attempt failure detail. Slightly wider/taller than its
          two siblings to give that longer message room to wrap without excessive height. -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap"
                        Text="{Binding Message}" />

@@ -13,7 +13,7 @@
          see this dialog's own view-model doc comment for why. Modeled on QsoLinkWindowView.axaml
          (Industry atoms, Grid RowDefinitions="*,Auto" content/footer split). -->
 
-    <Border Background="{StaticResource IndustryBg}">
+    <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
 
             <ScrollViewer Grid.Row="0">
