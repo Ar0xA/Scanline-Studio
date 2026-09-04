@@ -93,7 +93,8 @@ internal sealed class VisLockStateMachine
     // effect. UpdateThresholds is ONLY ever a two-field assignment -- never Reset(), never touching
     // _state/_visData/_visCount/_triggerFireSample/_resolvedMode or the 4 SyncEnvelopeDetectors
     // below, since legacy's own SetSenseLvl doesn't touch m_SyncMode or any detector either. This is
-    // the one invariant every caller of UpdateThresholds depends on for safety.
+    // the one invariant every caller of UpdateThresholds depends on for safety. Retune (below) is the
+    // one method that DOES touch the 4 detectors, by design -- a separate AFC-driven concern.
     private double _slvl; // m_SLvl -- see AnalogFmSstvDecoder.SLvl for value/citation
     private double _slvl2; // m_SLvl2 -- see AnalogFmSstvDecoder.SLvl2
     private readonly SyncEnvelopeDetector _d11Detector; // m_iir11/m_lpf11, 1080Hz/80Hz BW (sstv.cpp:1446/1451)
@@ -134,6 +135,26 @@ internal sealed class VisLockStateMachine
     /// reasoning -- lets a test prove <see cref="UpdateThresholds"/> actually reached this class'
     /// own copies, not just the decoder's.</summary>
     internal (double Slvl, double Slvl2) ThresholdsForTests => (_slvl, _slvl2);
+
+    /// <summary>Retunes all 4 VIS/sync-tone detectors by the same AFC offset, mirroring legacy's
+    /// single <c>InitTone(dfq)</c> call retuning <c>m_iir11/12/13/19</c> together (`sstv.cpp:1695-1705`).
+    /// The one method (besides the constructor) that touches these 4 detectors -- <see cref="UpdateThresholds"/>'s
+    /// own doc comment names this as the exception to its "never touches the detectors" invariant.
+    /// Callers pass 0 to reset to nominal (legacy's own <c>InitTone(0)</c>, called from both
+    /// <c>InitAFC</c>/<c>Start()</c> and <c>Stop()</c>).</summary>
+    internal void Retune(double offsetHz)
+    {
+        _d11Detector.Retune(offsetHz);
+        _d12Detector.Retune(offsetHz);
+        _d13Detector.Retune(offsetHz);
+        _d19Detector.Retune(offsetHz);
+    }
+
+    /// <summary>Test-only observation hook for all 4 detectors' applied center frequencies after the
+    /// most recent <see cref="Retune"/> call -- mirrors <see cref="SyncEnvelopeDetector.AppliedCenterFrequencyHzForTests"/>.</summary>
+    internal (double D11, double D12, double D13, double D19) DetectorFrequenciesForTests =>
+        (_d11Detector.AppliedCenterFrequencyHzForTests, _d12Detector.AppliedCenterFrequencyHzForTests,
+         _d13Detector.AppliedCenterFrequencyHzForTests, _d19Detector.AppliedCenterFrequencyHzForTests);
 
     /// <summary>Resets the logical lock state (mirrors legacy's own <c>Stop()</c>, `sstv.cpp:1769-1791`,
     /// resetting <c>m_SyncMode</c>/<c>m_sint1</c> but leaving the envelope resonators' own filter state
