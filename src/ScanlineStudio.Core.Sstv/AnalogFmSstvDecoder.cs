@@ -3920,6 +3920,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // directions). No SetWidth call belongs here.
         _zeroCrossingDemodulator.Clear();
         _syncEnvelopeDetector = null;
+        // §5.3: legacy's Stop() half of InitTone(0)'s reset (sstv.cpp:1769-1791's outer `if(m_AFCFQ)`
+        // guard) -- only for the `m_fskdecode == 0` branch; legacy deliberately leaves m_iir19/m_iirfsk
+        // retuned when FSK-ID RX decode is on, to catch a trailing station-ID burst on the same offset
+        // carrier (code-review round-1 finding). This port doesn't model that carve-out -- always
+        // resets all 4 -- a pre-existing gap (these detectors were already nominal on this path before
+        // §5.3), not a regression, and small in practice (dfq is single-digit Hz vs 100Hz bandwidth);
+        // noted here rather than silently diverging from what this comment used to claim.
+        // _lastAppliedAfcRetuneHz itself is reset inside InitializeAfc, not here (this method runs
+        // before that), so this gate correctly skips the reset on an image that never triggered AFC --
+        // nulled below too so a stale non-null value can't survive to be misread as "still retuned."
+        if (_lastAppliedAfcRetuneHz is not null)
+        {
+            _visLockStateMachine.Retune(0);
+            _visDataD19Detector.Retune(0);
+            _fskSpaceDetector.Retune(0);
+            _visDataD12Detector.Retune(0);
+            _lastAppliedAfcRetuneHz = null;
+        }
         _slantTracker = null;
         ResetReSyncState(); // legacy's Stop()-side m_Skip = 0, sstv.cpp:1789
 
@@ -5961,6 +5979,20 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // ever read as picture data -- bounded, not chased further.
         _zeroCrossingDemodulator.Clear();
 
+        // §5.3: legacy's Start() -> InitAFC() -> InitTone(0) resets all 5 AFC-retuned resonators to
+        // nominal on EVERY fresh lock, including a mid-reception restart (sstv.cpp:2592-2594/2237/
+        // 2241) -- placed here, unconditionally, before the AVT/!_afcEnabled early return below, same
+        // reasoning as _afcZeroCrossingCounter two lines up. This is the fix for a real leak: this
+        // method is also reached via Commit() -> FinalizeAnchorAndStartDecoding once a mid-reception
+        // restart's new anchor resolves, a path that never touches EndOfImage -- without this reset,
+        // these detectors would stay mistuned from the PREVIOUS lock's drift exactly while the new
+        // AfcTracker is fresh and hasn't re-locked yet. EndOfImage resets the same 4 for legacy's
+        // Stop() half; both are needed.
+        _visLockStateMachine.Retune(0);
+        _visDataD19Detector.Retune(0);
+        _fskSpaceDetector.Retune(0);
+        _visDataD12Detector.Retune(0);
+
         // AVT's own exclusion is real legacy behavior (see this method's own doc comment); the
         // !_afcEnabled branch is this port's new settings-driven toggle, layered on top without
         // changing AVT's case -- both land on the identical "_afcTracker stays null" outcome every
@@ -5991,6 +6023,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>Test-only visibility into whether AFC is currently active for the mode last passed to
     /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
     internal bool HasAfcTrackerForTests => _afcTracker is not null;
+
+    /// <summary>Test-only direct entry point to <see cref="ApplyGatedAfcUpdate"/> -- lets a test drive
+    /// a real AFC lock (and its downstream detector retunes) deterministically, without needing a full
+    /// encode/decode round trip's own timing to happen to produce one. Mirrors
+    /// <see cref="InitializeAfcForTests"/>'s own reasoning. Production code never calls this.</summary>
+    internal void ApplyGatedAfcUpdateForTests(double measuredFrequencyHz) => ApplyGatedAfcUpdate(measuredFrequencyHz);
 
     /// <summary>Test-only visibility into the AFC correction cursor -- functional-audit addition
     /// (D7, round 1). Lets a test confirm AFC correction actually keeps pace with live decode
@@ -6127,9 +6165,28 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// non-AVT mode.</summary>
     internal SyncEnvelopeDetector? SyncEnvelopeDetectorForTests => _syncEnvelopeDetector;
 
-    /// <summary>Test-only visibility into one of the seven VIS-time tone detectors AFC must NOT
-    /// retune (ultracode audit finding #1's scope correction).</summary>
+    /// <summary>Test-only visibility into one of the 4 remaining VIS-time tone detectors AFC must NOT
+    /// retune (ultracode audit finding #1's scope correction) -- pre-lock-only reads, `readonly` for
+    /// the decoder's whole lifetime; retuning them would bias the NEXT image's header search instead
+    /// of helping this one. §5.3 moved the other 3 of the original 7 (`_visDataD19Detector`/
+    /// `_fskSpaceDetector`/`_visDataD12Detector`) into the retuned group -- see their own accessors
+    /// below.</summary>
     internal SyncEnvelopeDetector SyncBypass1200DetectorForTests => _syncBypass1200Detector;
+
+    /// <summary>Test-only visibility into the 4 VIS/sync-tone detectors §5.3 added to AFC's retune
+    /// scope, alongside <see cref="SyncEnvelopeDetectorForTests"/> -- see
+    /// <see cref="ApplyGatedAfcUpdate"/>'s own comment for why these specific 3 (plus
+    /// <see cref="VisLockStateMachine"/>'s own 4, exposed via <c>_visLockStateMachine</c> directly in
+    /// tests) are genuinely read post-lock, unlike <see cref="SyncBypass1200DetectorForTests"/>'s
+    /// group.</summary>
+    internal (double D19, double FskSpace, double D12) NewlyRetunedDetectorFrequenciesForTests =>
+        (_visDataD19Detector.AppliedCenterFrequencyHzForTests, _fskSpaceDetector.AppliedCenterFrequencyHzForTests,
+         _visDataD12Detector.AppliedCenterFrequencyHzForTests);
+
+    /// <summary>Test-only visibility into <see cref="VisLockStateMachine"/>'s own 4 detector
+    /// frequencies -- see <see cref="VisLockStateMachine.DetectorFrequenciesForTests"/>.</summary>
+    internal (double D11, double D12, double D13, double D19) VisLockDetectorFrequenciesForTests =>
+        _visLockStateMachine.DetectorFrequenciesForTests;
 
     /// <summary>Test-only visibility into the Auto-Slant tracker itself -- needed to distinguish
     /// manual ReSync's two suppression scopes from the outside: the one-line gate
@@ -6436,6 +6493,18 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         {
             _lastAppliedAfcRetuneHz = dfq;
             _syncEnvelopeDetector?.Retune(dfq);
+
+            // §5.3: legacy's InitTone retunes all 5 resonators together (m_iir11/12/13/19/fsk), not
+            // just the sync-envelope one -- these 4 are genuinely read post-lock (VisLockStateMachine's
+            // mid-reception re-verification path; _visDataD19Detector/_fskSpaceDetector's dual pre/
+            // post-lock use in TryNarrowFskScan; _visDataD12Detector's post-lock scope-capture feed).
+            // Deliberately NOT retuning _visDataD11Detector/_syncBypass1200/1900/FskDetector here --
+            // those are read ONLY pre-lock and stay `readonly` for the decoder's whole lifetime, so
+            // retuning them would bias the NEXT image's header search instead of helping this one.
+            _visLockStateMachine.Retune(dfq);
+            _visDataD19Detector.Retune(dfq);
+            _fskSpaceDetector.Retune(dfq);
+            _visDataD12Detector.Retune(dfq);
         }
     }
 

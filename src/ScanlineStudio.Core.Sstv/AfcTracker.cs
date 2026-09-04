@@ -20,11 +20,8 @@ namespace ScanlineStudio.Core.Sstv;
 ///
 /// Correction (ultracode audit findings #1/#4): two earlier claims in this comment were wrong.
 /// (1) legacy's <c>InitTone</c> retune IS modeled — <see cref="SyncEnvelopeDetector.Retune"/>, called
-/// from <c>AnalogFmSstvDecoder</c> using <see cref="CorrectionHz"/> below, mirrors it exactly for the
-/// Auto-Slant sync-envelope detector (the one legacy path whose loss was actually measurable; the
-/// port never modeled the *other* four VIS-bit/FSK tone detectors <c>InitTone</c> also retunes, since
-/// VIS bits are decoded via direct frequency thresholding on the continuous demodulator output
-/// instead, which has no equivalent fixed-frequency resonator to retune). (2) the `m_CurMax > 16`
+/// from <c>AnalogFmSstvDecoder</c> using <see cref="CorrectionHz"/> below, mirrors it for the
+/// Auto-Slant sync-envelope detector. (2) the `m_CurMax > 16`
 /// gate IS ported, at the <see cref="CorrectionHz"/> call site in <c>AnalogFmSstvDecoder</c> — it
 /// gates the call to <see cref="ProcessSample"/> (matching legacy's `SyncFreq(d)` update), while the
 /// standing correction itself is applied to every sample unconditionally (matching legacy's separate,
@@ -33,6 +30,17 @@ namespace ScanlineStudio.Core.Sstv;
 /// Legacy's <c>SyncFreq</c> also sets <c>m_AFCFlag = 15</c> on every lock (`sstv.cpp:2361`) --
 /// confirmed (Tier A Batch 7 chunk 7e) this drives only a UI "AFC active" activity lamp
 /// (`Main.cpp:3312/3314/3438`), no DSP/decode effect, so it has no equivalent here.
+///
+/// §5.3 correction (2026-09-04): the paragraph above previously claimed the port "never modeled the
+/// other four VIS-bit/FSK tone detectors InitTone also retunes... since VIS bits are decoded via
+/// direct frequency thresholding... which has no equivalent fixed-frequency resonator to retune" --
+/// this was stale/wrong. The resonators exist today (<see cref="VisLockStateMachine"/>'s own 4
+/// <c>SyncEnvelopeDetector</c> instances, plus <c>AnalogFmSstvDecoder</c>'s own
+/// <c>_visDataD19Detector</c>/<c>_fskSpaceDetector</c>/<c>_visDataD12Detector</c>) and are now retuned
+/// the same way as the sync-envelope detector, in <c>AnalogFmSstvDecoder.ApplyGatedAfcUpdate</c> (see
+/// its own comment for which are retuned and why the remaining 4 — <c>_visDataD11Detector</c> and the
+/// 3 sync-bypass detectors — are deliberately excluded: they're read only pre-lock and would bias the
+/// NEXT image's header search if retuned).
 /// </summary>
 internal sealed class AfcTracker
 {

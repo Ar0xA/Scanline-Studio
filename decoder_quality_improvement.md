@@ -162,11 +162,40 @@ YONIQ performs a buffered refresh around line 16 and, at its higher Sync Accurac
 
 The initial folding difference particularly matters to Scottie DX, PD240, MP140, MP175, and MN140.
 
-### 5.3 Share AFC correction with all applicable post-lock tone detectors
+### 5.3 Share AFC correction with all applicable post-lock tone detectors — DONE, measured (2026-09-05)
 
-The AFC estimate currently retunes the slant sync-envelope detector, while separate locked VIS/FSK/sync-bypass resonators remain at nominal centers. This makes mid-image restart and narrow FSK paths less tolerant of persistent carrier offset ([AfcTracker.cs](src/ScanlineStudio.Core.Sstv/AfcTracker.cs), [VisLockStateMachine.cs](src/ScanlineStudio.Core.Sstv/VisLockStateMachine.cs), [AnalogFmSstvDecoder.cs](src/ScanlineStudio.Core.Sstv/AnalogFmSstvDecoder.cs)).
+Shipped: the AFC estimate now retunes `VisLockStateMachine`'s 4 detectors plus `_visDataD19Detector`/
+`_fskSpaceDetector`/`_visDataD12Detector`, alongside the already-retuned slant sync-envelope detector
+([AfcTracker.cs](src/ScanlineStudio.Core.Sstv/AfcTracker.cs),
+[VisLockStateMachine.cs](src/ScanlineStudio.Core.Sstv/VisLockStateMachine.cs),
+[AnalogFmSstvDecoder.cs](src/ScanlineStudio.Core.Sstv/AnalogFmSstvDecoder.cs)). Passed 2 rounds of
+auditor plan-review (found and fixed 2 real issues: a mid-reception-restart reset leak, a
+misclassified detector) and 1 round of code-review (explicit go).
 
-Use one bounded, confidence-qualified offset for every applicable post-lock detector. Keep initial pre-AFC header acquisition separate, and do not route generic line-sync AFC into AVT's training PLL.
+**Measured, not assumed — first attempt was a methodology error, corrected.** A first measurement
+(sample-rate-mismatch-based "drift," 0-10,000ppm, clean signal, plain decode + mid-reception restart)
+showed bit-identical results before/after at every level — but a sample-rate mismatch scales BOTH
+frequency and timing together (entangling this feature with Auto-Slant, which was absorbing all of
+it), and even at 10,000ppm only shifts a 1200Hz tone by ~12Hz, far inside the 80-100Hz resonator
+bandwidths this feature retunes. A corrected measurement used a real SSB-style pure additive
+frequency shift (FFT-based analytic-signal rotation, zero effect on timing — the real equivalent of a
+receiver's BFO/tuning offset) combined with calibrated noise, on the mid-reception-restart scenario,
+comparing a clean "before" build (git worktree at the prior commit) against the current code:
+
+| Mode | Offset | Before | After |
+|---|---|---|---|
+| mn110 | 0/30/60Hz | 16.0dB / 20.0dB / NEVER | identical at all three |
+| robot-36 | 0/60/110Hz | 9.0dB / 12.0dB / NEVER | identical at all three |
+| **robot-36** | **90Hz** | **NEVER (fails even at clean 30dB SNR)** | **20.0dB noise floor** |
+
+6 of 7 tested conditions showed no difference (offset either small enough that the un-retuned
+resonators already had margin, or large enough that even retuned ones fail). One showed a real,
+substantial, reproducible improvement — the exact "offset large enough to matter, small enough that
+noise (not the offset itself) becomes the limiting factor" band. Confirms the mechanism has genuine,
+if narrow, real-world value: a moderate carrier offset (~90Hz, realistic for SSB tuned by ear) during
+a mid-reception restart. Scratch measurement code, not committed (test-only, deleted after use);
+methodology reusable if a similar carrier-offset question comes up again — see auto-memory
+`project_afc_retune_extension_shipped.md` for the reusable technique.
 
 ### 5.4 Use the measured VIS/header origin
 
@@ -484,3 +513,78 @@ reliability) made these points, verified directly against source before acceptin
   channel model in the test harness -- genuinely valuable for judging whether reacquisition/AFC work is
   worth it at all, but out of scope for the immediate next step; flagged here so it isn't silently
   forgotten, not built yet.
+
+## 14. Addendum (2026-09-04): §6.2 dwell-averaging tried and rejected with direct measured evidence
+
+§6.2 (robust per-pixel frequency estimation, dwell-matched averaging) was investigated as the next
+experiment after H3, following the reordering in §13. It reached 2 rounds of auditor plan-review
+(both rounds found and fixed real issues: wrong `endSample` rounding at a legacy tone-selector site
+that must NOT change, a symmetric-trim window that degenerated to 0-1 real samples on short-pixel
+modes, a per-pixel fallback that mixed two estimators mid-scanline). Before round 3, an independent
+model review (a different model than either the original document author or the auditor) flagged that
+this port had already tried a form of dwell averaging once before, early in development
+(`IScanlineDecoder.cs`'s own doc comment, `SstvModeRegistry.cs`'s doc comment): a full-window
+block-average, invented rather than traced from legacy source, measured to cause a real resolution
+floor (every mode under ~4 samples/pixel at 11025Hz failed round-trip tolerance), reverted back to
+legacy's real single-sample/peak-pick behavior.
+
+**Direct physics measurement, not just theory, before committing further review effort**: the actual
+FM discriminator's (`HilbertFmDemodulator.cs`) step-response settling time for a full black-to-white
+(1500Hz-to-2300Hz) frequency step was measured directly (a throwaway diagnostic test, not committed --
+extends the existing `HilbertFmDemodulatorTests.SettlingTime_AfterFrequencyStep_IsBoundedAndFast`,
+which already predicted "~16 samples (13 FIR + 3 IIR)" for a much smaller 20Hz step). Measured result
+at 11025Hz (the real production/default sample rate): robust settling (stays within tolerance, not
+just briefly touches it) takes ~18-19 samples. Then, every one of the 43 registered SSTV modes' own
+samples-per-pixel at 11025Hz was computed directly from each mode's own scan-segment duration and
+image width: **not one of the 43 modes reaches 19 samples/pixel** -- the widest/slowest (Scottie DX)
+tops out at ~11.9, the narrow/fast cluster (rm8, PD120, P3, Martin M2, SC2-60) sits around 2-2.7.
+
+**Conclusion**: at the real 11025Hz rate, every mode's entire pixel dwell sits inside the
+demodulator's own settling transient for a worst-case edge. There is no mode with a "clean, settled
+tail" inside its own dwell window for any averaging technique -- head-trimmed, symmetric, or
+full-window -- to draw from. This isn't a short-pixel-mode-specific risk, as originally framed; it's
+universal at this sample rate, and it directly explains WHY the original block-averaging attempt
+failed on clean round-trip tests specifically (averaging inside an unsettled transient adds a
+systematic bias toward the PREVIOUS pixel's value -- blur, not noise reduction -- which dominates on
+a clean signal where there's no noise for averaging to usefully reduce in the first place). This is a
+property of the demodulator's own group delay (the Hilbert FIR stage's ~13-sample contribution, not
+just the smoothing IIR's ~3), not of any particular trim/window/eligibility strategy layered on top of
+it -- no amount of refining the averaging technique itself can fix it without also reducing the
+demodulator's own settling time, which is a separate, much larger architectural change out of scope
+for a per-pixel estimator experiment.
+
+**Decision: do not build the dwell-averaging flag.** No code was shipped, no production/decode-path
+file was changed (only two throwaway diagnostic test files, never committed, deleted after use). The
+plan document (`~/.claude/plans/robust-giggling-codd.md`) and this addendum are the durable record --
+re-derive the settling-time numbers above (both diagnostic tests are cheap to reconstruct, see
+`HilbertFmDemodulatorTests.cs` for the exact reusable pattern) before ever reconsidering this specific
+technique, rather than re-attempting it from the theory alone a third time.
+
+**CORRECTION (same day, before any of this was acted on)**: the redirect below was wrong on two
+counts, both since verified directly (code read + a real measured probe, not assumption). AFC
+drift-tracking is NOT unported -- `AfcTracker.cs` is a complete, faithful port of `SyncFreq`/`InitAFC`,
+shipped well before this addendum was written; the "still-unported" claim was a stale comment that
+predated that work and was never updated. And Robot36/72/MR73/ML180-320 do NOT still fail
+golden-vector tolerance -- all 50 round-trip theories pass today (measured deltas 4.35-4.86, well
+under the 10.0 tolerance); that claim was also stale. Their small residual delta (vs. RGB-family
+modes' 1.0-1.6) tracks decoder FAMILY (YCbCr vs RGB), not samples-per-pixel or settling time -- the
+settling-time finding from the rejected §6.2 experiment above is real but a second-order effect here,
+not the explanation for this specific pattern. AFC is also measurably ACTIVE in these round-trip
+tests, not inert as assumed below -- a small legacy calibration nudge (`d -= 128`) locks even on a
+perfect sync tone and adds a real ~1-luma-level standing bias, confirmed via an on/off probe with AVT
+(no AFC) as a control. Net result: nothing is unported, nothing is failing, no further action item
+here. See `src/ScanlineStudio.Core.Sstv/SstvModeRegistry.cs`'s own corrected comment (search
+"CORRECTION (2026-09-04)") for the fuller writeup. For real candidates with an actual evidence path:
+extending §5.3's AFC retune to the VIS/FSK/sync-bypass resonators (small, port-first, real legacy
+behavior), or revisiting the parked OTA false-lock case
+(`project_false_lock_investigation_parked.md`).
+
+~~**Redirected effort**: the still-unported legacy AFC drift-tracking loop (`CSSTVDEM::SyncFreq`,
+`sstv.cpp:2339` onward, plus its state fields `m_AFCDiff`/`m_AFCAVG`/`m_AFCLock`/`m_AFCFQ` and the
+`if (m_afc) d += m_AFCDiff;` continuous correction applied to every demodulated sample,
+`sstv.cpp:2270`) -- named in this document's own §5.3 and in §13's residual-failure discussion
+(Robot36/72, MR73, ML180-320 still fail golden-vector tolerance today for a reason not yet fully
+root-caused; AFC drift is the more likely remaining candidate now that the settling-time analysis
+above rules out per-pixel estimation as a fix). This is a real legacy feature to PORT, not a novel
+technique to invent and fight the demodulator's own physics -- a better fit for this project's
+port-first strength. See the plan file for the next investigation.~~

@@ -64,6 +64,20 @@ namespace ScanlineStudio.Core.Sstv;
 /// follow-up rather than assumed away. See spec/14-roadmap.md's Phase 1 entry for the full
 /// before/after measured table.
 ///
+/// CORRECTION (2026-09-04): both the "still-unported AFC" and "still failing" claims above are
+/// stale. AFC drift-tracking was ported in full (<see cref="AfcTracker"/>, faithfully matches
+/// `SyncFreq`/`InitAFC`) well before this correction was written. And every mode named above now
+/// passes round-trip tolerance at 11025Hz (`EncodeThenDecode_ViaWavFile_RoundTripsWithinTolerance_At11025Hz`
+/// covers exactly this set) — measured deltas 4.35-4.86, comfortably under 10.0. Directly verified:
+/// the small residual delta these modes still carry (vs. RGB-family modes' 1.0-1.6) tracks DECODER
+/// FAMILY, not samples-per-pixel or settling time — YCbCr-family modes (Robot/MR/ML) sit at 3.5-4.9
+/// regardless of spp (MR175 at ~11.6 spp measures the same as MR73 at ~4.75 spp), most likely from
+/// YCbCr-to-RGB conversion/truncation math, not demodulator settling. AFC itself is measurably ACTIVE
+/// in these round-trip tests (not inert as might be assumed for a driftless self-encode/decode) — a
+/// small `d -= 128` legacy calibration nudge locks even on a perfect sync tone, adding a real
+/// standing ~1-luma-level bias, confirmed present via an on/off probe and absent on AVT (which has no
+/// AFC) as a control. No further action item here; nothing is unported and nothing is failing.
+///
 /// 43/43 modes done — every mode in the legacy table has an entry here. MN/MC ("narrow" family)
 /// surfaced a real protocol difference rather than a
 /// shape difference — legacy identifies these modes via neither a normal nor an "extended" VIS
