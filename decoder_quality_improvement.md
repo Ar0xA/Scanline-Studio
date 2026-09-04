@@ -422,3 +422,65 @@ Do not land P1 ideas as a batch. Filtering, demodulation, sync, AFC, timing, and
 ## 12. Final recommendation
 
 Preserve Hilbert and the current decoder choices as the compatibility baseline. First make the receiver measurably faithful where known legacy gaps remain. Then add an opt-in enhanced profile whose algorithms are selected by paired evidence rather than intuition. The most promising quality gains are better narrow-mode filtering, lossless timing replay, consistent AFC/tone retuning, robust sync/reacquisition, and robust marker/pixel evidence. More novel methods are best pursued offline, where multiple internally consistent passes can be compared without destabilizing live reception or obscuring what was actually received.
+
+## 13. Addendum (2026-09-04): independent second-opinion review, and what's actually been measured
+
+Section 5.1 (H3/HBPFN, mode-aware locked filtering) shipped and was measured with a new controlled-noise
+harness (`tests/ScanlineStudio.Core.Sstv.Tests/ImpairmentSweepHarness.cs`, added this session): for the
+6 MN/MC modes it applies to, noise floor improved 7-13dB at every tested SNR level, with the other 37
+modes bit-identical before/after. This is the first item on this whole document to go from "recommended"
+to "measured and shipped" — see commit `24f1cb4`.
+
+A second, independent review (a different model, given this same document and the shipped H3 result as
+context, asked to critique the priority order specifically for IMAGE CLARITY rather than lock
+reliability) made these points, verified directly against source before accepting them:
+
+- **This document's own priority order optimizes for lock reliability (does an image arrive at all,
+  intact), not for clarity once locked.** Those are related but distinct goals. For clarity
+  specifically, §6.2 (robust per-pixel frequency estimation) is the single biggest lever, not the
+  lock-reliability items ranked above it.
+- **Verified directly (`PixelSampleReader.cs`)**: every pixel is read as either a single raw
+  demodulated sample (`ReadBare`, legacy's `GetPixelLevel`) or the LARGER of two samples `m_KSB` apart
+  (`ReadPeakPicked`, legacy's `GetPictureLevel`) -- no averaging at all. Two real consequences for
+  clarity: (a) FM discriminator noise is heaviest exactly where fast-pixel modes (Scottie DX, Robot 72,
+  PD290) sample most often, and a proper dwell-matched average would reject much of it essentially for
+  free; (b) "keep the larger of two samples" is systematically biased brighter under noise -- every
+  noisy image is quietly washed out before anything else in this document's list even runs, and no
+  existing section names this specific defect.
+- **Verified directly (`HilbertFmDemodulator.cs:202`)**: the post-discriminator smoothing filter is a
+  fixed 1800Hz/3rd-order Butterworth (`_smoothingFilter.Design(1800.0, sampleRate, 3)`) regardless of
+  mode -- roughly matched to Martin M1's own pixel rate, far too wide for slow modes (Scottie DX,
+  Robot 72, PD290), where it passes noise bandwidth no real pixel-rate signal occupies.
+- **New techniques not in this document, worth real benchmarking**: a windowed-FFT (or Goertzel) per-
+  pixel frequency estimate (the approach the real `slowrx` decoder uses, and the maximum-likelihood
+  single-tone estimator in Gaussian noise per Rife & Boorstyn 1974) -- this document's §6.8 dismisses
+  Goertzel for the picture band without benchmarking it as a full alternative estimator family, not just
+  a VIS/FSK-only tool; classic FM click/threshold-extension detection (Rice, 1963) -- detecting a
+  simultaneous large phase jump plus analytic-magnitude collapse and holding/interpolating that sample,
+  which belongs bundled into the pixel-estimator work as its impulse-noise half; running the internal
+  DSP at a higher sample rate than legacy's 11025Hz default with FRACTIONAL (not integer-indexed) pixel
+  alignment, a direct sharpness gain independent of noise; and a deterministic, self-disabling,
+  SNR-adaptive presentation-layer smoothing pass (vertical-only, chroma-weighted heavier than luma,
+  using the known sync/porch tone segments as a free per-line noise-level estimate) -- unlike ML
+  restoration (correctly rejected elsewhere in this document), this cannot hallucinate content, since
+  it never invents information the decoder didn't actually receive; this document currently files
+  something like it under §9.5 "offline," but nothing about it requires being offline.
+- **A real, verified bug in the existing measurement methodology**: `NoiseRobustnessTests.cs`'s own
+  descending-SNR sweep has no `break` on failure (confirmed directly reading the loop) -- so a later,
+  non-monotonic "pass" at a WORSE SNR silently overwrites an earlier real failure, masking it. This
+  document's own §3.3 already named this exact risk ("does not break... can overwrite the first failing
+  result") but it was never fixed. `ImpairmentSweepHarness.cs` (new, added this session) inherited the
+  same pattern and needs the same fix. Any future DSP-quality claim built on either harness should
+  confirm this is fixed first, not assume the reported "noise floor" is trustworthy.
+- **Recommended reordering for the clarity goal specifically** (not a replacement for this document's
+  own reliability-focused order, a different lens on the same backlog): (1) fix the measurement harness
+  itself (the bug above, plus multi-seed, broader mode coverage, and ideally SSB-passband-shaped noise
+  instead of flat white noise -- real HF reception is band-limited, not full-spectrum); (2) the pixel
+  estimator (§6.2, expanded to include click rejection and benchmarked against a windowed-FFT
+  alternative, not just averaging variants); (3) the adaptive presentation-smoothing pass; (4) this
+  document's own already-ranked lock-reliability items (§6.1, §6.3, §6.4); (5) robust slant/AFC (§6.5,
+  §6.6); (6) VIS/FSK soft decisions (§6.8).
+- **Not adopted, noted for completeness**: a full Watterson/ITU-R F.1487 HF multipath-and-Doppler
+  channel model in the test harness -- genuinely valuable for judging whether reacquisition/AFC work is
+  worth it at all, but out of scope for the immediate next step; flagged here so it isn't silently
+  forgotten, not built yet.
