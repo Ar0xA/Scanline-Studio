@@ -29,15 +29,17 @@
   </PropertyGroup>
 
   <!--
-    spec/18-path-to-1.0.md High item 5: no custom git-SHA-stamping target needed here. Confirmed
-    empirically (not assumed) by building once WITH a hand-rolled short-git-SHA-stamping target
-    and inspecting the actual built DLL's strings: the .NET 8 SDK already appends the full
-    git commit SHA to InformationalVersion automatically once it detects a .git directory (via its
+    spec/18-path-to-1.0.md High item 5: no per-project git-SHA-stamping target needed here.
+    Confirmed empirically (not assumed) by building once WITH a hand-rolled short-git-SHA-stamping
+    target and inspecting the actual built DLL's strings: the .NET 8 SDK already appends the git
+    commit SHA to InformationalVersion automatically once it detects a .git directory (via its
     bundled Microsoft.Build.Tasks.Git machinery, no SourceLink NuGet package required). The
-    custom target's own short-SHA suffix and the SDK's own automatic full-SHA suffix both landed
-    in the same string ("0.9.0+3647ad5.3647ad5bfb52f959...", redundant and ugly), proving the SDK
-    already solves "which build did this bug report come from" for free. Directory.Build.props's
-    plain <Version>/<Product>/<Copyright> is sufficient; do not re-add a git-stamping target here.
+    custom target's own short-SHA suffix and the SDK's own automatic (then full-length) suffix
+    both landed in the same string ("0.9.0+3647ad5.3647ad5bfb52f959...", redundant and ugly),
+    proving the SDK solves "which build did this bug report come from" for free — it only needed
+    trimming to match this project's own short-SHA convention, done once, solution-wide, in
+    Directory.Build.props's TrimSourceRevisionId target, not per-project. Do not re-add a
+    git-stamping target here.
   -->
 
   <ItemGroup>
