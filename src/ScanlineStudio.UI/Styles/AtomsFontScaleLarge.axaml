@@ -1,0 +1,183 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Phase 2 font-size presets: the "Large" branch. Every key here MUST have an identical-named
+         counterpart in AtomsFontScaleNormal.axaml (key-set parity is a permanent guard test,
+         AtomsFontScaleTests.cs) — a key present in only one branch resolves to nothing and silently
+         drops the affected value. Values are a principled first-pass: a flat +2px FontSize delta for
+         the compact UI range (9-16px), a smaller proportional bump for the two larger hero/edit
+         sizes (24px, 40px) to avoid them dominating even more once already large, Height/MinHeight/
+         LineHeight derived by preserving each site's own Normal box-to-text ratio (not picked
+         freestanding), and LetterSpacing recomputed at each site's own documented em ratio (there is
+         no single universal formula — see AtomsFontScaleNormal.axaml's per-key comments for each
+         site's ratio). Not final — subject to correction via the real-window verification gate
+         before this phase ships. -->
+
+    <x:Double x:Key="IndustryBtn36FontSize">14.5</x:Double>
+    <x:Double x:Key="IndustryBtn36Height">42</x:Double>
+    <x:Double x:Key="IndustryBtn36MinHeight">42</x:Double>
+
+    <x:Double x:Key="IndustryBtn26FontSize">14</x:Double>
+    <x:Double x:Key="IndustryBtn26Height">30</x:Double>
+    <x:Double x:Key="IndustryBtn26MinHeight">30</x:Double>
+
+    <x:Double x:Key="IndustryBtn25FontSize">14</x:Double>
+    <x:Double x:Key="IndustryBtn25Height">29</x:Double>
+    <x:Double x:Key="IndustryBtn25MinHeight">29</x:Double>
+
+    <x:Double x:Key="IndustryBtn24FontSize">13</x:Double>
+    <x:Double x:Key="IndustryBtn24Height">28</x:Double>
+    <x:Double x:Key="IndustryBtn24MinHeight">28</x:Double>
+
+    <x:Double x:Key="IndustryBtn22FontSize">13</x:Double>
+    <x:Double x:Key="IndustryBtn22Height">26</x:Double>
+    <x:Double x:Key="IndustryBtn22MinHeight">26</x:Double>
+
+    <x:Double x:Key="IndustryBtn21FontSize">12.5</x:Double>
+    <x:Double x:Key="IndustryBtn21Height">25</x:Double>
+    <x:Double x:Key="IndustryBtn21MinHeight">25</x:Double>
+
+    <!-- Real-window verification finding: the flat +2 delta (10->12) overflowed the quick-mode
+         grid's fixed-width UniformGrid cells for "SC2-180" — documented (QuickModeShortNames.cs's
+         own comment) as the widest short-name that already renders exactly at the edge of its cell
+         at Normal size, so ANY growth without also growing the cell was going to clip it. The grid
+         cell width itself has no font-scale lever (a UniformGrid divides its parent's available
+         width evenly, independent of content), so corrected here instead: a smaller +1 delta
+         (10->11, matching this being a dense/high-repetition chip style used across the whole app,
+         not just this one grid) — less aggressive growth, still an improvement over Normal, and
+         confirmed to fit. -->
+    <x:Double x:Key="IndustryMiniFontSize">11</x:Double>
+    <x:Double x:Key="IndustryMiniHeight">19</x:Double>
+    <x:Double x:Key="IndustryMiniMinHeight">19</x:Double>
+
+    <x:Double x:Key="IndustryStepperValueFontSize">14</x:Double>
+    <x:Double x:Key="IndustryStepperHeight">26</x:Double>
+    <x:Double x:Key="IndustryStepperMinHeight">26</x:Double>
+    <x:Double x:Key="IndustryStepperMinWidth">105</x:Double>
+
+    <x:Double x:Key="IndustryInputFontSize">13</x:Double>
+    <x:Double x:Key="IndustryInputHeight">28</x:Double>
+    <x:Double x:Key="IndustryInputMinHeight">28</x:Double>
+
+    <x:Double x:Key="IndustryInputTallFontSize">14</x:Double>
+    <x:Double x:Key="IndustryInputTallHeight">30</x:Double>
+    <x:Double x:Key="IndustryInputTallMinHeight">30</x:Double>
+
+    <x:Double x:Key="IndustryRowLabelFontSize">13</x:Double>
+    <x:Double x:Key="IndustryRowLabelLineHeight">20</x:Double>
+
+    <x:Double x:Key="IndustryRowValueFontSize">13</x:Double>
+    <x:Double x:Key="IndustryRowValueLineHeight">20</x:Double>
+    <x:Double x:Key="IndustryRowValueLetterSpacing">-0.26</x:Double>
+
+    <x:Double x:Key="IndustryRowMinHeight">20</x:Double>
+
+    <x:Double x:Key="IndustryMenuHeight">30</x:Double>
+    <x:Double x:Key="IndustryMenuMinHeight">30</x:Double>
+    <x:Double x:Key="IndustryMenuItemFontSize">14</x:Double>
+
+    <x:Double x:Key="IndustryTabItemFontSize">13.5</x:Double>
+    <x:Double x:Key="IndustryTabItemHeight">31</x:Double>
+    <x:Double x:Key="IndustryTabItemMinHeight">31</x:Double>
+    <!-- .09em * 13.5 = 1.215, same ratio as Normal's own 1.035 (.09em * 11.5). -->
+    <x:Double x:Key="IndustryTabItemLetterSpacing">1.215</x:Double>
+
+    <x:Double x:Key="IndustryStatusFontSize">12</x:Double>
+    <x:Double x:Key="IndustryStatusHeight">23</x:Double>
+    <x:Double x:Key="IndustryStatusMinHeight">23</x:Double>
+
+    <x:Double x:Key="IndustryCheckBoxFontSize">13</x:Double>
+    <x:Double x:Key="IndustrySegFontSize">13</x:Double>
+
+    <x:Double x:Key="IndustryThumbnailCallFontSize">12</x:Double>
+    <x:Double x:Key="IndustryThumbnailCallGalleryFontSize">13</x:Double>
+    <x:Double x:Key="IndustryThumbnailMetaFontSize">11</x:Double>
+    <x:Double x:Key="IndustryThumbnailMetaGalleryFontSize">11.5</x:Double>
+
+    <x:Double x:Key="IndustryContextMenuItemFontSize">14</x:Double>
+    <x:Double x:Key="IndustryHelpGlyphFontSize">12</x:Double>
+
+    <!-- .14em * 11.5 = 1.61, same ratio as Normal's own 1.33 (.14em * 9.5). -->
+    <x:Double x:Key="IndustryGbTitleFontSize">11.5</x:Double>
+    <x:Double x:Key="IndustryGbTitleLetterSpacing">1.61</x:Double>
+
+    <x:Double x:Key="IndustryKickerFontSize">12</x:Double>
+    <!-- .14em * 12 = 1.68. -->
+    <x:Double x:Key="IndustryKickerLetterSpacing">1.68</x:Double>
+    <!-- .16em * 12 = 1.92. -->
+    <x:Double x:Key="IndustryKickerWideLetterSpacing">1.92</x:Double>
+
+    <!-- .08em * 13 = 1.04. -->
+    <x:Double x:Key="IndustryTableHeaderFontSize">13</x:Double>
+    <x:Double x:Key="IndustryTableHeaderLetterSpacing">1.04</x:Double>
+
+    <!-- -.02em * 13 = -0.26. -->
+    <x:Double x:Key="IndustryTableCellFontSize">13</x:Double>
+    <x:Double x:Key="IndustryTableCellLetterSpacing">-0.26</x:Double>
+
+    <!-- Same .14em ratio and FontSize as IndustryGbTitle above. -->
+    <x:Double x:Key="IndustryDisclosureFontSize">11.5</x:Double>
+    <x:Double x:Key="IndustryDisclosureLetterSpacing">1.61</x:Double>
+
+    <!-- +4 (not the usual +2), a smaller proportional bump for the hero readout so it doesn't
+         dominate the header even more once already large. -->
+    <x:Double x:Key="IndustryFrequencyReadoutFontSize">44</x:Double>
+    <x:Double x:Key="IndustryFrequencyReadoutLineHeight">45</x:Double>
+    <!-- -.03em * 44 = -1.32, same ratio as Normal's own -1.2 (-.03em * 40). -->
+    <x:Double x:Key="IndustryFrequencyReadoutLetterSpacing">-1.32</x:Double>
+
+    <!-- +3, same smaller-proportional-bump reasoning as the readout above. Width scaled by the same
+         FontSize ratio as the mono glyph-advance-width Normal value was measured at. -->
+    <x:Double x:Key="IndustryFrequencyEditFontSize">27</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditHeight">46</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditMinHeight">46</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditWidth">202</x:Double>
+
+    <!-- Vertical stays 0 — the original historical fix's whole purpose was overriding Fluent's own
+         nonzero default down to 0 to stop it clipping the glyph line box; reintroducing any nonzero
+         vertical padding here would risk the exact same clip. Horizontal widens slightly with the
+         larger font. -->
+    <Thickness x:Key="IndustryTxHeaderBtnPadding">7,0</Thickness>
+
+    <x:Double x:Key="IndustryDialogTitleFontSize">18</x:Double>
+
+    <x:Double x:Key="IndustryTxSelectionReadoutFontSize">12</x:Double>
+
+    <!-- Round-2 real-window-verification fix: IndustryMiniHeight's own Large value dropped from 20
+         to 19 (a smaller +1 FontSize delta, see that key's own comment above) after this comment was
+         first written; re-derived to match, not left stale. 19 * (IndustryMiniHeight Large 19 /
+         IndustryMiniHeight Normal 17) = 21.24, rounded 21 — same growth ratio as the sibling
+         IndustryMini chip/toggle forms. -->
+    <x:Double x:Key="IndustryMiniIconButtonSize">21</x:Double>
+
+    <x:Double x:Key="IndustryAboutTitleFontSize">20</x:Double>
+
+    <x:Double x:Key="IndustryCallsignChipFontSize">14</x:Double>
+    <!-- .08em * 14 = 1.12, same ratio as Normal's own 0.96 (.08em * 12). -->
+    <x:Double x:Key="IndustryCallsignChipLetterSpacing">1.12</x:Double>
+
+    <x:Double x:Key="IndustryRangeCaptionFontSize">12</x:Double>
+
+    <!-- 60 * (IndustryInputFontSize Large 13 / Normal 11) = 70.9, rounded 71. -->
+    <x:Double x:Key="IndustryLogbookNotesHeight">71</x:Double>
+
+    <x:Double x:Key="IndustryOptionsAdvancedCaptionFontSize">13</x:Double>
+
+    <!-- 320 * (IndustryFrequencyEditWidth Large 202 / Normal 180) = 359.1, rounded 359. -->
+    <x:Double x:Key="IndustryVfoCardMinWidth">359</x:Double>
+
+    <!-- 108 * (IndustryInputFontSize Large 13 / Normal 11) = 127.6, rounded 128. -->
+    <x:Double x:Key="IndustryBandwidthComboWidth">128</x:Double>
+
+    <x:Double x:Key="IndustryUtcClockFontSize">17</x:Double>
+
+    <x:Double x:Key="IndustryFrequencyPresetFontSize">14.5</x:Double>
+    <x:Double x:Key="IndustryFrequencyPresetLabelFontSize">11.5</x:Double>
+    <!-- .06em * 11.5 = 0.69, same ratio as Normal's own 0.57 (.06em * 9.5). -->
+    <x:Double x:Key="IndustryFrequencyPresetLabelLetterSpacing">0.69</x:Double>
+
+    <x:Double x:Key="IndustryFavouritesHintFontSize">12</x:Double>
+
+    <x:Double x:Key="IndustryRadioHeaderStatusMessageFontSize">12</x:Double>
+
+</ResourceDictionary>

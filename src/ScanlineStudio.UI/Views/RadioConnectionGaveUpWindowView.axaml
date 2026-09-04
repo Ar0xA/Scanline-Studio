@@ -5,7 +5,7 @@
         x:Class="ScanlineStudio.UI.Views.RadioConnectionGaveUpWindowView"
         x:DataType="vm:RadioConnectionGaveUpWindowViewModel"
         Title="{loc:Translate Options.Radio.Connect.GaveUp.Title}"
-        Width="380" Height="180"
+        Width="380" SizeToContent="Height"
         MinWidth="340" MinHeight="160"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
@@ -15,7 +15,12 @@
          Modeled on AboutWindowView.axaml — Industry atoms, Grid RowDefinitions="*,Auto"
          content/footer split, RequestClose event wired in the code-behind. No mockup exists: new
          scope, not a legacy MMSSTV screen — radio-connection UX is a rewrite-only concern, CAT
-         control itself is explicitly not ported (CLAUDE.md §2). -->
+         control itself is explicitly not ported (CLAUDE.md §2).
+
+         Phase 2 font-size presets: SizeToContent="Height" (was a fixed Height="180"), matching
+         ConfirmActionDialogView's own precedent — MinHeight="160" stays as a real floor (this
+         dialog already had one, unlike its 4 siblings), the ScrollViewer below remains the
+         belt-and-suspenders mitigation for a genuinely long give-up Reason string. -->
 
     <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="*,Auto">
@@ -27,7 +32,7 @@
                  height. -->
             <ScrollViewer Grid.Row="0">
                 <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.Connect.GaveUp.Title}" FontSize="16" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.Connect.GaveUp.Title}" FontSize="{DynamicResource IndustryDialogTitleFontSize}" />
                     <TextBlock Classes="IndustryRowValue" Text="{Binding Message}" TextWrapping="Wrap" />
                 </StackPanel>
             </ScrollViewer>

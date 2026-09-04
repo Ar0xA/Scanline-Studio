@@ -4667,6 +4667,80 @@ public sealed class OptionsWindowViewModelTests
         }
     }
 
+    // Phase 2 font-size presets: FontScale shares the Appearance tab/section with AppTheme -- same
+    // deliberately-NOT-part-of-OptionsSnapshot reasoning, loaded/saved directly via _settingsStore.
+    // No UI.Tests-hosted "applies live" test exists for FontScale, unlike AppTheme's own
+    // SaveAsync_AppliesTheThemeLive_OnApplicationCurrent above: App.ApplyFontScale's state lives on
+    // the real ScanlineStudio.UI.App subclass specifically (unlike RequestedThemeVariant, a base
+    // Avalonia.Application property), and this test project's own TestAppBuilder configures a bare
+    // Application, not the real App -- App.ApplyFontScale safely no-ops there (see its own doc
+    // comment). The mechanism itself is proven for real in
+    // ScanlineStudio.UI.FontTests.AppearanceFontScaleResolutionTests, which hosts the real App.
+
+    [AvaloniaFact]
+    public void Constructor_LoadsPersistedFontScale()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                AppearanceSettings.SectionKey,
+                new AppearanceSettings { FontScale = AppFontScale.Large },
+                AppearanceSettingsJsonContext.Default.AppearanceSettings),
+        };
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AppFontScale.Large, vm.FontScale);
+        Assert.True(vm.IsFontScaleLargeSelected);
+        Assert.False(vm.IsFontScaleNormalSelected);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_NoPersistedFontScale_FallsBackToNormal()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(AppFontScale.Normal, vm.FontScale);
+        Assert.True(vm.IsFontScaleNormalSelected);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(AppFontScale.Normal)]
+    [InlineData(AppFontScale.Large)]
+    public async Task SaveAsync_PersistsFontScale(AppFontScale fontScale)
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FontScale = fontScale;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var saved = settingsStore.Settings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+        Assert.Equal(fontScale, saved?.FontScale);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveAsync_PersistsThemeAndFontScaleTogether_OneUpdateAsyncCall()
+    {
+        // Confirms both fields land in the SAME UpdateAsync call (not two independent round trips),
+        // matching this method's own established "one atomic write" convention for the Appearance
+        // section.
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AppTheme = AppTheme.Dark;
+        vm.FontScale = AppFontScale.Large;
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        var saved = settingsStore.Settings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+        Assert.Equal(AppTheme.Dark, saved?.Theme);
+        Assert.Equal(AppFontScale.Large, saved?.FontScale);
+    }
+
     [AvaloniaFact]
     public void ResetAppearanceToDefault_ResetsToLight()
     {
@@ -4674,16 +4748,18 @@ public sealed class OptionsWindowViewModelTests
         {
             Settings = new AppSettings().WithSection(
                 AppearanceSettings.SectionKey,
-                new AppearanceSettings { Theme = AppTheme.Dark },
+                new AppearanceSettings { Theme = AppTheme.Dark, FontScale = AppFontScale.Large },
                 AppearanceSettingsJsonContext.Default.AppearanceSettings),
         };
         var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(AppTheme.Dark, vm.AppTheme);
+        Assert.Equal(AppFontScale.Large, vm.FontScale);
 
         vm.ResetAppearanceToDefaultCommand.Execute(null);
 
         Assert.Equal(AppTheme.Light, vm.AppTheme);
+        Assert.Equal(AppFontScale.Normal, vm.FontScale);
     }
 
     /// <summary>Forces the real <see cref="OptionsSettingsService.SaveAsync"/>/

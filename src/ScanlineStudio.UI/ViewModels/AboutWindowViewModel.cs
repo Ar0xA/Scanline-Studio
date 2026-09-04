@@ -35,6 +35,13 @@ public sealed partial class AboutWindowViewModel : ObservableObject
     /// <c>MainViewModel.RepositoryUrl</c>) it's a C# constant, not a locale key.</summary>
     public const string AuthorCallsign = "PD3AN";
 
+    /// <summary>Displayed text for the clickable website row (<see cref="OpenWebsiteCommand"/>) --
+    /// same "plain identifier, not translatable copy" reasoning as <see cref="AuthorCallsign"/>
+    /// above and <c>MainViewModel.RepositoryUrl</c>: a domain name is the same in every locale.</summary>
+    public const string WebsiteDisplay = "scanlinestudio.app";
+
+    private const string WebsiteUrl = "https://scanlinestudio.app";
+
     private const string AuthorQrzUrl = "https://www.qrz.com/db/PD3AN";
 
     private readonly IUrlLauncher _urlLauncher;
@@ -66,6 +73,9 @@ public sealed partial class AboutWindowViewModel : ObservableObject
 
     [RelayCommand]
     private void OpenAuthorQrz() => _urlLauncher.Open(AuthorQrzUrl);
+
+    [RelayCommand]
+    private void OpenWebsite() => _urlLauncher.Open(WebsiteUrl);
 
     /// <summary>Same convention as <see cref="QsoLinkWindowViewModel.RequestClose"/> -- the View's
     /// code-behind subscribes <c>vm.RequestClose += Close;</c>.</summary>

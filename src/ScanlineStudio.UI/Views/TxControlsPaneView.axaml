@@ -66,6 +66,12 @@
                      IsEnabled on the left-click Command still mirrors the ComboBox's own !IsEditorOpen
                      gate below via QuickSelectModeCommand's own CanExecute (High item 2's stale-mode
                      transmit crash fix) — unchanged by this conversion. -->
+                <!-- Real-window verification finding (Phase 2 font-size presets), code-review-caught
+                     sibling gap: this grid is pixel-identical to MainWindow.axaml's own Receive-tab
+                     QuickModeSlots grid (same UniformGrid Columns=4 Rows=4, same IndustryMiniButtonTheme,
+                     same default slot list including "SC2-180" in slot 16) — the Padding fix applied
+                     there for the same clipping bug was missed here on the first pass. Must stay in
+                     sync with that grid's own Padding value. -->
                 <ItemsControl ItemsSource="{Binding QuickModeSlots}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -74,7 +80,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="vm:QuickModeSlotViewModel">
-                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1"
+                            <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="1" Padding="2,1,2,1"
                                     Content="{Binding ShortCaption}" Command="{Binding SelectCommand}" CommandParameter="{Binding CurrentMode.Id}"
                                     ToolTip.Tip="{loc:Translate Panes.TxControls.QuickMode.ReassignHint}">
                                 <Button.ContextMenu>
