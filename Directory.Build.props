@@ -26,11 +26,11 @@
       spec/18-path-to-1.0.md High item 5: previously absent entirely, so every assembly shipped
       as the .NET default 1.0.0.0 with no way to tell which build a bug report came from. Centralized
       here (not per-project) since every assembly in the solution should agree on the same product
-      identity. The .NET 8 SDK automatically appends a full git commit SHA to InformationalVersion
-      once it detects a .git directory (bundled Microsoft.Build.Tasks.Git, no SourceLink package
-      needed). Confirmed empirically, no custom stamping target exists anywhere in this solution;
-      see ScanlineStudio.Host.csproj's own doc comment for that dead end (an earlier version of
-      THIS comment wrongly pointed there, corrected here).
+      identity. The .NET 8 SDK automatically appends a git commit SHA to InformationalVersion once it
+      detects a .git directory (bundled Microsoft.Build.Tasks.Git, no SourceLink package needed) —
+      shortened to the same 7-char form `git log`/commit messages use by the TrimSourceRevisionId
+      target below, not the SDK's own full 40-char default. See ScanlineStudio.Host.csproj's own doc
+      comment for a dead-end hand-rolled stamping target that predates and is superseded by this.
     -->
     <Version>0.9.0</Version>
     <Product>Scanline Studio</Product>
@@ -40,5 +40,16 @@
          Bump by hand at each new year, same as any other copyright notice. -->
     <Copyright>Copyright © 2026 the Scanline Studio contributors</Copyright>
   </PropertyGroup>
+
+  <!-- The SDK's own git-SHA suffix above appends the FULL 40-char commit hash to
+       InformationalVersion, not the short form this project's own commit messages/git log use
+       (`git rev-parse` in short form == 7 chars). SourceRevisionId is the property that "+&lt;sha&gt;" suffix
+       is actually built from; trim it right after Microsoft.Build.Tasks.Git's own
+       InitializeSourceControlInformation target sets it, before anything downstream consumes it. -->
+  <Target Name="TrimSourceRevisionId" AfterTargets="InitializeSourceControlInformation">
+    <PropertyGroup>
+      <SourceRevisionId>$(SourceRevisionId.Substring(0, 7))</SourceRevisionId>
+    </PropertyGroup>
+  </Target>
 
 </Project>

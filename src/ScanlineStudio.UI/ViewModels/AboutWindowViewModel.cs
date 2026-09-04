@@ -20,12 +20,12 @@ public sealed partial class AboutWindowViewModel : ObservableObject
 {
     public string ApplicationName { get; }
 
-    /// <summary>The SDK automatically appends a full git commit SHA build-metadata suffix
+    /// <summary>The SDK automatically appends a git commit SHA build-metadata suffix
     /// (`+&lt;sha&gt;`) to <see cref="AssemblyInformationalVersionAttribute"/> once it detects a
-    /// `.git` directory -- confirmed empirically during this feature's own implementation (no
-    /// custom git-invoking MSBuild target needed, see ScanlineStudio.Host.csproj's own doc
-    /// comment on that dead end). Falls back to the plain assembly version if the informational
-    /// attribute is somehow absent (e.g. a non-SDK build), never blank.</summary>
+    /// `.git` directory -- trimmed to this project's own short-SHA convention (7 chars, matching
+    /// `git log`/commit messages) by Directory.Build.props's TrimSourceRevisionId target, not the
+    /// SDK's own full-length default. Falls back to the plain assembly version if the
+    /// informational attribute is somehow absent (e.g. a non-SDK build), never blank.</summary>
     public string VersionDisplay { get; }
 
     public string Copyright { get; }
