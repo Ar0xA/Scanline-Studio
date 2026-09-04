@@ -187,7 +187,7 @@
                      row (real-window finding). Local Height wins over the class's own Height=17
                      Setter (same precedence this codebase already relies on for Padding overrides
                      elsewhere), so IndustryMini's border/padding/font stay, only the height changes. -->
-                <Border Classes="Industry IndustryMini" Height="26" Margin="0,0,4,4"><TextBlock VerticalAlignment="Center" Text="{Binding DimensionsChipText}" /></Border>
+                <Border Classes="Industry IndustryMini" Height="{DynamicResource IndustryBtn26Height}" Margin="0,0,4,4"><TextBlock VerticalAlignment="Center" Text="{Binding DimensionsChipText}" /></Border>
 
                 <!-- Real, wired: aspect toggle + add-text + apply/cancel. PreserveAspect has no
                      mockup equivalent (mock2's own row ends at the dimensions chip) — reuses
@@ -1477,7 +1477,7 @@
                                     Margin="0,-20,0,0" Padding="4,2" IsHitTestVisible="False"
                                     Background="{DynamicResource IndustryAccent}"
                                     IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="10" Foreground="{DynamicResource IndustryBg}" />
+                                <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="{DynamicResource IndustryTxSelectionReadoutFontSize}" Foreground="{DynamicResource IndustryBg}" />
                             </Border>
 
                             <!-- Follow-up visual-polish pass: live rubber-band preview (draw-to-place)
@@ -1644,11 +1644,11 @@
                                      zoom: a straight cut ~7px inside the button's own border). Phase
                                      A's own fix here was horizontal only (DUPLICATE->DUP); this is
                                      the separate vertical clip that fix didn't touch. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="{DynamicResource IndustryTxHeaderBtnPadding}"
                                         Content="{loc:Translate Panes.TxImageEditor.BringToFront}"
                                         Command="{Binding BringToFrontCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.BringToFrontMenu}" />
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="{DynamicResource IndustryTxHeaderBtnPadding}"
                                         Content="{loc:Translate Panes.TxImageEditor.SendToBack}"
                                         Command="{Binding SendToBackCommand}" CommandParameter="{Binding SelectedOverlayElement}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" />
@@ -1659,10 +1659,10 @@
                                      convention, while these compact 21px header buttons need the
                                      mock's own abbreviated DUP/DEL to avoid clipping ("DUPLICATE"
                                      visibly overflowed this button width at this font size). -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="{DynamicResource IndustryTxHeaderBtnPadding}"
                                         Content="{loc:Translate Panes.TxImageEditor.DuplicateHeaderAction}"
                                         Command="{Binding DuplicateCommand}" />
-                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="6,0"
+                                <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary" Padding="{DynamicResource IndustryTxHeaderBtnPadding}"
                                         Content="{loc:Translate Panes.TxImageEditor.RemoveHeaderAction}"
                                         Command="{Binding RemoveOverlayElementCommand}" CommandParameter="{Binding SelectedOverlayElement}" />
                             </StackPanel>
@@ -1778,7 +1778,7 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeText}" />
                                             <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Text}" IsEnabled="{Binding !Locked}" Margin="2,0" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
-                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
                                             <!-- TX workflow modernization plan, Phase 8: layers-list/
@@ -1793,7 +1793,7 @@
                                                  button's Click fires, same "any button in the row
                                                  selects first" precedent RemoveCommand's own comment
                                                  below already documents. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
                                                     Command="{Binding DuplicateCommand}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
@@ -1804,7 +1804,7 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
@@ -1817,7 +1817,7 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeBox}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ToolBox}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
-                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
                                             <!-- TX workflow modernization plan, Phase 8: layers-list/
@@ -1832,7 +1832,7 @@
                                                  button's Click fires, same "any button in the row
                                                  selects first" precedent RemoveCommand's own comment
                                                  below already documents. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
                                                     Command="{Binding DuplicateCommand}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
@@ -1843,7 +1843,7 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
@@ -1859,14 +1859,14 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeLine}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.ToolLine}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
-                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
                                                     Command="{Binding DuplicateCommand}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
-                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
@@ -1888,7 +1888,7 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{loc:Translate Panes.TxImageEditor.AddImage}" />
                                             <TextBlock Grid.Column="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Margin="4,0" Text="{Binding Z, StringFormat='z{0}'}" />
-                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="19" Height="19" Padding="0"
+                                            <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
                                             <!-- TX workflow modernization plan, Phase 8: layers-list/
@@ -1903,7 +1903,7 @@
                                                  button's Click fires, same "any button in the row
                                                  selects first" precedent RemoveCommand's own comment
                                                  below already documents. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
                                                     Command="{Binding DuplicateCommand}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
@@ -1914,7 +1914,7 @@
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
                                                  precedent exactly. -->
-                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="19" Height="19" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />

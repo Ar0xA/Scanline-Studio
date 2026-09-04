@@ -1,0 +1,198 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Phase 2 font-size presets: the "Normal" branch of the live-switchable font-scale axis
+         (App.axaml.cs's ApplyFontScale swaps this dictionary's membership against
+         AtomsFontScaleLarge.axaml's, independent of the color ThemeVariant axis — see that file's
+         own doc comment for why this can't reuse ThemeDictionaries). Every key here pins today's
+         shipped literal value from Atoms.axaml/the Views files — golden-tested in
+         AtomsFontScaleTests.cs so the tokenization sweep itself never quietly changes Normal's
+         appearance. Key-set parity with AtomsFontScaleLarge.axaml is a permanent guard test — a key
+         present in only one branch resolves to nothing and silently drops the affected value. -->
+
+    <x:Double x:Key="IndustryBtn36FontSize">12.5</x:Double>
+    <x:Double x:Key="IndustryBtn36Height">36</x:Double>
+    <x:Double x:Key="IndustryBtn36MinHeight">36</x:Double>
+
+    <x:Double x:Key="IndustryBtn26FontSize">12</x:Double>
+    <x:Double x:Key="IndustryBtn26Height">26</x:Double>
+    <x:Double x:Key="IndustryBtn26MinHeight">26</x:Double>
+
+    <x:Double x:Key="IndustryBtn25FontSize">12</x:Double>
+    <x:Double x:Key="IndustryBtn25Height">25</x:Double>
+    <x:Double x:Key="IndustryBtn25MinHeight">25</x:Double>
+
+    <x:Double x:Key="IndustryBtn24FontSize">11</x:Double>
+    <x:Double x:Key="IndustryBtn24Height">24</x:Double>
+    <x:Double x:Key="IndustryBtn24MinHeight">24</x:Double>
+
+    <x:Double x:Key="IndustryBtn22FontSize">11</x:Double>
+    <x:Double x:Key="IndustryBtn22Height">22</x:Double>
+    <x:Double x:Key="IndustryBtn22MinHeight">22</x:Double>
+
+    <x:Double x:Key="IndustryBtn21FontSize">10.5</x:Double>
+    <x:Double x:Key="IndustryBtn21Height">21</x:Double>
+    <x:Double x:Key="IndustryBtn21MinHeight">21</x:Double>
+
+    <!-- Shared by the 3 interactive IndustryMini*Theme ControlThemes (Button/ToggleButton/RadioButton,
+         confirmed identical geometry) AND the plain Border.IndustryMini non-interactive chip form. -->
+    <x:Double x:Key="IndustryMiniFontSize">10</x:Double>
+    <x:Double x:Key="IndustryMiniHeight">17</x:Double>
+    <x:Double x:Key="IndustryMiniMinHeight">17</x:Double>
+
+    <x:Double x:Key="IndustryStepperValueFontSize">12</x:Double>
+    <x:Double x:Key="IndustryStepperHeight">22</x:Double>
+    <x:Double x:Key="IndustryStepperMinHeight">22</x:Double>
+    <!-- 90 = 52 (default value-cell min-width) + 38 (2x18px spinner buttons + ~2px border) —
+         see IndustryStepperTheme's own comment for the derivation this pins. -->
+    <x:Double x:Key="IndustryStepperMinWidth">90</x:Double>
+
+    <x:Double x:Key="IndustryInputFontSize">11</x:Double>
+    <x:Double x:Key="IndustryInputHeight">24</x:Double>
+    <x:Double x:Key="IndustryInputMinHeight">24</x:Double>
+
+    <x:Double x:Key="IndustryInputTallFontSize">12</x:Double>
+    <x:Double x:Key="IndustryInputTallHeight">26</x:Double>
+    <x:Double x:Key="IndustryInputTallMinHeight">26</x:Double>
+
+    <x:Double x:Key="IndustryRowLabelFontSize">11</x:Double>
+    <x:Double x:Key="IndustryRowLabelLineHeight">16.5</x:Double>
+
+    <x:Double x:Key="IndustryRowValueFontSize">11</x:Double>
+    <x:Double x:Key="IndustryRowValueLineHeight">16.5</x:Double>
+    <x:Double x:Key="IndustryRowValueLetterSpacing">-0.22</x:Double>
+
+    <!-- Border.IndustryRow's own MinHeight tracks IndustryRowLabel/RowValue's LineHeight. -->
+    <x:Double x:Key="IndustryRowMinHeight">16.5</x:Double>
+
+    <x:Double x:Key="IndustryMenuHeight">26</x:Double>
+    <x:Double x:Key="IndustryMenuMinHeight">26</x:Double>
+    <x:Double x:Key="IndustryMenuItemFontSize">12</x:Double>
+
+    <x:Double x:Key="IndustryTabItemFontSize">11.5</x:Double>
+    <x:Double x:Key="IndustryTabItemHeight">26</x:Double>
+    <x:Double x:Key="IndustryTabItemMinHeight">26</x:Double>
+    <!-- .09em * 11.5 = 1.035, per the file's own comment at this site. -->
+    <x:Double x:Key="IndustryTabItemLetterSpacing">1.035</x:Double>
+
+    <x:Double x:Key="IndustryStatusFontSize">10</x:Double>
+    <x:Double x:Key="IndustryStatusHeight">19</x:Double>
+    <x:Double x:Key="IndustryStatusMinHeight">19</x:Double>
+
+    <x:Double x:Key="IndustryCheckBoxFontSize">11</x:Double>
+    <x:Double x:Key="IndustrySegFontSize">11</x:Double>
+
+    <x:Double x:Key="IndustryThumbnailCallFontSize">10</x:Double>
+    <x:Double x:Key="IndustryThumbnailCallGalleryFontSize">11</x:Double>
+    <x:Double x:Key="IndustryThumbnailMetaFontSize">9</x:Double>
+    <x:Double x:Key="IndustryThumbnailMetaGalleryFontSize">9.5</x:Double>
+
+    <x:Double x:Key="IndustryContextMenuItemFontSize">12</x:Double>
+    <x:Double x:Key="IndustryHelpGlyphFontSize">10</x:Double>
+
+    <!-- .14em * FontSize, per the file's own comment at each of these 3 sites. -->
+    <x:Double x:Key="IndustryGbTitleFontSize">9.5</x:Double>
+    <x:Double x:Key="IndustryGbTitleLetterSpacing">1.33</x:Double>
+
+    <x:Double x:Key="IndustryKickerFontSize">10</x:Double>
+    <x:Double x:Key="IndustryKickerLetterSpacing">1.4</x:Double>
+    <!-- .16em * 10 = 1.6 (Kicker.wide's own, distinct ratio from plain Kicker's .14em). -->
+    <x:Double x:Key="IndustryKickerWideLetterSpacing">1.6</x:Double>
+
+    <!-- .08em * 11 = 0.88. -->
+    <x:Double x:Key="IndustryTableHeaderFontSize">11</x:Double>
+    <x:Double x:Key="IndustryTableHeaderLetterSpacing">0.88</x:Double>
+
+    <!-- -.02em * 11 = -0.22, same ratio/site-shape as IndustryRowValue above. -->
+    <x:Double x:Key="IndustryTableCellFontSize">11</x:Double>
+    <x:Double x:Key="IndustryTableCellLetterSpacing">-0.22</x:Double>
+
+    <!-- ToggleButton.IndustryDisclosure /template/ ContentPresenter — same .14em ratio and FontSize
+         as IndustryGbTitle (a real coupled site found during the token-catalog implementation pass,
+         not in the original plan-reviewed inventory; folded in here). -->
+    <x:Double x:Key="IndustryDisclosureFontSize">9.5</x:Double>
+    <x:Double x:Key="IndustryDisclosureLetterSpacing">1.33</x:Double>
+
+    <!-- RadioHeaderView.axaml's frequency readout — the display TextBlock. -->
+    <x:Double x:Key="IndustryFrequencyReadoutFontSize">40</x:Double>
+    <x:Double x:Key="IndustryFrequencyReadoutLineHeight">41</x:Double>
+    <x:Double x:Key="IndustryFrequencyReadoutLetterSpacing">-1.2</x:Double>
+
+    <!-- RadioHeaderView.axaml's frequency readout — the edit-mode TextBox. Width is mono
+         glyph-advance-width-driven (AtomsTokens.axaml's own IndustryMonoFontFamily comment). -->
+    <x:Double x:Key="IndustryFrequencyEditFontSize">24</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditHeight">41</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditMinHeight">41</x:Double>
+    <x:Double x:Key="IndustryFrequencyEditWidth">180</x:Double>
+
+    <!-- TxImageEditorPaneView.axaml's 4 header-action buttons — a vertical lever preserving the
+         original fix's purpose (Fluent's own default vertical padding clipped the glyph line box at
+         this compact button height; explicit Padding overrides it down). Horizontal stays a fixed 6
+         at Normal; Large widens it slightly as the font grows, see the Large branch. -->
+    <Thickness x:Key="IndustryTxHeaderBtnPadding">6,0</Thickness>
+
+    <!-- RadioConnectionGaveUpWindowView.axaml's title TextBlock — its own explicit FontSize
+         override, distinct from IndustryGbTitle's shared 9.5px (a real coupled site found during
+         implementation, not in the original inventory; folded in here). -->
+    <x:Double x:Key="IndustryDialogTitleFontSize">16</x:Double>
+
+    <!-- TxImageEditorPaneView.axaml's selection-readout badge (mono text on an IndustryAccent
+         background, over the canvas). -->
+    <x:Double x:Key="IndustryTxSelectionReadoutFontSize">10</x:Double>
+
+    <!-- TxImageEditorPaneView.axaml's repeated icon-only IndustryMini square buttons (rotate/flip
+         controls, Width=Height, Padding=0) — distinct from IndustryMiniHeight/MinHeight above,
+         which size the text-bearing chip/toggle forms, not an icon-only square button. -->
+    <x:Double x:Key="IndustryMiniIconButtonSize">19</x:Double>
+
+    <!-- Remaining Views-file sweep (18 files besides RadioHeaderView's frequency readout and
+         TxImageEditorPaneView, both already tokenized above). -->
+
+    <!-- AboutWindowView.axaml's app-name title — a local override on top of IndustryGbTitle. -->
+    <x:Double x:Key="IndustryAboutTitleFontSize">18</x:Double>
+
+    <!-- MainWindow.axaml's operator-callsign chip (menu-bar top-right) — overrides IndustryMini's
+         default 10px/mono metrics with this chip's own 12px/.08em spec (design doc §1). -->
+    <x:Double x:Key="IndustryCallsignChipFontSize">12</x:Double>
+    <x:Double x:Key="IndustryCallsignChipLetterSpacing">0.96</x:Double>
+
+    <!-- MainWindow.axaml's waterfall/spectrum card RangeCaption (mono, top-right of the plot). -->
+    <x:Double x:Key="IndustryRangeCaptionFontSize">10</x:Double>
+
+    <!-- MainWindow.axaml's Logbook tab Notes multi-line TextBox — a local Height override on top
+         of the already-tokenized IndustryInput base (its own FontSize/base-Height come from
+         IndustryInputFontSize/Height; this is the taller multi-line variant only). -->
+    <x:Double x:Key="IndustryLogbookNotesHeight">60</x:Double>
+
+    <!-- OptionsWindowView.axaml's Advanced-tab caption text (no shared Classes, a standalone
+         FontSize override). -->
+    <x:Double x:Key="IndustryOptionsAdvancedCaptionFontSize">11</x:Double>
+
+    <!-- RadioHeaderView.axaml's VFO card MinWidth — code-review-fixed once already to prevent
+         reflow when the frequency edit field (IndustryFrequencyEditWidth) appears; must grow with it. -->
+    <x:Double x:Key="IndustryVfoCardMinWidth">320</x:Double>
+
+    <!-- RadioHeaderView.axaml's CAT bandwidth ComboBox — code-review-fixed once already (a real
+         shipped bug, session-documented) for caret-scroll clipping at this exact width; must grow
+         with IndustryInputFontSize or the same clipping bug reappears at Large. -->
+    <x:Double x:Key="IndustryBandwidthComboWidth">108</x:Double>
+
+    <!-- RadioHeaderView.axaml's UTC clock readout (mono, VFO card). -->
+    <x:Double x:Key="IndustryUtcClockFontSize">15</x:Double>
+
+    <!-- RadioHeaderView.axaml's frequency-preset memory buttons — 2 local overrides per button
+         (the mono frequency line and its Barlow label line), both distinct from IndustryBtn36's own
+         FontSize despite the coincidentally-equal Normal value. -->
+    <x:Double x:Key="IndustryFrequencyPresetFontSize">12.5</x:Double>
+    <x:Double x:Key="IndustryFrequencyPresetLabelFontSize">9.5</x:Double>
+    <!-- .06em * 9.5 = 0.57, per the file's own comment at this site. -->
+    <x:Double x:Key="IndustryFrequencyPresetLabelLetterSpacing">0.57</x:Double>
+
+    <!-- RadioHeaderView.axaml's Favourites-card hint text (mono, bottom of the card). -->
+    <x:Double x:Key="IndustryFavouritesHintFontSize">10</x:Double>
+
+    <!-- RadioHeaderView.axaml's ErrorMessage/MaintenanceMessage status line — one shared token,
+         both sites are the identical role (a status line in the same footer location). -->
+    <x:Double x:Key="IndustryRadioHeaderStatusMessageFontSize">10</x:Double>
+
+</ResourceDictionary>

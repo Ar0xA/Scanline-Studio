@@ -60,4 +60,15 @@ public sealed class AboutWindowViewModelTests
 
         Assert.Equal(["https://www.qrz.com/db/PD3AN"], urlLauncher.OpenedUrls);
     }
+
+    [AvaloniaFact]
+    public void OpenWebsiteCommand_OpensTheAppWebsite()
+    {
+        var urlLauncher = new FakeUrlLauncher();
+        var vm = new AboutWindowViewModel(urlLauncher);
+
+        vm.OpenWebsiteCommand.Execute(null);
+
+        Assert.Equal(["https://scanlinestudio.app"], urlLauncher.OpenedUrls);
+    }
 }

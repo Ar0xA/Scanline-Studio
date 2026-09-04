@@ -5,7 +5,7 @@
         x:Class="ScanlineStudio.UI.Views.HamlibLibraryReloadFailedDialogView"
         x:DataType="vm:HamlibLibraryReloadFailedDialogViewModel"
         Title="{loc:Translate Options.HamlibLibraryReloadFailedDialog.Title}"
-        Width="420" Height="200"
+        Width="420" SizeToContent="Height"
         MinWidth="320"
         CanResize="False"
         WindowStartupLocation="CenterOwner">
@@ -13,8 +13,10 @@
     <!-- Minimal OK-only acknowledgement — see HamlibLibraryReloadFailedDialogViewModel's own doc
          comment. Same shape as RestartRequiredDialogView.axaml/SampleRateChangeDeferredDialogView.axaml,
          except Text binds to the ViewModel's own Message property instead of a static locale string,
-         since this dialog carries a real per-attempt failure detail. Slightly wider/taller than its
-         two siblings to give that longer message room to wrap without excessive height. -->
+         since this dialog carries a real per-attempt failure detail. Phase 2 font-size presets:
+         SizeToContent="Height" (was a fixed Height), matching ConfirmActionDialogView's own
+         precedent. Slightly wider than its two siblings to give that longer message room to
+         wrap without an excessive number of lines. -->
 
     <Border Background="{DynamicResource IndustryBg}">
         <Grid RowDefinitions="Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">

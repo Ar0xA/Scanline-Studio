@@ -147,6 +147,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private AppTheme _appTheme = AppTheme.Light;
 
+    /// <summary>Backs the Appearance tab's second radio group (Phase 2 font-size presets) -- same
+    /// "deliberately NOT part of <see cref="OptionsSnapshot"/>" reasoning as <see cref="AppTheme"/>
+    /// directly above, sharing the same <see cref="AppearanceSettings"/> section. Backed by 2
+    /// <c>IsFontScaleXSelected</c> computed properties below, same pattern as <see cref="AppTheme"/>.
+    /// Default <see cref="AppFontScale.Normal"/> matches <c>App.axaml.cs</c>'s own seeded default
+    /// (<c>Initialize()</c>'s <c>ApplyFontScale(AppFontScale.Normal)</c> call).</summary>
+    [ObservableProperty]
+    private AppFontScale _fontScale = AppFontScale.Normal;
+
     [ObservableProperty]
     private AudioDeviceInfo? _selectedCaptureDevice;
 
@@ -2284,6 +2293,32 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>Backs the Appearance tab's font-scale radio group -- same computed-bool-property
+    /// idiom as <see cref="IsAppThemeLightSelected"/>/etc above.</summary>
+    public bool IsFontScaleNormalSelected
+    {
+        get => FontScale == AppFontScale.Normal;
+        set
+        {
+            if (value)
+            {
+                FontScale = AppFontScale.Normal;
+            }
+        }
+    }
+
+    public bool IsFontScaleLargeSelected
+    {
+        get => FontScale == AppFontScale.Large;
+        set
+        {
+            if (value)
+            {
+                FontScale = AppFontScale.Large;
+            }
+        }
+    }
+
     /// <summary>Backs the Decode tab's 3-way Demod type radio group -- same computed-bool-property
     /// idiom as <see cref="IsSenseLevelVeryLowSelected"/>/etc above. Item order (0=PLL/1=Zero
     /// crossing/2=Hilbert) matches <c>Option.dfm</c>'s real <c>RGDemType</c> item order and
@@ -2664,7 +2699,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var appSettings = await _settingsStore.LoadAsync();
             RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? true;
             JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
-            AppTheme = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings)?.Theme ?? AppTheme.Light;
+            // One shared GetSection call for both fields (code-review fix: was two independent
+            // deserializations of the same section), matching Program.cs's own one-shared-read shape.
+            var appearanceSettings = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+            AppTheme = appearanceSettings?.Theme ?? AppTheme.Light;
+            FontScale = appearanceSettings?.FontScale ?? AppFontScale.Normal;
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -3532,6 +3571,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var rememberWindowPosition = RememberWindowPosition;
             var jpegQuality = JpegQuality;
             var appTheme = AppTheme;
+            var fontScale = FontScale;
             await _settingsStore.UpdateAsync(appSettings =>
             {
                 var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
@@ -3542,7 +3582,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                     ImageExportSettings.SectionKey, currentImageExport with { JpegQuality = jpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
                 var currentAppearance = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings) ?? new AppearanceSettings();
                 return updatedAppSettings.WithSection(
-                    AppearanceSettings.SectionKey, currentAppearance with { Theme = appTheme }, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+                    AppearanceSettings.SectionKey, currentAppearance with { Theme = appTheme, FontScale = fontScale }, AppearanceSettingsJsonContext.Default.AppearanceSettings);
             });
 
             // Phase 1 dark mode: live-apply, own try/catch (same "one field's failure must not
@@ -3565,6 +3605,18 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             catch (Exception ex)
             {
                 Log.AppThemeApplyFailed(_logger, appTheme, ex);
+            }
+
+            // Phase 2 font-size presets: own separate try/catch, same "one field's failure must not
+            // abort the other" reasoning as the theme live-apply block immediately above -- kept
+            // independent rather than merged into it.
+            try
+            {
+                App.ApplyFontScale(fontScale);
+            }
+            catch (Exception ex)
+            {
+                Log.FontScaleApplyFailed(_logger, fontScale, ex);
             }
 
             if (SelectedCulture is { } culture && !culture.Equals(_localization.CurrentCulture))
@@ -3627,6 +3679,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         Log.ResetSectionInvoked(_logger, "Appearance");
         AppTheme = AppTheme.Light;
+        // Phase 2 addition -- does not live-apply, same as AppTheme immediately above: this only
+        // mutates the in-memory property, matching this command's own established behavior. Live-apply
+        // only happens from SaveCoreUnguardedAsync, for both fields, on an actual Save click.
+        FontScale = AppFontScale.Normal;
     }
 
     [RelayCommand]
@@ -3887,6 +3943,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(IsAppThemeSystemSelected));
     }
 
+    partial void OnFontScaleChanged(AppFontScale value)
+    {
+        OnPropertyChanged(nameof(IsFontScaleNormalSelected));
+        OnPropertyChanged(nameof(IsFontScaleLargeSelected));
+    }
+
     partial void OnDemodTypeChanged(DemodType value)
     {
         OnPropertyChanged(nameof(IsDemodTypePllSelected));
@@ -3942,6 +4004,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Applying theme {AppTheme} live failed after a successful settings save")]
         public static partial void AppThemeApplyFailed(ILogger logger, AppTheme appTheme, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Applying font scale {FontScale} live failed after a successful settings save")]
+        public static partial void FontScaleApplyFailed(ILogger logger, AppFontScale fontScale, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Sample rate change to {SampleRate}Hz deferred -- a recording is in progress")]
         public static partial void SampleRateChangeDeferred(ILogger logger, int sampleRate);
