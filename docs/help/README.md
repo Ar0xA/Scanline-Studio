@@ -27,8 +27,22 @@ Screenshots are intentionally avoided. They become stale quickly, are hard to lo
 hide the control names users need to search. Add one only when a spatial relationship cannot be
 explained clearly in text, and keep it in an `images/` subdirectory with useful alternative text.
 
+## Explaining hard terms
+
+Write for a technically comfortable but non-expert reader — plain wording first, before reaching
+for a hover explanation. When a term genuinely needs defining, add it once to the `glossary`
+article's `<dl>` with a stable `id="glossary-<term>"` on its `<dt>`, then link the term's first bare
+occurrence per article with `<a class="term" href="#glossary-<term>">...</a>`. The tooltip (built in
+`help.js`) reads the definition live from that `<dt>`/`<dd>` pair at hover/focus time — there is no
+second copy to keep in sync, and the link itself is a working fallback with no JavaScript or on a
+touch device with no hover. Don't link every occurrence of a term in the same article; the first is
+enough.
+
 ## Update checklist
 
+- **Any change that adds, renames, or removes a user-visible Options field, menu item, dialog, or
+  workflow step must update this guide in the same change**, and pass the structural check below,
+  before the change is considered done — a stale guide is a real regression, not a follow-up.
 - Compare main menu items and tab names with `src/ScanlineStudio.UI/Views/MainWindow.axaml`.
 - Compare Options sections with `src/ScanlineStudio.UI/Views/OptionsWindowView.axaml`.
 - Compare visible wording with `assets/locale/en.json`.
@@ -53,5 +67,5 @@ set of search expectations. It uses only Node.js built-ins and does not download
 - `index.html` — semantic help content and release metadata.
 - `styles.css` — visual design, responsive layout, and print rules.
 - `help-search.js` — pure offline search and ranking shared by the browser and structural check.
-- `help.js` — generated contents, search UI, keyboard behavior, and active-topic tracking.
+- `help.js` — generated contents, search UI, keyboard behavior, active-topic tracking, and the hover/focus term-tooltip mechanism.
 - `check-help.mjs` — dependency-free structural regression check.

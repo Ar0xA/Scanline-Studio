@@ -327,5 +327,70 @@
     element.textContent = helpVersion || "unversioned";
   });
 
+  // Hover/focus tooltips for hard terms (e.g. <a class="term" href="#glossary-cat">CAT</a>).
+  // The definition text is read live from the glossary's own <dt>/<dd> pair, not duplicated here --
+  // a glossary entry that changes can't silently leave a second, stale copy elsewhere. The link
+  // itself is a real, working fallback with no JavaScript and on touch devices with no hover.
+  function initTermTooltips() {
+    const termLinks = Array.from(document.querySelectorAll("a.term"));
+    if (termLinks.length === 0) {
+      return;
+    }
+
+    const tooltip = document.createElement("div");
+    tooltip.className = "term-tooltip";
+    tooltip.setAttribute("role", "tooltip");
+    tooltip.hidden = true;
+    document.body.appendChild(tooltip);
+
+    let activeLink = null;
+
+    function showTooltip(link) {
+      const targetId = link.getAttribute("href")?.slice(1);
+      const term = targetId && document.getElementById(targetId);
+      const definition = term?.nextElementSibling;
+      if (!term || !definition || definition.tagName !== "DD") {
+        return;
+      }
+
+      activeLink = link;
+      tooltip.textContent = definition.textContent.trim();
+      tooltip.hidden = false;
+
+      const linkRect = link.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const left = Math.min(Math.max(8, linkRect.left), window.innerWidth - tooltipRect.width - 8);
+      tooltip.style.left = `${left + window.scrollX}px`;
+      tooltip.style.top = `${linkRect.bottom + window.scrollY + 6}px`;
+    }
+
+    function hideTooltip(link) {
+      if (activeLink !== link) {
+        return;
+      }
+      tooltip.hidden = true;
+      activeLink = null;
+    }
+
+    termLinks.forEach((link) => {
+      link.addEventListener("mouseenter", () => showTooltip(link));
+      link.addEventListener("mouseleave", () => hideTooltip(link));
+      link.addEventListener("focus", () => showTooltip(link));
+      link.addEventListener("blur", () => hideTooltip(link));
+    });
+
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key === "Escape" && activeLink) {
+          hideTooltip(activeLink);
+        }
+      },
+      true
+    );
+  }
+
+  initTermTooltips();
+
   main?.setAttribute("data-help-ready", "true");
 })();

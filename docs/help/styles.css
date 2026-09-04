@@ -1,6 +1,7 @@
 :root {
   color-scheme: light;
   --page: #f2f2f3;
+  --page-translucent: rgba(242, 242, 243, 0.97);
   --surface: #ffffff;
   --surface-muted: #e8eaec;
   --ink: #20252a;
@@ -11,14 +12,44 @@
   --accent-dark: #084b83;
   --accent-soft: #dbe9f5;
   --healthy: #2e9e44;
+  --healthy-tint: #dff1e3;
   --attention: #c88a00;
+  --attention-tint: #fff3d5;
   --danger: #b42a2a;
+  --danger-tint: #f8dddd;
   --focus: #0f62a8;
   --sidebar-width: 19rem;
   --content-width: 76rem;
   --font-ui: "Barlow", "Segoe UI", system-ui, sans-serif;
   --font-condensed: "Barlow Condensed", "Arial Narrow", sans-serif;
   --font-mono: "DejaVu Sans Mono", "Cascadia Mono", Consolas, monospace;
+}
+
+/* Loosely matches the application's own Dark theme (AtomsTokens.axaml's "Dark" branch) -- this is a
+   separate static file with no live channel to the running app's Appearance setting, so it follows
+   the OS/browser's own light-dark preference instead, not required to be pixel-identical. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #1a1b1c;
+    --page-translucent: rgba(26, 27, 28, 0.97);
+    --surface: #242526;
+    --surface-muted: #2c2d2e;
+    --ink: #e7e7e8;
+    --ink-muted: #a3a4a5;
+    --line: #585859;
+    --line-strong: #6c6d6e;
+    --accent: #49a5f3;
+    --accent-dark: #82c2f7;
+    --accent-soft: #073c69;
+    --healthy: #5ccc72;
+    --healthy-tint: #184e23;
+    --attention: #ffc033;
+    --attention-tint: #664600;
+    --danger: #da4e4e;
+    --danger-tint: #541212;
+    --focus: #49a5f3;
+  }
 }
 
 * {
@@ -82,7 +113,7 @@ input {
   min-height: 4.6rem;
   padding: 0.65rem clamp(0.75rem, 2vw, 1.5rem);
   border-bottom: 1px solid var(--line-strong);
-  background: rgba(242, 242, 243, 0.97);
+  background: var(--page-translucent);
 }
 
 .brand {
@@ -530,17 +561,17 @@ kbd {
 
 .warning {
   border-left-color: var(--attention);
-  background: #fff3d5;
+  background: var(--attention-tint);
 }
 
 .safety {
   border-left-color: var(--danger);
-  background: #f8dddd;
+  background: var(--danger-tint);
 }
 
 .tip {
   border-left-color: var(--healthy);
-  background: #dff1e3;
+  background: var(--healthy-tint);
 }
 
 .note strong:first-child,
@@ -635,7 +666,7 @@ dd {
   margin: 0;
   padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--attention);
-  background: #fff3d5;
+  background: var(--attention-tint);
   text-align: center;
 }
 
@@ -706,6 +737,31 @@ dd {
     display: block;
     margin-top: 0.3rem;
   }
+}
+
+a.term {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 0.15em;
+  cursor: help;
+}
+
+.term-tooltip {
+  position: absolute;
+  z-index: 120;
+  max-width: 22rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 0.85rem;
+  line-height: 1.45;
+  box-shadow: 0 0.4rem 1.1rem rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+}
+
+.term-tooltip[hidden] {
+  display: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

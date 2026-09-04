@@ -19,8 +19,8 @@ for (const match of html.matchAll(topicPattern)) {
   topics.push({ id: match[1], category: match[2], keywords: match[3], title: match[4], html: match[0] });
 }
 
-if (topics.length < 20) {
-  fail(`Expected at least 20 help topics, found ${topics.length}.`);
+if (topics.length < 28) {
+  fail(`Expected at least 28 help topics, found ${topics.length}.`);
 }
 
 const ids = new Set();
@@ -88,7 +88,9 @@ const searchExpectations = new Map([
   ["slanted image", "troubleshooting"],
   ["template overlays", "templates-overlays"],
   ["qrz password", "qrz-forwarding"],
-  ["wav re-decode", "record-redecode"]
+  ["wav re-decode", "record-redecode"],
+  ["dark mode font size", "appearance-options"],
+  ["stations heard", "receive-controls"]
 ]);
 
 for (const [query, expectedTopic] of searchExpectations) {
