@@ -53,6 +53,7 @@ internal sealed class SyncEnvelopeDetector
 
     public double ProcessSample(double input)
     {
+        ProcessSampleCallCountForTests++;
         var resonated = _resonator.Process(input);
         return _smoother.Process(Math.Abs(resonated));
     }
@@ -77,4 +78,10 @@ internal sealed class SyncEnvelopeDetector
     /// because <see cref="TankFilter"/> exposes no coefficient readback -- this is the only way to
     /// observe from outside whether a retune actually happened.</summary>
     internal double AppliedCenterFrequencyHzForTests { get; private set; }
+
+    /// <summary>Test-only observation hook: cumulative count of <see cref="ProcessSample"/> calls --
+    /// lets a caller-side test prove a specific span of samples was (or was NOT) fed to this detector,
+    /// e.g. <c>DrainPendingSkip</c>'s own post-snap-window guard (buffered-replay fix, §15 item 2),
+    /// which is the only way to observe a "not double-fed" claim from outside.</summary>
+    internal int ProcessSampleCallCountForTests { get; private set; }
 }

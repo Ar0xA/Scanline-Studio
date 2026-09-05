@@ -91,7 +91,9 @@ public class ReplayEngineTests
         }
 
         Assert.True(decoder.NextLineForTests >= 12, "Test setup problem: insufficient live decode before replay.");
-        Assert.True(decoder.RxLineStagingBufferForTests!.Count > 0);
+        var stagedCountBeforeReplay = decoder.RxLineStagingBufferForTests!.Count;
+        Assert.True(stagedCountBeforeReplay > 0);
+        var replayPassCountBefore = decoder.ReplayPassCountForTests;
         var expected = new InvalidOperationException("Injected replay subscriber failure.");
         var replayRows = new List<int>();
         Action<DecodedImageUpdate> throwingHandler = _ => throw expected;
@@ -102,9 +104,11 @@ public class ReplayEngineTests
 
         Assert.Same(expected, actual);
         Assert.NotEmpty(replayRows);
-        Assert.Equal(0, decoder.RxLineStagingBufferForTests.Count);
-        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0,
-            "Replay must reach its cursor-reconciliation/truncation tail before surfacing the subscriber failure.");
+        // Buffered-replay fix (§15 item 2): the staging buffer is never truncated anymore, so it stays
+        // exactly as it was -- swapped from the old "must be cleared" assertion to "must be unchanged."
+        Assert.Equal(stagedCountBeforeReplay, decoder.RxLineStagingBufferForTests.Count);
+        Assert.True(decoder.ReplayPassCountForTests > replayPassCountBefore,
+            "Replay must reach its cursor-reconciliation tail (which increments ReplayPassCountForTests) before surfacing the subscriber failure -- ExecuteWithDeferredSubscriberFailures defers the throw until after PerformReplay fully returns.");
 
         decoder.LineDecoded -= throwingHandler;
         var nextLineAfterReplay = decoder.NextLineForTests;
@@ -265,15 +269,12 @@ public class ReplayEngineTests
         // claims to. Always false for On (RxLineStagingBuffer.HasWriteFailed is a hardcoded no-op).
         Assert.False(decoder.RxLineStagingBufferForTests!.HasWriteFailed, "Staging buffer silently stopped capturing -- this test would then prove nothing about replay over the real intended staged extent.");
         Assert.NotNull(firstRowAfterReplay);
-        // Round-3 code-review correction: PerformReplay's own sample-cursor re-anchor ALWAYS sacrifices
-        // exactly one transmission line's own row (the row covering whatever raw samples were consumed
-        // live but not yet reflected in the staged sample count when this pass ran -- see the method's
-        // own doc comment) -- not "at most one, sometimes zero" as an earlier version of this test
-        // assumed. In the steady state (live decode's own sample-consumption and slant-tracking
-        // accumulation advance together) that gap is un-skippable by construction, so the expected next
-        // row is deterministically `lastRowDuringReplay + 2` (one sacrificed row + the next one),
-        // Robot36's own RowsPerTransmissionLine == 1.
-        Assert.Equal(lastRowDuringReplay + 2, firstRowAfterReplay!.Value);
+        // Buffered-replay fix (§15 item 2): PerformReplay's sample-cursor re-anchor now snaps BACKWARD
+        // to the corrected row start instead of jumping FORWARD past it, so no row is ever sacrificed --
+        // the expected next row is a seamless continuation, exactly one transmission line
+        // (RowsPerTransmissionLine == 1 for Robot36) after the last row this pass redrew, matching
+        // legacy's own zero-gap continuity exactly.
+        Assert.Equal(lastRowDuringReplay + 1, firstRowAfterReplay!.Value);
 
         Assert.NotNull(decodedImage);
         var averageDelta = ComputeAveragePerChannelDelta(sourceImage, decodedImage!);
@@ -281,37 +282,32 @@ public class ReplayEngineTests
     }
 
     [Fact]
-    public void PerformReplay_CalledTwice_SecondPassStaysCorrectDespiteFirstPassesCursorJump()
+    public void PerformReplay_CalledTwice_SecondPassRedrawsFromRowZeroAndStillMatchesSource()
     {
-        // Round-3 code-review regression test for the stale-anchor blocker, STRENGTHENED in round 4
-        // after the auditor's own two-pass trace found round 3's fix (_rxBufferAnchorSample advanced
-        // additively) kept the sample-COUNT bookkeeping correct while leaving the staging buffer
-        // PHYSICALLY discontinuous -- a second pass would read straight across that gap as if it were
-        // continuous audio, silently misaligning PIXELS without the row-index gap (gap1/gap2 below)
-        // ever showing anything wrong. Round 4's fix truncates the staging buffer at every jump (see
-        // PerformReplay's own doc comment) and tracks WHERE in the image that truncation point sits
-        // (_rxBufferBaseTransmissionLine). This test now checks what the auditor's own round-4 report
-        // said the row-index-only checks couldn't: PIXEL CONTENT.
+        // Buffered-replay fix (§15 item 2, robust-giggling-codd.md): this used to regression-test the
+        // OLD forward-jump-then-truncate design's own buffer-splice bug (a second pass reading straight
+        // across a truncation-created gap as if it were continuous audio). That design, and the bug
+        // class it created, are both gone now -- Step B never truncates the staging buffer, so every
+        // pass's redraw loop covers the WHOLE staged reception from row 0, not just what's staged since
+        // the previous pass. This test now proves the actual FEATURE that removing truncation delivers:
+        // pass 2 re-touches rows pass 1 already drew and they still match source -- structurally
+        // impossible to prove this way under the old design, since pass 1's own raw audio was gone from
+        // the buffer (truncated) by the time pass 2 ran.
+        //
+        // Also pins the batching change (§15 item 2 scope item 5): LineDecoded now fires exactly ONCE
+        // per pass, carrying the LAST redrawn row -- this test's own `lastRowThisPass` capture relies on
+        // that (it used to collect a whole HashSet of per-row events during a pass; batching makes that
+        // collection always a single element now, so this test reads the image directly instead).
         //
         // A per-row solid, widely-separated color (NOT the smooth gradient other tests in this file
-        // use) is deliberately used -- the auditor's own round-4 finding was that a slow gradient is a
-        // "useless discriminator" here, since a one-row misassignment falls below its own row-to-row
-        // delta. Large per-row jumps make a wrong row assignment obvious.
-        //
-        // R24 (YCbCrSequentialScanlineDecoder), not Robot36: while diagnosing this test's own failures
-        // during round-4 implementation, Robot36 (RobotScanlineDecoder, the only decoder with cross-line
-        // instance state -- caches the previous line's OTHER chroma channel across DecodeLine calls,
-        // matching legacy's own m_D36[2][320] state) failed this test's own per-row tolerance. That was
-        // ORIGINALLY attributed to real replay-caused cross-row bleed -- **investigated further and
-        // corrected 2026-08-14** (PerformReplay's own doc comment has the full finding): the failure was
-        // confounded by this test's own CreateRowIdentityTestImage, deliberately built with wildly
-        // different adjacent-row colors to stress OTHER row-misalignment bugs -- an invalid fidelity
-        // target for Robot36 specifically, whose real, by-design vertical chroma subsampling produces
-        // large per-row error against exactly that kind of image REGARDLESS of replay (confirmed via a
-        // no-replay control reproducing the same per-row deltas). R24 stays the right mode for THIS
-        // test's own row-misalignment-across-a-cursor-jump check (it needs a decoder whose correctness
-        // doesn't depend on neighboring-row chroma continuity), not because Robot36 has a replay bug --
-        // it doesn't. See PerformReplay's own doc comment for the full closed investigation.
+        // use) is deliberately used -- a slow gradient is a "useless discriminator" here, since a
+        // one-row misassignment falls below its own row-to-row delta. R24
+        // (YCbCrSequentialScanlineDecoder), not Robot36: Robot36 (RobotScanlineDecoder, the only decoder
+        // with cross-line instance state -- caches the previous line's OTHER chroma channel across
+        // DecodeLine calls, matching legacy's own m_D36[2][320] state) has real, by-design vertical
+        // chroma subsampling that produces large per-row error against exactly this kind of image
+        // REGARDLESS of replay (see PerformReplay's own doc comment for the closed investigation) -- an
+        // invalid fidelity target for this specific per-row check.
         var mode = SstvModeRegistry.R24;
         var sourceImage = CreateRowIdentityTestImage(mode.ImageWidth, mode.ImageHeight);
 
@@ -321,91 +317,21 @@ public class ReplayEngineTests
 
         var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On)
         {
-            // Round-1 code-review fix: this test drives exactly two replay passes, at moments IT
-            // controls, and asserts precise row-continuity/pixel-content invariants across each -- an
-            // automatic replay pass (RX buffer subsystem Phase 6d) firing unpredictably during the same
-            // PushSamples calls (via the once-per-image latch or a real Auto-Slant commit, both
-            // reachable under this test's own real 500ppm mismatch) would interleave a THIRD,
-            // uncontrolled pass and corrupt this test's own bookkeeping. Suppressed here so
-            // PerformReplayForTests() remains the only thing that ever calls PerformReplay.
+            // This test drives exactly two replay passes, at moments IT controls -- an automatic replay
+            // pass firing unpredictably during the same PushSamples calls (via the once-per-image latch
+            // or a real Auto-Slant commit, both reachable under this test's own real 500ppm mismatch)
+            // would interleave a THIRD, uncontrolled pass and corrupt this test's own bookkeeping.
             SuppressAutomaticReplayForTests = true,
         };
-        var replaying = false;
-        var lastRowDuringReplay = -1;
-        int? firstRowAfterReplay = null;
         IImageSource? decodedImage = null;
-        var rowsTouchedThisPass = new HashSet<int>();
+        var lastRowThisPass = -1;
         decoder.LineDecoded += update =>
         {
             decodedImage = update.Image;
-            if (replaying)
-            {
-                lastRowDuringReplay = update.Line;
-                rowsTouchedThisPass.Add(update.Line);
-            }
-            else if (lastRowDuringReplay >= 0 && firstRowAfterReplay is null)
-            {
-                firstRowAfterReplay = update.Line;
-            }
+            lastRowThisPass = update.Line;
         };
 
-        (int gap, Rgb24[] snapshotBeforeThisPass, int decodedRowBoundaryAtSnapshot, HashSet<int> rowsTouched) RunOneReplayPassAndReturnGap(ref int offset)
-        {
-            lastRowDuringReplay = -1;
-            firstRowAfterReplay = null;
-            rowsTouchedThisPass = [];
-            var startingLineCount = decoder.RxLineStagingBufferForTests!.LineCount;
-            var snapshot = decodedImage is null ? [] : SnapshotRows(decodedImage);
-            // Only rows [0, decodedRowBoundaryAtSnapshot) actually have real (non-default) content at
-            // snapshot time -- rows at or past this boundary haven't been decoded by ANYTHING yet, and
-            // ordinary live decode (unrelated to replay) legitimately fills them in as more samples
-            // arrive, including during this very pass's own priming loop below. The "untouched rows
-            // stay identical" check further down must only apply below this boundary, or it flags
-            // completely normal live-decode progress as a false regression.
-            var decodedRowBoundaryAtSnapshot = decoder.NextLineForTests;
-
-            while (offset < samples.Length)
-            {
-                var length = Math.Min(256, samples.Length - offset);
-                decoder.PushSamples(samples.AsMemory(offset, length));
-                offset += length;
-
-                if (lastRowDuringReplay < 0 && decoder.RxLineStagingBufferForTests!.LineCount > startingLineCount + 5)
-                {
-                    replaying = true;
-                    decoder.PerformReplayForTests();
-                    replaying = false;
-
-                    // Buffer-state invariants, checked immediately after every truncation (round-4 fix):
-                    // the staging buffer must be genuinely empty, and _rxBufferAnchorSample/
-                    // _rxBufferBaseTransmissionLine must both track the fresh anchor exactly, or the
-                    // NEXT pass's own resumeDest/row-loop math silently drifts.
-                    Assert.Equal(0, decoder.RxLineStagingBufferForTests!.Count);
-                    Assert.Equal(0, decoder.RxLineStagingBufferForTests!.LineCount);
-                    Assert.Equal(decoder.ConsumedSamplesForTests, decoder.RxBufferAnchorSampleForTests);
-                    // R24: RowsPerTransmissionLine == 1, so base and NextLine coincide numerically here --
-                    // round-5 code-review nit: this specific assertion is common-mode-blind (it would
-                    // have passed even with the exact "both fields got the un-based local value" bug an
-                    // earlier version of this fix had, since BOTH fields would be wrong the SAME way).
-                    // The gap2 assertion at the bottom of this test is what actually caught that bug --
-                    // this check stays for basic sanity, not as the primary regression guard.
-                    Assert.Equal(decoder.RxBufferBaseTransmissionLineForTests, decoder.NextLineForTests);
-                }
-
-                if (lastRowDuringReplay >= 0 && firstRowAfterReplay is not null)
-                {
-                    break;
-                }
-            }
-
-            Assert.True(lastRowDuringReplay >= 0, "Test setup problem: PerformReplay never fired LineDecoded for this pass.");
-            Assert.NotNull(firstRowAfterReplay);
-            return (firstRowAfterReplay!.Value - lastRowDuringReplay, snapshot, decodedRowBoundaryAtSnapshot, rowsTouchedThisPass);
-        }
-
         var offset = 0;
-        // Prime the staging buffer before the first pass, same threshold the sibling single-replay test
-        // uses.
         while (offset < samples.Length && (decoder.RxLineStagingBufferForTests?.LineCount ?? 0) <= 5)
         {
             var length = Math.Min(256, samples.Length - offset);
@@ -415,43 +341,40 @@ public class ReplayEngineTests
 
         Assert.True((decoder.RxLineStagingBufferForTests?.LineCount ?? 0) > 5, "Test setup problem: staging buffer never reached >5 lines before the first pass.");
 
-        var (gap1, _, _, _) = RunOneReplayPassAndReturnGap(ref offset);
-        var (gap2, snapshotBeforePass2, decodedRowBoundaryBeforePass2, rowsTouchedByPass2) = RunOneReplayPassAndReturnGap(ref offset);
+        lastRowThisPass = -1;
+        decoder.PerformReplayForTests();
+        Assert.True(lastRowThisPass >= 0, "Test setup problem: pass 1 never fired LineDecoded.");
+        var lastRowPass1 = lastRowThisPass;
+        // Zero-gap guarantee (this fix's own core property): live decode resumes exactly one
+        // transmission line after the last row this pass redrew (R24: RowsPerTransmissionLine == 1).
+        Assert.Equal(lastRowPass1 + 1, decoder.NextLineForTests);
 
-        // The pixel-content check the auditor's own round-4 report said the row-index-only checks (gap1/
-        // gap2 alone) could not catch: every row PASS 2 redrew must match the SOURCE image's own row for
-        // that index (proving the second pass reads the RIGHT audio, not audio shifted by the
-        // first pass's own jump) -- and every row pass 2 did NOT redraw must be byte-identical to its
-        // OWN pre-pass-2 snapshot (proving pass 2 never stamps content into rows that belong to pass 1's
-        // own already-correct redraw, the base-transmission-line regression this round's fix targets).
-        Assert.NotNull(decodedImage);
-        for (var y = 0; y < mode.ImageHeight; y++)
+        var lineCountAfterPass1 = decoder.RxLineStagingBufferForTests!.LineCount;
+        while (offset < samples.Length && decoder.RxLineStagingBufferForTests!.LineCount <= lineCountAfterPass1 + 5)
         {
-            var actualRow = decodedImage!.GetScanline(y);
-            if (rowsTouchedByPass2.Contains(y))
-            {
-                var delta = RowDelta(actualRow, sourceImage.GetScanline(y));
-                Assert.True(delta <= 24.0, $"Row {y} (redrawn by pass 2) delta {delta:F2} vs source exceeded tolerance -- pass 2 likely read audio from the wrong (jump-shifted) position.");
-            }
-            else if (y < decodedRowBoundaryBeforePass2)
-            {
-                // Only rows that were ALREADY decoded (by pass 1's own replay or by ordinary live
-                // decode) before pass 2 started are checked for "must stay identical" -- a row past
-                // that boundary was still default/undecoded at snapshot time, and ordinary live decode
-                // legitimately filling it in during pass 2's own priming loop is normal progress, not a
-                // regression.
-                var beforeRow = snapshotBeforePass2.AsSpan(y * mode.ImageWidth, mode.ImageWidth);
-                var delta = RowDelta(actualRow, beforeRow);
-                Assert.True(delta <= 1.0, $"Row {y} (NOT redrawn by pass 2) changed by {delta:F2} -- pass 2 overwrote a row it shouldn't have touched (a base-transmission-line regression).");
-            }
+            var length = Math.Min(256, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
         }
 
-        // R24: RowsPerTransmissionLine == 1 -- both passes sacrifice exactly one row, deterministically.
-        // gap2 is the value this test exists to pin -- both round-3's stale-anchor bug and round-4's
-        // own local/absolute base-offset bug would leave gap2 wrong (differently: stale-anchor gives a
-        // gap larger than 2, the base-offset bug gave a large NEGATIVE gap) while leaving gap1 correct.
-        Assert.Equal(2, gap1);
-        Assert.Equal(2, gap2);
+        Assert.True(decoder.RxLineStagingBufferForTests!.LineCount > lineCountAfterPass1 + 5, "Test setup problem: staging buffer never grew past pass 1's own extent before pass 2.");
+
+        lastRowThisPass = -1;
+        decoder.PerformReplayForTests();
+        Assert.True(lastRowThisPass >= 0, "Test setup problem: pass 2 never fired LineDecoded.");
+        var lastRowPass2 = lastRowThisPass;
+
+        Assert.True(lastRowPass2 > lastRowPass1, "Test setup problem: pass 2 didn't redraw further than pass 1 -- staging buffer growth between passes was insufficient.");
+        Assert.Equal(lastRowPass2 + 1, decoder.NextLineForTests);
+
+        // The actual point of Step B: pass 2's own redraw loop covers the WHOLE staged reception from
+        // row 0, including every row pass 1 already drew -- checked directly against source here.
+        Assert.NotNull(decodedImage);
+        for (var y = 0; y <= lastRowPass2; y++)
+        {
+            var delta = RowDelta(decodedImage!.GetScanline(y), sourceImage.GetScanline(y));
+            Assert.True(delta <= 24.0, $"Row {y} delta {delta:F2} vs source exceeded tolerance after pass 2's own full-reception redraw.");
+        }
     }
 
     [Fact]
@@ -512,10 +435,10 @@ public class ReplayEngineTests
         Assert.True(lastRowDuringReplay >= 0, "Test setup problem: PerformReplay never fired LineDecoded.");
         Assert.NotNull(firstRowAfterReplay);
         Assert.Equal(0, lastRowDuringReplay % 2); // every replayed row index is a bitmap-row start for a paired mode
-        // Round-3 code-review correction: same deterministic "always sacrifice exactly one transmission
-        // line" reasoning as the sibling Robot36 test above, scaled by RowsPerTransmissionLine == 2 (one
-        // sacrificed transmission line == 2 bitmap rows) -- the exact expected gap is +4, not a range.
-        Assert.Equal(lastRowDuringReplay + 4, firstRowAfterReplay!.Value);
+        // Buffered-replay fix (§15 item 2): same zero-gap reasoning as the sibling Robot36 test above,
+        // scaled by RowsPerTransmissionLine == 2 (one transmission line == 2 bitmap rows) -- the exact
+        // expected gap is +2, a seamless continuation, not a sacrificed-row +4.
+        Assert.Equal(lastRowDuringReplay + 2, firstRowAfterReplay!.Value);
     }
 
     [Fact]
@@ -598,9 +521,10 @@ public class ReplayEngineTests
     {
         // Proves the automatic commit trigger (ProcessSlantTrackingSample's own commit branch) actually
         // fires PerformReplay, with NO PerformReplayForTests() call anywhere in this test.
-        // _rxBufferBaseTransmissionLine only ever becomes nonzero inside PerformReplay's own tail (the
-        // truncation) -- observing it move off 0 is proof positive that PerformReplay actually ran,
-        // without needing to track row sequences by hand.
+        // Buffered-replay fix (§15 item 2): _rxBufferBaseTransmissionLine now stays 0 forever (the
+        // staging buffer is never truncated/re-based), so it can no longer serve as this test's oracle --
+        // swapped to ReplayPassCountForTests, which counts a genuinely completed PerformReplay pass
+        // regardless of the (now fixed) base transmission line.
         var mode = SstvModeRegistry.Robot36;
         var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
         Array.Fill(pixels, new Rgb24(230, 230, 230));
@@ -613,18 +537,19 @@ public class ReplayEngineTests
         var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
         decoder.PushSamples(samples);
 
-        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "The automatic commit trigger never fired a replay pass -- _rxBufferBaseTransmissionLine should have moved off 0.");
+        Assert.True(decoder.ReplayPassCountForTests > 0, "The automatic commit trigger never fired a replay pass.");
     }
 
     [Fact]
     public void PerformReplay_AutomaticOnceLatch_NeverFiresWithoutARealCorrection()
     {
         // Round-2 code-review regression test for the explicit user decision (2026-08-13) narrowing the
-        // once-per-image latch: it must NOT fire (and PerformReplay must never truncate the staging
-        // buffer) when no Auto-Slant correction has ever committed this image, even past the
-        // 16-transmission-line threshold. A clean (matched-rate) signal never commits a correction, and
-        // Robot36's own 240 lines are comfortably past 16 -- _rxBufferBaseTransmissionLine must stay 0
-        // for the WHOLE image.
+        // once-per-image latch: it must NOT fire when no Auto-Slant correction has ever committed this
+        // image, even past the 16-transmission-line threshold. A clean (matched-rate) signal never
+        // commits a correction, and Robot36's own 240 lines are comfortably past 16 -- no replay pass
+        // should ever run for the WHOLE image. Buffered-replay fix (§15 item 2): swapped from the old
+        // "_rxBufferBaseTransmissionLine stays 0" oracle (now always true regardless of whether replay
+        // ran, since the buffer is never truncated/re-based) to ReplayPassCountForTests.
         var mode = SstvModeRegistry.Robot36;
         var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
         var samples = Encode(mode, sourceImage, SampleRate);
@@ -632,7 +557,7 @@ public class ReplayEngineTests
         var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.On);
         decoder.PushSamples(samples);
 
-        Assert.Equal(0, decoder.RxBufferBaseTransmissionLineForTests);
+        Assert.Equal(0, decoder.ReplayPassCountForTests);
     }
 
     [Fact]
@@ -649,12 +574,13 @@ public class ReplayEngineTests
         //
         // Round-2 code-review correction (real bug in the test, not the production code): an earlier
         // version of this test set SuppressAutomaticReplayForTests = true, which made the FINAL
-        // assertion (_rxBufferBaseTransmissionLine == 0) unconditionally true regardless of whether the
-        // latch's own new gate worked at all -- the suppression isolated this test from the very thing
-        // it exists to prove. Automatic replay now runs UNSUPPRESSED for this whole test; the discriminator
-        // is instead "the base stops changing once the hole exists," not "the base never changes at all"
-        // (the commit trigger legitimately replays at least once, BEFORE the ReSync, which is expected
-        // and asserted below, not suppressed).
+        // assertion unconditionally true regardless of whether the latch's own new gate worked at all --
+        // the suppression isolated this test from the very thing it exists to prove. Automatic replay now
+        // runs UNSUPPRESSED for this whole test; the discriminator is instead "the pass count stops
+        // moving once the hole exists," not "it never moves at all" (the commit trigger legitimately
+        // replays at least once, BEFORE the ReSync, which is expected and asserted below, not suppressed).
+        // Buffered-replay fix (§15 item 2): swapped from the old "_rxBufferBaseTransmissionLine" oracle
+        // (now always 0, since the staging buffer is never truncated/re-based) to ReplayPassCountForTests.
         var mode = SstvModeRegistry.Robot36;
         var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
         Array.Fill(pixels, new Rgb24(230, 230, 230));
@@ -702,7 +628,7 @@ public class ReplayEngineTests
         // The commit trigger legitimately replays at least once already, before any ReSync -- proves the
         // hole the ReSync is about to punch lands in a NON-EMPTY staged buffer, i.e. a real interior gap,
         // not an edge case against an empty one.
-        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "Test setup problem: the automatic commit trigger never replayed before the ReSync -- the hole below wouldn't land in a real interior gap.");
+        Assert.True(decoder.ReplayPassCountForTests > 0, "Test setup problem: the automatic commit trigger never replayed before the ReSync -- the hole below wouldn't land in a real interior gap.");
 
         // Round-3 code-review hardening: snapshot BEFORE RequestReSync(), not after the priming push --
         // ApplySyncCorrection (the ReSync's own shared tail) writes none of the RxBuffer-side fields, so
@@ -711,7 +637,7 @@ public class ReplayEngineTests
         // 16-line latch threshold itself, capturing the snapshot AFTER that push could already reflect a
         // (reverted-gate) latch firing, silently making the test vacuous again. Captured here, that
         // can't happen -- the value used below is fixed before the ReSync (and its priming push) even run.
-        var baseAfterReSync = decoder.RxBufferBaseTransmissionLineForTests;
+        var passCountAfterReSync = decoder.ReplayPassCountForTests;
 
         decoder.RequestReSync();
         // One more push to let the deferred ReSync actually apply (PerformReSync drains at the top of
@@ -731,10 +657,10 @@ public class ReplayEngineTests
 
         Assert.True(TransmissionLinesDecoded() >= 40, "Test setup problem: never decoded past the latch threshold after the ReSync.");
         Assert.True(decoder.SlantCorrectionsDisabledForRestOfImageForTests, "The disabled-for-rest-of-image flag should never clear mid-image -- see ApplySyncCorrection/ResetReSyncState's own scope.");
-        // The real discriminator: the base must not have moved AGAIN since the ReSync -- proving the
-        // once-per-image latch never fired across the hole. (It's allowed to be nonzero -- that's the
+        // The real discriminator: the pass count must not have moved AGAIN since the ReSync -- proving
+        // the once-per-image latch never fired across the hole. (It's allowed to be nonzero -- that's the
         // pre-ReSync commit-triggered pass captured above -- just unchanged since then.)
-        Assert.Equal(baseAfterReSync, decoder.RxBufferBaseTransmissionLineForTests);
+        Assert.Equal(passCountAfterReSync, decoder.ReplayPassCountForTests);
     }
 
     [Fact]
@@ -774,12 +700,256 @@ public class ReplayEngineTests
 
         Assert.NotNull(onImage);
         Assert.NotNull(offImage);
-        Assert.True(onDecoder.RxBufferBaseTransmissionLineForTests > 0, "Test setup problem: automatic replay never actually fired for the On decoder -- this test would prove nothing about the feature it's named for.");
+        Assert.True(onDecoder.ReplayPassCountForTests > 0, "Test setup problem: automatic replay never actually fired for the On decoder -- this test would prove nothing about the feature it's named for.");
 
         var onDelta = ComputeAveragePerChannelDelta(sourceImage, onImage!);
         var offDelta = ComputeAveragePerChannelDelta(sourceImage, offImage!);
 
         Assert.True(onDelta < offDelta, $"Expected RxBufferMode.On (delta {onDelta:F2}) to decode measurably better than Off (delta {offDelta:F2}) under a real clock mismatch -- if this fails, the RX buffer subsystem's own core value proposition isn't actually holding end to end, even though every individual piece tests correct in isolation.");
+    }
+
+    [Fact]
+    public void PerformReplay_SetsSuppressionAndClearsStaleSyncPeak_AfterEveryPass()
+    {
+        // Buffered-replay fix (§15 item 2, robust-giggling-codd.md), round 3 risk #3: both existing
+        // precedents that set _suppressNextSlantProcessLine = true (ApplySyncCorrection/
+        // ApplyNotchDisableShift) pair it with _lastLineSyncPeakPosition = null -- PerformReplay's own
+        // tail must do the same, or a manual ReSync landing before the first post-snap line completes
+        // would read a stale peak position (the LAST REPLAYED line's own peak, written during the
+        // re-feed walk) as if it were current. Unconditional on every completed pass, so no real
+        // correction is needed to exercise it -- a clean signal suffices.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        var samples = Encode(mode, sourceImage, SampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.On)
+        {
+            SuppressAutomaticReplayForTests = true,
+        };
+
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < samples.Length && (decoder.RxLineStagingBufferForTests?.LineCount ?? 0) <= 5)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True((decoder.RxLineStagingBufferForTests?.LineCount ?? 0) > 5, "Test setup problem: staging buffer never reached >5 lines.");
+
+        decoder.PerformReplayForTests();
+
+        Assert.True(decoder.SuppressNextSlantProcessLineForTests, "PerformReplay's own tail must suppress the first post-snap line's own Auto-Sync observation.");
+        Assert.Null(decoder.LastLineSyncPeakPositionForTests);
+    }
+
+    [Fact]
+    public void PerformReplay_BatchedLineDecodedEvent_NeverFiresBeforeTheImageHasAtLeast16LiveLines()
+    {
+        // Buffered-replay fix (§15 item 2), round 3/4 risk #4: three real consumers
+        // (ReceiveHistoryRecorder, ReceivedImageBuffer, SstvSessionService's RX loopback self-test --
+        // all in other projects, not directly reachable from this test) each derive their own step
+        // size from only the FIRST TWO consecutive LineDecoded events, one-shot, never re-learned. A
+        // batched replay event landing as an image's first or second event would poison that
+        // derivation. Structurally impossible: both the automatic commit trigger and manual Correct
+        // Slant require cumulative staged/decoded transmission lines >= 16 before a replay can even be
+        // requested (see PerformReplay's own doc comment, Reachability paragraph) -- proven directly
+        // here by chunking the push and confirming at least 16 live events already fired in some
+        // earlier chunk before the chunk that first makes ReplayPassCountForTests move off 0.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 44100;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.0005);
+        var samples = Encode(mode, sourceImage, trueSampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On);
+        var eventCount = 0;
+        decoder.LineDecoded += _ => eventCount++;
+
+        const int chunkSize = 256;
+        var offset = 0;
+        var eventCountBeforeReplayChunk = -1;
+        while (offset < samples.Length && decoder.ReplayPassCountForTests == 0)
+        {
+            eventCountBeforeReplayChunk = eventCount;
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(decoder.ReplayPassCountForTests > 0, "Test setup problem: automatic replay never fired.");
+        // Conservative lower bound (events from the chunk that raises the batched event itself aren't
+        // counted here, only events strictly before it) -- still enough to prove the invariant, since
+        // the entry gate's own >= 16 requirement is on cumulative decoded/staged lines, not on this
+        // chunk boundary.
+        Assert.True(eventCountBeforeReplayChunk >= 15, $"Only {eventCountBeforeReplayChunk} live LineDecoded events fired before the replay-triggering chunk -- expected at least 15 (entry gate requires >= 16 cumulative lines before replay can even be requested).");
+    }
+
+    [Fact]
+    public void DrainPendingSkip_InPostSnapWindow_DoesNotDoubleFeedDetectorOrAdvanceAnchor()
+    {
+        // Buffered-replay fix (§15 item 2, robust-giggling-codd.md), round 3/4 item 1: DrainPendingSkip's
+        // 3-way guard (detector feed / _slantProcessedUpTo++ / _rxBufferAnchorSample++, all gated
+        // together on _consumedSamples >= _slantProcessedUpTo) must suppress all three while
+        // _consumedSamples sits behind the frozen _slantProcessedUpTo (the post-snap window a backward
+        // snap opens) -- these samples were already staged/fed before the snap, so re-feeding the
+        // detector or re-advancing either cursor would double-count them and corrupt the fixed
+        // coordinate map every replay resumeDest depends on.
+        //
+        // A severe (1%) clock mismatch accumulates enough drift that even an early correction's own
+        // backward-snap distance is comfortably larger than RequestNotch(enable)'s own fixed, precisely
+        // known skip (NotchFilter.Tap/2 -- 96 taps at this test's 11025Hz rate, so a 48-sample skip) --
+        // notch-enable reuses DrainPendingSkip verbatim (ApplyPendingNotchRequest's own doc comment), so
+        // it exercises the exact same guard a manual ReSync would, with a skip size this test can assert
+        // exactly rather than depending on PerformReSync's own data-dependent sync-offset measurement.
+        var mode = SstvModeRegistry.Robot36;
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        Array.Fill(pixels, new Rgb24(230, 230, 230));
+        var sourceImage = new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
+
+        const int declaredSampleRate = 11025;
+        const int trueSampleRate = (int)(declaredSampleRate * 1.01);
+        var samples = Encode(mode, sourceImage, trueSampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(declaredSampleRate, rxBufferMode: RxBufferMode.On)
+        {
+            SuppressAutomaticReplayForTests = true,
+        };
+
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < samples.Length
+            && (decoder.SlantTrackerForTests?.DriftPpm is null or 0.0
+                || (decoder.RxLineStagingBufferForTests?.LineCount ?? 0) <= 20))
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True(decoder.SlantTrackerForTests?.DriftPpm is not (null or 0.0), "Test setup problem: never observed a committed correction.");
+        Assert.True((decoder.RxLineStagingBufferForTests?.LineCount ?? 0) > 20, "Test setup problem: staging buffer never reached >20 lines.");
+
+        decoder.PerformReplayForTests();
+
+        // NotchFilter.ComputeTap(11025) = (int)(96.0 * 11025 / 11025) = 96, already even, well under
+        // NotchTapMax (256) -- computed here from the documented formula (NotchFilter.cs's own doc
+        // comment) since the notch isn't constructed (and NotchTapForTests isn't readable) until
+        // ApplyPendingNotchRequest actually runs, below. Self-checked against the real value once it is.
+        const int expectedHalfTap = 48;
+        var windowWidth = decoder.SlantProcessedUpToForTests - decoder.ConsumedSamplesForTests;
+        Assert.True(windowWidth >= expectedHalfTap, $"Test setup problem: post-snap window ({windowWidth} samples) is narrower than the notch-enable skip ({expectedHalfTap} samples) -- this test needs the whole skip to land inside the window to prove the guard suppresses it completely.");
+
+        var anchorBefore = decoder.RxBufferAnchorSampleForTests;
+        var slantProcessedBefore = decoder.SlantProcessedUpToForTests;
+        var detectorCallCountBefore = decoder.SyncEnvelopeDetectorForTests!.ProcessSampleCallCountForTests;
+
+        decoder.RequestNotch(true, 1500.0); // in-passband frequency -- ComputeBandwidth's own 15Hz branch, irrelevant to Tap
+        decoder.PushSamples(samples.AsMemory(offset, Math.Min(chunkSize, samples.Length - offset)));
+
+        Assert.Equal(96, decoder.NotchTapForTests);
+        var halfTap = decoder.NotchTapForTests / 2;
+        Assert.Equal(expectedHalfTap, halfTap);
+        Assert.Equal(0, decoder.PendingSkipSamplesForTests);
+
+        // The anchor's own core proof: _rxBufferAnchorSample++ is ONLY reachable inside DrainPendingSkip's
+        // guarded branch (ApplySlantTracking's own separate catch-up loop, below, never touches it) --
+        // so it staying exactly where it was proves the guard suppressed every one of the skip's 48
+        // samples, not just some of them. Without the guard this would have moved by +halfTap
+        // permanently -- a real, uncorrected corruption of the fixed coordinate map every replay
+        // resumeDest depends on (see _rxBufferAnchorSample's own doc comment).
+        Assert.Equal(anchorBefore, decoder.RxBufferAnchorSampleForTests);
+
+        // Coarse sanity check only, NOT a discriminator for this guard (code-review correction: an
+        // earlier version of this comment overclaimed it was). _slantProcessedUpTo always converges
+        // back to _consumedSamples regardless of the guard (ApplySlantTracking's own catch-up loop at
+        // :6644 walks it there unconditionally once live decode passes wherever it's currently frozen),
+        // and worked through by hand against the realistic regression (strip the `if` from
+        // DrainPendingSkip's three guarded statements, keeping them as unconditional `++`, the natural
+        // shape of "someone reverts just this guard"): the TOTAL detector call count since this pass
+        // ended up EXACTLY THE SAME either way (`decoder.ConsumedSamplesForTests - slantProcessedBefore`
+        // in both cases) -- what actually differs is WHICH raw-sample indices get fed (guarded: the
+        // genuinely-new span once each; unguarded: the skip's own 48 already-fed indices get re-fed, and
+        // an equal-sized span of genuinely-new indices right before the final _consumedSamples never
+        // gets fed at all), which a call COUNT cannot see. This assertion still catches a totally
+        // different regression (a gross off-by-some-other-amount in either cursor), so it stays, just
+        // relabeled -- the anchor assertion above is this test's real, sole proof that the guard fires.
+        var detectorCallDelta = decoder.SyncEnvelopeDetectorForTests!.ProcessSampleCallCountForTests - detectorCallCountBefore;
+        var expectedDetectorCallDelta = decoder.ConsumedSamplesForTests - slantProcessedBefore;
+        Assert.Equal(expectedDetectorCallDelta, detectorCallDelta);
+    }
+
+    [Fact]
+    public void PerformReplay_RawFloorClampForward_TouchesOnlyTheLandingPoint()
+    {
+        // Buffered-replay fix (§15 item 2), code-review addition: the raw-floor clamp-forward branch is
+        // the ONE path in PerformReplay's tail that reuses the retired forward-jump landing formula --
+        // the plan flagged this twice as the exact spot a future edit could silently reintroduce the
+        // un-staged-hole bug this whole piece removes (see PerformReplay's own doc comment, and this
+        // branch's own inline comment: "do NOT set _slantProcessedUpTo = _consumedSamples here"). It
+        // needs a real, deterministic test, not just a hand-derived proof.
+        //
+        // Naturally landing a backward snap far enough back to violate _bufferBase needs a manual
+        // Correct Slant search whose own corrected rate differs enough from the accumulated drift --
+        // empirically hard to land precisely (tried several real clock-mismatch magnitudes against a
+        // full Robot36 image; each one either converged too close to land the target below the buffer's
+        // real floor, or diverged enough to lose lock entirely before ever reaching TryCorrectSlant's own
+        // entry gate). BufferBaseOverrideForTests exists for exactly this: forcing the ONE condition
+        // (`backwardTargetConsumedSamples < _bufferBase`) this branch actually checks, deterministically,
+        // without needing to fight the search's own real convergence dynamics -- the branch's own logic
+        // (arithmetic on cursors already loaded before the check runs) doesn't care why the condition is
+        // true, only that it is.
+        var mode = SstvModeRegistry.Robot36;
+        var sourceImage = CreateGradientTestImage(mode.ImageWidth, mode.ImageHeight);
+        var samples = Encode(mode, sourceImage, SampleRate);
+
+        var decoder = new AnalogFmSstvDecoder(SampleRate, rxBufferMode: RxBufferMode.On)
+        {
+            SuppressAutomaticReplayForTests = true,
+        };
+
+        const int chunkSize = 256;
+        var offset = 0;
+        while (offset < samples.Length && (decoder.RxLineStagingBufferForTests?.LineCount ?? 0) <= 5)
+        {
+            var length = Math.Min(chunkSize, samples.Length - offset);
+            decoder.PushSamples(samples.AsMemory(offset, length));
+            offset += length;
+        }
+
+        Assert.True((decoder.RxLineStagingBufferForTests?.LineCount ?? 0) > 5, "Test setup problem: staging buffer never reached >5 lines.");
+
+        var anchorBefore = decoder.RxBufferAnchorSampleForTests;
+        var slantProcessedBefore = decoder.SlantProcessedUpToForTests;
+        var stagedCountBefore = decoder.RxLineStagingBufferForTests!.Count;
+        var consumedBefore = decoder.ConsumedSamplesForTests;
+
+        // Forces the branch: a floor set to (current live cursor + 1) can never be satisfied by ANY
+        // backward target (which is always <= the live cursor's own destination-coordinate position).
+        decoder.BufferBaseOverrideForTests = consumedBefore + 1;
+        try
+        {
+            decoder.PerformReplayForTests();
+        }
+        finally
+        {
+            decoder.BufferBaseOverrideForTests = null;
+        }
+
+        Assert.Equal(1, decoder.RawFloorClampForwardCountForTests);
+        // The branch's own core contract: touches ONLY the landing point. Everything else the normal
+        // backward branch also leaves alone stays exactly as it was.
+        Assert.Equal(anchorBefore, decoder.RxBufferAnchorSampleForTests);
+        Assert.Equal(slantProcessedBefore, decoder.SlantProcessedUpToForTests);
+        Assert.Equal(stagedCountBefore, decoder.RxLineStagingBufferForTests!.Count);
+        // The landing point itself must be a genuinely FORWARD move (strictly past where the live
+        // cursor already was before this call, never at-or-behind it) -- `forward - consumedBefore =
+        // ceil((resumeLine+1)*stride) - resumeDest` is unconditionally > 0, not just >= 0.
+        Assert.True(decoder.ConsumedSamplesForTests > consumedBefore);
     }
 
     [Fact]
@@ -950,17 +1120,6 @@ public class ReplayEngineTests
         }
 
         return new ArrayImageSource(width, height, pixels);
-    }
-
-    private static Rgb24[] SnapshotRows(IImageSource image)
-    {
-        var snapshot = new Rgb24[image.Width * image.Height];
-        for (var y = 0; y < image.Height; y++)
-        {
-            image.GetScanline(y).CopyTo(snapshot.AsSpan(y * image.Width, image.Width));
-        }
-
-        return snapshot;
     }
 
     private static double RowDelta(ReadOnlySpan<Rgb24> a, ReadOnlySpan<Rgb24> b)

@@ -441,10 +441,11 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
 
     /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
     /// <see cref="AnalogFmSstvDecoder.RxBufferBaseTransmissionLineForTests"/> directly -- RX buffer
-    /// subsystem Phase 8c, lets a wrapper-level test prove a replay pass actually ran (this field only
-    /// ever moves off 0 inside <c>PerformReplay</c>'s own tail) with the same proof-positive precision
-    /// the direct <see cref="AnalogFmSstvDecoder"/> tests use, instead of inferring it from a weaker
-    /// public-surface signal like a raw <c>LineDecoded</c> event count. Same reasoning/shape as
+    /// subsystem Phase 8c, lets a wrapper-level test prove a replay pass actually ran. Buffered-replay
+    /// fix (§15 item 2): this field stays 0 forever now (the staging buffer is never truncated/
+    /// re-based), so it no longer proves anything on its own -- see
+    /// <see cref="InnerReplayPassCountForTests"/> below for the current proof-positive oracle. Kept for
+    /// any caller still reading it directly; same reasoning/shape as
     /// <see cref="InnerRxLineStagingBufferForTests"/> above.</summary>
     internal int InnerRxBufferBaseTransmissionLineForTests
     {
@@ -453,6 +454,24 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             lock (_gate)
             {
                 return _inner.RxBufferBaseTransmissionLineForTests;
+            }
+        }
+    }
+
+    /// <summary>Diagnostic-only: reads the CURRENT inner instance's own
+    /// <see cref="AnalogFmSstvDecoder.ReplayPassCountForTests"/> directly -- lets a wrapper-level test
+    /// prove a replay pass actually ran (this counter only ever increments inside
+    /// <c>PerformReplay</c>'s own tail, on a genuinely completed pass) with the same proof-positive
+    /// precision the direct <see cref="AnalogFmSstvDecoder"/> tests use, instead of inferring it from a
+    /// weaker public-surface signal like a raw <c>LineDecoded</c> event count. Same reasoning/shape as
+    /// <see cref="InnerRxLineStagingBufferForTests"/> above.</summary>
+    internal int InnerReplayPassCountForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.ReplayPassCountForTests;
             }
         }
     }

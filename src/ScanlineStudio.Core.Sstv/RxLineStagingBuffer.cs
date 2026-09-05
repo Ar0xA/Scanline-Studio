@@ -155,7 +155,20 @@ internal sealed class RxLineStagingBuffer : IRxLineStagingBuffer
 
     /// <summary>Total sample budget this buffer was constructed with -- mirrors legacy's
     /// <c>m_RxBufAllocSize</c> (`sstv.cpp:1637`). Fixed for this instance's lifetime; a mode change
-    /// mid-buffer does not resize it, matching legacy's own single fixed-size allocation.</summary>
+    /// mid-buffer does not resize it, matching legacy's own single fixed-size allocation.
+    ///
+    /// Buffered-replay fix (§15 item 2): <see cref="Clear"/> now fires only at a fresh lock, not at the
+    /// tail of every replay pass (<see cref="AnalogFmSstvDecoder.PerformReplay"/> no longer truncates
+    /// this buffer at all) -- so for a long reception with many corrections, real RAM-mode capacity
+    /// exhaustion (a silent <see cref="TryAppendLine"/> rejection, not an error) is now reachable far
+    /// sooner than it used to be, since nothing periodically resets <see cref="Count"/> back toward 0
+    /// mid-image anymore. This is legacy-faithful, not a regression: legacy's own `m_StgBuf` is NEVER
+    /// truncated either, so this cap now behaves exactly like legacy's real capacity-exhaustion
+    /// behavior for the first time -- the port's own prior truncate-on-jump design was the actual
+    /// divergence, making rejection artificially rarer than legacy's real behavior. A rejected line
+    /// still decodes correctly live; only its own future re-correctability via replay is lost (see
+    /// <see cref="AnalogFmSstvDecoder.PerformReplayForTests"/>'s own
+    /// <c>PerformReplay_AfterRejectionAtCapacity_ResumesFromTheLiveCursorNotTheStagedExtent</c> test).</summary>
     public int CapacitySamples { get; }
 
     /// <summary>Samples currently staged (both streams always have equal length -- see

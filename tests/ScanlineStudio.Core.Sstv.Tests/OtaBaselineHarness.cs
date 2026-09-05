@@ -141,7 +141,7 @@ public sealed class OtaBaselineHarness
 
         decoder.ModeDetected += mode =>
         {
-            locks.Add(new LockTracker(mode, decoder.TotalSamplesReceived));
+            locks.Add(new LockTracker(mode, decoder.TotalSamplesReceived, decoder.ReplayPassCountForTests));
         };
 
         decoder.DecodeRestarted += _ =>
@@ -215,6 +215,14 @@ public sealed class OtaBaselineHarness
             // not a strict pass/fail measure (this harness never asserts on it).
             var completed = lockTracker.MaxLine + 1 >= lockTracker.Mode.ImageHeight;
 
+            // §15 item 2 measurement: ReplayPassCountForTests is cumulative across the decoder's whole
+            // lifetime (see that property's own doc comment), so this lock's own count is the delta
+            // between its own starting snapshot and whichever comes next -- the NEXT lock's starting
+            // snapshot if there is one, or the decoder's final value if this is the last lock in the
+            // file.
+            var replayPassCountAfter = i + 1 < locks.Count ? locks[i + 1].ReplayPassCountAtStart : decoder.ReplayPassCountForTests;
+            var replayPasses = replayPassCountAfter - lockTracker.ReplayPassCountAtStart;
+
             lockRecords.Add(new OtaLockRecord(
                 lockTracker.Mode.Id,
                 lockTracker.DetectedAtSample,
@@ -224,6 +232,7 @@ public sealed class OtaBaselineHarness
                 lockTracker.LastSlantPpm,
                 lockTracker.LastAnchorLagSamples,
                 lockTracker.LastSyncOffsetSamples,
+                replayPasses,
                 imageFileName));
         }
 
@@ -246,10 +255,11 @@ public sealed class OtaBaselineHarness
             stopwatch.Elapsed.TotalMilliseconds);
     }
 
-    private sealed class LockTracker(SstvModeDefinition mode, long detectedAtSample)
+    private sealed class LockTracker(SstvModeDefinition mode, long detectedAtSample, int replayPassCountAtStart)
     {
         public SstvModeDefinition Mode { get; } = mode;
         public long DetectedAtSample { get; } = detectedAtSample;
+        public int ReplayPassCountAtStart { get; } = replayPassCountAtStart;
         public int MaxLine { get; set; } = -1;
         public int Restarts { get; set; }
         public IImageSource? LastImage { get; set; }
@@ -334,6 +344,7 @@ public sealed record OtaLockRecord(
     double? FinalSlantPpm,
     int? FinalAnchorLagSamples,
     int? FinalSyncOffsetSamples,
+    int ReplayPassCount,
     string? ImageFileName);
 
 public sealed record OtaFileReport(
