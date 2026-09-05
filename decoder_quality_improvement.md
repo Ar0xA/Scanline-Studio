@@ -150,15 +150,25 @@ Affected modes: MN73/110/140 and MC110/140/180.
 
 Expected benefit: better rejection of adjacent signals and out-of-band interference, especially with Narrow or Very Narrow selected. Validate at every supported sample rate and against clean golden vectors before claiming improvement.
 
-### 5.2 Fix buffered replay before restoring full Sync Accuracy behavior
+### 5.2 Fix buffered replay before restoring full Sync Accuracy behavior — STEP 1 DONE, shipped (2026-09-05)
 
-The current replay path deliberately jumps over one resume row/window and later discards earlier staged history. This can leave a row unredrawn and prevents later correction from reprocessing the entire earlier image ([AnalogFmSstvDecoder.cs](src/ScanlineStudio.Core.Sstv/AnalogFmSstvDecoder.cs)).
+Shipped in commit `f3e3e63`: the replay path now snaps backward instead of jumping forward over one
+resume row/window, and the staging buffer is never truncated. This matches legacy's own
+never-truncated `m_StgBuf`. A later correction can now reprocess the whole earlier image
+([AnalogFmSstvDecoder.cs](src/ScanlineStudio.Core.Sstv/AnalogFmSstvDecoder.cs)). Review: 4
+plan-review rounds plus 2 code-review rounds by `yoniq-auditor`, verdict READY FOR PRODUCTION: YES.
+Verification: 43-mode impairment sweep (430 data points, zero regressions, 20 genuine improvements),
+21-file OTA before/after comparison (no new failures), full test suite green. Design history:
+`~/.claude/plans/robust-giggling-codd.md`.
+
+Steps 2 and 3 below stay open. The legacy line-32 refresh trigger (the second `m_SyncAccuracyN` bit)
+is still unported.
 
 YONIQ performs a buffered refresh around line 16 and, at its higher Sync Accuracy level, another around line 32. Scanline Studio only implements the first accuracy bit and gates the line-16 replay because replay currently sacrifices a row. The correct order is:
 
-1. make replay lossless and bounded;
-2. verify that repeated correction does not corrupt sync-detector state;
-3. restore the legacy refresh policy and 3-versus-4-line folding behavior.
+1. make replay lossless and bounded — DONE (`f3e3e63`);
+2. verify that repeated correction does not corrupt sync-detector state — PARTIAL (a multi-pass re-correction test exists, a full sync-detector-state check does not);
+3. restore the legacy refresh policy and 3-versus-4-line folding behavior — OPEN.
 
 The initial folding difference particularly matters to Scottie DX, PD240, MP140, MP175, and MN140.
 
