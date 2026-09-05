@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Imaging;
@@ -50,7 +51,15 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 public sealed class ImpairmentSweepHarness
 {
     internal const string FixtureDir = "Fixtures/GoldenVectors";
-    internal static readonly JsonSerializerOptions ReportJsonOptions = new() { WriteIndented = true };
+    // AllowNamedFloatingPointLiterals is load-bearing, not cosmetic: a point where no seed decodes
+    // records NaN, and System.Text.Json at its default Strict number handling THROWS on writing one.
+    // That would abort a multi-hour sweep inside the per-mode incremental write added to survive
+    // aborts. It covers ReadReport too, and changes no existing report's content.
+    internal static readonly JsonSerializerOptions ReportJsonOptions = new()
+    {
+        WriteIndented = true,
+        NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+    };
 
     // Real golden-vector source images -- more representative than a fresh gradient, and keeps this
     // harness's mode set intuitively cross-referenceable against GoldenVectorTests. PictureHeight is
@@ -218,10 +227,12 @@ public sealed class ImpairmentSweepHarness
     {
         var run = report.Select(r => r.Run).FirstOrDefault(r => r is not null);
         return run is null
-            ? "awgn-v1 @44100Hz, calibration=total-band, seeds=2"
+            ? "awgn-v1 @44100Hz, calibration=total-band, seeds=2, floor='every seed usable', bars=30/-, filters=(historic)"
             : string.Create(
                 CultureInfo.InvariantCulture,
-                $"{run.NoiseModel} @{run.SampleRate}Hz, calibration={run.CalibrationBand}, seeds={run.SeedCount}");
+                $"{run.NoiseModel} @{run.SampleRate}Hz, calibration={run.CalibrationBand}, seeds={run.SeedCount}, " +
+                $"floor='{run.FloorRule}', bars={run.MeanUsableDeltaBar:F1}/{run.PercentileUsableDeltaBar:F1}, " +
+                $"filters=[{string.Join(" | ", run.FilterSpecs)}]");
     }
 
     internal static IReadOnlyList<ImpairmentModeReport> ReadReport(string runDir)
@@ -456,6 +467,23 @@ public sealed record ImpairmentPoint(
 /// <summary>Run-level metadata, repeated on every mode record rather than hoisted to a new JSON root
 /// object -- the root is a bare array in every existing report, and keeping it that way means old
 /// reports still deserialize without sniffing the first token.</summary>
+/// <summary>Where one realization's noise actually came from. Recorded PER SEED: the design's whole
+/// diversity argument is that the seeds walk capture days and receivers, so a single seed's
+/// provenance would state the opposite of what the run did. <see cref="ClipRmsSpreadWarning"/> is the
+/// load-bearing one -- it flags a stream whose SNR label is a weak summary of what the decoder saw,
+/// and one seed's copy of it is blind to the other four.</summary>
+public sealed record NoiseStreamProvenance(
+    int Seed,
+    string? Day,
+    string? Receiver,
+    double Kurtosis,
+    double Crest,
+    IReadOnlyList<string> FileNames,
+    IReadOnlyList<double> JoinOffsetsSeconds,
+    IReadOnlyList<double> ClipRmsDb,
+    double? ClipRmsSpreadDb,
+    bool? ClipRmsSpreadWarning);
+
 public sealed record ImpairmentRunMetadata(
     string NoiseModel,
     int SampleRate,
@@ -466,7 +494,7 @@ public sealed record ImpairmentRunMetadata(
     double MeanUsableDeltaBar,
     double PercentileUsableDeltaBar,
     IReadOnlyList<string> FilterSpecs,
-    IReadOnlyList<string>? NoiseStatistics = null,
+    IReadOnlyList<NoiseStreamProvenance>? NoiseStreams = null,
     string? CorpusDirectory = null,
     string? CorpusIdentityHash = null,
     int? CorpusClipCount = null,
@@ -480,13 +508,7 @@ public sealed record ImpairmentModeReport(
     string ModeId,
     IReadOnlyList<ImpairmentPoint> Points,
     double? NoiseFloorDb,
-    ImpairmentRunMetadata? Run = null,
-    IReadOnlyList<string>? NoiseStreamFiles = null,
-    IReadOnlyList<double>? NoiseStreamJoinOffsetsSeconds = null,
-    double? NoiseStreamClipRmsSpreadDb = null,
-    bool? NoiseStreamClipRmsSpreadWarning = null,
-    string? NoiseStreamDay = null,
-    string? NoiseStreamReceiver = null);
+    ImpairmentRunMetadata? Run = null);
 
 /// <summary>Explicit opt-in, not directory-presence-gated (unlike <see cref="RequiresOtaRecordingsFactAttribute"/>)
 /// -- this harness is fully synthetic and deliberately slow, so it must never silently run on an

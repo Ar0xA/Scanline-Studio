@@ -46,7 +46,7 @@ public static class RealNoiseStreamBuilder
         var (day, receiver, ordered) = SelectStratum(corpus, seed, seedOrdinal);
 
         var crossfade = (int)(CrossfadeSeconds * corpus.SampleRate);
-        var trim = PolyphaseResampler.OutputGroupDelay;
+        var trim = PolyphaseResampler.OutputWarmupSamples;
         var neededOutput = (int)(requiredSeconds * OutputSampleRate) + trim;
         // Assemble in the corpus's own rate, then resample once. Resampling each clip separately
         // would put a filter warm-up transient at every join instead of only at the head.
@@ -60,6 +60,13 @@ public static class RealNoiseStreamBuilder
         var cursor = 0;
         while (assembled.Count < neededAssembled)
         {
+            if (cursor >= ordered.Count && fileNames.Count == 0)
+            {
+                throw new InvalidOperationException(
+                    $"Stratum {day}/{receiver} has {ordered.Count} clips but none longer than the {crossfade}-sample " +
+                    "crossfade, so no stream can be assembled from it.");
+            }
+
             // Wrap rather than stop: a receiver's own corpus can be shorter than the longest mode.
             var clip = ordered[cursor % ordered.Count];
             cursor++;
@@ -90,9 +97,11 @@ public static class RealNoiseStreamBuilder
         var take = Math.Min((int)(requiredSeconds * OutputSampleRate), resampled.Length - head);
         var output = resampled[head..(head + take)];
 
+        // Where a join lands on the OUTPUT timeline: rate-scaled, shifted by the resampler's group
+        // delay, then shifted again by the head that was trimmed off.
         var scale = (double)OutputSampleRate / corpus.SampleRate;
         var joinOffsetsSeconds = joinOffsetsAssembled
-            .Select(a => ((a * scale) - head) / OutputSampleRate)
+            .Select(a => ((a * scale) + PolyphaseResampler.OutputGroupDelaySamples - head) / OutputSampleRate)
             .Where(t => t >= 0 && t < take / (double)OutputSampleRate)
             .ToList();
 

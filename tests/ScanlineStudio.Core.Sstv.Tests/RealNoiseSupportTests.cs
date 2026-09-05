@@ -116,7 +116,7 @@ public sealed class RealNoiseSupportTests
         var resampled = PolyphaseResampler.Resample(source, CorpusSampleRate);
 
         // Trim both ends: the head carries the prototype's warm-up, and the tail runs off the input.
-        var trim = PolyphaseResampler.OutputGroupDelay + 2000;
+        var trim = PolyphaseResampler.OutputWarmupSamples + 2000;
         var inner = resampled[trim..^trim];
         var sourceInner = source[(trim * CorpusSampleRate / SweepSampleRate)..^(trim * CorpusSampleRate / SweepSampleRate)];
 
@@ -135,7 +135,7 @@ public sealed class RealNoiseSupportTests
     {
         var resampled = PolyphaseResampler.Resample(Tone(1900, CorpusSampleRate, 2.0), CorpusSampleRate);
 
-        var trim = PolyphaseResampler.OutputGroupDelay + 2000;
+        var trim = PolyphaseResampler.OutputWarmupSamples + 2000;
         var inner = resampled[trim..^trim];
 
         // A 1900Hz tone must still be 1900Hz at the new rate: it survives a band containing 1900

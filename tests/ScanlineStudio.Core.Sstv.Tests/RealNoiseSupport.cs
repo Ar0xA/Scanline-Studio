@@ -95,29 +95,62 @@ public static class FirFilter
     /// <summary>Filters <paramref name="samples"/> and returns the group-delay-aligned result, same
     /// length as the input. The filter's warm-up region is at the head, so callers that care about
     /// sample 0 (VIS lock does) must feed a longer buffer and trim, not rely on this alignment.</summary>
-    public static float[] Apply(IReadOnlyList<float> samples, double[] coefficients)
+    public static float[] Apply(IReadOnlyList<float> samples, double[] coefficients) =>
+        Apply(ToArray(samples), coefficients);
+
+    public static float[] Apply(float[] samples, double[] coefficients)
     {
         var taps = coefficients.Length;
         var delay = (taps - 1) / 2;
-        var output = new float[samples.Count];
-        for (var i = 0; i < samples.Count; i++)
+        var output = new float[samples.Length];
+
+        // Split rather than test per tap. Inside [delay, Length-delay) every index the window reaches
+        // is provably in range: the window spans [i-delay, i+delay], so the guard there is dead work
+        // in the loop that dominates this harness's runtime. The edges keep it.
+        var innerEnd = Math.Max(delay, samples.Length - delay);
+        for (var i = 0; i < Math.Min(delay, samples.Length); i++)
+        {
+            output[i] = (float)ConvolveGuarded(samples, coefficients, i, delay);
+        }
+
+        for (var i = delay; i < innerEnd; i++)
         {
             double acc = 0;
             var start = i + delay;
             for (var k = 0; k < taps; k++)
             {
-                var idx = start - k;
-                if (idx >= 0 && idx < samples.Count)
-                {
-                    acc += coefficients[k] * samples[idx];
-                }
+                acc += coefficients[k] * samples[start - k];
             }
 
             output[i] = (float)acc;
         }
 
+        for (var i = innerEnd; i < samples.Length; i++)
+        {
+            output[i] = (float)ConvolveGuarded(samples, coefficients, i, delay);
+        }
+
         return output;
     }
+
+    private static double ConvolveGuarded(float[] samples, double[] coefficients, int i, int delay)
+    {
+        double acc = 0;
+        var start = i + delay;
+        for (var k = 0; k < coefficients.Length; k++)
+        {
+            var idx = start - k;
+            if (idx >= 0 && idx < samples.Length)
+            {
+                acc += coefficients[k] * samples[idx];
+            }
+        }
+
+        return acc;
+    }
+
+    private static float[] ToArray(IReadOnlyList<float> samples) =>
+        samples as float[] ?? samples.ToArray();
 
     /// <summary>RMS of the signal after <paramref name="coefficients"/>, measured only over the
     /// region where the filter window is fully populated. Allocation-free relative to
@@ -127,19 +160,25 @@ public static class FirFilter
     /// that step is broadband, so a stopband figure measured across the edges reports the edge
     /// transient rather than the filter. Excluding it costs one tap length out of a multi-minute
     /// stream and is what makes a stopband assertion mean the filter.</summary>
-    public static double BandRms(IReadOnlyList<float> samples, double[] coefficients)
+    public static double BandRms(IReadOnlyList<float> samples, double[] coefficients) =>
+        BandRms(ToArray(samples), coefficients);
+
+    public static double BandRms(float[] samples, double[] coefficients)
     {
         var taps = coefficients.Length;
         var delay = (taps - 1) / 2;
         var first = delay;
-        var last = samples.Count - delay;
+        var last = samples.Length - delay;
         if (last <= first)
         {
             throw new ArgumentException(
-                $"Buffer of {samples.Count} samples is too short for a {taps}-tap filter; nothing remains after excluding both edges.",
+                $"Buffer of {samples.Length} samples is too short for a {taps}-tap filter; nothing remains after excluding both edges.",
                 nameof(samples));
         }
 
+        // No bounds guard in this loop, and it is not an oversight: over [delay, Length-delay) the
+        // window reaches [i-delay, i+delay], which is exactly the range the loop bounds already
+        // guarantee. The guard was pure overhead in the hot path.
         double sumSquares = 0;
         for (var i = first; i < last; i++)
         {
@@ -147,11 +186,7 @@ public static class FirFilter
             var start = i + delay;
             for (var k = 0; k < taps; k++)
             {
-                var idx = start - k;
-                if (idx >= 0 && idx < samples.Count)
-                {
-                    acc += coefficients[k] * samples[idx];
-                }
+                acc += coefficients[k] * samples[start - k];
             }
 
             sumSquares += acc * acc;
@@ -203,10 +238,22 @@ public static class PolyphaseResampler
         SampleRate: inputSampleRate * UpFactor,
         Window: "blackman");
 
-    /// <summary>Group delay in OUTPUT samples. The prototype's warm-up lands at output sample 0,
-    /// which is exactly where VIS lock happens, so the sweep resamples a longer stream and drops
-    /// this many samples from the head.</summary>
-    public static int OutputGroupDelay => (((UpFactor * TapsPerPhase) + 1) - 1) / 2 / DownFactor;
+    /// <summary>Output samples that must be discarded before every tap of the polyphase window is
+    /// fed by real input. Output <c>m</c> reads input indices <c>baseIndex - j</c> for
+    /// <c>j</c> in <c>[0, TapsPerPhase)</c>, so a fully-populated window needs
+    /// <c>baseIndex = m * Down / Up &gt;= TapsPerPhase - 1</c>.
+    ///
+    /// This is deliberately NOT the group delay, which is smaller: the group delay says where a
+    /// feature lands, the warm-up says where the filter stops seeing zeros. Trimming the group delay
+    /// would leave an attenuated head at output sample 0 -- exactly where VIS lock happens.</summary>
+    public static int OutputWarmupSamples =>
+        (int)Math.Ceiling((TapsPerPhase - 1) * (double)UpFactor / DownFactor);
+
+    /// <summary>Group delay in OUTPUT samples: how far a feature in the input is shifted by the
+    /// prototype. Needed to place a known input event on the output timeline, which the noise-stream
+    /// builder does for its join offsets.</summary>
+    public static double OutputGroupDelaySamples =>
+        ((UpFactor * TapsPerPhase) / 2.0 / UpFactor) * UpFactor / DownFactor;
 
     public static float[] Resample(IReadOnlyList<float> input, int inputSampleRate)
     {
