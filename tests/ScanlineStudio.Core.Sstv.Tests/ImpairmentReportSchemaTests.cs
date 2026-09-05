@@ -34,7 +34,6 @@ public sealed class ImpairmentReportSchemaTests
         Assert.Null(point.PerLineDelta95);
         Assert.Null(point.UsableByPercentile);
         Assert.Null(point.SeedOutcomes);
-        Assert.Null(report[0].NoiseStreamClipRmsSpreadDb);
 
         // The fields that DO carry a value still round-trip.
         Assert.Equal(20.0, point.SnrDb);
@@ -88,15 +87,55 @@ public sealed class ImpairmentReportSchemaTests
         ImpairmentSweepHarness.AssertComparable(before, after);
     }
 
-    private static IReadOnlyList<ImpairmentModeReport> Report(string noiseModel, int sampleRate, string calibrationBand, int seedCount)
+    [Fact]
+    public void CompareGuard_RejectsAChangedUsabilityBar()
+    {
+        // Everything the original guard checked is identical here. Lowering the bar from 30 to 25
+        // moves every floor in the run, so a model-and-rate-only guard would have passed this.
+        var before = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5);
+        var after = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, meanBar: 25.0);
+
+        Assert.Throws<InvalidOperationException>(() => ImpairmentSweepHarness.AssertComparable(before, after));
+    }
+
+    [Fact]
+    public void CompareGuard_RejectsAChangedMeasurementFilter()
+    {
+        // Every recorded band power is defined relative to the filter's real response, so a filter
+        // edit silently redefines the numbers being diffed.
+        var before = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, filterSpecs: ["measurement-H2: 1023 taps"]);
+        var after = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, filterSpecs: ["measurement-H2: 511 taps"]);
+
+        Assert.Throws<InvalidOperationException>(() => ImpairmentSweepHarness.AssertComparable(before, after));
+    }
+
+    [Fact]
+    public void ANaNDelta_RoundTripsInsteadOfThrowing()
+    {
+        // A point where no seed decodes records NaN. System.Text.Json throws on writing one unless
+        // named floating-point literals are allowed, and that write is the per-mode incremental save
+        // that exists so a killed sweep still leaves results.
+        IReadOnlyList<ImpairmentModeReport> report =
+            [new ImpairmentModeReport("robot-36", [new ImpairmentPoint(0.0, double.NaN, false)], NoiseFloorDb: null)];
+
+        var json = JsonSerializer.Serialize(report, ImpairmentSweepHarness.ReportJsonOptions);
+        var round = JsonSerializer.Deserialize<List<ImpairmentModeReport>>(json, ImpairmentSweepHarness.ReportJsonOptions)!;
+
+        Assert.True(double.IsNaN(round[0].Points[0].Delta));
+    }
+
+    private static IReadOnlyList<ImpairmentModeReport> Report(
+        string noiseModel, int sampleRate, string calibrationBand, int seedCount,
+        double meanBar = 30.0, string floorRule = "test",
+        IReadOnlyList<string>? filterSpecs = null)
     {
         var run = new ImpairmentRunMetadata(
             noiseModel, sampleRate, calibrationBand, seedCount,
             FloorAxis: calibrationBand,
-            FloorRule: "test",
-            MeanUsableDeltaBar: 30.0,
+            FloorRule: floorRule,
+            MeanUsableDeltaBar: meanBar,
             PercentileUsableDeltaBar: 60.0,
-            FilterSpecs: []);
+            FilterSpecs: filterSpecs ?? []);
 
         return [new ImpairmentModeReport("robot-36", [], NoiseFloorDb: null, Run: run)];
     }

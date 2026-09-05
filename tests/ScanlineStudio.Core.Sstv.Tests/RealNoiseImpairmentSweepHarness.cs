@@ -21,9 +21,25 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// <item><c>awgn-inband-v1</c> -- the control for this comparison. Gaussian, but LOW-PASSED to the
 /// corpus's own bandwidth and calibrated on the same in-band axis with the same floor estimator as
 /// the real-noise arm. Without the band match the two arms would differ in spectrum as well as in
-/// amplitude statistic, and the headline result would not be attributable to non-Gaussianity at all.
-/// Band-limiting does not compromise the control: a linear filter of Gaussian noise is still
-/// Gaussian.</item>
+/// amplitude statistic. Band-limiting does not compromise the control: a linear filter of Gaussian
+/// noise is still Gaussian.</item>
+/// </list>
+///
+/// The control is BANDWIDTH-matched, not PSD-matched, so the arms are not reduced to the amplitude
+/// statistic alone. The corpus's effective noise bandwidth is about 3100Hz against the control's flat
+/// 3500Hz, which leaves the real arm carrying roughly 0.4dB more noise inside H1 at equal H2 power --
+/// H1 being the post-lock filter that governs pixel delta, hence usability, hence the floor. It
+/// biases the real arm to look slightly WORSE.
+///
+/// So read a real-versus-control difference against this rule, not as a bare number: a mode 2 or more
+/// grid steps worse on the real arm, or a one-step difference on clearly more than about 6 of the 43
+/// modes, exceeds what the tilt can explain and IS attributable to the amplitude statistic. A
+/// one-step difference on a handful of modes is inconclusive.
+///
+/// The out-of-band leg of that concern does NOT apply here: this decoder's `LevelAgc` runs on the
+/// POST-bandpass sample (`AnalogFmSstvDecoder.cs:1158-1165`), matching legacy's own order, so
+/// out-of-band power reaches nothing except through H2's real stopband.
+/// <list type="bullet">
 /// <item><c>paderborn-real-v1</c> -- real recorded HF noise from the external corpus.</item>
 /// </list>
 ///
@@ -63,11 +79,37 @@ public sealed class RealNoiseImpairmentSweepHarness
     // mean-based flag, never instead of it, so either floor can be computed later without re-running.
     private const double PercentileUsableDeltaBar = 60.0;
 
-    private static readonly int[] InBandSeeds = [12345, 67890, 24680, 13579, 55555];
+    private static readonly int[] DefaultInBandSeeds = [12345, 67890, 24680, 13579, 55555];
 
-    // 4 of 5, not "every seed" -- see ImpairmentSeedOutcome's own doc comment for why a first-failure
-    // rule turns the floor into a min-of-N order statistic once the noise is heavy-tailed.
-    private const int RequiredUsableSeeds = 4;
+    /// <summary>The seeds this run draws its realizations from. <c>SCANLINE_IMPAIRMENT_SEEDS</c>
+    /// replaces them, which is what the floor-reproducibility check needs: the same modes run twice
+    /// with DISJOINT seed sets, to find out whether five realizations is enough before a full run is
+    /// spent. The seeds themselves are recorded per realization in the report.</summary>
+    private static int[] ResolveSeeds()
+    {
+        var configured = Environment.GetEnvironmentVariable("SCANLINE_IMPAIRMENT_SEEDS");
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            return DefaultInBandSeeds;
+        }
+
+        var seeds = configured
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(t => int.Parse(t, NumberStyles.Integer, CultureInfo.InvariantCulture))
+            .ToArray();
+
+        if (seeds.Length < 2)
+        {
+            throw new InvalidOperationException($"SCANLINE_IMPAIRMENT_SEEDS='{configured}' yields {seeds.Length} seed(s); at least 2 are needed.");
+        }
+
+        return seeds;
+    }
+
+    /// <summary>Tolerate exactly one unlucky realization. That is the whole point of the rule: under
+    /// heavy-tailed noise a "every seed must be usable" bar turns the floor into a min-of-N order
+    /// statistic, pessimistically biased and liable to move several dB run-to-run on clip luck.</summary>
+    internal static int RequiredUsableSeeds(int seedCount) => Math.Max(1, seedCount - 1);
 
     [RequiresRealNoiseSweepFact]
     public async Task RunRealNoiseSweep_ProducesBaselineReport()
@@ -109,38 +151,86 @@ public sealed class RealNoiseImpairmentSweepHarness
         Progress(progressPath, $"{noiseModel} at {encoder.SampleRate}Hz, {selected.Count} modes selected.");
 
         var maxSeconds = MaxModeSeconds(selected.Select(m => m.ModeId));
-        Progress(progressPath, $"preparing {InBandSeeds.Length} noise realizations of {maxSeconds:F0}s...");
-        var realizations = InBandSeeds
-            .Select((seed, ordinal) => NoiseRealization.Prepare(seed, ordinal, maxSeconds, encoder.SampleRate, bands, corpus))
-            .ToList();
-        Progress(progressPath, "noise ready.");
+        var parallelism = ResolveParallelism();
+        var seeds = ResolveSeeds();
 
-        var metadata = BuildMetadata(noiseModel, encoder.SampleRate, bands, corpus, realizations.Select(r => r.Statistics).ToList());
-        var reports = new List<ImpairmentModeReport>();
-
-        foreach (var (modeId, source, pictureHeight) in selected)
+        // Prefix sums dominate this harness's memory: one double per sample per band, per realization.
+        var projectedGb = (double)seeds.Length * (bands.Count + 1) * maxSeconds * encoder.SampleRate * sizeof(double) / (1024 * 1024 * 1024);
+        Progress(progressPath, $"preparing {seeds.Length} noise realizations of {maxSeconds:F0}s, ~{projectedGb:F1}GB of prefix sums, parallelism {parallelism}...");
+        if (projectedGb > 8.0)
         {
-            Progress(progressPath, $"starting {modeId}...");
-            var report = await MeasureModeAsync(modeId, source, pictureHeight, encoder, realizations, bands, metadata);
-            reports.Add(report);
-
-            // Rewritten after every mode, so a run that is killed or times out still leaves usable
-            // results on disk rather than nothing at all.
-            File.WriteAllText(
-                Path.Combine(runDir, "report.json"),
-                JsonSerializer.Serialize(reports, ImpairmentSweepHarness.ReportJsonOptions));
-
-            var floor = report.NoiseFloorDb is null ? "NEVER" : $"{report.NoiseFloorDb:F1}dB";
-            Progress(progressPath, $"finished {modeId}: floor ({metadata.FloorAxis}) {floor}");
+            Progress(progressPath, $"WARNING: projected prefix-sum memory is {projectedGb:F1}GB. Reduce the seed count, the band count, or the mode selection.");
         }
 
+        // The realizations are independent, and each one is a stack of full-length FIR passes.
+        var prepared = new NoiseRealization[seeds.Length];
+        Parallel.For(0, seeds.Length, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, ordinal =>
+        {
+            prepared[ordinal] = NoiseRealization.Prepare(seeds[ordinal], ordinal, maxSeconds, encoder.SampleRate, bands, corpus);
+        });
+        var realizations = prepared.ToList();
+        Progress(progressPath, "noise ready.");
+
+        var metadata = BuildMetadata(noiseModel, encoder.SampleRate, bands, corpus, realizations.Select(r => r.Provenance).ToList(), seeds.Length);
+
+        // Modes are independent: each builds its own encoder output and its own decoder, and reads the
+        // shared realizations without mutating them. Results are keyed by mode and emitted in the
+        // selection order, so the report does not depend on which mode happened to finish first.
+        var completed = new Dictionary<string, ImpairmentModeReport>(StringComparer.Ordinal);
+        var writeLock = new object();
+        var finished = 0;
+
+        await Parallel.ForEachAsync(
+            selected,
+            new ParallelOptions { MaxDegreeOfParallelism = parallelism },
+            async (mode, _) =>
+            {
+                var report = await MeasureModeAsync(mode.ModeId, mode.Source, mode.PictureHeight, encoder, realizations, bands, metadata);
+
+                lock (writeLock)
+                {
+                    completed[mode.ModeId] = report;
+                    finished++;
+
+                    // Rewritten after every mode, so a run that is killed or times out still leaves
+                    // usable results on disk rather than nothing at all.
+                    File.WriteAllText(
+                        Path.Combine(runDir, "report.json"),
+                        JsonSerializer.Serialize(OrderedReports(selected, completed), ImpairmentSweepHarness.ReportJsonOptions));
+
+                    Progress(progressPath, $"finished {mode.ModeId} ({finished}/{selected.Count}): floor ({metadata.FloorAxis}) {FormatFloor(report.NoiseFloorDb)}");
+                }
+            });
+
+        var reports = OrderedReports(selected, completed);
         Progress(progressPath, $"done: {reports.Count} modes, written to {runDir}.");
         Console.WriteLine($"{noiseModel}: {reports.Count} modes, written to {runDir}.");
         foreach (var report in reports)
         {
-            var floor = report.NoiseFloorDb is null ? "NEVER" : $"{report.NoiseFloorDb:F1}dB";
-            Console.WriteLine($"  [{report.ModeId}] floor ({metadata.FloorAxis}): {floor}");
+            Console.WriteLine($"  [{report.ModeId}] floor ({metadata.FloorAxis}): {FormatFloor(report.NoiseFloorDb)}");
         }
+    }
+
+    private static List<ImpairmentModeReport> OrderedReports(
+        IReadOnlyList<(string ModeId, IImageSource Source, int PictureHeight)> selected,
+        Dictionary<string, ImpairmentModeReport> completed) =>
+        selected
+            .Where(m => completed.ContainsKey(m.ModeId))
+            .Select(m => completed[m.ModeId])
+            .ToList();
+
+    /// <summary>How many modes decode at once. Defaults to half the cores: the decodes are
+    /// CPU-bound and independent, but this project has seen the test host crash under full parallel
+    /// load, and the shared prefix sums already hold several GB.</summary>
+    private static int ResolveParallelism()
+    {
+        var configured = Environment.GetEnvironmentVariable("SCANLINE_IMPAIRMENT_PARALLELISM");
+        if (int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) && value > 0)
+        {
+            return value;
+        }
+
+        return Math.Max(1, Environment.ProcessorCount / 2);
     }
 
     /// <summary>The modes this run covers. <c>SCANLINE_IMPAIRMENT_MODES</c> narrows it to a
@@ -186,11 +276,16 @@ public sealed class RealNoiseImpairmentSweepHarness
         return selected;
     }
 
+    private static readonly object ProgressLock = new();
+
     private static void Progress(string path, string message)
     {
         var line = string.Create(CultureInfo.InvariantCulture, $"[{DateTime.UtcNow:HH:mm:ss}] {message}");
-        File.AppendAllText(path, line + Environment.NewLine);
-        Console.WriteLine(line);
+        lock (ProgressLock)
+        {
+            File.AppendAllText(path, line + Environment.NewLine);
+            Console.WriteLine(line);
+        }
     }
 
     private static async Task<ImpairmentModeReport> MeasureModeAsync(
@@ -228,8 +323,7 @@ public sealed class RealNoiseImpairmentSweepHarness
         var h3Band = NarrowBandFor(mode);
 
         var points = new List<ImpairmentPoint>();
-        double? noiseFloorDb = null;
-        var stillUnbrokenFromTop = true;
+        var usableBySnr = new List<(double SnrDb, int UsableSeeds)>();
 
         foreach (var snrDb in ImpairmentSweepHarness.SnrLevelsDb)
         {
@@ -285,11 +379,30 @@ public sealed class RealNoiseImpairmentSweepHarness
                 UsableByPercentile: meanPerLine95 is null ? null : meanPerLine95 <= PercentileUsableDeltaBar,
                 SeedOutcomes: outcomes));
 
-            if (usableCount >= RequiredUsableSeeds)
+            usableBySnr.Add((snrDb, usableCount));
+        }
+
+        return new ImpairmentModeReport(modeId, points, ComputeFloor(usableBySnr, RequiredUsableSeeds(realizations.Count)), metadata);
+    }
+
+    /// <summary>The lowest SNR that met the usable-seed bar with every higher-SNR point also meeting
+    /// it. The unbroken-from-top latch is the point: a later, worse-SNR point that happens to pass
+    /// must not resurrect a floor that a better-SNR point already broke. That exact defect shipped
+    /// once in the AWGN sweep (decoder_quality_improvement.md section 13 addendum).
+    ///
+    /// <paramref name="points"/> must be in descending-SNR order, which is the order the sweep grid
+    /// itself is declared in.</summary>
+    internal static double? ComputeFloor(IReadOnlyList<(double SnrDb, int UsableSeeds)> points, int requiredUsable)
+    {
+        double? floor = null;
+        var stillUnbrokenFromTop = true;
+        foreach (var (snrDb, usableSeeds) in points)
+        {
+            if (usableSeeds >= requiredUsable)
             {
                 if (stillUnbrokenFromTop)
                 {
-                    noiseFloorDb = snrDb;
+                    floor = snrDb;
                 }
             }
             else
@@ -298,18 +411,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             }
         }
 
-        var first = realizations[0];
-        return new ImpairmentModeReport(
-            modeId,
-            points,
-            noiseFloorDb,
-            metadata,
-            first.FileNames,
-            first.JoinOffsetsSeconds,
-            first.ClipRmsSpreadDb,
-            first.ClipRmsSpreadWarning,
-            first.Day,
-            first.Receiver);
+        return floor;
     }
 
     /// <summary>95th-percentile of the per-LINE mean delta. The whole-image mean that drives the
@@ -391,13 +493,16 @@ public sealed class RealNoiseImpairmentSweepHarness
 
     private static ImpairmentRunMetadata BuildMetadata(
         string noiseModel, int sampleRate, IReadOnlyList<MeasurementBand> bands, RealNoiseCorpus? corpus,
-        IReadOnlyList<string> noiseStatistics)
+        IReadOnlyList<NoiseStreamProvenance> noiseStreams, int seedCount)
     {
         var specs = bands
             .Select(b => new FirSpec($"measurement-{b.Name}", MeasurementTaps, b.LowHz, b.HighHz, sampleRate, "blackman").ToString())
             .ToList();
-        specs.Add(PolyphaseResampler.Spec(48000).ToString());
-        if (noiseModel == "awgn-inband-v1")
+        if (corpus is not null)
+        {
+            specs.Add(PolyphaseResampler.Spec(corpus.SampleRate).ToString());
+        }
+        else
         {
             specs.Add(new FirSpec("control-band-limiter", MeasurementTaps, 0, CorpusBandwidthHz, sampleRate, "blackman").ToString());
         }
@@ -406,20 +511,24 @@ public sealed class RealNoiseImpairmentSweepHarness
             NoiseModel: noiseModel,
             SampleRate: sampleRate,
             CalibrationBand: string.Create(CultureInfo.InvariantCulture, $"H2 {H2LowHz:F0}-{H2HighHz:F0}Hz"),
-            SeedCount: InBandSeeds.Length,
+            SeedCount: seedCount,
             FloorAxis: string.Create(CultureInfo.InvariantCulture, $"H2 {H2LowHz:F0}-{H2HighHz:F0}Hz in-band SNR"),
-            FloorRule: string.Create(CultureInfo.InvariantCulture, $"lowest SNR where at least {RequiredUsableSeeds} of {InBandSeeds.Length} seeds are usable, unbroken from the top"),
+            FloorRule: string.Create(CultureInfo.InvariantCulture, $"lowest SNR where at least {RequiredUsableSeeds(seedCount)} of {seedCount} seeds are usable, unbroken from the top"),
             MeanUsableDeltaBar: MeanUsableDeltaBar,
             PercentileUsableDeltaBar: PercentileUsableDeltaBar,
             FilterSpecs: specs,
-            NoiseStatistics: noiseStatistics,
+            NoiseStreams: noiseStreams,
             CorpusDirectory: corpus?.Directory,
             CorpusIdentityHash: corpus?.IdentityHash,
             CorpusClipCount: corpus?.Clips.Count,
             CorpusTotalSeconds: corpus?.TotalSeconds,
             CorpusCaveats: corpus is null
-                ? null
+                ? [
+                    "Recorded band powers other than InBandSnrDb come from realization 0. InBandSnrDb is exact for every realization by construction; the others are not.",
+                    "The control is bandwidth-matched to the corpus, not PSD-matched. Compare this run's own H1/H2 and total/H2 ratios against the real arm's before attributing any difference to non-Gaussianity.",
+                  ]
                 : [
+                    "Recorded band powers other than InBandSnrDb come from realization 0. InBandSnrDb is exact for every realization by construction; the others are not.",
                     $"Corpus spans only {corpus.Days.Count} capture days ({string.Join(", ", corpus.Days)}); ionospheric diversity is limited.",
                     "Clip levels are kept raw, not normalized; measured spread is 8.7dB corpus-wide and up to 15dB within one receiver.",
                     "Concatenation leaves a small sawtooth: clips rise about 0.66dB from first to last quartile (79% of 250 sampled clips), and joins showed 1.2-2.4dB edge steps in the one group measured directly.",
@@ -427,6 +536,9 @@ public sealed class RealNoiseImpairmentSweepHarness
                   ],
             CorpusSkippedFiles: corpus?.SkippedFiles);
     }
+
+    private static string FormatFloor(double? floorDb) =>
+        floorDb is null ? "NEVER" : string.Create(CultureInfo.InvariantCulture, $"{floorDb:F1}dB");
 
     private static double? ToDb(double value) => value <= 0 ? null : 20.0 * Math.Log10(value);
 
@@ -449,7 +561,7 @@ public sealed class RealNoiseImpairmentSweepHarness
         private NoiseRealization(
             int seed, float[] samples, Dictionary<string, double[]> prefixSquares,
             string? day, string? receiver, IReadOnlyList<string> fileNames,
-            IReadOnlyList<double> joinOffsets, double? spreadDb, bool? spreadWarning)
+            IReadOnlyList<double> joinOffsets, IReadOnlyList<double> clipRmsDb, double? spreadDb, bool? spreadWarning)
         {
             Seed = seed;
             _samples = samples;
@@ -458,6 +570,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             Receiver = receiver;
             FileNames = fileNames;
             JoinOffsetsSeconds = joinOffsets;
+            ClipRmsDb = clipRmsDb;
             ClipRmsSpreadDb = spreadDb;
             ClipRmsSpreadWarning = spreadWarning;
         }
@@ -469,23 +582,41 @@ public sealed class RealNoiseImpairmentSweepHarness
         /// <summary>Kurtosis and crest factor of this realization. The control arm's crest shifts
         /// slightly under band-limiting, because filtering correlates neighbouring samples -- that is
         /// expected, and worth recording rather than being surprised by later.</summary>
-        public string Statistics
+        public NoiseStreamProvenance Provenance
         {
             get
             {
-                var rms = FirFilter.Rms(_samples);
+                double mean = 0;
+                foreach (var sample in _samples)
+                {
+                    mean += sample;
+                }
+
+                mean /= _samples.Length;
+
+                double sumSquares = 0;
                 double fourth = 0;
                 double peak = 0;
                 foreach (var sample in _samples)
                 {
-                    var normalized = sample / rms;
-                    fourth += normalized * normalized * normalized * normalized;
-                    peak = Math.Max(peak, Math.Abs(sample));
+                    var centred = sample - mean;
+                    sumSquares += centred * centred;
+                    fourth += centred * centred * centred * centred;
+                    peak = Math.Max(peak, Math.Abs(centred));
                 }
 
-                return string.Create(
-                    CultureInfo.InvariantCulture,
-                    $"seed={Seed} kurtosis={fourth / _samples.Length:F3} crest={peak / rms:F2}");
+                var variance = sumSquares / _samples.Length;
+                return new NoiseStreamProvenance(
+                    Seed,
+                    Day,
+                    Receiver,
+                    Kurtosis: fourth / _samples.Length / (variance * variance),
+                    Crest: peak / Math.Sqrt(variance),
+                    FileNames,
+                    JoinOffsetsSeconds,
+                    ClipRmsDb,
+                    ClipRmsSpreadDb,
+                    ClipRmsSpreadWarning);
             }
         }
 
@@ -496,6 +627,8 @@ public sealed class RealNoiseImpairmentSweepHarness
         public IReadOnlyList<string> FileNames { get; }
 
         public IReadOnlyList<double> JoinOffsetsSeconds { get; }
+
+        public IReadOnlyList<double> ClipRmsDb { get; }
 
         public double? ClipRmsSpreadDb { get; }
 
@@ -510,6 +643,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             string? receiver = null;
             IReadOnlyList<string> fileNames = [];
             IReadOnlyList<double> joins = [];
+            IReadOnlyList<double> clipRmsDb = [];
             double? spread = null;
             bool? spreadWarning = null;
 
@@ -521,14 +655,17 @@ public sealed class RealNoiseImpairmentSweepHarness
                 receiver = buffer.Receiver;
                 fileNames = buffer.FileNames;
                 joins = buffer.JoinOffsetsSeconds;
+                clipRmsDb = buffer.ClipRmsDb;
                 spread = buffer.ClipRmsSpreadDb;
                 spreadWarning = buffer.ClipRmsSpreadWarning;
             }
             else
             {
-                // The control arm: Gaussian, then low-passed to the corpus's own bandwidth so the two
-                // arms differ ONLY in amplitude statistic. A linear filter of Gaussian noise is still
-                // Gaussian, so this stays a valid Gaussian control.
+                // The control arm: Gaussian, then low-passed to the corpus's own bandwidth so the
+                // arms are matched in bandwidth rather than only in in-band power. A linear filter of
+                // Gaussian noise is still Gaussian, so this stays a valid Gaussian control. It is
+                // bandwidth-matched, NOT PSD-matched -- see the class doc comment for the residual
+                // tilt this leaves and the rule for reading a difference against it.
                 //
                 // The band-limiter's warm-up is generated and then discarded, matching the trim the
                 // real arm already applies to its resampler transient. Left in, a few ms of
@@ -550,7 +687,7 @@ public sealed class RealNoiseImpairmentSweepHarness
                 prefixSquares[band.Name] = PrefixSquares(FirFilter.Apply(samples, band.Coefficients));
             }
 
-            return new NoiseRealization(seed, samples, prefixSquares, day, receiver, fileNames, joins, spread, spreadWarning);
+            return new NoiseRealization(seed, samples, prefixSquares, day, receiver, fileNames, joins, clipRmsDb, spread, spreadWarning);
         }
 
         public double BandRms(string band, int count) =>
