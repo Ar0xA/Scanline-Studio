@@ -124,6 +124,21 @@ public sealed class RealNoiseCorpusTests : IDisposable
     }
 
     [Fact]
+    public void Build_ThrowsWhenNoClipInTheStratumIsLongerThanTheCrossfade()
+    {
+        // Without this the assembly loop would spin forever with no output, in a harness that argues
+        // a run nobody can watch is a run nobody can tell apart from a hang.
+        WriteClip("19_12_04_00_00_00__1_2__GeXX1x__1_noise00.wav", seed: 1, seconds: 0.002);
+        WriteClip("19_12_04_00_00_00__1_2__GeXX1x__1_noise01.wav", seed: 2, seconds: 0.002);
+        var corpus = RealNoiseCorpus.Load(_dir);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => RealNoiseStreamBuilder.Build(corpus, seed: 1, seedOrdinal: 0, requiredSeconds: 1.0));
+
+        Assert.Contains("crossfade", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Crossfade_HoldsConstantPower_ForUncorrelatedSegments()
     {
         // Averaged over many independent realizations: a single draw is too noisy to distinguish a

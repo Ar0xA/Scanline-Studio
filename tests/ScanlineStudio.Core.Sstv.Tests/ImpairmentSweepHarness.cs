@@ -227,12 +227,13 @@ public sealed class ImpairmentSweepHarness
     {
         var run = report.Select(r => r.Run).FirstOrDefault(r => r is not null);
         return run is null
-            ? "awgn-v1 @44100Hz, calibration=total-band, seeds=2, floor='every seed usable', bars=30/-, filters=(historic)"
+            ? "awgn-v1 @44100Hz, calibration=total-band, seeds=2, floor='every seed usable', bars=30/-, filters=(historic), generation=(historic), corpus=(none)"
             : string.Create(
                 CultureInfo.InvariantCulture,
                 $"{run.NoiseModel} @{run.SampleRate}Hz, calibration={run.CalibrationBand}, seeds={run.SeedCount}, " +
                 $"floor='{run.FloorRule}', bars={run.MeanUsableDeltaBar:F1}/{run.PercentileUsableDeltaBar:F1}, " +
-                $"filters=[{string.Join(" | ", run.FilterSpecs)}]");
+                $"filters=[{string.Join(" | ", run.FilterSpecs)}], " +
+                $"generation={run.NoiseGenerationVersion ?? "(unversioned)"}, corpus={run.CorpusIdentityHash ?? "(none)"}");
     }
 
     internal static IReadOnlyList<ImpairmentModeReport> ReadReport(string runDir)
@@ -464,10 +465,7 @@ public sealed record ImpairmentPoint(
     bool? UsableByPercentile = null,
     IReadOnlyList<ImpairmentSeedOutcome>? SeedOutcomes = null);
 
-/// <summary>Run-level metadata, repeated on every mode record rather than hoisted to a new JSON root
-/// object -- the root is a bare array in every existing report, and keeping it that way means old
-/// reports still deserialize without sniffing the first token.</summary>
-/// <summary>Where one realization's noise actually came from. Recorded PER SEED: the design's whole
+/// <summary>Where one realization's noise actually came from, recorded per seed. Recorded PER SEED: the design's whole
 /// diversity argument is that the seeds walk capture days and receivers, so a single seed's
 /// provenance would state the opposite of what the run did. <see cref="ClipRmsSpreadWarning"/> is the
 /// load-bearing one -- it flags a stream whose SNR label is a weak summary of what the decoder saw,
@@ -484,6 +482,9 @@ public sealed record NoiseStreamProvenance(
     double? ClipRmsSpreadDb,
     bool? ClipRmsSpreadWarning);
 
+/// <summary>Run-level metadata, repeated on every mode record rather than hoisted to a new JSON root
+/// object -- the root is a bare array in every existing report, and keeping it that way means old
+/// reports still deserialize without sniffing the first token.</summary>
 public sealed record ImpairmentRunMetadata(
     string NoiseModel,
     int SampleRate,
@@ -495,6 +496,7 @@ public sealed record ImpairmentRunMetadata(
     double PercentileUsableDeltaBar,
     IReadOnlyList<string> FilterSpecs,
     IReadOnlyList<NoiseStreamProvenance>? NoiseStreams = null,
+    string? NoiseGenerationVersion = null,
     string? CorpusDirectory = null,
     string? CorpusIdentityHash = null,
     int? CorpusClipCount = null,

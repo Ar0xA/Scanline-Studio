@@ -36,6 +36,10 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// modes, exceeds what the tilt can explain and IS attributable to the amplitude statistic. A
 /// one-step difference on a handful of modes is inconclusive.
 ///
+/// Where the 6 comes from: a 0.4dB systematic tilt flips a mode by one grid step only when that
+/// mode's true threshold happens to sit within 0.4dB of a grid boundary. Against the roughly 3.5dB
+/// spacing near the floors that is about 11% of modes, so about 5 of 43 -- call it 6 with rounding.
+///
 /// The out-of-band leg of that concern does NOT apply here: this decoder's `LevelAgc` runs on the
 /// POST-bandpass sample (`AnalogFmSstvDecoder.cs:1158-1165`), matching legacy's own order, so
 /// out-of-band power reaches nothing except through H2's real stopband.
@@ -106,10 +110,15 @@ public sealed class RealNoiseImpairmentSweepHarness
         return seeds;
     }
 
-    /// <summary>Tolerate exactly one unlucky realization. That is the whole point of the rule: under
-    /// heavy-tailed noise a "every seed must be usable" bar turns the floor into a min-of-N order
-    /// statistic, pessimistically biased and liable to move several dB run-to-run on clip luck.</summary>
-    internal static int RequiredUsableSeeds(int seedCount) => Math.Max(1, seedCount - 1);
+    /// <summary>Tolerate exactly one unlucky realization, but never drop below a strict majority.
+    ///
+    /// Tolerating one is the whole point: under heavy-tailed noise an "every seed must be usable" bar
+    /// turns the floor into a min-of-N order statistic, pessimistically biased and liable to move
+    /// several dB run-to-run on clip luck. The majority clamp stops that flipping into its own
+    /// mirror image at small N -- a bare "seedCount - 1" would give 1 of 2, a MAX-of-N statistic that
+    /// is optimistically biased for exactly the same reason.</summary>
+    internal static int RequiredUsableSeeds(int seedCount) =>
+        Math.Max(seedCount - 1, (seedCount / 2) + 1);
 
     [RequiresRealNoiseSweepFact]
     public async Task RunRealNoiseSweep_ProducesBaselineReport()
@@ -518,6 +527,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             PercentileUsableDeltaBar: PercentileUsableDeltaBar,
             FilterSpecs: specs,
             NoiseStreams: noiseStreams,
+            NoiseGenerationVersion: corpus is null ? "control-" + RealNoiseStreamBuilder.GenerationVersion : RealNoiseStreamBuilder.GenerationVersion,
             CorpusDirectory: corpus?.Directory,
             CorpusIdentityHash: corpus?.IdentityHash,
             CorpusClipCount: corpus?.Clips.Count,
