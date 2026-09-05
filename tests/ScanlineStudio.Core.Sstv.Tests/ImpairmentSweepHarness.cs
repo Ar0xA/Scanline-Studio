@@ -49,14 +49,14 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// </summary>
 public sealed class ImpairmentSweepHarness
 {
-    private const string FixtureDir = "Fixtures/GoldenVectors";
-    private static readonly JsonSerializerOptions ReportJsonOptions = new() { WriteIndented = true };
+    internal const string FixtureDir = "Fixtures/GoldenVectors";
+    internal static readonly JsonSerializerOptions ReportJsonOptions = new() { WriteIndented = true };
 
     // Real golden-vector source images -- more representative than a fresh gradient, and keeps this
     // harness's mode set intuitively cross-referenceable against GoldenVectorTests. PictureHeight is
     // the same "real content" crop each fixture already uses there (legacy padding/row-doubling
     // quirks some canvases have) -- see GoldenVectorTests.Fixtures for the same table.
-    private static readonly (string ModeId, string SourceBmp, int PictureHeight)[] RealFixtureModes =
+    internal static readonly (string ModeId, string SourceBmp, int PictureHeight)[] RealFixtureModes =
     [
         ("robot-36", "robot36.bmp", 240),
         ("martin-m1", "martin-m1.bmp", 256),
@@ -69,7 +69,7 @@ public sealed class ImpairmentSweepHarness
     ];
 
     // Same sweep as NoiseRobustnessTests -- descending SNR.
-    private static readonly double[] SnrLevelsDb = [40.0, 30.0, 25.0, 20.0, 16.0, 12.0, 9.0, 6.0, 3.0, 0.0];
+    internal static readonly double[] SnrLevelsDb = [40.0, 30.0, 25.0, 20.0, 16.0, 12.0, 9.0, 6.0, 3.0, 0.0];
 
     // Two seeds, not one (§13 addendum) -- averaged per point, not a bigger single sweep, to keep the
     // reported number meaning "typical," not "this exact noise draw."
@@ -136,6 +136,13 @@ public sealed class ImpairmentSweepHarness
 
         var before = ReadReport(beforeDir);
         var after = ReadReport(afterDir);
+
+        // Before any comparison output exists, so a rejected compare cannot leave half a report on
+        // screen. Comparability is a four-member tuple, not just the noise model: two runs of the
+        // SAME model are still not comparable if they used a different calibration band or a
+        // different floor estimator, and raising the seed count is an explicitly planned follow-up.
+        AssertComparable(before, after);
+
         var afterByMode = after.ToDictionary(r => r.ModeId);
 
         var comparisons = new List<string>();
@@ -191,7 +198,33 @@ public sealed class ImpairmentSweepHarness
         Assert.NotEmpty(comparisons);
     }
 
-    private static IReadOnlyList<ImpairmentModeReport> ReadReport(string runDir)
+    /// <summary>Throws unless both runs share every property that makes their numbers mean the same
+    /// thing. A report with no run metadata predates this work and is an <c>awgn-v1</c> run at 44100Hz
+    /// calibrated on the total band with the original 2-seed rule.</summary>
+    internal static void AssertComparable(IReadOnlyList<ImpairmentModeReport> before, IReadOnlyList<ImpairmentModeReport> after)
+    {
+        var beforeRun = DescribeRun(before);
+        var afterRun = DescribeRun(after);
+        if (beforeRun != afterRun)
+        {
+            throw new InvalidOperationException(
+                $"Refusing to compare two impairment runs that are not on the same footing.{Environment.NewLine}" +
+                $"  before: {beforeRun}{Environment.NewLine}" +
+                $"  after:  {afterRun}");
+        }
+    }
+
+    private static string DescribeRun(IReadOnlyList<ImpairmentModeReport> report)
+    {
+        var run = report.Select(r => r.Run).FirstOrDefault(r => r is not null);
+        return run is null
+            ? "awgn-v1 @44100Hz, calibration=total-band, seeds=2"
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"{run.NoiseModel} @{run.SampleRate}Hz, calibration={run.CalibrationBand}, seeds={run.SeedCount}");
+    }
+
+    internal static IReadOnlyList<ImpairmentModeReport> ReadReport(string runDir)
     {
         var json = File.ReadAllText(Path.Combine(runDir, "report.json"));
         return JsonSerializer.Deserialize<List<ImpairmentModeReport>>(json, ReportJsonOptions) ?? [];
@@ -304,7 +337,7 @@ public sealed class ImpairmentSweepHarness
         return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
     }
 
-    private static IImageSource CropToTop(IImageSource image, int pictureHeight)
+    internal static IImageSource CropToTop(IImageSource image, int pictureHeight)
     {
         if (pictureHeight == image.Height)
         {
@@ -324,7 +357,7 @@ public sealed class ImpairmentSweepHarness
         return new ArrayImageSource(image.Width, pictureHeight, pixels);
     }
 
-    private static double MeasureAveragePerChannelDelta(IImageSource expected, IImageSource actual, int height)
+    internal static double MeasureAveragePerChannelDelta(IImageSource expected, IImageSource actual, int height)
     {
         double totalDelta = 0;
         var sampleCount = 0;
@@ -346,7 +379,7 @@ public sealed class ImpairmentSweepHarness
 
     // Identical formula to NoiseRobustnessTests.CreateGradientTestImage, duplicated per this suite's
     // own small-duplication convention -- used only for modes with no real golden-vector source bmp.
-    private static ArrayImageSource CreateGradientTestImage(int width, int height)
+    internal static ArrayImageSource CreateGradientTestImage(int width, int height)
     {
         var pixels = new Rgb24[width * height];
         for (var y = 0; y < height; y++)
@@ -366,7 +399,7 @@ public sealed class ImpairmentSweepHarness
     // Same shape/gradient as CreateGradientTestImage, but R=G=B -- fair for a mono-only encoding
     // (rm8/rm12), where a colored source would always show a large, noise-independent delta from
     // color loss alone.
-    private static ArrayImageSource CreateGrayscaleGradientTestImage(int width, int height)
+    internal static ArrayImageSource CreateGrayscaleGradientTestImage(int width, int height)
     {
         var pixels = new Rgb24[width * height];
         for (var y = 0; y < height; y++)
@@ -381,7 +414,7 @@ public sealed class ImpairmentSweepHarness
         return new ArrayImageSource(width, height, pixels);
     }
 
-    private static string FindRepoRoot()
+    internal static string FindRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "ScanlineStudio.sln")))
@@ -398,9 +431,62 @@ public sealed class ImpairmentSweepHarness
     }
 }
 
-public sealed record ImpairmentPoint(double SnrDb, double Delta, bool DecodedCorrectly);
+/// <summary>One seed's own outcome at one SNR point. Recorded rather than collapsed, because under
+/// heavy-tailed noise a "first failure wins" rule turns the floor into a min-of-N order statistic:
+/// pessimistically biased, high variance, and liable to move several dB run-to-run on clip luck
+/// alone -- which would then be read as a DSP effect.</summary>
+public sealed record ImpairmentSeedOutcome(int Seed, bool DecodedCorrectly, double? Delta, double? PerLineDelta95, bool Usable);
 
-public sealed record ImpairmentModeReport(string ModeId, IReadOnlyList<ImpairmentPoint> Points, double? NoiseFloorDb);
+/// <param name="SnrDb">The nominal sweep-grid index, NOT a measurement. Its physical meaning differs
+/// by noise model -- see <paramref name="TotalBandSnrDb"/> and <paramref name="InBandSnrDb"/>.</param>
+public sealed record ImpairmentPoint(
+    double SnrDb,
+    double Delta,
+    bool DecodedCorrectly,
+    double? TotalBandSnrDb = null,
+    double? InBandSnrDb = null,
+    double? NoiseBandPowerH1Db = null,
+    double? NoiseBandPowerH2Db = null,
+    double? NoiseBandPowerH3Db = null,
+    double? NoiseBandPowerTotalDb = null,
+    double? PerLineDelta95 = null,
+    bool? UsableByPercentile = null,
+    IReadOnlyList<ImpairmentSeedOutcome>? SeedOutcomes = null);
+
+/// <summary>Run-level metadata, repeated on every mode record rather than hoisted to a new JSON root
+/// object -- the root is a bare array in every existing report, and keeping it that way means old
+/// reports still deserialize without sniffing the first token.</summary>
+public sealed record ImpairmentRunMetadata(
+    string NoiseModel,
+    int SampleRate,
+    string CalibrationBand,
+    int SeedCount,
+    string FloorAxis,
+    string FloorRule,
+    double MeanUsableDeltaBar,
+    double PercentileUsableDeltaBar,
+    IReadOnlyList<string> FilterSpecs,
+    IReadOnlyList<string>? NoiseStatistics = null,
+    string? CorpusDirectory = null,
+    string? CorpusIdentityHash = null,
+    int? CorpusClipCount = null,
+    double? CorpusTotalSeconds = null,
+    IReadOnlyList<string>? CorpusCaveats = null,
+    IReadOnlyList<string>? CorpusSkippedFiles = null);
+
+/// <param name="Run">Null on any report written before the real-noise work; such a report is an
+/// <c>awgn-v1</c> run at 44100Hz on the total-band axis.</param>
+public sealed record ImpairmentModeReport(
+    string ModeId,
+    IReadOnlyList<ImpairmentPoint> Points,
+    double? NoiseFloorDb,
+    ImpairmentRunMetadata? Run = null,
+    IReadOnlyList<string>? NoiseStreamFiles = null,
+    IReadOnlyList<double>? NoiseStreamJoinOffsetsSeconds = null,
+    double? NoiseStreamClipRmsSpreadDb = null,
+    bool? NoiseStreamClipRmsSpreadWarning = null,
+    string? NoiseStreamDay = null,
+    string? NoiseStreamReceiver = null);
 
 /// <summary>Explicit opt-in, not directory-presence-gated (unlike <see cref="RequiresOtaRecordingsFactAttribute"/>)
 /// -- this harness is fully synthetic and deliberately slow, so it must never silently run on an
