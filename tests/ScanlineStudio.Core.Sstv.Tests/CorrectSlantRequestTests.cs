@@ -60,7 +60,10 @@ public class CorrectSlantRequestTests
         // would make the SlantPpm assertion below fail for a reason having nothing to do with the fix
         // under test (the exact mistake an earlier version of a sibling test in this file made -- see
         // RequestCorrectSlant_StaleRequestFromAbandonedImage_IsClearedAtTheNextFreshLock's own history).
-        while (offset < samples.Length && (!requested || decoder.RxBufferBaseTransmissionLineForTests == 0))
+        // Buffered-replay fix (§15 item 2): swapped from the old "_rxBufferBaseTransmissionLine == 0"
+        // oracle (now always true regardless of whether replay ran, since the staging buffer is never
+        // truncated/re-based) to ReplayPassCountForTests.
+        while (offset < samples.Length && (!requested || decoder.ReplayPassCountForTests == 0))
         {
             var length = Math.Min(chunkSize, samples.Length - offset);
             decoder.PushSamples(samples.AsMemory(offset, length));
@@ -79,7 +82,7 @@ public class CorrectSlantRequestTests
         Assert.True(requested, "Test setup problem: never staged 16 lines to request against.");
         var nominalLineWidth = mode.LineDurationMs / 1000.0 * declaredSampleRate;
         Assert.NotEqual(nominalLineWidth, decoder.EffectiveSamplesPerLineForTests);
-        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "PerformReplay never ran -- _rxBufferBaseTransmissionLine should have moved off 0 (proof positive, same technique ReplayEngineTests' own automatic-trigger tests use).");
+        Assert.True(decoder.ReplayPassCountForTests > 0, "PerformReplay never ran.");
 
         // Auditor code-review finding, Phase 8c round 1 (blocker, fixed): a manual commit that only
         // writes _effectiveSamplesPerLine, without also syncing the tracker's own rate pair, leaves
@@ -159,7 +162,9 @@ public class CorrectSlantRequestTests
         }
 
         Assert.True(requested, "Test setup problem: never staged 16 lines to request against.");
-        Assert.True(decoder.RxBufferBaseTransmissionLineForTests > 0, "The manual request's own PerformReplay call should not be gated by SuppressAutomaticReplayForTests.");
+        // Buffered-replay fix (§15 item 2): swapped from the old "_rxBufferBaseTransmissionLine" oracle
+        // (now always 0, since the staging buffer is never truncated/re-based) to ReplayPassCountForTests.
+        Assert.True(decoder.ReplayPassCountForTests > 0, "The manual request's own PerformReplay call should not be gated by SuppressAutomaticReplayForTests.");
     }
 
     [Fact]

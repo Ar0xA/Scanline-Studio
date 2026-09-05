@@ -55,19 +55,26 @@ namespace ScanlineStudio.Core.Sstv;
 /// <b>The drain barrier is a flush-sentinel wait on per-stream counters, never
 /// <see cref="ChannelWriter{T}.Complete()"/></b> -- an earlier draft of this design used `Complete()`
 /// for this and was caught in round-2 plan-review: a completed channel is permanently closed, so
-/// reusing it after <see cref="Clear"/> (which fires far more often than once per reception -- every
-/// fresh lock, and the tail of every replay pass) would silently kill capture on the very next line.
+/// reusing it after <see cref="Clear"/> would silently kill capture on the very next line.
 /// `Complete()` is reserved for <see cref="Dispose"/> only, where the channel is genuinely done.
+/// Buffered-replay fix (§15 item 2): <see cref="Clear"/> now fires only at a fresh lock, not at the
+/// tail of every replay pass -- <see cref="AnalogFmSstvDecoder.PerformReplay"/> no longer truncates the
+/// staging buffer at all, so this class's own capture lifetime is now one <see cref="Clear"/> per
+/// reception, matching legacy's own never-truncated <c>WaveStg</c> exactly.
 ///
 /// <b>Reads</b> (<see cref="DemodulatedAt"/>/<see cref="SyncEnvelopeAt"/>): NOT a persistently-open
-/// <c>MemoryMappedFile</c> (round-1 plan-review finding: unsafe here because capture resumes after
-/// every replay pass, and a live memory-mapped view pins the file length on Windows). Instead, the
-/// first read after any new writes drains both channels (the same flush-sentinel barrier as
-/// <see cref="Clear"/>) and bulk-reads each file's current full contents into a pooled snapshot,
-/// invalidated by the next <see cref="TryAppendLine"/> or <see cref="Clear"/> call. This makes
-/// Extended's "no RAM cap" promise a CAPTURE-time guarantee, not a read-time one -- peak read RAM is
-/// proportional to whatever's staged since the last replay pass (accepted tradeoff, round-2
-/// confirmed).
+/// <c>MemoryMappedFile</c> (round-1 plan-review finding: unsafe here because capture can resume after a
+/// read, and a live memory-mapped view pins the file length on Windows). Instead, the first read after
+/// any new writes drains both channels (the same flush-sentinel barrier as <see cref="Clear"/>) and
+/// bulk-reads each file's current full contents into a pooled snapshot, invalidated by the next
+/// <see cref="TryAppendLine"/> or <see cref="Clear"/> call. This makes Extended's "no RAM cap" promise a
+/// CAPTURE-time guarantee, not a read-time one. Buffered-replay fix (§15 item 2), Extended-mode cost
+/// growth: since <see cref="Clear"/> no longer fires between replay passes, peak read RAM (and the I/O
+/// cost of reading/redrawing it) is now proportional to the WHOLE reception staged so far, not "since
+/// the last replay pass" as an earlier version of this comment claimed -- each pass costs strictly more
+/// than the last as the image grows, a real, accepted, legacy-faithful tradeoff (legacy's own
+/// `UpdateSampFreq` re-decodes its whole `m_StgBuf` on every pass too, `Main.cpp:5603-5612`) rather than
+/// a regression unique to this port.
 /// </summary>
 internal sealed partial class RxDiskLineStagingBuffer : IRxLineStagingBuffer
 {

@@ -766,11 +766,13 @@ public class RestartableSstvDecoderTests
     {
         // RX buffer subsystem Phase 8c: proves RequestCorrectSlant() reaches the real inner
         // AnalogFmSstvDecoder through the wrapper, not just that the wrapper method compiles. Uses the
-        // new InnerRxBufferBaseTransmissionLineForTests passthrough (added after auditor code-review
-        // round 1 flagged the original LineDecoded-count discriminator as weaker than it needed to be
-        // -- it would also pass if the decoder restarted mid-run and decoded extra lines with no
-        // replay at all) for the SAME proof-positive precision the direct AnalogFmSstvDecoder tests
-        // use: that field only ever moves off 0 inside PerformReplay's own tail.
+        // InnerReplayPassCountForTests passthrough (added after auditor code-review round 1 flagged the
+        // original LineDecoded-count discriminator as weaker than it needed to be -- it would also pass
+        // if the decoder restarted mid-run and decoded extra lines with no replay at all; buffered-replay
+        // fix, §15 item 2, retired the original InnerRxBufferBaseTransmissionLineForTests oracle this
+        // used, since that field stays 0 forever now) for the SAME proof-positive precision the direct
+        // AnalogFmSstvDecoder tests use: this counter only ever increments inside PerformReplay's own
+        // tail, on a genuinely completed pass.
         //
         // autoSlantEnabled: false (same technique as AutoSlantEnabledFalse_ActuallyPropagates... above)
         // means the CONTINUOUS automatic tracker never commits on its own, so any replay observed here
@@ -814,7 +816,7 @@ public class RestartableSstvDecoderTests
         }
 
         Assert.True(requested, "Test setup problem: never decoded 16 lines to request against.");
-        Assert.True(decoder.InnerRxBufferBaseTransmissionLineForTests > 0, "PerformReplay never ran on the live inner decoder -- RequestCorrectSlant() may not have reached it.");
+        Assert.True(decoder.InnerReplayPassCountForTests > 0, "PerformReplay never ran on the live inner decoder -- RequestCorrectSlant() may not have reached it.");
     }
 
     [Fact]
