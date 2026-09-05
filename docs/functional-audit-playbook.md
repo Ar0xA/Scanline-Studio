@@ -1,6 +1,6 @@
 # Functional Bug Sweep Playbook
 
-Run this when you want an exhaustive, disciplined `auditor` pass across production
+Run this when you want an exhaustive, disciplined `yoniq-auditor` pass across production
 code hunting **functional/C# correctness bugs** — not legacy parity. Complementary
 to [`docs/audit-playbook.md`](audit-playbook.md), not a replacement: that one verifies
 the ported chain matches YONIQ end-to-end against golden vectors; this one hunts
@@ -67,14 +67,14 @@ the trimmed list, not the raw candidate count above.
 
 ### Phase 1 — Rounds
 
-For each real-logic file (+ paired tests), fan out to the `auditor` agent in its
-own isolated context. Restate the ADHD scope rule in every payload — auditor.md's
+For each real-logic file (+ paired tests), fan out to the `yoniq-auditor` agent in its
+own isolated context. Restate the ADHD scope rule in every payload — yoniq-auditor.md's
 own system prompt already carries it, but the fan-out prompt itself needs the
-scope boundary for THIS specific file, same as every other auditor delegation in
+scope boundary for THIS specific file, same as every other yoniq-auditor delegation in
 this project.
 
-**Auditor's task per round:**
-1. The existing 8-item functional/C# checklist (`auditor.md`) against the
+**Yoniq-auditor's task per round:**
+1. The existing 8-item functional/C# checklist (`yoniq-auditor.md`) against the
    production file.
 2. **Test-integrity check** against the paired test file(s): does each test
    actually verify the claimed behavior? Would it fail if the behavior broke?
@@ -99,8 +99,8 @@ agent re-checking its own prior "looks fine" tends to anchor on it.
 share a real cross-file invariant (a ring buffer's SPSC contract spanning
 producer/consumer files, a P/Invoke layer underlying several managed wrappers,
 sibling decoders that must agree on a shared index convention), auditing each
-file in isolation is how the cross-file break gets missed. Give the auditor the
-whole coupled set in one round; only split once the auditor itself confirms the
+file in isolation is how the cross-file break gets missed. Give the yoniq-auditor the
+whole coupled set in one round; only split once the yoniq-auditor itself confirms the
 files are genuinely independent.
 
 **Files too large for one round get chunked, not skipped or force-fit.**
@@ -110,7 +110,7 @@ more work; that's exactly backwards from risk-based tiering.
 
 ### Chunking a mega-file
 
-1. Ask the `auditor` itself to propose chunk boundaries (method-group/subsystem,
+1. Ask the `yoniq-auditor` itself to propose chunk boundaries (method-group/subsystem,
    not arbitrary line ranges) as a planning task — it can read the file's real
    structure faster and more accurately than a heuristic can guess it.
 2. Chunks that mutate the same field cluster stay on **one sequential agent
@@ -150,7 +150,7 @@ test-integrity notes. STOP for review before starting the next tier.
 
 - Different files run in **parallel** (independent). Rounds *within* one file are
   sequential (round 2 needs round 1's report + the fix already applied).
-- Fixes are applied by the orchestrating session, not the auditor — auditor stays
+- Fixes are applied by the orchestrating session, not the yoniq-auditor — yoniq-auditor stays
   read-only, matching its existing contract.
 - Checkpoint **per tier**, not per file.
 

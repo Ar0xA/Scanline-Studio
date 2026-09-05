@@ -2,7 +2,7 @@
 
 Run this at **workstream boundaries** (e.g. DSP engine -> UI, CAT layer -> codec
 modes) or **before a release tag** — not routinely. For single-function checks, just
-say *"use the auditor agent to check this part"* instead.
+say *"use the yoniq-auditor agent to check this part"* instead.
 
 **Why it's separate from per-function audits:** per-function checks prove each brick
 is sound; this proves the wall stands. Each piece can pass its own round-trip while
@@ -42,7 +42,7 @@ PHASE 1 — PLAN (no auditing yet)
 - Output this as a table and wait for my go.
 
 PHASE 2 — PER-UNIT FAN-OUT
-- For each unit, delegate to the `auditor` agent in its own isolated context with
+- For each unit, delegate to the `yoniq-auditor` agent in its own isolated context with
   only the minimal legacy + candidate snippets. Restate the ADHD scope rule in each
   payload. Collect each verdict; do not fix anything yet — just aggregate.
 - Return a consolidated findings table: unit | verdict | blockers | risks.

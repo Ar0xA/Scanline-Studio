@@ -1,4 +1,4 @@
-# Auditor handoff template
+# Yoniq-auditor handoff template
 
 Per-function/port audit delegation template, referenced from `CLAUDE.md` §7. Split out to keep
 `CLAUDE.md` under its own line-count target — the content is unchanged, only the location moved.
@@ -26,7 +26,7 @@ Start directly with the XML, no prose:
 </audit_task>
 ```
 
-- **Checklist:** don't restate it — `.claude/agents/auditor.md`'s own system prompt already carries
+- **Checklist:** don't restate it — `~/.claude/agents/yoniq-auditor.md`'s own system prompt already carries
   the full checklist (functional equivalence, golden-vector parity, encoding, binary-as-bytes,
   numeric fidelity, edge cases, concurrency, boundary hygiene) and is loaded automatically on every
   invocation. A second copy here already drifted from it once; one source of truth now.
