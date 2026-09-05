@@ -588,3 +588,201 @@ root-caused; AFC drift is the more likely remaining candidate now that the settl
 above rules out per-pixel estimation as a fix). This is a real legacy feature to PORT, not a novel
 technique to invent and fight the demodulator's own physics -- a better fit for this project's
 port-first strength. See the plan file for the next investigation.~~
+
+## 15. Remaining legacy-parity gaps (2026-09-05 exhaustive sweep)
+
+After §5.3 shipped, a two-pass sweep re-verified every gap-shaped claim in this document (§5.4-§5.8)
+and in the codebase's own comments against CURRENT source -- not taken at face value, per this
+session's own repeated lesson (4 stale claims already caught this way). All 15 items below are
+confirmed real and open as of this sweep. None have been ranked by likely reception/decode-quality
+impact yet -- see the follow-up note at the end of this section.
+
+### From the doc's own §5.4-§5.8 (re-verified, all still real)
+
+1. **§5.7 -- AVT training runs the wrong bandpass filter.** `AnalogFmSstvDecoder.cs:1165-1170`: legacy
+   selects H1 whenever `m_Sync || m_SyncMode >= 3` (true throughout AVT training); this port's
+   `BandpassFilteredSampleAt` gates purely on `_mode is not null`, running H2 (search/wide) for the
+   entire AVT training window instead. Same H1/H2 gate the H3 work touched. Full DSP review cadence.
+2. **§5.2 -- Buffered replay's second refresh trigger never ported.** `AnalogFmSstvDecoder.cs:592-609`:
+   only legacy's first `m_SyncAccuracyN` bit is implemented. **STATUS (2026-09-05): SHIPPED.**
+   `PerformReplay`'s own coupled defects (forward-cursor row-sacrifice + buffer-truncation blocking a
+   later correction from fixing rows an earlier one already drew) are both fixed -- backward snap
+   replaces the forward jump, and the staging buffer is never truncated anymore, matching legacy's own
+   never-truncated `m_StgBuf` exactly. 4 rounds of plan-review + 2 rounds of code-review, both by
+   `yoniq-auditor`, final verdict READY FOR PRODUCTION: YES. Verification: full test suite green, a
+   43-mode impairment sweep (zero regressions, 20 genuine improvements, mostly Robot 8/12), and a real
+   21-file OTA recording comparison (no new failures). Full design history at
+   `~/.claude/plans/robust-giggling-codd.md`. The second `m_SyncAccuracyN` bit itself (a separate,
+   still-unported legacy trigger condition, not this item's own row-loss/truncation defects) remains
+   open -- see that file's own history for why it was never this piece's scope.
+3. **§5.5 -- Sync-bypass uses a midpoint approximation, not legacy's staged `m_wBgn` alignment.**
+   `SstvModeRegistry.cs:925-936`: "this port doesn't have [`m_wBgn`]" at all -- a real architectural
+   addition, the biggest lift on this list.
+4. **§5.4 -- VIS header commits at a fixed origin for the 0-185ms delta band.**
+   `AnalogFmSstvDecoder.cs:5572-5608`: explicitly marked "OPEN for 0-185ms" in its own comment, already
+   through 9 prior audit rounds. Bounded, mode-dependent (fold count varies by mode). Moderate scope.
+5. **§5.6 -- VIS-bit-phase freeze semantics diverge from legacy (`m_sint1`).**
+   `AnalogFmSstvDecoder.cs:4395-4406`/`:4448-4454`: a residual left over after a related fix (S12) that
+   closed `m_sint2`/`m_sint3` but not `m_sint1`. Evidence-gated by the doc's own priority call --
+   "unless a capture reproduces it."
+6. **§5.8 -- No general demodulator calibration hook or optional differentiator.** Confirmed absent
+   from `PixelSampleReader.cs`/`YCbCr.cs`. Small, isolated, low priority -- optional compatibility
+   feature, not a weak-signal win.
+
+### From `spec/14-roadmap.md`, not in this document at all
+
+7. **Roadmap item 6 -- mid-image narrow-restart reads stale demodulator-cache config.**
+   `BandpassFilteredSampleAt`/`DemodulatedFrequencyAt` are forward-fill caches with no snapshot/restore
+   -- a mid-image restart into a narrow mode can read ~1 line computed under the OLD mode's filter
+   config. Real, port-specific (legacy is never "ahead" of real time this way). Needs a real
+   rewind/checkpoint mechanism for two stateful filter classes -- architectural, not mechanical.
+8. **Roadmap item 10 -- `PixelSampleReader`'s silent clamp vs. `Rel()`'s throw.** Same logical
+   condition ("read behind the trim watermark") handled two different ways in two places. Small
+   mechanical fix, but explicitly flagged as not worth doing reactively without a concrete failure
+   driving it.
+
+### New from the exhaustive comment sweep, not previously tracked anywhere
+
+9. **`AnalogFmSstvDecoder.cs:472-482`** -- a rejected line followed by a later-accepted *shorter* line
+   can leave the RX staging buffer with a physical discontinuity nothing detects. Same defect class as
+   item 10 below.
+10. **`AnalogFmSstvDecoder.cs:2977-2990`** -- a manual-ReSync-driven mid-row skip leaves a mid-buffer
+    hole in `RxLineStagingBuffer` that a later replay reads straight across. "Currently unreachable in
+    practice" given today's trigger conditions, per its own comment, but not proven impossible.
+11. **`AnalogFmSstvDecoder.cs:4352-4356`** -- the merged sync-bypass tracker loop has no equivalent of
+    legacy's case-0-only gating, so it can act on samples legacy's own state machine would have frozen.
+    "Low severity... but a real, if narrow, structural difference."
+12. **`RxLineStagingBuffer.cs:20-22`** -- Manual ReSync can push the anchor to a negative pre-origin
+    index; the buffer throws instead of reserving margin. Its own comment names a since-shipped phase
+    (replay) as the fix owner, but no test or later comment closes this specific sub-case -- re-verify
+    before trusting it's still open, given this session's own pattern of stale "still open" claims.
+13. **`AnalogFmSstvDecoder.cs:915-925`** -- with Auto Stop/Auto Sync/Auto Slant now independently
+    live-toggleable, "all three off" is a newly-reachable state where legacy wouldn't accumulate a
+    tracking counter but this port still does. Already evaluated once and deferred ("the ripple... was
+    not measured as safe") -- a deliberate, already-assessed deferral, borderline real-gap/closed-
+    decision.
+14. **`AnalogFmSstvDecoder.cs:7355-7367`** -- post-replay, the sync-envelope detector resumes with a
+    ~3-10ms discontinuous input; bounded, "no concrete failure could be constructed," already
+    deliberately deprioritized.
+15. **The `m_fskdecode` Stop() partial-reset asymmetry** (`sstv.cpp:1771-1780`) -- explicitly deferred
+    as part of this session's own just-shipped §5.3 work (`AnalogFmSstvDecoder.cs:3926`), re-confirmed
+    still open by this sweep, not silently forgotten.
+
+**Update (2026-09-05): Fable verified all 15 and ranked the survivors by likely reception/decode
+impact.** Four more turned out stale (8th-11th stale claim caught this session total -- re-verify
+every "still open" claim against current source, this keeps happening):
+
+- **Item 3 (§5.5, `m_wBgn`) -- effectively CLOSED, the registry's own comment is stale.** Legacy's
+  `m_wBgn` is just a flag gating a fold-argmax-subtract-OFP computation (`Main.cpp:3751-3799`) that
+  this port already does for every non-AVT commit via `TryResolveSyncAnchorCorrection`
+  (`AnalogFmSstvDecoder.cs:5041-5189`). The midpoint this doc worried about is only the coarse anchor
+  the fold re-phases -- the real staged mechanism already exists.
+- **Item 9 -- unreachable.** `RxLineStagingBuffer.TryAppendLine` latches `_capacityReached` on first
+  rejection; every later line is also rejected. "Rejected, then a later shorter line accepted" can't
+  happen.
+- **Item 12 -- stale pre-replay-shipping doc comment.** This port's ReSync is forward-skip only;
+  legacy's negative-index case corresponds to `PerformReplay`'s `origin`, which already handles
+  negatives (`feedFrom = Math.Max(0, -origin)`) and has test coverage. No live path indexes negatively.
+- **Item 10 -- confirmed unreachable, not just claimed.** Both trigger sites are gated on
+  `!_slantCorrectionsDisabledForRestOfImage`, which `ApplySyncCorrection` sets. Only a new,
+  not-yet-built UI trigger would reopen this.
+
+**Ranked, most impactful first (reception/decode-quality impact, not ease-of-build):**
+
+1. **Item 2 (buffered replay drops a row per pass)** -- the standout. Legacy re-decodes its whole
+   buffer on a slant correction and loses nothing; this port's `PerformReplay` leaves the resume line
+   undrawn and truncates staging, so later passes can only correct rows staged since the previous
+   pass. The current real OTA baseline (`ota-recordings/baseline-reports/20260904T125437Z/`) shows 19
+   of 21 real locks measured a nonzero final slant correction -- meaning nearly every real capture
+   triggers at least one replay, and therefore at least one stale/undrawn row TODAY, on otherwise
+   good-signal decodes. Unlike §5.1/§5.3 (noise-floor gains at the margin), this is a visible per-image
+   artifact on typical decodes -- plausibly touches MORE real pictures than either shipped item.
+   Verifiable right now by counting affected rows in those 19 baseline BMPs before writing any code.
+2. **Item 4 (VIS fixed-origin, 0-185ms band)** -- medium-low; mostly a WAV-re-decode/short-lead-in
+   scenario, likely invisible in ordinary live reception (the fixed window almost always exhausts
+   first). Bounded to 1-2 lines of shift.
+3. **Items 5+11 (sync-bypass trackers not frozen during VIS-bit decode)** -- low probability, high
+   consequence (a wrong mode lock = a garbage picture if it ever fires), but needs a specific interval
+   coincidence within a ~600ms window that no capture has shown yet. Worth a targeted noise-sweep test
+   (VIS under heavy noise with the bypass trackers armed) BEFORE writing any fix code -- if nothing
+   shows up, leave it.
+4. **Item 7 (mid-image narrow-restart stale filter cache)** -- low; needs an MN/MC transmission
+   interrupting an in-progress wide-mode image, affects one line, and the architectural fix
+   (filter-state checkpoint/rewind) is disproportionate to the payoff.
+5. **Item 1 (AVT H1/H2)** -- very low; AVT is essentially extinct on the air today.
+6. **Items 14, 15** -- very low; both already bounded/deliberately deprioritized, no realistic trigger.
+7. **Items 8, 13, 6** -- no decode effect (8, 13) or not a reception win at all (6) -- not worth
+   building.
+
+**Recommendation: item 2 next.** It's the only item with a directly measurable real-world footprint
+using data already on hand, and unlike the two DSP experiments already run this session, its effect
+size can be estimated from the existing OTA baseline BEFORE implementation, not just after.
+**STATUS (2026-09-05): item 2 SHIPPED** (see item 2's own status note above). Resume order for the
+remaining items, per the ranking above: item 5/11 (sync-bypass freeze gap) next, then item 4 (VIS
+fixed-origin band).
+
+## 16. Post-2015 techniques worth considering (2026-09-05, independent model brainstorm)
+
+Everything in this document up to this point is a direct port of, or close variation on, 1990s/2000s
+DSP technique (Hilbert discriminator, IIR tank-resonator envelope detectors, classical AFC, zero-
+crossing counting, max-of-two peak-picking). Asked specifically for genuinely NEWER (post-~2015)
+techniques from signal processing, estimation theory, robust statistics, SDR practice, and ML that
+could plausibly help THIS problem (noisy narrowband analog-FM audio -> image), respecting this
+project's own hard rule: never present invented/hallucinated pixel content as if it were received data.
+
+**Framing**: at typical pixel dwell (~5 samples/pixel for Martin M1 at 11025Hz), a windowed-FFT/
+Goertzel estimator is already close to the Cramer-Rao bound for a single-tone frequency estimate --
+there are really only two places left to gain: better behavior BELOW the noise threshold (where FM
+clicks dominate), and borrowing statistical strength across pixels via a prior, which is exactly where
+the anti-hallucination rule applies.
+
+Ranked, most promising first:
+
+1. **Outlier-robust Kalman/RTS smoother along the scanline** (heavy-tailed/Student-t measurement
+   noise, high process noise so it doesn't fight real edges) -- the principled modern successor to
+   max-of-two peak-picking. Sidesteps the settling-time problem that killed §6.2's plain averaging
+   entirely, since it never widens the per-pixel window -- an FM click is down-weighted as a
+   statistical outlier, not blended into a wider average. Cheap (scalar state), real checkable
+   mechanism. Best candidate.
+2. **Kalman-PLL with SNR-driven loop bandwidth** (modern GNSS/SDR tracking practice, not a 1990s
+   analog-style PLL) -- adapts loop bandwidth from a noise variance measured off the sync/porch
+   segments each line (free, no new estimation needed). Threshold-extension literature suggests 2-4dB
+   gain in exactly the SNR regime real HF pictures degrade in. Real theoretical upside; real risk of
+   acquisition lag at the start of each line, needs direct measurement before trusting it.
+3. **Time-frequency ridge extraction with a continuity penalty** (synchrosqueezing/reassignment,
+   Oberlin 2015; a Viterbi-style penalized ridge over the spectrogram) -- genuinely post-2015, but the
+   underlying window is the same time-bandwidth tradeoff as averaging; gains come mostly from the
+   continuity prior, which item 1 already captures more cheaply. Only worth benchmarking if item 1
+   disappoints.
+4. **A learned false-lock classifier** (small model, ~20 hand-picked features: sync-energy ratio,
+   porch energy, period consistency, AFC residual, VIS soft margins) -- fully within the
+   anti-hallucination rule, since it only makes a better DECISION from real evidence, never invents
+   pixel content. Directly targets the one remaining squelch-proof false-lock case
+   (`project_false_lock_investigation_parked.md`). Low effort, low compute, trainable on the existing
+   8 real captures plus synthetic impairments.
+5. **Real recorded HF noise in the test harness** (from WebSDR/KiwiSDR silence, not synthetic AWGN) --
+   real atmospheric/impulsive noise is not Gaussian, so a pure-AWGN noise sweep likely overstates real
+   discriminator performance. Watterson/ITU-R F.1487 (already noted, not built) is still the right
+   fading model for a 2.4kHz channel -- nothing newer is needed there. Zero decoder-code risk, cheapest
+   evidence-per-hour of anything on this list -- a measurement-infrastructure improvement, not a DSP
+   change, same shape as this session's own harness-fix work.
+6. **Two-receiver diversity combining of frequency estimates**, weighted by item 2's own per-line
+   noise estimate (extends this doc's own already-listed §9.4) -- real for web-SDR users specifically,
+   low priority otherwise.
+
+**Explicitly NOT recommended, with reasons** (novelty alone isn't a reason to build something --
+matches this session's own evidence-first standard): MUSIC/ESPRIT/compressive sensing solve a
+multi-tone resolution problem this project doesn't have (one dominant tone, few samples) and would
+cost more than Goertzel peak-picking for no real gain here. Particle filters are overkill for a
+near-Gaussian scalar state that item 1's Kalman/RTS smoother already covers. Neural FM demodulators
+only outperform classical estimators by learning an image prior below threshold -- i.e. they become
+the next item. Self-supervised denoising (Noise2Noise/Noise2Self-style) on the demodulated stream is
+STILL a hallucination risk even though it's "self-supervised" -- a CNN's receptive field is itself a
+learned prior over what images look like, not a direct measurement, and violates this project's own
+rule the same way full ML image restoration already correctly does. A learned SNR estimator is
+unnecessary -- the sync/porch tones already give this analytically, for free.
+
+Suggested order per the reviewing model: item 5 (pure measurement, zero code risk) first, then item 1,
+then item 4, then item 2 last (biggest theoretical upside, but the most acquisition-lag risk to
+de-risk first). The user chose to prioritize the legacy-parity gap survey's own item 2 (buffered
+replay row-drop, §15) ahead of any of these -- see the plan file for that work in progress.
