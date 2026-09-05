@@ -7,6 +7,17 @@ public sealed class RealNoiseFloorRuleTests
 {
     private const int Required = 4;
 
+    [Theory]
+    [InlineData(2, 2)]   // NOT 1 of 2: that would be a max-of-N statistic, the mirror of the bias
+    [InlineData(3, 2)]   //             this rule exists to remove.
+    [InlineData(4, 3)]
+    [InlineData(5, 4)]   // the shipped default
+    [InlineData(9, 8)]
+    public void RequiredUsableSeeds_ToleratesOne_ButNeverDropsBelowAMajority(int seedCount, int expected)
+    {
+        Assert.Equal(expected, RealNoiseImpairmentSweepHarness.RequiredUsableSeeds(seedCount));
+    }
+
     [Fact]
     public void Floor_IsTheLowestSnrMeetingTheBar_WhenEveryPointAboveAlsoMeetsIt()
     {

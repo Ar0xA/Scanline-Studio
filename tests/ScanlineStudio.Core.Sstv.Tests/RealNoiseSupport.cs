@@ -100,6 +100,7 @@ public static class FirFilter
 
     public static float[] Apply(float[] samples, double[] coefficients)
     {
+        ValidateTaps(coefficients.Length);
         var taps = coefficients.Length;
         var delay = (taps - 1) / 2;
         var output = new float[samples.Length];
@@ -165,6 +166,9 @@ public static class FirFilter
 
     public static double BandRms(float[] samples, double[] coefficients)
     {
+        // Odd taps is a MEMORY-SAFETY precondition here, not just a linear-phase preference: the
+        // unguarded inner loop below is in range only because taps-1 == 2*delay exactly.
+        ValidateTaps(coefficients.Length);
         var taps = coefficients.Length;
         var delay = (taps - 1) / 2;
         var first = delay;
@@ -195,15 +199,17 @@ public static class FirFilter
         return Math.Sqrt(sumSquares / (last - first));
     }
 
-    public static double Rms(IReadOnlyList<float> samples)
+    public static double Rms(IReadOnlyList<float> samples) => Rms(ToArray(samples));
+
+    public static double Rms(float[] samples)
     {
         double sumSquares = 0;
-        for (var i = 0; i < samples.Count; i++)
+        for (var i = 0; i < samples.Length; i++)
         {
             sumSquares += (double)samples[i] * samples[i];
         }
 
-        return Math.Sqrt(sumSquares / samples.Count);
+        return Math.Sqrt(sumSquares / samples.Length);
     }
 
     private static void ValidateTaps(int taps)
@@ -226,7 +232,7 @@ public static class PolyphaseResampler
     public const int UpFactor = 147;
     public const int DownFactor = 160;
 
-    // Per-phase tap count. 32 gives a prototype of 4704 taps at the 7.056MHz intermediate rate,
+    // Per-phase tap count. 32 gives a prototype of 4705 taps at the 7.056MHz intermediate rate,
     // whose transition band is far narrower than the 3.5kHz-limited corpus needs.
     private const int TapsPerPhase = 32;
 

@@ -124,10 +124,56 @@ public sealed class ImpairmentReportSchemaTests
         Assert.True(double.IsNaN(round[0].Points[0].Delta));
     }
 
+    [Fact]
+    public void CompareGuard_RejectsAChangedNoiseGenerationVersion()
+    {
+        // The resampler trim correction shifted every stream by 15 samples while leaving every other
+        // recorded property identical, so without this the guard would diff across it.
+        var before = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, generation: "v1");
+        var after = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, generation: "v2-warmup-trim");
+
+        Assert.Throws<InvalidOperationException>(() => ImpairmentSweepHarness.AssertComparable(before, after));
+    }
+
+    [Fact]
+    public void CompareGuard_RejectsADifferentCorpus()
+    {
+        // The identity hash exists so a run against a changed or remounted drive is detectable. The
+        // guard is the only place that can act on it.
+        var before = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, corpusHash: "E9D66EDCED7A696E");
+        var after = Report("paderborn-real-v1", 44100, "H2 400-2500Hz", 5, corpusHash: "0000000000000000");
+
+        Assert.Throws<InvalidOperationException>(() => ImpairmentSweepHarness.AssertComparable(before, after));
+    }
+
+    [Fact]
+    public void AReportCarryingRetiredFields_StillDeserializes()
+    {
+        // The two reports already on disk carry the per-mode NoiseStream* members that were replaced
+        // by per-seed provenance. Reading them must not throw.
+        const string retired = """
+            [
+              {
+                "ModeId": "robot-36",
+                "Points": [],
+                "NoiseFloorDb": 16.0,
+                "NoiseStreamFiles": [ "a.wav" ],
+                "NoiseStreamClipRmsSpreadDb": 1.9,
+                "NoiseStreamDay": "19_12_04"
+              }
+            ]
+            """;
+
+        var report = JsonSerializer.Deserialize<List<ImpairmentModeReport>>(retired, ImpairmentSweepHarness.ReportJsonOptions)!;
+
+        Assert.Equal("robot-36", report[0].ModeId);
+        Assert.Equal(16.0, report[0].NoiseFloorDb);
+    }
+
     private static IReadOnlyList<ImpairmentModeReport> Report(
         string noiseModel, int sampleRate, string calibrationBand, int seedCount,
         double meanBar = 30.0, string floorRule = "test",
-        IReadOnlyList<string>? filterSpecs = null)
+        IReadOnlyList<string>? filterSpecs = null, string? generation = null, string? corpusHash = null)
     {
         var run = new ImpairmentRunMetadata(
             noiseModel, sampleRate, calibrationBand, seedCount,
@@ -135,7 +181,9 @@ public sealed class ImpairmentReportSchemaTests
             FloorRule: floorRule,
             MeanUsableDeltaBar: meanBar,
             PercentileUsableDeltaBar: 60.0,
-            FilterSpecs: filterSpecs ?? []);
+            FilterSpecs: filterSpecs ?? [],
+            NoiseGenerationVersion: generation,
+            CorpusIdentityHash: corpusHash);
 
         return [new ImpairmentModeReport("robot-36", [], NoiseFloorDb: null, Run: run)];
     }

@@ -32,6 +32,12 @@ public static class RealNoiseStreamBuilder
 {
     public const int OutputSampleRate = 44100;
 
+    /// <summary>Bump this whenever a change alters the SAMPLES a given seed produces. It goes into the
+    /// comparability footing, so two runs across such a change refuse to be diffed. The resampler trim
+    /// correction is exactly the case that motivated it: it shifted every stream by 15 samples while
+    /// leaving every other recorded property identical.</summary>
+    public const string GenerationVersion = "v2-warmup-trim";
+
     // Anti-click only, NOT level-matching. A raw step is a synthetic impulse and would corrupt the
     // impulsive statistic this sweep exists to measure; a real 1.2-2.4dB level step across the join
     // is left intact, because it is real HF behavior.
