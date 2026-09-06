@@ -267,7 +267,8 @@
         <h3>Input chain</h3>
         <ul>
           <li><strong><a class="term" href="#glossary-bpf">BPF</a></strong> controls RX band-pass sharpness. Wide is the recommended starting point; sharper filters reject adjacent interference but tolerate less drift. Note that the option named <strong>Normal</strong> switches the filter off entirely, despite the name — see <a href="#decode-options">Decode options</a>, which documents the same setting reached from Options → Decode. A mid-picture change waits until that reception ends.</li>
-          <li><strong>Notch</strong> suppresses a narrow interfering tone. Click the spectrum trace to choose its frequency, then switch it on.</li>
+          <li><strong>Notch</strong> suppresses a narrow interfering tone. Click the spectrum trace to choose its frequency, then switch it on. It is off by default, and it is not remembered between sessions.</li>
+          <li>Leave the notch off unless you can actually see a carrier in the spectrum. It is a narrow filter placed inside the signal band, so it removes picture along with the interference. That trade is worth making against a real carrier and is a pure loss without one. Switch it off again once the interference goes away.</li>
           <li><strong><a class="term" href="#glossary-agc">AGC</a> gain</strong>, <strong>buffer</strong>, <strong><a class="term" href="#glossary-xrun">XRUN</a></strong>, and <strong>clipping</strong> help diagnose the audio path.</li>
         </ul>
 
@@ -301,7 +302,7 @@
           </table>
         </div>
 
-        <p>Clicking the spectrum selects the RX notch frequency. The notch affects the decoder input; the plotted spectrum and waterfall do not visually show the filtered result.</p>
+        <p>Clicking the spectrum selects the RX notch frequency. The notch affects the decoder input; the plotted spectrum and waterfall do not visually show the filtered result. Use <strong>Peak hold</strong> to tell a carrier from picture content: a carrier holds one frequency, picture content does not.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
