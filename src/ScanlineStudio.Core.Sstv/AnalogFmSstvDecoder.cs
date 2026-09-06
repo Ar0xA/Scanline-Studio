@@ -923,9 +923,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private readonly List<double> _bandpassFilteredSamples = [];
     private int _bandpassFilteredProcessedUpTo;
 
-    // Settings-driven toggle, real but not a legacy port -- legacy's own AFC (sstv.cpp:1471) is
-    // unconditionally always-on with no user-facing off switch of its own; the only "off" case that
-    // exists in legacy is AVT mode's own exclusion (see InitializeAfc below), which this field does
+    // Port of legacy's user-toggleable m_afc (default 1, sstv.cpp:1471), driven by the "AFC" speed
+    // button in the main window's "DSP" group box (Main.dfm's GB1/SBAFC, Main.cpp:1917/6011-6013).
+    // Separate from AVT mode's own AFC exclusion (see InitializeAfc below), which this field does
     // NOT replace -- AVT stays excluded regardless of this flag's value. Restart-only: this decoder
     // is a DI singleton constructed once (Program.cs), and this field is readonly -- changing the
     // setting takes effect on the next app launch, not live.
@@ -1058,7 +1058,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// behavior -- see <see cref="_rxBufferMode"/>'s own doc comment for the current read sites.
     /// Restart-only, same reasoning/limitation as demodType above (see that parameter's own doc
     /// comment).</param>
-    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
+    public AnalogFmSstvDecoder(int sampleRate = 11025, bool afcEnabled = true, bool syncRestartEnabled = true, bool autoSyncEnabled = true, bool autoStopEnabled = false, bool autoSlantEnabled = true, int senseLevel = 1, DemodType demodType = DemodType.Hilbert, RxBpfPreset rxBpfPreset = RxBpfPreset.Wide, RxBufferMode rxBufferMode = RxBufferMode.On, double pllVcoGain = 1.0, int pllLoopOrder = 1, double pllLoopCutoffHz = 1500, int pllOutputOrder = 3, double pllOutputCutoffHz = 900, ZeroCrossingSmoothingMode zeroCrossingSmoothingMode = ZeroCrossingSmoothingMode.Iir, int zeroCrossingOutputOrder = 3, double zeroCrossingOutputCutoffHz = 900, double zeroCrossingSmoothingFrequencyHz = 2200, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null, double hilbertOutputCutoffHz = HilbertFmDemodulator.DefaultOutputCutoffHz)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 1);
 
@@ -1093,7 +1093,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _zeroCrossingOutputOrder = zeroCrossingOutputOrder;
         _zeroCrossingOutputCutoffHz = zeroCrossingOutputCutoffHz;
         _zeroCrossingSmoothingFrequencyHz = zeroCrossingSmoothingFrequencyHz;
-        _demodulator = new HilbertFmDemodulator(sampleRate);
+        _demodulator = new HilbertFmDemodulator(sampleRate, hilbertOutputCutoffHz);
         _pllDemodulator = new PllFmDemodulator(sampleRate, DemodulatorLowHz, DemodulatorHighHz, pllVcoGain, pllLoopOrder, pllLoopCutoffHz, pllOutputOrder, pllOutputCutoffHz);
         _zeroCrossingDemodulator = new ZeroCrossingFrequencyCounter(sampleRate, zeroCrossingSmoothingMode, zeroCrossingOutputOrder, zeroCrossingOutputCutoffHz, zeroCrossingSmoothingFrequencyHz);
         _afcZeroCrossingCounter = new ZeroCrossingFrequencyCounter(sampleRate, zeroCrossingSmoothingMode, zeroCrossingOutputOrder, zeroCrossingOutputCutoffHz, zeroCrossingSmoothingFrequencyHz);
