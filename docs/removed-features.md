@@ -2,6 +2,11 @@
 
 Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry here naming the legacy files, the replacement (if any), and the user-visible impact. "Superseded" claims must state which users are actually covered — this document exists so that claim is checked, not assumed.
 
+**Scope of the two `CLMS` entries below.** They cover `Do` (line enhancer) and `DoN` (auto-notch)
+only. `CLMS::Sig` (`fir.cpp:217-236`), the LMS-predictor signal-level measurement behind legacy's
+repeater squelch, is a separate method and is NOT dropped — it is still a live candidate, see
+[[spec/17-rx-telemetry-feasibility]].
+
 ## `CLMS::DoN` — LMS auto-notch ("ANF" / "ANS")
 
 **Not ported. Decided 2026-09-06 on measurement, not judgment.**

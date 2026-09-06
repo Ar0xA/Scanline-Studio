@@ -1373,7 +1373,9 @@ this; the items below are a complete inventory, not a priority push):
 
 **RX/TX quality-of-life** (excludes the already-deliberately-dropped DSP tunables — PLL VCO
 gain, zero-crossing params, RxBPF width, squelch level, calibration wizard, differentiator, LMS
-filter — those are a known exclusion, not rediscovered here):
+filter — those are a known exclusion, not rediscovered here). The LMS filter itself was measured
+across all 43 modes in 2026-09 and dropped on the numbers, not just its tunable — see
+[[docs/removed-features]] for `CLMS::Do` and `CLMS::DoN`:
 - ~~Manual "ReSync" button~~ — **done** (2026-08-07): the roadmap's own original framing ("applies
   an already-computed sync-skip correction") pointed at the wrong legacy feature — traced the real
   click handler (`TMmsstv::KRFSClick`, `Main.cpp:14004-14020`) and found `ReSyncSSTV` (the 32-line

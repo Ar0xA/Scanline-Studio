@@ -86,7 +86,7 @@ be measured against an image that actually has detail to lose.
 
 | Asset | Source | License |
 |---|---|---|
-| `.../GoldenVectors/testcard.bmp` | Originally authored for this repo — generated at SSTV-native 320x256. Colour bars, vertical gratings at exact 2/3/4/6/8/12-pixel periods, hard black-white edges, a 16-step grey staircase, a geometry circle and 8-pixel castellations. The exact pixel periods are the point: they state a resolution limit in pixels rather than as a score. | LGPL-3.0-or-later, same as this repo. No third-party content. |
+| `.../GoldenVectors/testcard-{320x120,320x240,320x256,512x400,640x496,800x616}.bmp` | Originally authored for this repo — one generated card per mode dimension in the registry. Colour bars, vertical gratings at exact 2/3/4/6/8/12-pixel periods, hard black-white edges, a 16-step grey staircase, a geometry circle and 8-pixel castellations. The exact pixel periods are the point: they state a resolution limit in pixels rather than as a score. | LGPL-3.0-or-later, same as this repo. No third-party content. |
 
 **Photographic test images are deliberately NOT bundled.** They live outside the repo and are located
 by the `SCANLINE_SOURCE_BMP` environment variable, the same posture as the recorded HF noise corpus:

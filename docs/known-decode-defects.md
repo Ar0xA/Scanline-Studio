@@ -65,8 +65,8 @@ zero-crossing +5.6), and any single mode or encoding.
 
 **The impairment bench cannot attribute this**, because it encodes and decodes with our own code.
 Settling it needs either a decoder instrumented to report raw Y / R-Y / B-Y against what the encoder
-intended, or a genuine off-air recording whose source picture is known. `OtaColourProbe.cs` exists
-for the second route but has not been run. The existing OTA set does not serve: YONIQ's own
+intended, or a genuine off-air recording whose source picture is known. A throwaway probe for the
+second route was written and deleted unrun. The existing OTA set does not serve: YONIQ's own
 `Hist*.bmp` decodes correlate at about 0.0 with ours, so they are decodes of different transmissions.
 
 ### Why the bench never caught it
