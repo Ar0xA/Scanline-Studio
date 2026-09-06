@@ -342,9 +342,8 @@ public sealed partial class OptionsSettingsService
                 OperatorSettingsJsonContext.Default.OperatorSettings)
             .WithSection(
                 SstvDecoderSettings.SectionKey,
-                // AfcEnabled is preserved as-is -- this dialog has no control for it (legacy's AFC
-                // is always-on with no user-facing toggle of its own, see that field's own doc
-                // comment). AutoStopEnabled/SyncRestartEnabled wired 2026-08-12, after fixing their
+                // AfcEnabled is preserved as-is -- this dialog has no control for it, though legacy
+                // does (the "AFC" speed button in its "DSP" group box); see that field's own doc comment. AutoStopEnabled/SyncRestartEnabled wired 2026-08-12, after fixing their
                 // own loc text's field/label semantics mismatch (see OptionsWindowView.axaml's own
                 // comment at that row). SenseLevel wired same batch, one item later -- no loc-text
                 // fix needed for it (already accurate, see AnalogFmSstvDecoder.SenseLevelPresets'

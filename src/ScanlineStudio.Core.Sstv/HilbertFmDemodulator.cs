@@ -155,6 +155,10 @@ internal sealed class HilbertFmDemodulator
     private readonly double[] _h;
     private readonly FirDelayLine _z;
     private readonly double[] _a = new double[4];
+    /// <summary>Legacy's fixed output smoother cutoff (`sstv.cpp`). Kept as the default so an
+    /// unparameterized construction stays bit-identical to the port.</summary>
+    public const double DefaultOutputCutoffHz = 1800.0;
+
     private readonly IirFilter _smoothingFilter = new();
 
     /// <summary>`m_htap` (`sstv.cpp:3013`, `m_tap/2`) -- half the FIR tap count, this demodulator's
@@ -163,7 +167,11 @@ internal sealed class HilbertFmDemodulator
     /// directly rather than re-deriving the tap/sample-rate tiering table a second time.</summary>
     internal int HalfTap => _htap;
 
-    public HilbertFmDemodulator(int sampleRate)
+    /// <param name="outputCutoffHz">Cutoff of the final order-3 Butterworth smoother, in Hz. The
+    /// default reproduces legacy's fixed 1800 Hz (`sstv.cpp`). It is a parameter only so a
+    /// measurement harness can sweep it: the correct anti-alias cutoff is half the mode's pixel
+    /// rate, which spans 463 Hz to 3636 Hz across the mode set, and 1800 Hz sits in the middle.</param>
+    public HilbertFmDemodulator(int sampleRate, double outputCutoffHz = DefaultOutputCutoffHz)
     {
         int tap;
         int df;
@@ -199,7 +207,7 @@ internal sealed class HilbertFmDemodulator
         _h = MakeHilbert(tap, sampleRate, 100.0, sampleRate / 2.0 - 100.0);
         _z = new FirDelayLine(tap, headMovesForward: true);
 
-        _smoothingFilter.Design(1800.0, sampleRate, 3);
+        _smoothingFilter.Design(outputCutoffHz, sampleRate, 3);
     }
 
     /// <summary>Feeds one input sample; returns the demodulated instantaneous frequency in Hz.
