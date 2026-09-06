@@ -2,6 +2,67 @@
 
 Per CLAUDE.md's removal rule: dropping a legacy capability requires an entry here naming the legacy files, the replacement (if any), and the user-visible impact. "Superseded" claims must state which users are actually covered — this document exists so that claim is checked, not assumed.
 
+## `CLMS::DoN` — LMS auto-notch ("ANF" / "ANS")
+
+**Not ported. Decided 2026-09-06 on measurement, not judgment.**
+
+**Legacy:** `CLMS::DoN` (`fir.cpp:162-190`), `SetAN` (`fir.cpp:194-213`), N-constants
+(`fir.cpp:96-103`). Applied to the RX audio buffer before demodulation (`Sound.cpp:348-354`).
+UI: the `SBLMS` button's right-click popup (`Main.cpp:14425-14439`), captions "ANF" (an=1) and
+"ANS" (an=2), rendered red when armed (`Main.cpp:2682-2692`). Persisted as `[Define] RXLMSAN`
+(`Main.cpp:1919`, `2426`). Default off (`Sound.cpp:58-59`).
+
+**Why not ported.** A faithful test-only port was built and measured. It is not a port defect —
+the filter provably works, notching an injected carrier 8x down. It removes the WANTED signal
+harder: 19x. Two causes, both structural rather than tunable:
+
+1. **No resolution.** 49 taps at 11025 Hz span 4.4 ms, giving roughly 225 Hz of spectral
+   resolution. Any notch it forms is at least 200 Hz wide inside an 800 Hz signal band, so
+   removing a carrier at 1750 Hz necessarily removes 1650-1850 Hz of picture.
+2. **Power weighting.** LMS fits the strongest correlated components first. Below signal level the
+   carrier is not the strongest thing present, so the filter fits the picture instead.
+
+Lengthening the decorrelation delay was tested as a fix (1.09 to 80 ms) and made it worse at every
+setting; legacy's own 1.09 ms was the best of them, and every setting removed more picture than
+interference.
+
+**Measured, real HF noise corpus, test-card source:**
+
+| condition | off | ported CNotch | ANF | ANS |
+|---|---|---|---|---|
+| no carrier, 5 modes | 22-48 | — | +52 to +78 worse | +53 to +74 worse |
+| carrier -6 dB | 49.29 | — | 99.30 | 91.98 |
+| carrier 0 dB | 86.34 | **37.18** | 99.90 | 95.29 |
+| carrier +6 dB | **no lock** | **37.27** | 96.44 | 101.92 |
+| carrier +12 dB | **no lock** | **37.54** | 105.28 | 117.37 |
+| carrier +20 dB | **no lock** | **39.29** | 97.62 | 100.61 |
+
+Mean absolute per-pixel delta, lower is better. ANF does produce a lock at +6 dB and above where
+the baseline produces nothing at all — but into an unusable picture, while the notch we already
+ship lands two to three times better. **In no tested condition does ANF rescue anything
+`NotchFilter` does not rescue better.**
+
+**Replacement:** `src/ScanlineStudio.Core.Sstv/NotchFilter.cs`, a direct port of legacy's `CNotch`,
+with a manual frequency control in the RX pane. 96 taps, so roughly twice the spectral resolution.
+
+**What `NotchFilter` does NOT cover** — the real gap, stated plainly:
+
+- **Automatic carrier acquisition.** The user must find the frequency and click the spectrum.
+- **Tracking a drifting carrier.**
+- **More than one simultaneous carrier.**
+- **A carrier appearing mid-picture** without user action.
+- **The ANS gentle variant** has no equivalent.
+
+**Affected users:** anyone importing an `.ini` with `RXLMSAN=1` or `2`. Import rule: honour `RXLMS`
+for the line enhancer if that ships, drop the AN state, and log one information line. Not a silent
+no-op.
+
+**Better replacement, not built:** steer `NotchFilter` automatically by detecting a spectral peak
+that persists at one frequency for seconds — which is what distinguishes a carrier from picture
+content, and needs no adaptive filter. That closes the first four gaps above and reuses the ported
+filter for the part that must be correct.
+
+
 ## Native per-rig CAT protocol implementations
 
 - **Legacy**: `cradio.cpp`'s `Freq*` methods (`FreqYaesuHF`, `FreqYaesuVU`, `FreqYaesu9K2K`, `FreqICOM`, `FreqKenwood`, `FreqJST245`, plus the generic poll table backing Ten-Tec Omni VI) and `cradio.h`'s `RADIO_POLL*` enum/`CmdInit`/`CmdRx`/`CmdTx` templates, `RadioSet.cpp`, `ExtCmd.cpp`.
