@@ -546,6 +546,35 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         AutoSlantEnabled = enabled;
     }
 
+    public int RequestAfcEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedAfcEnabled { get; private set; }
+
+    public void RequestAfcEnabled(bool enabled)
+    {
+        RequestAfcEnabledCallCount++;
+        LastRequestedAfcEnabled = enabled;
+        AfcEnabled = enabled;
+    }
+
+    public int PersistAfcEnabledCallCount { get; private set; }
+
+    public bool? LastPersistedAfcEnabled { get; private set; }
+
+    public Exception? PersistAfcEnabledException { get; set; }
+
+    public Task PersistAfcEnabledAsync(bool enabled, CancellationToken ct = default)
+    {
+        if (PersistAfcEnabledException is { } ex)
+        {
+            throw ex;
+        }
+
+        PersistAfcEnabledCallCount++;
+        LastPersistedAfcEnabled = enabled;
+        return Task.CompletedTask;
+    }
+
     public int RequestSyncRestartEnabledCallCount { get; private set; }
 
     public bool? LastRequestedSyncRestartEnabled { get; private set; }
@@ -908,6 +937,8 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public bool IsLevelOverdriven { get; set; }
 
     public bool AutoSlantEnabled { get; set; } = true;
+
+    public bool AfcEnabled { get; set; } = true;
 
     public int SenseLevel { get; set; } = 1;
 

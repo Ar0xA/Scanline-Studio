@@ -330,11 +330,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
     /// needed). Diffs via <see cref="SstvDecoderSettings.Resolve"/> (RESOLVED, concrete values, the
     /// SAME resolution `Program.CreateSstvDecoder`/the loopback self-test already use) rather than
     /// the raw nullable fields directly -- a null vs. explicit-same-as-default field must NOT read as
-    /// "changed." NOTE: <see cref="ResolvedSstvDecoderSettings.AfcEnabled"/> is part of this diffed
-    /// bundle but has NO live-push path of its own -- <c>RestartableSstvDecoder</c> only reads it once,
-    /// at construction. An AfcEnabled-only preset difference still fires every call below (harmlessly,
-    /// each is a no-op against unchanged values) but does not actually apply the new AFC setting live;
-    /// that field stays restart-required.</summary>
+    /// "changed."</summary>
     private void PushDecoderChanges(AppSettings previous, AppSettings preset)
     {
         if (!preset.Sections.ContainsKey(SstvDecoderSettings.SectionKey))
@@ -355,6 +351,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         _sstvSession.RequestAutoSyncEnabled(newResolved.AutoSyncEnabled);
         _sstvSession.RequestAutoStopEnabled(newResolved.AutoStopEnabled);
         _sstvSession.RequestAutoSlantEnabled(newResolved.AutoSlantEnabled);
+        _sstvSession.RequestAfcEnabled(newResolved.AfcEnabled);
         _sstvSession.RequestSyncRestartEnabled(newResolved.SyncRestartEnabled);
         _sstvSession.RequestReconfiguration(newResolved.RxBpfPreset, newResolved.DemodType, newResolved.RxBufferMode);
         _sstvSession.RequestPllTuning(newResolved.PllVcoGain, newResolved.PllLoopOrder, newResolved.PllLoopCutoffHz, newResolved.PllOutputOrder, newResolved.PllOutputCutoffHz);

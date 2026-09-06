@@ -301,6 +301,12 @@ public interface ISstvSessionService : IAsyncDisposable
     /// any thread.</summary>
     void RequestAutoSlantEnabled(bool enabled);
 
+    /// <summary>Applies <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AfcEnabled"/> to the
+    /// live decoder. It takes effect mid-image, matching legacy -- see that property's own doc comment.
+    /// Like <see cref="RequestSenseLevel"/>, this does NOT write anything to disk; call
+    /// <see cref="PersistAfcEnabledAsync"/> for that.</summary>
+    void RequestAfcEnabled(bool enabled);
+
     /// <summary>Requests a live Sync-Restart ("Auto-restart") toggle -- see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SyncRestartEnabled"/> for the full
     /// contract, including the RX-bandpass-filter-rebuild and VIS-lock-re-anchor side effects this
@@ -404,6 +410,11 @@ public interface ISstvSessionService : IAsyncDisposable
     /// SenseLevel specifically if both are used in close succession is an accepted, narrow race (see
     /// this feature's own plan-review), not solved further here.</summary>
     Task PersistSenseLevelAsync(int level, CancellationToken ct = default);
+
+    /// <summary>Persists <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AfcEnabled"/>. Same
+    /// targeted read-modify-write shape, and the same call-it-yourself split from
+    /// <see cref="RequestAfcEnabled"/>, as <see cref="PersistSenseLevelAsync"/> above.</summary>
+    Task PersistAfcEnabledAsync(bool enabled, CancellationToken ct = default);
 
     /// <summary>Targeted single-field persist for the Receive tab's own live "BPF" dropdown, same
     /// read-modify-write shape as <see cref="PersistSenseLevelAsync"/> (against
@@ -798,6 +809,11 @@ public interface ISstvSessionService : IAsyncDisposable
     /// the live-apply command (no separate persist method -- see that method's own doc comment for
     /// why).</summary>
     bool AutoSlantEnabled { get; }
+
+    /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AfcEnabled"/>,
+    /// so a view model can re-read the live value after a configuration-preset push. Same shape as
+    /// <see cref="AutoSlantEnabled"/> above.</summary>
+    bool AfcEnabled { get; }
 
     /// <summary>Pass-through of <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.SenseLevel"/>
     /// -- genuinely LIVE: it can change at runtime (Options Save, or the Receive-tab dropdown),

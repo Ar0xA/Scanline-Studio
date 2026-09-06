@@ -1163,6 +1163,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// genuinely live now (2026-08-27).</summary>
     public bool AutoSlantEnabled => _decoder.AutoSlantEnabled;
 
+    /// <summary>See <see cref="ISstvSessionService.AfcEnabled"/> / <see cref="ISstvDecoder.AfcEnabled"/>.</summary>
+    public bool AfcEnabled => _decoder.AfcEnabled;
+
     /// <summary>See <see cref="ISstvSessionService.SenseLevel"/> / <see cref="ISstvDecoder.SenseLevel"/>.</summary>
     public int SenseLevel => _decoder.SenseLevel;
 
@@ -1282,6 +1285,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     {
         Log.AutoSlantEnabledRequested(_logger, enabled);
         _decoder.AutoSlantEnabled = enabled;
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.RequestAfcEnabled"/>.</summary>
+    public void RequestAfcEnabled(bool enabled)
+    {
+        Log.AfcEnabledRequested(_logger, enabled);
+        _decoder.AfcEnabled = enabled;
     }
 
     /// <summary>See <see cref="ISstvSessionService.RequestSyncRestartEnabled"/>.</summary>
@@ -1658,6 +1668,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
         {
             var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
             var updated = current with { SenseLevel = level };
+            return appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        }, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>See <see cref="ISstvSessionService.PersistAfcEnabledAsync"/>. Same targeted
+    /// read-modify-write shape as <see cref="PersistSenseLevelAsync"/> above.</summary>
+    public async Task PersistAfcEnabledAsync(bool enabled, CancellationToken ct = default)
+    {
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            var current = appSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
+            var updated = current with { AfcEnabled = enabled };
             return appSettings.WithSection(SstvDecoderSettings.SectionKey, updated, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
         }, ct).ConfigureAwait(false);
     }
@@ -4923,6 +4945,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Auto-Slant enabled requested: {Enabled}")]
         public static partial void AutoSlantEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "AFC enabled requested: {Enabled}")]
+        public static partial void AfcEnabledRequested(ILogger logger, bool enabled);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Sync-Restart enabled requested: {Enabled}")]
         public static partial void SyncRestartEnabledRequested(ILogger logger, bool enabled);
