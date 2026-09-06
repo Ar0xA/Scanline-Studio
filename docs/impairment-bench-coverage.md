@@ -83,6 +83,39 @@ Ordered by how much it matters.
 - **21 recordings plus whatever has been added**, of a handful of modes, on whatever conditions
   happened to occur.
 
+## Vacuous gates: where "zero degradation across all 43 modes" cannot fail
+
+The project's standing bar for making a change default-on is "clear improvement AND zero degradation
+to lock or decode across all 43 modes". **For any mechanism the bench cannot exercise, that bar is
+vacuously satisfied** — the gate never tests what it claims to protect. A gate that cannot fail is
+not a gate.
+
+Two of these are being closed now, because they gate current work:
+
+1. **AFC.** No frequency offset is injected, so AFC measures exactly `0.00` whatever happens to it —
+   "helped", "did nothing" and "broke it" are indistinguishable. Closed by adding an offset at the
+   encoder's phase-increment choke point. This matters disproportionately: a wrong AFC correction
+   shifts the ENTIRE luma map for the rest of the image, and it also feeds five resonator retunes
+   including the sync envelope detector, which the anchor corrector and slant tracker both consume.
+2. **Clock error / slant.** Null for the same reason. `sampleRateOffsetHz` already exists and is
+   already plumbed, so closing this needs no new code.
+
+Four more are **logged, not closed**, because nothing currently planned touches them. Recorded here
+so they are not rediscovered by accident:
+
+3. **The AGC silence gate** (`AgcCurMaxAt > 16.0`) — never exercised. Only reachable via a
+   sample-blanking change, which was dropped on evidence.
+4. **`_afcBoundSample`** — has already shipped one silent total-AFC-disable regression with zero
+   coverage. Same vacuity class.
+5. **Multi-image / back-to-back reception** — the bench decodes one image per mode, so end-of-image
+   handling, the dead zone, guard/cooldown carry-over and retune reset are all structurally
+   unregressed.
+6. **Fading** — the largest gap in the bench overall, and untouched by any of this.
+
+There is also a discipline item rather than a test: **AFC's measurement source forks by demodulator
+type**, so any comparison across demodulators must record which one each arm ran, or an AFC
+difference will be misread as a demodulator difference.
+
 ## How to quote a result
 
 - Say what was modelled. "A 9–13 dB floor improvement on MN/MC under real HF noise, no fading" is a
