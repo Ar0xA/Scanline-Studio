@@ -21,6 +21,33 @@ one, because its blank regions scored as clean. Both were caught by looking, not
 They are complements. Only the first can say a decode got *more correct*. Only the second sees a real
 channel.
 
+## The variance confound, and how to read a real-versus-Gaussian comparison
+
+**Do not quote a real-versus-Gaussian variance ratio as a decoder property.** The real arm gives each
+seed a different `(capture day, receiver)` stratum by design, so its realizations are several
+different physical noise environments. The Gaussian arm's realizations are repeated draws of one
+stationary process. A larger spread on the real arm is therefore expected by construction, and is a
+property of the corpus and of the stratification, not of the decoder.
+
+A second, independent confound points the same way. Calibration fixes **total** H2 (400–2500 Hz)
+power. A clip whose in-band energy is partly a stationary carrier therefore receives less *broadband*
+noise at the same nominal SNR, by `-10*log10(1-f)` dB for tonal fraction `f`. Worse, tonal energy
+between 400 and 1100 Hz counts fully toward calibration but is removed by H1 before it can damage a
+pixel. Both effects make carrier-rich realizations decode better for reasons that have nothing to do
+with the decoder.
+
+**What is unaffected:** any comparison **paired at fixed seeds** — before/after a code change, or the
+A/B/C/D ablation. Both confounds are common-mode within a seed and cancel in the difference. Absolute
+floors on the H2 axis, cross-mode comparisons, and any variance claim are affected.
+
+**Sample size.** Five seeds cannot attribute anything. At n=5 a rank correlation needs |rho| >= 0.90
+to reach 5% significance, and every per-seed covariate (carrier content, kurtosis, crest, clip-level
+spread, day, receiver) is a descriptor of the same five mutually-confounded strata. Attribution
+requires replication *within* one stratum, which `SCANLINE_IMPAIRMENT_SEEDS` supports.
+
+Related: a shipped filter's benefit may be partly "it rejects real HF carriers" rather than "it lowers
+a broadband noise floor". State which one the measurement supports.
+
 ## What the real-noise bench does NOT cover
 
 Ordered by how much it matters.
@@ -29,10 +56,13 @@ Ordered by how much it matters.
    This is the largest gap. Watterson / ITU-R F.1487 is the right model for a 2.4 kHz channel and is
    noted in `decoder_quality_improvement.md` §16, not built.
 2. **No frequency offset.** The encoder produces perfectly on-frequency signals
-   (`sampleRateOffsetHz` defaults to 0). Anything whose job is to correct a frequency error is
-   therefore invisible here. **Demonstrated:** the §5.3 AFC retune measured exactly `0.00` change on
-   all 43 modes at every SNR — a null produced by an inapplicable test, not by an ineffective change.
-   That same work had already produced one false null from a different methodology error.
+   (`sampleRateOffsetHz` defaults to 0), so anything whose job is to correct a frequency error is
+   invisible here. **Demonstrated:** the §5.3 AFC retune measured exactly `0.00` change on all 43
+   modes at every SNR — a null produced by an inapplicable test, not by an ineffective change. That
+   same work had already produced one false null from a different methodology error.
+   Note also that AFC's correct output on a clean signal is **not** zero: a calibration term in
+   `AfcTracker` makes a perfect reading yield -3.125 Hz wide / -1.0 Hz narrow, asserted by an existing
+   test. Scoring AFC against an assumed 0 is wrong; score deviation from a clean-signal baseline.
 3. **Narrow noise provenance.** The corpus is 3 capture days, 36 receivers, one region of Europe.
    Real HF noise varies with band, hour, season, latitude and solar conditions. Measured
    realization-to-realization kurtosis already ranges 2.4 to 8.2 *within* this corpus.
