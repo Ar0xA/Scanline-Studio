@@ -28,8 +28,11 @@ public sealed record SstvDecoderSettings
 {
     public const string SectionKey = "SstvDecoder";
 
-    /// <summary>Legacy's AFC is always-on with no user-facing off switch of its own; this is a new,
-    /// non-legacy-ported toggle.</summary>
+    /// <summary>Port of legacy's user-toggleable <c>m_afc</c> (default 1, <c>sstv.cpp:1471</c>),
+    /// driven by the "AFC" speed button in the main window's "DSP" group box (<c>Main.dfm</c>'s
+    /// <c>GB1</c>/<c>SBAFC</c>, <c>Main.cpp:1917</c>/<c>6011-6013</c>) and persisted as
+    /// <c>RXAFC</c> (<c>Main.cpp:1916</c>/<c>2424</c>). The setting is ported; the UI control is
+    /// not yet -- no Options-dialog or toolbar control writes this field.</summary>
     public bool? AfcEnabled { get; init; }
 
     /// <summary>Port of legacy's real, user-toggleable <c>m_SyncRestart</c> (default 1,

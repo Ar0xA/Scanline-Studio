@@ -76,6 +76,34 @@ Recorded here per the same `CLAUDE.md` rule, which names "bitmap" and "dataset" 
 | `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/{robot36,martin-m1}.mmv` | Real-time modulator/soundcard tap via legacy's own `File → Rec` (`Sound.cpp`'s `CWaveFile::Rec`), transmitting an originally-authored synthetic gradient image (`{robot36,martin-m1}.bmp`, not a legacy asset) through a locally-built/run legacy install. Originally also contained incidental non-legacy content outside the TX window (confirmed by reading `Sound.cpp:325-395` directly that legacy's sound-card input is only closed while transmitting) — trimmed down to the TX region plus a 1.0s safety margin per-file, at the user's request, to remove that content; see the fixture directory's own `README.md` for exact trim provenance. | LGPL-3.0-or-later (output of running the LGPL-licensed legacy binary), included here solely as a golden-vector comparison fixture in this repo's own test suite — never redistributed as a product asset. |
 | `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/{robot36,martin-m1}_RX.bmp` | Legacy's own decode of the corresponding `.mmv` above, played back via `File → Play` and saved via legacy's auto-History feature. | Same as above. |
 
+## Test-image fixture for decode-quality measurement
+
+Added 2026-09-06. Every pre-existing golden-vector `.bmp` in that directory is the same smooth
+synthetic gradient — mean horizontal pixel-to-pixel difference 0.24, against 43-54 for a real
+received picture. That makes any change which merely BLURS score better under a mean-absolute-error
+metric, because the metric cannot tell smooth from correct. This fixture exists so decode quality can
+be measured against an image that actually has detail to lose.
+
+| Asset | Source | License |
+|---|---|---|
+| `.../GoldenVectors/testcard.bmp` | Originally authored for this repo — generated at SSTV-native 320x256. Colour bars, vertical gratings at exact 2/3/4/6/8/12-pixel periods, hard black-white edges, a 16-step grey staircase, a geometry circle and 8-pixel castellations. The exact pixel periods are the point: they state a resolution limit in pixels rather than as a score. | LGPL-3.0-or-later, same as this repo. No third-party content. |
+
+**Photographic test images are deliberately NOT bundled.** They live outside the repo and are located
+by the `SCANLINE_SOURCE_BMP` environment variable, the same posture as the recorded HF noise corpus:
+nothing whose licence needs auditing enters this repository. Keeping them local removes the question
+instead of answering it.
+
+Three candidate sources were reviewed before that decision, recorded so they are not reconsidered:
+
+- **Kodak Lossless True Color Image Suite** — the field's usual choice, but its status is only
+  "understood to have been released for unrestricted usage." Ambiguous, and `CLAUDE.md` §5 says
+  exclude when in doubt.
+- **TESTIMAGES archive** (testimages.org) — CC BY-NC-SA 4.0. The NonCommercial clause is
+  incompatible with this project's distribution.
+- **Philips PM5544 television test card** — the Commons SVG is CC BY 2.5, which WOULD be usable with
+  attribution, but it was designed for 625-line television, so its finest gratings alias at 320x256,
+  and no SVG renderer is installed here. `testcard.bmp` replaces it and needs no attribution.
+
 ## Process going forward
 
 Per the license-audit rule in `CLAUDE.md`: no legacy asset (source file, data table, bitmap, `.mtm` template, prefix table) may be ported or bundled into Scanline Studio without a new row in this document recording what it is, where it came from, and under what license it's being included.

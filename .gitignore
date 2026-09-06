@@ -66,3 +66,7 @@ __pycache__/
 # Regeneratable synthetic decode-quality sweep reports (ImpairmentSweepHarness) -- not build inputs,
 # not source data, kept local only.
 /impairment-reports/
+
+# User-supplied OTA captures and decodes -- local only, never committed (same posture as
+# ota-recordings/ and the HF noise corpus).
+tests/test/
