@@ -68,7 +68,30 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         // into the flatten step; explicitly forwarding `ct` here (what the analyzer suggests) would
         // BIND the parameter, silently defeating that -- the exact bug this shape exists to avoid.
 #pragma warning disable CA2016
-        return FlattenBatches(EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct));
+        return FlattenBatches(EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, 0.0, ct));
+#pragma warning restore CA2016
+    }
+
+    /// <summary>Encodes with a simulated receiver tuning error, for the impairment bench only.
+    ///
+    /// Without this the bench encodes perfectly on-frequency signals, so AFC has nothing to correct
+    /// and reports exactly zero whatever happens to it. That makes the project's "zero degradation
+    /// across all 43 modes" gate vacuous for anything AFC-related: it cannot distinguish a change
+    /// that helped, one that did nothing, and one that broke frequency correction outright.
+    ///
+    /// Not on <see cref="ISstvEncoder"/> deliberately -- a transmitter has no reason to mistune
+    /// itself, and this must not become reachable from production.</summary>
+    internal IAsyncEnumerable<float> EncodeWithCarrierOffsetAsync(
+        SstvModeDefinition mode,
+        IImageSource image,
+        double carrierOffsetHz,
+        CancellationToken ct = default)
+    {
+        ValidateImageDimensions(mode, image);
+#pragma warning disable CA2016
+        return FlattenBatches(EncodeBatchedAsyncCore(
+            mode, image, StationIdTransmitOptions.None, 0.0, txBpfEnabled: true,
+            TxOutputBandpassFilter.DefaultTapCount, txLpfEnabled: false, 2000.0, carrierOffsetHz, ct));
 #pragma warning restore CA2016
     }
 
@@ -87,7 +110,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     {
         ValidateImageDimensions(mode, image);
 
-        return EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct);
+        return EncodeBatchedAsyncCore(mode, image, stationId ?? StationIdTransmitOptions.None, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, 0.0, ct);
     }
 
     // T1-3 (production_audit.md), plan-review finding: EncodeAsync's own per-float behavior is
@@ -254,6 +277,15 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     // accumulator/lpfAverage/bandpassFilter/the frequencyHz<=0 branch) is IDENTICAL to what this
     // method contained before T1-3 -- only what happens to the already-computed float changed
     // (appended to a shared buffer and conditionally flushed, instead of yielded directly).
+    /// <param name="carrierOffsetHz">Receiver tuning error, in Hz, added to every emitted tone. Models
+    /// an operator whose radio is mistuned: a BFO offset shifts every audio tone by the SAME amount
+    /// with timing unchanged. Distinct from <c>sampleRateOffsetHz</c>, which is a CLOCK error that
+    /// shifts timing and scales frequencies proportionally.
+    ///
+    /// Exists because the impairment bench otherwise encodes perfectly on-frequency signals, so AFC
+    /// has nothing to correct and measures exactly zero however it behaves -- "helped", "did nothing"
+    /// and "broke it" become indistinguishable. Not reachable through <see cref="ISstvEncoder"/>;
+    /// test seam only, and zero by default so no production path changes.</param>
     private async IAsyncEnumerable<ReadOnlyMemory<float>> EncodeBatchedAsyncCore(
         SstvModeDefinition mode,
         IImageSource image,
@@ -263,6 +295,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         int txBpfTapCount,
         bool txLpfEnabled,
         double txLpfFrequencyHz,
+        double carrierOffsetHz,
         [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
@@ -377,7 +410,12 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                     // MovingAverage is a linear operator (mean(a*x+b) = a*mean(x)+b) and legacy's VCO
                     // conversion is itself affine, so a boxcar mean commutes through it exactly.
                     var smoothedFrequencyHz = txLpfEnabled ? lpfAverage.Add(frequencyHz) : frequencyHz;
-                    var phaseIncrement = 2 * Math.PI * smoothedFrequencyHz / effectiveSampleRate;
+
+                    // The carrier offset is added AFTER the transmit smoothing on purpose: it models
+                    // a RECEIVER tuning error, which is downstream of the transmitter's audio path.
+                    // It is also deliberately absent from the silence branch above -- there is no
+                    // tone there to shift, and shifting nothing would only advance the phase.
+                    var phaseIncrement = 2 * Math.PI * (smoothedFrequencyHz + carrierOffsetHz) / effectiveSampleRate;
 
                     phase += phaseIncrement;
                     if (phase >= 2 * Math.PI)
