@@ -63,6 +63,77 @@ content, and needs no adaptive filter. That closes the first four gaps above and
 filter for the part that must be correct.
 
 
+## `CLMS::Do` — LMS adaptive line enhancer ("LMS")
+
+**Not ported. Decided 2026-09-06 on measurement, not judgment.**
+
+**Legacy:** `CLMS::Do` (`fir.cpp:136-160`), `SetLMS` (`fir.cpp:105-134`), constants
+(`fir.cpp:88-94`). Applied to the RX audio buffer before demodulation (`Sound.cpp:348-354`).
+UI: the `SBLMS` button in the `Main.dfm` "DSP" group box, alongside `SBAFC`
+(`Main.cpp:6011-6018`). Persisted as `[Define] RXLMS`. Default off.
+
+**What it is.** A 5-tap adaptive predictor at 11025 Hz with a 1-sample decorrelation delay. It
+outputs the prediction, normalised by the sum of the tap magnitudes. A periodic signal is
+predictable and survives; broadband noise is not and is attenuated.
+
+**Why not ported.** A faithful test-only port was built and measured across the whole mode
+registry. It works. It is simply too small to be worth the decode-path state it needs.
+
+Sweep coverage: all 43 registry modes, real HF noise corpus, 5 seeds x 4 SNR points
+(20/16/12/9 dB), test-card source, plus a second pass on a photographic source for the modes that
+passed. Qualification gate: mean gain >= 3%, no cell worse than -1%, no lock lost.
+
+**8 of 43 modes passed the gate. Converted to the only unit that matters:**
+
+| mode | mean pixel-error gain, photo source | equivalent SNR gain |
+|---|---|---|
+| mn73 | +20.2% | +2.4 dB |
+| mn110 | +19.9% | +2.3 dB |
+| mc110 | +16.8% | +2.3 dB |
+| mn140 | +16.1% | +2.0 dB |
+| mc140 | +13.3% | +2.0 dB |
+| mc180 | +12.6% | +1.8 dB |
+| mp140 | +9.7% | +1.0 dB |
+| mr175 | +9.6% | +0.9 dB |
+
+The dB column is the SNR the unfiltered decode would need to reach the filtered decode's error. It
+averages the 9, 12 and 16 dB points. The 20 dB point sits at the end of the measured curve, so no
+equivalent can be interpolated there.
+
+**The other 35 modes.** Most are simply too small to matter (`ml180`-`ml320`, `rm8`, `rm12`, `p5`,
+`r24`, `robot-36`, `robot-72`, the Scottie family: -0.5% to +1.2% mean). Six are actively harmful on
+some noise draws: `sc2-180` -14.7% mean and -72.2% worst cell, `pd90` -53.2% worst, `pd160` -29.5%,
+`pd50` -24.5%, `martin-m1` -22.1%, `mp73` -16.8%.
+
+**Why 2 dB is not enough here.** 2 dB is about a third of an S-unit, and it is visible as slightly
+less speckle rather than as a better picture. The modes that gain it are MN and MC — the same family
+where the ported H3/HBPFN narrow bandpass already recovered 7-13 dB. Buying 2 dB on top of a
+fixed problem is worth much less than 2 dB on a broken one. Against that, a per-mode gate would add
+three pieces of decode-path state: a per-mode table, an acquisition-state rule (the filter runs
+before VIS detection, so it cannot know the mode yet), and a mid-stream switch transient.
+
+**Measurements that did NOT block it**, recorded so they are not re-run:
+
+- No lock was lost in any cell of any of the 43 modes. The harness filtered the whole buffer before
+  pushing it, so the filter was active during acquisition and VIS detection.
+- Clean-signal alignment shift is identical with the filter on and off in every mode, so it adds no
+  net pixel shift and needs no group-delay compensation.
+- It does not smear. Horizontal detail (mean |dI/dx|) moves toward the clean-source value and never
+  below it: source 10.6, `off` 22.7, filtered 18.2 for mn73 at 20 dB.
+- A photographic source gives roughly double the test-card gain, so the content-dependence risk runs
+  the opposite way to the one expected.
+
+**Replacement:** none, and none needed. The H3/HBPFN locked narrow bandpass (commit `24f1cb4`)
+already covers the MN/MC noise floor, which is where this filter's gain concentrates.
+
+**Affected users:** anyone importing an `.ini` with `RXLMS=1`. Import rule: drop the state and log
+one information line. Not a silent no-op.
+
+**Data:** `impairment-reports/20260906T162011Z-lms-sweep` (14 modes, test card),
+`.../20260906T170406Z-lms-sweep` (29 modes, test card), `.../20260906T195406Z-lms-sweep`
+(8 modes, photo). Report JSON retained, decoded picture dumps deleted.
+
+
 ## Native per-rig CAT protocol implementations
 
 - **Legacy**: `cradio.cpp`'s `Freq*` methods (`FreqYaesuHF`, `FreqYaesuVU`, `FreqYaesu9K2K`, `FreqICOM`, `FreqKenwood`, `FreqJST245`, plus the generic poll table backing Ten-Tec Omni VI) and `cradio.h`'s `RADIO_POLL*` enum/`CmdInit`/`CmdRx`/`CmdTx` templates, `RadioSet.cpp`, `ExtCmd.cpp`.

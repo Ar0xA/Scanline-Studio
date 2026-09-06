@@ -94,3 +94,25 @@ bandwidth is the suspect.
 Not reachable in shipped configuration — `pllOutputCutoffHz` defaults to 900 Hz and no UI exposes it.
 It matters only if an output-cutoff control is ever added: **the safe range is not the same for all
 three demodulators.**
+
+## 4. Right-edge column error on MN and MC modes
+
+**Found 2026-09-06, during the LMS line-enhancer sweep. Not investigated.**
+
+The last two pixel columns of every MN and MC decode carry a much larger error than the rest of the
+line. Measured on `photo-city` at 20 dB SNR, mean absolute per-pixel delta by column:
+
+| mode | mid-image | column -2 | column -1 |
+|---|---|---|---|
+| mn73 | 23.2 | 69.4 | 108.8 |
+| mc180 | 15.8 | 77.0 | 84.6 |
+
+It renders as a coloured stripe down the right edge of the picture. `mp140` shows no such artefact
+(12.6 mid-image, 11.2 and 10.7 at the edge), so it is specific to these families and not a general
+end-of-line effect.
+
+It is present with every DSP option off, so it is not caused by any optional filter. Likely
+candidates, none checked: the end-of-line window running past the last pixel centre, or the sync
+search consuming samples the last pixels need. The first step is to decode a clean, noise-free
+signal and see whether the artefact survives — if it does, it is a pure timing bug rather than a
+noise-sensitivity one.
