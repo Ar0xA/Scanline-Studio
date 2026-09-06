@@ -495,6 +495,20 @@ public interface ISstvDecoder
     /// visibility caveat as <see cref="SenseLevel"/>'s own getter.</summary>
     bool AutoSlantEnabled { get; set; }
 
+    /// <summary>Port of legacy's real <c>m_afc</c> (default 1, <c>sstv.cpp:1471</c>), driven by the
+    /// "AFC" speed button in legacy's own "DSP" group box (<c>Main.dfm</c>'s <c>GB1</c>/<c>SBAFC</c>,
+    /// <c>Main.cpp:6011-6018</c>) and persisted as <c>RXAFC</c>.
+    ///
+    /// Live-settable, and it takes effect MID-IMAGE, matching legacy: <c>m_afc</c> is read per sample
+    /// (<c>sstv.cpp:2258</c>/<c>2263</c>/<c>2267</c>/<c>2270</c>), and legacy's off transition also
+    /// calls <c>InitAFC()</c>, dropping the accumulated correction and retuning all five AFC
+    /// resonators to nominal. This port reproduces both. Corrections already applied to earlier
+    /// samples stay applied -- legacy is forward-only too.
+    ///
+    /// Same deferred-latch shape and "eventual, not immediate" getter caveat as
+    /// <see cref="AutoSlantEnabled"/> above. AVT mode is excluded from AFC regardless of this flag.</summary>
+    bool AfcEnabled { get; set; }
+
     /// <summary>Port of legacy's real <c>sys.m_AutoSync</c> -- gates only Auto Sync's own trigger
     /// branches, not the drift-detection bookkeeping that runs unconditionally either way (see
     /// <c>AnalogFmSstvDecoder._autoSyncEnabled</c>'s own doc comment for the full citation). Same

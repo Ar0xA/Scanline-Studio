@@ -531,6 +531,25 @@
                                 </StackPanel>
                             </HeaderedContentControl>
 
+                            <!-- DSP: legacy's own "DSP" group box (Main.dfm's GB1) holds exactly two
+                                 speed buttons, AFC and LMS. Only AFC exists in this port; LMS is
+                                 unported, so this card carries one row for now. Toggle chip mirrors
+                                 the Notch row's own IndustryMiniToggleTheme two-way IsChecked binding. -->
+                            <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
+                                <HeaderedContentControl.Header>
+                                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxDsp.CardHeader}" />
+                                </HeaderedContentControl.Header>
+                                <StackPanel Classes="Industry IndustryRows">
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxDsp.Afc}" />
+                                        <ToggleButton Grid.Column="2" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Margin="4,0,0,0"
+                                                      IsChecked="{Binding AfcEnabled}"
+                                                      Content="{Binding AfcToggleLabel}"
+                                                      ToolTip.Tip="{loc:Translate Panes.RxDsp.AfcTooltip}" />
+                                    </Grid></Border>
+                                </StackPanel>
+                            </HeaderedContentControl>
+
                             <!-- Signal quality: only Sync tone and Clip lo/hi are backed by real
                                  measurements. The SNR-per-line plot, Min/Max, luminance histogram,
                                  and Black/White tone rows were removed 2026-08-25 — no per-line SNR

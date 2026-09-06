@@ -60,7 +60,10 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         int MaximumSafeSampleIndex,
         long ProjectionReserveSamples);
 
-    private readonly bool _afcEnabled;
+    // NOT readonly -- AfcEnabled is live-settable, so this field is both the seed for a freshly
+    // (re)built inner (CreateInner) and this wrapper's own current value. Same shape as
+    // _autoSlantEnabled below.
+    private bool _afcEnabled;
 
     // NOT readonly (2026-08-27, restart-required-settings backlog item 1) -- same shape as
     // _stationIdDecodeEnabled below: both the seed for a freshly-(re)built inner (CreateInner) AND
@@ -1141,6 +1144,27 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
             {
                 _autoSlantEnabled = value;
                 _inner.AutoSlantEnabled = value;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.AfcEnabled"/>. Same wrapper shape and getter contract as
+    /// <see cref="AutoSlantEnabled"/> immediately above.</summary>
+    public bool AfcEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _afcEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _afcEnabled = value;
+                _inner.AfcEnabled = value;
             }
         }
     }

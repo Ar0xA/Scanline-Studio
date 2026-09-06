@@ -258,6 +258,10 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// see <see cref="OnSenseLevelChanged"/>'s own doc comment.</summary>
     private Task _pendingSenseLevelPersist = Task.CompletedTask;
 
+    /// <summary>Same ordering-safety shape as <see cref="_pendingSenseLevelPersist"/> immediately
+    /// above -- rapid clicks on the DSP card's AFC toggle must not race their settings-file writes.</summary>
+    private Task _pendingAfcPersist = Task.CompletedTask;
+
     /// <summary>True once <see cref="_currentEntryId"/> is known -- gates the Note/Flag controls'
     /// <c>IsEnabled</c>. See <see cref="_currentEntryId"/>'s own doc comment for why this can be
     /// false even for a fully-decoded, on-screen image (the save+record round-trip hasn't completed
@@ -743,6 +747,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // per-change side effect (unlike SenseLevel below), but seeding the field directly keeps
         // both settings' construction-time init consistent.
         _autoSlantEnabled = sstvSession.AutoSlantEnabled;
+        _afcEnabled = sstvSession.AfcEnabled;
         // Direct field assignment, NOT the generated property setter (round-2 plan-review finding):
         // going through the setter would fire OnSenseLevelChanged for a value that's already correct
         // and already saved, spuriously re-requesting/re-persisting it at construction. See
@@ -939,6 +944,51 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// pane's "Auto-correct" status text can go stale after Options makes AutoSlantEnabled live is if
     /// this call is missing from that refresh block.</summary>
     public void RefreshAutoSlantEnabledFromSession() => AutoSlantEnabled = _sstvSession.AutoSlantEnabled;
+
+    /// <summary>Whether legacy's real <c>m_afc</c> is on -- the DSP card's AFC toggle. Live and
+    /// mid-image, matching legacy: see <see cref="ISstvSessionService.RequestAfcEnabled"/> and
+    /// <c>ISstvDecoder.AfcEnabled</c> for the citations. Seeded directly from the backing field in
+    /// the constructor, same reasoning as <see cref="AutoSlantEnabled"/> above.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(AfcToggleLabel))]
+    private bool _afcEnabled;
+
+    /// <summary>The toggle chip's own caption. Bound rather than a static loc-key literal, for the
+    /// same reason the Notch chip binds its label: a static one reads "On" even when the toggle is
+    /// off.</summary>
+    public string AfcToggleLabel => _localization.GetString(AfcEnabled ? "Panes.RxDsp.AfcToggleOn" : "Panes.RxDsp.AfcToggleOff");
+
+    /// <summary>Fires on every <see cref="AfcEnabled"/> PROPERTY assignment, so a real toggle click
+    /// or <see cref="RefreshAfcEnabledFromSession"/> reaches it, but the constructor's own direct
+    /// field write does not. Same live-apply-then-chained-persist shape as
+    /// <see cref="OnSenseLevelChanged"/> below.</summary>
+    partial void OnAfcEnabledChanged(bool value)
+    {
+        _sstvSession.RequestAfcEnabled(value);
+        _pendingAfcPersist = PersistAfcEnabledAsync(value, _pendingAfcPersist);
+    }
+
+    /// <summary>Same ordering-safety and never-fault shape as <see cref="PersistSenseLevelAsync"/>
+    /// below -- see that method's own doc comment for why the whole body, including
+    /// <c>await previous</c>, sits inside the try.</summary>
+    private async Task PersistAfcEnabledAsync(bool value, Task previous)
+    {
+        try
+        {
+            await previous.ConfigureAwait(false);
+            await _sstvSession.PersistAfcEnabledAsync(value).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistAfcEnabledFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Re-syncs <see cref="AfcEnabled"/> from the session after a configuration-preset swap
+    /// (see <c>MainWindow.axaml.cs</c>'s <c>RefreshAfterConfigurationChange</c>). Without this the
+    /// DSP card keeps showing the old state while the decoder already changed. A no-op if unchanged.
+    /// Not called from the Options-Closed hook: Options has no AFC control.</summary>
+    public void RefreshAfcEnabledFromSession() => AfcEnabled = _sstvSession.AfcEnabled;
 
     /// <summary>Sync &amp; Slant card's "Squelch level" row (renamed from "VIS threshold"
     /// 2026-08-27 to match the Options window's own naming for this same setting) -- genuinely
@@ -2836,6 +2886,9 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the Squelch level failed")]
         public static partial void PersistSenseLevelFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the AFC enable flag failed")]
+        public static partial void PersistAfcEnabledFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting the RX BPF preset failed")]
         public static partial void PersistRxBpfPresetFailed(ILogger logger, Exception ex);
