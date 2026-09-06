@@ -273,7 +273,7 @@
 
         <h3>DSP</h3>
         <ul>
-          <li><strong>AFC</strong> switches automatic frequency control on or off. It is on by default. AFC measures the sync tone and shifts the decode back toward its nominal frequency, which corrects a station that is tuned slightly off. Switch it off if you suspect AFC is locking onto interference instead of the signal.</li>
+          <li><strong><a class="term" href="#glossary-afc">AFC</a></strong> switches automatic frequency control on or off. It is on by default. AFC measures the sync tone and shifts the decode back toward its nominal frequency, which corrects a station that is tuned slightly off. Switch it off if you suspect AFC is locking onto interference instead of the signal.</li>
           <li>The change applies during the current picture. From the next line onward the correction is no longer added, and the tone detectors return to their nominal frequencies. Lines already decoded keep the correction they were given.</li>
           <li>While AFC is off, the <strong>Sync tone</strong> row on the Signal quality card shows a dash, because no correction is being measured.</li>
           <li>AVT mode never uses AFC, whatever this is set to.</li>
@@ -953,6 +953,7 @@
         <p>Hover or focus a dotted-underlined term anywhere in this guide to see its definition without leaving the page — each one links here, to the same single definition, so it can't drift out of sync with a second copy elsewhere.</p>
         <dl>
           <dt id="glossary-adif">ADIF</dt><dd>Amateur Data Interchange Format; the standard file format logging software uses to exchange QSO records.</dd>
+          <dt id="glossary-afc">AFC</dt><dd>Automatic frequency control; measures the received sync tone and shifts the decode back toward its nominal frequency, correcting a station that is tuned slightly off. It corrects mistuning only — it does nothing about noise or interference.</dd>
           <dt id="glossary-agc">AGC</dt><dd>Automatic gain control; normalizes received signal level for processing.</dd>
           <dt id="glossary-alc">ALC</dt><dd>Automatic level control; a radio's own circuit that reduces drive when transmit audio would otherwise overdrive the final amplifier.</dd>
           <dt id="glossary-avt-training">AVT training</dt><dd>A decoder state for the AVT SSTV mode family, which needs to measure the incoming signal before it can lock onto and decode the picture — distinct from the normal searching/locked states other modes use.</dd>
