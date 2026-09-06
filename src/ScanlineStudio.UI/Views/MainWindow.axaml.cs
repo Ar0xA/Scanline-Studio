@@ -863,6 +863,7 @@ public partial class MainWindow : Window
                     _ = vm.RxImage.LoadQrzLookupConfiguredAsync();
                     vm.RxImage.RefreshSenseLevelFromSession();
                     vm.RxImage.RefreshAutoSlantEnabledFromSession();
+                    vm.RxImage.RefreshAfcEnabledFromSession();
                     _ = vm.RadioStatus.LoadPresetsSafeAsync();
                     // User-requested (2026-08-28): the window title now shows the active configuration
                     // name -- a switch is exactly the moment it can change.

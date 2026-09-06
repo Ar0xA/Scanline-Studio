@@ -150,6 +150,8 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public bool AutoSlantEnabled { get => throw NotExercised(); set => throw NotExercised(); }
 
+    public bool AfcEnabled { get => throw NotExercised(); set => throw NotExercised(); }
+
     public int SenseLevel { get => throw NotExercised(); set => throw NotExercised(); }
 
     public RxBpfPreset RxBpfPreset => throw NotExercised();
@@ -194,6 +196,8 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public void RequestAutoSlantEnabled(bool enabled) => throw NotExercised();
 
+    public void RequestAfcEnabled(bool enabled) => throw NotExercised();
+
     public void RequestSyncRestartEnabled(bool enabled) => throw NotExercised();
 
     public void RequestReconfiguration(RxBpfPreset rxBpfPreset, DemodType demodType, RxBufferMode rxBufferMode) => throw NotExercised();
@@ -205,6 +209,8 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
     public Task<CaptureDeviceApplyResult> RequestCaptureDeviceAsync(string? deviceId, string? deviceName, CancellationToken ct = default) => throw NotExercised();
 
     public Task PersistSenseLevelAsync(int level, CancellationToken ct = default) => throw NotExercised();
+
+    public Task PersistAfcEnabledAsync(bool enabled, CancellationToken ct = default) => throw NotExercised();
 
     public Task PersistRxBpfPresetAsync(RxBpfPreset preset, CancellationToken ct = default) => throw NotExercised();
 

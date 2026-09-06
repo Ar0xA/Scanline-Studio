@@ -926,10 +926,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Port of legacy's user-toggleable m_afc (default 1, sstv.cpp:1471), driven by the "AFC" speed
     // button in the main window's "DSP" group box (Main.dfm's GB1/SBAFC, Main.cpp:1917/6011-6013).
     // Separate from AVT mode's own AFC exclusion (see InitializeAfc below), which this field does
-    // NOT replace -- AVT stays excluded regardless of this flag's value. Restart-only: this decoder
-    // is a DI singleton constructed once (Program.cs), and this field is readonly -- changing the
-    // setting takes effect on the next app launch, not live.
-    private readonly bool _afcEnabled;
+    // NOT replace -- AVT stays excluded regardless of this flag's value. Live-settable via the
+    // AfcEnabled property, drained by ApplyPendingDecoderFlagsRequest, which also runs legacy's own
+    // InitAFC()-equivalent reset on the off edge.
+    private bool _afcEnabled;
 
     // Port of legacy's real m_SyncRestart (default 1, sstv.cpp:1486, toggled via the "Lock" toolbar
     // button, Main.cpp:10907/11887's KRARClick) -- see the mid-reception restart call site in
@@ -991,7 +991,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // Interlocked.Exchange<T> requires a reference type -- there is no Nullable<T> overload.
     private SenseLevelRequest? _pendingSenseLevelRequest;
 
-    private sealed record DecoderFlagsRequest(bool AutoSyncEnabled, bool AutoStopEnabled, bool AutoSlantEnabled, bool SyncRestartEnabled);
+    private sealed record DecoderFlagsRequest(bool AutoSyncEnabled, bool AutoStopEnabled, bool AutoSlantEnabled, bool SyncRestartEnabled, bool AfcEnabled);
 
     // Deferred-request latch for AutoSyncEnabled/AutoStopEnabled/AutoSlantEnabled/SyncRestartEnabled
     // (2026-08-27, restart-required-settings backlog item 1) -- a CAS-loop merge, not a bare
@@ -1080,7 +1080,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // Same reference initially -- see _desiredFlags/_appliedFlags's own doc comment for why this
         // matters (the drain's first no-op check must correctly see "nothing pending" until a setter
         // is actually called).
-        _desiredFlags = _appliedFlags = new DecoderFlagsRequest(autoSyncEnabled, autoStopEnabled, autoSlantEnabled, syncRestartEnabled);
+        _desiredFlags = _appliedFlags = new DecoderFlagsRequest(autoSyncEnabled, autoStopEnabled, autoSlantEnabled, syncRestartEnabled, afcEnabled);
         _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
         (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
         _demodType = demodType;
@@ -1871,14 +1871,35 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
     }
 
+    /// <summary>See <see cref="ISstvDecoder.AfcEnabled"/>. Same deferred-latch mechanism and getter
+    /// contract as <see cref="AutoSlantEnabled"/> above. UNLIKE its siblings there, a change to THIS
+    /// flag additionally tears down or rebuilds <see cref="_afcTracker"/> mid-image and resets the
+    /// five AFC-retuned resonators -- see <see cref="ApplyPendingDecoderFlagsRequest"/> for the
+    /// legacy citations.</summary>
+    public bool AfcEnabled
+    {
+        get => _afcEnabled;
+        set
+        {
+            DecoderFlagsRequest current, updated;
+            do
+            {
+                current = Volatile.Read(ref _desiredFlags);
+                updated = current with { AfcEnabled = value };
+            } while (Interlocked.CompareExchange(ref _desiredFlags, updated, current) != current);
+        }
+    }
+
     /// <summary>Drains <see cref="_desiredFlags"/> -- see that field's own doc comment for the full
     /// mechanism. Called from <see cref="PushSamplesCore"/> immediately after
     /// <see cref="ApplyPendingSenseLevelRequest"/> (order between the two doesn't matter -- zero
     /// field overlap, confirmed: that method touches <see cref="_senseLevel"/>/<see cref="_slvl"/>/
     /// <see cref="_slvl2"/>/<see cref="_slvl3"/>/<see cref="VisLockStateMachine"/>'s thresholds only;
     /// this one touches <see cref="_autoSyncEnabled"/>/<see cref="_autoStopEnabled"/>/
-    /// <see cref="_autoSlantEnabled"/>/<see cref="_syncRestartEnabled"/>/<see cref="_searchBandpassFilter"/>/
-    /// <see cref="_visLockProcessedUpTo"/>/<see cref="_visLockOriginSample"/>). MUST stay below the
+    /// <see cref="_autoSlantEnabled"/>/<see cref="_syncRestartEnabled"/>/<see cref="_afcEnabled"/>/
+    /// <see cref="_searchBandpassFilter"/>/<see cref="_visLockProcessedUpTo"/>/
+    /// <see cref="_visLockOriginSample"/>/<see cref="_afcTracker"/>/<see cref="_afcProcessedUpTo"/>/
+    /// <see cref="_lastAppliedAfcRetuneHz"/> and the five AFC-retuned resonators). MUST stay below the
     /// abandon/ForceMode/ReSync/Notch block above in <see cref="PushSamplesCore"/> (plan-review round
     /// 2 nit) -- that block can move <see cref="_consumedSamples"/>, which the re-anchor below
     /// reads.</summary>
@@ -1891,12 +1912,16 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         }
 
         var previouslyAppliedSyncRestart = _appliedFlags.SyncRestartEnabled;
+        var previouslyAppliedAfc = _appliedFlags.AfcEnabled;
         _appliedFlags = desired;
 
         _autoSyncEnabled = desired.AutoSyncEnabled;
         _autoStopEnabled = desired.AutoStopEnabled;
         _autoSlantEnabled = desired.AutoSlantEnabled;
         _syncRestartEnabled = desired.SyncRestartEnabled;
+        _afcEnabled = desired.AfcEnabled;
+
+        ApplyAfcEnabledEdge(previouslyAppliedAfc);
 
         if (_syncRestartEnabled != previouslyAppliedSyncRestart)
         {
@@ -1932,6 +1957,58 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                 _visLockOriginSample = _visLockProcessedUpTo;
             }
         }
+    }
+
+    /// <summary>Applies an <see cref="AfcEnabled"/> change mid-image, matching legacy's own
+    /// <c>SBAFCClick</c> (<c>Main.cpp:6013-6016</c>): it assigns <c>m_afc</c> and calls
+    /// <c>InitAFC()</c> on the OFF transition ONLY. <c>m_afc</c> is then read per sample
+    /// (<c>sstv.cpp:2258</c>/<c>2263</c>/<c>2267</c> gate the <c>SyncFreq</c> update, and
+    /// <c>sstv.cpp:2270</c>'s <c>if( m_afc ) d += m_AFCDiff;</c> gates the standing correction), so
+    /// the toggle takes effect immediately rather than at the next image.
+    ///
+    /// FORWARD-ONLY, which is legacy's own shape rather than a shortcut: legacy adds
+    /// <c>m_AFCDiff</c> into <c>d</c> and stores the result (<c>sstv.cpp:2289</c>), so pixels already
+    /// written keep their correction there too. Nothing is un-applied here either. This port's
+    /// run-ahead is bounded to the current line and this drain runs before the sample-append loop,
+    /// so a toggle lands at the next LINE boundary against legacy's next SAMPLE.
+    ///
+    /// Gated on a locked mode: with no mode there is no tracker to tear down and no resonator that
+    /// was ever retuned. AVT is excluded for the same reason <see cref="InitializeAfc"/> excludes it
+    /// -- its tracker is always null, so both edges would be no-ops.</summary>
+    private void ApplyAfcEnabledEdge(bool previouslyApplied)
+    {
+        if (_afcEnabled == previouslyApplied || _mode is null || _mode == SstvModeRegistry.Avt)
+        {
+            return;
+        }
+
+        if (!_afcEnabled)
+        {
+            // Legacy's InitAFC() -> InitTone(0) (sstv.cpp:1658-1693/1695-1705) retunes all FIVE
+            // AFC-retuned resonators (m_iir11/12/13/19/fsk) back to nominal. InitializeAfc's own copy
+            // of this reset lists only four because _syncEnvelopeDetector does not exist yet at that
+            // point in a lock; mid-image it does, and leaving it retuned would strand the sync
+            // envelope detector at the last correction while nothing updates it again.
+            _afcTracker = null;
+            _lastAppliedAfcRetuneHz = null;
+            _syncEnvelopeDetector?.Retune(0);
+            _visLockStateMachine.Retune(0);
+            _visDataD19Detector.Retune(0);
+            _fskSpaceDetector.Retune(0);
+            _visDataD12Detector.Retune(0);
+            return;
+        }
+
+        // Re-base before rebuilding: ApplyAfcCorrections early-returns while the tracker is null, so
+        // _afcProcessedUpTo stalled wherever the OFF edge left it. Without this the loop would walk
+        // the new tracker across audio already decoded uncorrected. Same Math.Max pattern, and same
+        // reason, as InitializeAfc's own cursor guard.
+        _afcProcessedUpTo = Math.Max(_afcProcessedUpTo, _consumedSamples);
+
+        // Legacy does NOT call InitAFC on the ON edge, and nothing touches AFC state while the flag
+        // is off, so a fresh tracker here is legacy-equivalent: m_AFCDiff was already zeroed by the
+        // OFF edge, and tracking resumes from nominal.
+        CreateAfcTracker(_mode);
     }
 
     /// <summary>Diagnostic-only: exposes <see cref="_searchBandpassFilter"/> so a test can prove
@@ -6083,6 +6160,14 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             return;
         }
 
+        CreateAfcTracker(mode);
+    }
+
+    /// <summary>Builds a fresh <see cref="AfcTracker"/> for <paramref name="mode"/>. Factored out of
+    /// <see cref="InitializeAfc"/> so <see cref="ApplyAfcEnabledEdge"/>'s ON edge builds an
+    /// identically-configured tracker instead of a second copy of the band table.</summary>
+    private void CreateAfcTracker(SstvModeDefinition mode)
+    {
         var isNarrow = mode.NarrowModeCode is not null;
         var (syncTargetHz, bandLowHz, bandHighHz, bandwidthHalfHz) = isNarrow
             ? (1900.0, 1800.0, 1950.0, 128.0)
@@ -6102,6 +6187,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// <summary>Test-only visibility into whether AFC is currently active for the mode last passed to
     /// <see cref="InitializeAfc"/> -- production code has no need to read this back.</summary>
     internal bool HasAfcTrackerForTests => _afcTracker is not null;
+
+    /// <summary>Test-only: the offset last pushed to the AFC-retuned resonators, or
+    /// <see langword="null"/> when they sit at nominal. Exists so a test can prove
+    /// <see cref="ApplyAfcEnabledEdge"/>'s off edge actually ran legacy's <c>InitTone(0)</c>
+    /// equivalent, rather than only nulling the tracker.</summary>
+    internal double? LastAppliedAfcRetuneHzForTests => _lastAppliedAfcRetuneHz;
 
     /// <summary>Test-only direct entry point to <see cref="ApplyGatedAfcUpdate"/> -- lets a test drive
     /// a real AFC lock (and its downstream detector retunes) deterministically, without needing a full
@@ -6172,8 +6263,9 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// call compiles.</summary>
     internal double ZeroCrossingDemodulatorCurrentFrequencyHzForTests => _zeroCrossingDemodulator.CurrentFrequencyHzForTests;
 
-    /// <summary>Test-only visibility into the AFC-enable flag this instance was actually constructed
-    /// with -- production code has no need to read this back. Same reasoning as
+    /// <summary>Test-only visibility into the AFC-enable flag currently in effect -- the last value
+    /// drained by <see cref="ApplyPendingDecoderFlagsRequest"/>, which is the constructed one until
+    /// something sets <see cref="AfcEnabled"/>. Production code has no need to read this back. Same reasoning as
     /// <see cref="DemodTypeForTests"/> above: exists so a <see cref="RestartableSstvDecoder"/> test can
     /// prove the value actually reached the LIVE inner decoder after a periodic rebuild, not just that
     /// the wrapper still remembers what it was told (round-8 D2-audit finding: this flag and its four
@@ -6500,9 +6592,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         var bound = Math.Min(Math.Min(TotalSamplesReceived, _afcBoundSample), upperBoundSample);
         for (; _afcProcessedUpTo < bound; _afcProcessedUpTo++)
         {
-            // `m_afc` itself is legacy's own always-on default (sstv.cpp:1471 -- no separate toggle
-            // to model; AVT's exclusion is already handled by _afcTracker staying null, see
-            // InitializeAfc). Corrected (ultracode audit finding #4): the `m_CurMax > 16` gate wraps
+            // `m_afc` is legacy's user toggle (default 1, sstv.cpp:1471), modelled by _afcEnabled:
+            // while it is off this method never runs at all, because ApplyAfcEnabledEdge nulls
+            // _afcTracker. AVT's exclusion lands on the same null-tracker outcome, see
+            // InitializeAfc. Corrected (ultracode audit finding #4): the `m_CurMax > 16` gate wraps
             // ONLY the SyncFreq *update* (sstv.cpp:2258/2263/2267) -- the standing correction itself,
             // `d += m_AFCDiff` (sstv.cpp:2270), is a SEPARATE, unconditional statement applied to
             // every sample regardless of gate state (see the unconditional add below, outside every

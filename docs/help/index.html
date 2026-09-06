@@ -240,7 +240,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain signal quality stations heard worked before fsk cw id new station callsign">
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality stations heard worked before fsk cw id new station callsign">
         <p class="topic-category">Receiving</p>
         <h2>Reception controls and telemetry</h2>
         <p>The Receive tab exposes the decoder's important state without requiring routine DSP adjustment.</p>
@@ -269,6 +269,14 @@
           <li><strong><a class="term" href="#glossary-bpf">BPF</a></strong> controls RX band-pass sharpness. Wide is the recommended starting point; sharper filters reject adjacent interference but tolerate less drift. Note that the option named <strong>Normal</strong> switches the filter off entirely, despite the name — see <a href="#decode-options">Decode options</a>, which documents the same setting reached from Options → Decode. A mid-picture change waits until that reception ends.</li>
           <li><strong>Notch</strong> suppresses a narrow interfering tone. Click the spectrum trace to choose its frequency, then switch it on.</li>
           <li><strong><a class="term" href="#glossary-agc">AGC</a> gain</strong>, <strong>buffer</strong>, <strong><a class="term" href="#glossary-xrun">XRUN</a></strong>, and <strong>clipping</strong> help diagnose the audio path.</li>
+        </ul>
+
+        <h3>DSP</h3>
+        <ul>
+          <li><strong>AFC</strong> switches automatic frequency control on or off. It is on by default. AFC measures the sync tone and shifts the decode back toward its nominal frequency, which corrects a station that is tuned slightly off. Switch it off if you suspect AFC is locking onto interference instead of the signal.</li>
+          <li>The change applies during the current picture. From the next line onward the correction is no longer added, and the tone detectors return to their nominal frequencies. Lines already decoded keep the correction they were given.</li>
+          <li>While AFC is off, the <strong>Sync tone</strong> row on the Signal quality card shows a dash, because no correction is being measured.</li>
+          <li>AVT mode never uses AFC, whatever this is set to.</li>
         </ul>
 
         <div class="warning"><strong>Do not tune by numbers alone.</strong> If a picture decodes cleanly, avoid changing squelch, BPF, or advanced demodulator settings merely to make a readout look different.</div>
