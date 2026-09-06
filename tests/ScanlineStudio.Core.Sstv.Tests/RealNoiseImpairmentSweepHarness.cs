@@ -54,6 +54,12 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// MN/MC claim goes against that mode's own H3. All four are recorded per point, so any of these can
 /// be re-plotted later without re-running.
 ///
+/// COVERAGE BOUNDARY: this bench has no fading, no frequency offset, no transmitter-side impairment,
+/// one test image per mode, and a noise corpus from 3 capture days in one region. A result here is
+/// true within those conditions and not beyond them -- and a null can mean the bench cannot exercise
+/// the mechanism at all, which has already happened once. See docs/impairment-bench-coverage.md
+/// before quoting any number from this harness.
+///
 /// Cost: band powers are measured with 1023-tap FIRs, but each noise stream is filtered ONCE per band
 /// and reduced to a prefix sum of squares, so a mode's own slice RMS is then O(1). That is 25 filter
 /// passes for the whole sweep rather than one per mode per point.</summary>
@@ -163,12 +169,20 @@ public sealed class RealNoiseImpairmentSweepHarness
         var parallelism = ResolveParallelism();
         var seeds = ResolveSeeds();
 
-        // Prefix sums dominate this harness's memory: one double per sample per band, per realization.
-        var projectedGb = (double)seeds.Length * (bands.Count + 1) * maxSeconds * encoder.SampleRate * sizeof(double) / (1024 * 1024 * 1024);
-        Progress(progressPath, $"preparing {seeds.Length} noise realizations of {maxSeconds:F0}s, ~{projectedGb:F1}GB of prefix sums, parallelism {parallelism}...");
-        if (projectedGb > 8.0)
+        // Two very different costs, and the second one is what actually killed a run: the prefix sums
+        // are a fixed shared block, while the concurrent modes each carry their own multi-minute
+        // buffers and a decoder that retains the whole reception.
+        const double GiB = 1024 * 1024 * 1024;
+        var prefixGb = seeds.Length * (bands.Count + 1) * maxSeconds * encoder.SampleRate * sizeof(double) / GiB;
+        var perModeGb = maxSeconds * encoder.SampleRate * sizeof(float) * 6 / GiB;
+        var projectedGb = prefixGb + (perModeGb * parallelism);
+        Progress(
+            progressPath,
+            $"preparing {seeds.Length} noise realizations of {maxSeconds:F0}s. Projected peak ~{projectedGb:F1}GB " +
+            $"({prefixGb:F1}GB prefix sums + {parallelism} x ~{perModeGb:F1}GB per concurrent mode), parallelism {parallelism}.");
+        if (projectedGb > 12.0)
         {
-            Progress(progressPath, $"WARNING: projected prefix-sum memory is {projectedGb:F1}GB. Reduce the seed count, the band count, or the mode selection.");
+            Progress(progressPath, $"WARNING: projected peak {projectedGb:F1}GB. Lower SCANLINE_IMPAIRMENT_PARALLELISM or narrow the mode selection.");
         }
 
         // The realizations are independent, and each one is a stack of full-length FIR passes.
@@ -228,9 +242,11 @@ public sealed class RealNoiseImpairmentSweepHarness
             .Select(m => completed[m.ModeId])
             .ToList();
 
-    /// <summary>How many modes decode at once. Defaults to half the cores: the decodes are
-    /// CPU-bound and independent, but this project has seen the test host crash under full parallel
-    /// load, and the shared prefix sums already hold several GB.</summary>
+    /// <summary>How many modes decode at once. Memory-bound, not CPU-bound: a 43-mode run at 8-way
+    /// parallelism was killed by the OOM killer at 24.6GB. Each concurrent mode holds its encoded
+    /// signal, a mixed copy per seed, and a decoder whose staging buffer retains the WHOLE reception
+    /// since the buffered replay fix removed truncation -- so the per-mode cost is hundreds of MB for
+    /// a multi-minute mode, and it multiplies by this number.</summary>
     private static int ResolveParallelism()
     {
         var configured = Environment.GetEnvironmentVariable("SCANLINE_IMPAIRMENT_PARALLELISM");
@@ -239,7 +255,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             return value;
         }
 
-        return Math.Max(1, Environment.ProcessorCount / 2);
+        return Math.Max(1, Math.Min(4, Environment.ProcessorCount / 2));
     }
 
     /// <summary>The modes this run covers. <c>SCANLINE_IMPAIRMENT_MODES</c> narrows it to a
@@ -308,18 +324,25 @@ public sealed class RealNoiseImpairmentSweepHarness
     {
         var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
 
-        var cleanSamples = new List<float>();
+        var encoded = new List<float>();
         await foreach (var sample in encoder.EncodeAsync(mode, source))
         {
-            cleanSamples.Add(sample);
+            encoded.Add(sample);
         }
+
+        // Materialize once and drop the List. A List<float> grown by doubling can hold up to twice
+        // the samples it needs, and every IReadOnlyList<float> call below would copy it again --
+        // three copies of a multi-minute buffer, in each of several concurrent modes.
+        var cleanSamples = encoded.ToArray();
+        encoded.Clear();
+        encoded.TrimExcess();
 
         foreach (var realization in realizations)
         {
-            if (realization.SampleCount < cleanSamples.Count)
+            if (realization.SampleCount < cleanSamples.Length)
             {
                 throw new InvalidOperationException(
-                    $"Mode {modeId} encodes to {cleanSamples.Count / (double)encoder.SampleRate:F1}s but the prepared noise " +
+                    $"Mode {modeId} encodes to {cleanSamples.Length / (double)encoder.SampleRate:F1}s but the prepared noise " +
                     $"realizations are only {realization.SampleCount / (double)encoder.SampleRate:F1}s. Raise MaxModeSeconds.");
             }
         }
@@ -339,7 +362,7 @@ public sealed class RealNoiseImpairmentSweepHarness
             var outcomes = new List<ImpairmentSeedOutcome>();
             foreach (var realization in realizations)
             {
-                var noiseInBandRms = realization.BandRms("H2", cleanSamples.Count);
+                var noiseInBandRms = realization.BandRms("H2", cleanSamples.Length);
                 var scale = signalInBandRms / Math.Pow(10.0, snrDb / 20.0) / noiseInBandRms;
                 var noisy = realization.Mix(cleanSamples, scale);
 
@@ -363,6 +386,11 @@ public sealed class RealNoiseImpairmentSweepHarness
                 var delta = ImpairmentSweepHarness.MeasureAveragePerChannelDelta(source, actual, pictureHeight);
                 var perLine95 = PerLineDelta95(source, actual, pictureHeight);
                 outcomes.Add(new ImpairmentSeedOutcome(realization.Seed, true, delta, perLine95, delta <= MeanUsableDeltaBar));
+
+                // Drop this seed's decoder, its staged reception and its image before mixing the next
+                // one, instead of letting all five stay reachable until the point ends.
+                decodedImage = null;
+                detectedMode = null;
             }
 
             var decodedOutcomes = outcomes.Where(o => o.DecodedCorrectly).ToList();
@@ -371,19 +399,19 @@ public sealed class RealNoiseImpairmentSweepHarness
             var meanPerLine95 = decodedOutcomes.Count == 0 ? (double?)null : decodedOutcomes.Average(o => o.PerLineDelta95!.Value);
 
             var reference = realizations[0];
-            var referenceNoiseInBand = reference.BandRms("H2", cleanSamples.Count);
+            var referenceNoiseInBand = reference.BandRms("H2", cleanSamples.Length);
             var scaleAtPoint = signalInBandRms / Math.Pow(10.0, snrDb / 20.0) / referenceNoiseInBand;
 
             points.Add(new ImpairmentPoint(
                 SnrDb: snrDb,
                 Delta: meanDelta,
                 DecodedCorrectly: decodedOutcomes.Count == outcomes.Count,
-                TotalBandSnrDb: ToDb(signalTotalRms / (reference.BandRms("total", cleanSamples.Count) * scaleAtPoint)),
+                TotalBandSnrDb: ToDb(signalTotalRms / (reference.BandRms("total", cleanSamples.Length) * scaleAtPoint)),
                 InBandSnrDb: snrDb,
-                NoiseBandPowerH1Db: ToDb(reference.BandRms("H1", cleanSamples.Count) * scaleAtPoint),
+                NoiseBandPowerH1Db: ToDb(reference.BandRms("H1", cleanSamples.Length) * scaleAtPoint),
                 NoiseBandPowerH2Db: ToDb(referenceNoiseInBand * scaleAtPoint),
-                NoiseBandPowerH3Db: h3Band is null ? null : ToDb(reference.BandRms(h3Band, cleanSamples.Count) * scaleAtPoint),
-                NoiseBandPowerTotalDb: ToDb(reference.BandRms("total", cleanSamples.Count) * scaleAtPoint),
+                NoiseBandPowerH3Db: h3Band is null ? null : ToDb(reference.BandRms(h3Band, cleanSamples.Length) * scaleAtPoint),
+                NoiseBandPowerTotalDb: ToDb(reference.BandRms("total", cleanSamples.Length) * scaleAtPoint),
                 PerLineDelta95: meanPerLine95,
                 UsableByPercentile: meanPerLine95 is null ? null : meanPerLine95 <= PercentileUsableDeltaBar,
                 SeedOutcomes: outcomes));
