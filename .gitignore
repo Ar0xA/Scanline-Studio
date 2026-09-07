@@ -21,6 +21,7 @@ flrig/
 # (removed from all prior history 2026-08-13, see backup-pre-history-rewrite-20260813 on origin).
 CLAUDE.md
 PROJECT_BRIEF.md
+astra-audit.md
 
 # Codex CLI's equivalent local files — same reasoning as CLAUDE.md above.
 .codex/
