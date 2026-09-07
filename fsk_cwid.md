@@ -2,6 +2,18 @@
 
 Date: 2026-09-02
 
+> **CLOSED 2026-09-07.** Every item in this plan is either shipped, settled, or dropped. This file is
+> a historical record now, not a backlog.
+>
+> - **Part A:** A1 to A5 shipped. **A6 dropped** by user decision — the RX-enable toggles stay in
+>   Options only, with no pane toggle and no tooltip hint.
+> - **Part B:** B-P0 settled, B-P1 to B-P3 and B-P5 shipped. **B-P6 removed** by user decision
+>   (2026-09-03).
+> - **B-P4 (legacy-captured CW/FSK golden fixture) is PARKED, not done.** It needs a manual capture
+>   from the real legacy YONIQ binary on Windows or a VM. It stays listed in `PROJECT_BRIEF.md`.
+>   §12's last bullet still holds: do not make `CwIdRxEnabled` default-on until that fixture and one
+>   off-air recording have exercised the classical decoder.
+
 Status: source-level review and integration plan. No production or test code was changed as part of this review, and no tests were run. Every file/line reference below was read directly in this checkout; every claim about `deepcw-engine` comes from its repository contents fetched today. Anything not verified is labeled as an assumption.
 
 ## 1. Executive conclusion
