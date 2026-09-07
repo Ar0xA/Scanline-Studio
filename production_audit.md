@@ -4,7 +4,114 @@ Senior-engineer review of the full `src/` tree (~75,600 lines, 18 projects), run
 `auditor` passes (read-only): 6 scoped to one subsystem each, 1 scoped to the seams between them.
 Scope, method, and prompts: efficiency, optimization, dedup, correct API usage, logging/exception
 handling, plus general senior-review judgment (nullable/SOLID/DI, concurrency, disposal, security,
-test coverage). This is a **plan**, not a changelog — nothing listed here has been fixed yet.
+test coverage).
+
+> ## Status, re-verified 2026-09-07
+>
+> The original header said "nothing listed here has been fixed yet". That is no longer true, and it
+> stayed wrong for a week. Current state:
+>
+> - **Tier 0 — all 13 done.** Each item now carries its own commit reference below.
+> - **Tier 1 — 17 of 18 done.** Only **T1-14** is open, and only in part. Its own commit says
+>   "partial" and no follow-up exists.
+> - **Tier 2 — open.** Four items were re-verified as still open, listed in that section.
+> - **Tier 3 — open.** Four items were re-verified as still open, listed in that section.
+> - **Test-suite Tier 0 — 6 of 7 done.** Only **TT0-2** is open.
+> - **Test-suite Tier 1 — 5 done, 1 deferred, the rest open.** Five were re-verified as open and are
+>   marked in the table. **TT1-19** looks closed but is not fully confirmed.
+> - **Test-suite Tier 2/3 — untouched.**
+>
+> - **Triage, 2026-09-07:** an `auditor` pass over every remaining open item returned **no MUST FIX
+>   and no `principal` round needed**. See "Triage of the remaining open items" below.
+>
+> **This file is now the ONLY backlog in the repo.** Every other document records measurements,
+> decisions and history. If it is not in "What to pick up next" below, nobody is meant to be working
+> on it. Decode-path items were folded in on 2026-09-07 — see "Decode-path items folded in from other
+> documents".
+>
+> **Start here:** "What to pick up next — the short list", immediately below this banner.
+>
+> **How each verdict was reached.** Tier 0 and Tier 1 rest on commit evidence: every item has a
+> commit that names it. The other tiers rest on reading current source. Items with no marker below
+> were not individually re-checked, so treat them as unknown, not as done.
+
+## What to pick up next — the short list
+
+Everything not on this list is either done or deliberately dropped. Do not re-derive the backlog
+from the tiers below, and do not re-derive it from any other document — this is the only one that
+carries work. Reasons and dropped-item rationale are in "Triage of the remaining open items"
+further down.
+
+**Decode-path work — do the probe first, it may close the biggest item for free:**
+
+0a. **Green-cast Fault B — run the whole-image ideal-transport probe.** Extend the existing per-RGB-
+   triple Fault-A model to a whole image: photographic source through the real encoder's channel
+   layout, transport the channel bytes ideally (no modulation, filters or demodulation), reassemble
+   through the matching scanline decoder, measure green bias. About +4.7 means Fault B is protocol or
+   TX-side and closes as a parity decision like Fault A. About +2.3 means the loss is in the DSP chain
+   and earns the full review cadence. Touches no shipping code. Largest audience on this list — every
+   YCbCr mode, which is most real colour traffic. Detail: `docs/known-decode-defects.md` §1.
+
+0b. **MN/MC right-edge stripe — the one confirmed visible defect.** A coloured stripe on the right
+   edge of every MN and MC decode, 6 modes, deterministic, present with all DSP options off. Now
+   localized to one variable: MN140 and MP140 are structurally identical apart from sync 1900 against
+   1200 Hz, porch 2044 against 1500 Hz, and `LuminanceMin/MaxHz` 2044-2300 against the default
+   (`SstvModeRegistry.cs:418-438` against `:489-511`). MP140 is clean. **The defect follows the narrow
+   frequency plan and nothing else**, so start with that controlled pair on one source plus a clean
+   noise-free decode, and look at narrow band and sync-tone handling rather than a generic
+   end-of-line off-by-one. Full review cadence — this is decode-path state. Detail:
+   `docs/known-decode-defects.md` §4.
+
+0c. **Freeze the `m_sint1` sync-bypass tracker during VIS-bit decode.** `AnalogFmSstvDecoder.cs:4563`
+   and the sibling threshold block at `:4679-4694` are gated only on `_syncBypass1PrimaryHeld`, which
+   drops on the routine d12 dips that the 1100/1300 Hz VIS data-bit tones cause. Legacy freezes it:
+   `m_sint1.SyncStart()` is case-0-only (`sstv.cpp:1900`), `SyncMax` is case-1-only (`:1960`), and
+   cases 2/9/3 hold no `m_sint1` code at all. `m_sint2` and `m_sint3` were already fixed by S12
+   (`:4611`, `:4642`), so this is the same two-gate shape, already shipped once and reviewed. If it
+   fires, the result is a bypass mode-commit during VIS decode — a garbage picture. Probability is
+   unmeasured; a noise sweep that finds nothing would not prove safety and costs about as much as the
+   gate, so fix rather than probe. **One real design question for plan-review:** must
+   `_syncBypass1PrimaryHeld` reset on re-entering Search, matching legacy's `m_SyncMode = 0` fallback
+   at `sstv.cpp:1971`/`:1983`?
+
+**Then the production-readiness work, in this order:**
+
+1. **Golden-vector worst-row metric.** `tests/ScanlineStudio.Core.Sstv.Tests/GoldenVectorTests.cs:966`
+   — add a per-row max beside the frame average, measure the current worst row per fixture, pin at
+   about 1.5x to 2x. One corrupted row currently passes.
+2. **Map all 43 modes to their legacy `Main.cpp` `Line*` function**, then capture one TX golden
+   fixture per uncovered function. 11 captures already exist in
+   `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`. Do the mapping first —
+   it tells you whether the gap is 5 fixtures or 30.
+3. **WAL mode on `history.db`.** About 2 lines at connection open, in both
+   `SqliteLogbookRepository` and `SqliteReceiveHistoryStore`. Latency, not crashes.
+4. **Hoist the command out of the loop** at `src/ScanlineStudio.Core.Logbook/SqliteReceiveHistoryStore.cs:490`
+   and `:851`. Only those two sites. The other 19 `CreateCommand()` calls are fine.
+5. **Assert every `{loc:Translate X}` key resolves.** Extend
+   `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`. A typo'd key ships as a broken
+   label today.
+6. **Dispose-race test for `MiniAudioDeviceMuteQuery`.** Copy the shape of its sibling
+   `MiniAudioDeviceEnumerator`'s existing test.
+7. **Convert 5 silent-pass tests to `[SkipOnWindowsFact]`:** `ApplyPendingRelocationsTests.cs:219`,
+   `AppLocationOverridesTests.cs:47`, `AppLocationsServiceTests.cs:99` and `:192`,
+   `JsonSettingsStoreTests.cs:185`. Host.Tests needs its own copy of the attribute.
+8. **QRZ HTTP status check plus one non-OK fixture.** `Core.Logbook` has no status handling at all.
+   Error-message quality only — do it last, or with adjacent work.
+
+**Decide before writing any code:**
+
+- **Gallery filter latency.** Measure `RxHistoryPaneViewModel.UpdateFilteredEntries()` at N = 1 000 /
+  5 000 / 20 000 entries. Above about 50 ms per keystroke, add a 150 to 250 ms debounce. The deeper
+  fix is a row cap on `QueryAsync` (`RxHistoryPaneViewModel.cs:797`), which today has none.
+- **Hamlib header anchoring.** Vendor a pinned `rig.h` into the test project with a `LICENSES.md`
+  entry (Hamlib is LGPL-2.1), or accept a conditional skip. `hamlib/` is gitignored, so a test
+  reading it directly would silently not run anywhere else.
+
+**Two more, only after item 5 or 7 lands:** scoped `MainWindow.axaml.cs` tests (target T1-12's
+`DataContextChanged` re-entry guard first), then fold the 35 `logger is not null` guards into a
+null-object logger in that same file.
+
+---
 
 Per-subsystem go/no-go, from each audit's own closing verdict:
 
@@ -31,7 +138,7 @@ in this report:**
 
 ## Tier 0 — blockers (fix before calling this production-ready)
 
-### T0-1. Radio: un-key retry loop is inert on the Hamlib backend [safety]
+### T0-1 `DONE` (`915cacf`). Radio: un-key retry loop is inert on the Hamlib backend [safety]
 **Files:** `Core.Radio.Hamlib/HamlibRadioProtocol.cs:572-581` (unbounded `_lock.WaitAsync(ct)`, no
 timeout — the only one of 4 backends without one); `Application/RadioSessionService.cs:222-246`
 (3-attempt un-key retry, `CancellationToken.None`).
@@ -46,7 +153,7 @@ into a shared `Application`-layer helper; call it from `RadioSessionService` too
 **Investigate first:** whether abandoning a truly wedged `rig_*` call on a shared `RIG*` handle is
 itself safe — `HamlibRadioProtocol.cs:24-32` already discusses this tradeoff.
 
-### T0-2. `ISettingsStore` has no atomic update; ~25 read-modify-write sites can silently clobber each other
+### T0-2 `DONE` (`915cacf`). `ISettingsStore` has no atomic update; ~25 read-modify-write sites can silently clobber each other
 **Confirmed by 2 independent audits.** Root: `Settings/JsonSettingsStore.cs:12-15,50,90` — `_fileLock`
 serializes individual `LoadAsync`/`SaveAsync` calls, not a caller's load→mutate→save *sequence*
 against another caller's. `WithSection` clones the whole `Sections` dict
@@ -67,7 +174,7 @@ single dedup win found in this whole review: 5 near-identical guard blocks in
 a few sites read other sections off the same loaded snapshot in one breath
 (`LogbookSessionService.LogQsoAsync:71-83`) and need that read kept outside the mutate lambda.
 
-### T0-3. Startup blocks the main thread on radio-connect/audio-open with no timeout
+### T0-3 `DONE` (`fd1496b`). Startup blocks the main thread on radio-connect/audio-open with no timeout
 `Host/Program.cs:219-241` — `ConnectUsingSettingsAsync().GetAwaiter().GetResult()` and
 `StartReceivingAsync().GetAwaiter().GetResult()` run *before* `SetupWithLifetime`, with `ct=default`
 passed through (`Application/RadioSessionService.cs:37,44`). A powered-off rigctld host or a stalled
@@ -78,7 +185,7 @@ handlers), or wrap each in `.WaitAsync(TimeSpan)`.
 **Investigate first:** confirm nothing downstream assumes RX capture is live by the time
 `MainViewModel` is constructed.
 
-### T0-4. DI container graph is never validated before first resolve
+### T0-4 `DONE` (`915cacf`). DI container graph is never validated before first resolve
 `Host/Program.cs:133-142` — `ValidateOnBuild`/`ValidateScopes` only enabled in `Development`, which a
 GUI launch never is. A missing registration surfaces as an unguarded crash from `SetupWithLifetime`
 → `MainViewModel` resolution instead of the already-handled `Console.Error` + rethrow at line 140.
@@ -88,7 +195,7 @@ repeats on every resolve.
 ValidateOnBuild = true, ValidateScopes = true }))` before `Build()`. Cheap, existing tests already
 prove the graph resolves clean. No investigation needed.
 
-### T0-5. Shutdown can deadlock the UI thread for a guaranteed 10s stall
+### T0-5 `DONE` (`fd1496b`). Shutdown can deadlock the UI thread for a guaranteed 10s stall
 `Host/Program.cs:313-318` (`HandleLifetimeExit`) — `Task.WhenAny(...).GetAwaiter().GetResult()` runs
 on the Avalonia UI thread. Any `await` in the disposal chain missing `ConfigureAwait(false)` posts
 its continuation back to that blocked thread → deadlock until the 10s `Task.Delay` wins, leaving
@@ -98,7 +205,7 @@ off the UI thread.
 **Investigate first (cheap):** audit `ConfigureAwait` usage in the async-disposable singletons
 actually in the graph (`MiniAudioEngine`, `SstvSessionService`, `RadioController`).
 
-### T0-6. `RxDiskLineStagingBuffer`: 8 bare `catch {}` blocks swallow I/O failures silently
+### T0-6 `DONE` (`1ba6ab5`). `RxDiskLineStagingBuffer`: 8 bare `catch {}` blocks swallow I/O failures silently
 `Core.Sstv/RxDiskLineStagingBuffer.cs:191,201,212,405,524,551,566,612,680`. A full temp disk, a
 read-only `TMPDIR`, or mid-write ENOSPC silently degrades RX Extended buffering to "capture stopped"
 with **no log line anywhere** in this class except one dispose-path log. This does I/O
@@ -110,7 +217,7 @@ contract, stop the silence). Expose `HasWriteFailed`/`RxBufferDegraded` on `ISst
 through `RestartableSstvDecoder`, log once on the latching transition.
 **Investigate first (light):** decide UI-status-indicator vs. log-only for the surfaced flag.
 
-### T0-7. Decoder swap can hold a lock for up to 10s during disposal, freezing every UI property read
+### T0-7 `DONE` (`fd1496b`). Decoder swap can hold a lock for up to 10s during disposal, freezing every UI property read
 `Core.Sstv/RestartableSstvDecoder.cs:1566,655` — `outgoing.Dispose()` runs *inside* `Swap()`'s
 `lock (_gate)`, and that disposal chains into `RxDiskLineStagingBuffer.Dispose`'s two 5s
 `WaitForConsumer` calls. Every UI-facing property (`SignalPeakLevel`, `SlantPpm`, `SyncSource`, etc.
@@ -120,7 +227,7 @@ idle push), so this is now click-rate-bounded, not maintenance-interval-bounded.
 **Fix:** `Swap` returns the outgoing instance instead of disposing it; caller disposes it in the
 existing post-lock section (`PushSamplesCore`, `:719-753`) after exiting the lock. Small, local.
 
-### T0-8. QRZ account password stored plaintext with zero mitigating control
+### T0-8 `DONE` (`d71bf61`). QRZ account password stored plaintext with zero mitigating control
 `Core.Logbook/QrzLookupSettings.cs:25` (password) and `QrzUploadSettings.cs:17` (API key) persist
 into `settings.json` unencrypted. Confirmed: repo-wide grep for `ProtectedData`/`UnixFileMode`/
 `File.SetUnixFileMode` returns zero matches — the settings file also carries default (world-readable)
@@ -132,7 +239,7 @@ share presets, this becomes an exfiltration path, not just a local-file gap; (c)
 `ICredentialStore` abstraction (libsecret/DPAPI/Keychain) with plaintext JSON as a one-time
 migration source — post-ship.
 
-### T0-9. Logbook SQLite: no indexes beyond primary keys, plus an O(files×rows) reconcile scan
+### T0-9 `DONE` (`915cacf`). Logbook SQLite: no indexes beyond primary keys, plus an O(files×rows) reconcile scan
 `Core.Logbook/SqliteLogbookRepository.cs:239-259`, `SqliteReceiveHistoryStore.cs:555-569` — only
 `Id TEXT PRIMARY KEY`. Every logbook/gallery view query (`SearchAsync`, `QueryAsync`, sorted by
 `StartUtc`/`ReceivedAt` DESC) is a full scan + sort. `ReconcileWithDiskAsync:456-459` runs a
@@ -143,7 +250,7 @@ review — zero data risk, cheap. Consider a UNIQUE constraint on `FilePath` (cu
 with `WHERE NOT EXISTS`) — **investigate first**: confirm no legitimate duplicate-`FilePath` rows
 exist in shipped databases before adding UNIQUE.
 
-### T0-10. RX image decode allocates ~512 Large-Object-Heap buffers per received image
+### T0-10 `DONE` (`73932d8`). RX image decode allocates ~512 Large-Object-Heap buffers per received image
 `Core.Imaging/ReceivedImageBuffer.cs:179,230-239` and `Core.Logbook/ReceiveHistoryRecorder.cs:289,
 474-483` — both allocate a fresh `Rgb24[width*height]` (~246 KB, over the 85 KB LOH threshold) on
 **every** `LineDecoded` event, in 2 independent subscribers. A 320×256 image over ~256 line events
@@ -157,7 +264,7 @@ on the RX hot path, every reception.
 naive pool return can hand a recycled buffer to a live UI reader or a mid-flight PNG encode. Design
 the handoff before writing code.
 
-### T0-11. UI: no `WriteableBitmap`/`Bitmap` in the UI layer is ever disposed
+### T0-11 `DONE` (`76975d3`). UI: no `WriteableBitmap`/`Bitmap` in the UI layer is ever disposed
 `UI/Imaging/ImageSourceBitmapConverter.cs:15` returns a fresh `WriteableBitmap` on every call, ~12
 call sites, every VM-held bitmap replaced by assignment and abandoned — e.g.
 `RxImagePaneViewModel.cs:1844` on **every coalesced decode update** for the whole reception;
@@ -173,7 +280,7 @@ so in-place blitting needs a paired invalidate/double-buffer swap — verify wit
 headless (per this project's own known headless-`Lock()` gotcha). Confirm no bitmap is shared
 elsewhere (gallery/viewer) before disposing.
 
-### T0-12. UI: TX editor recomputes the full image pipeline synchronously on the UI thread per pointer-move
+### T0-12 `DONE` (`1d76e84`). UI: TX editor recomputes the full image pipeline synchronously on the UI thread per pointer-move
 `UI/ViewModels/TxImageEditorPaneViewModel.cs:3532-3553` — a crop drag runs the full
 crop→resize→adjustments→template-composite (ImageSharp text rasterization) pipeline plus a full
 `WriteableBitmap` allocation, **on every mouse-move event**. Same for each of 6 adjustment sliders.
@@ -183,7 +290,7 @@ in flight at a time).
 **Investigate first (light):** measure `ApplyTemplate` cost with 3-4 text elements to decide if
 coalescing alone suffices or the composite also needs to move off-thread.
 
-### T0-13. `MainViewModel` has zero test coverage; its Ctrl+S dispatch has a documented prior bug
+### T0-13 `DONE` (`8e33687`). `MainViewModel` has zero test coverage; its Ctrl+S dispatch has a documented prior bug
 **Corrected 2026-08-30 by the test-suite audit below — the original grep methodology (`new
 RxHistoryPaneViewModel(`, `new LogbookPaneViewModel(`) was stale.** Both of those ViewModels are
 actually well covered — `RxHistoryPaneViewModel` (~65 tests) and `LogbookPaneViewModel` (~40 tests)
@@ -210,24 +317,24 @@ awaitable-seam treatment `RxImagePaneViewModel._loadQuickModeGridTask` already u
 
 | # | Subsystem | Finding | File(s) |
 |---|---|---|---|
-| T1-1 | Core.Sstv | Both hot-path FIR filters do a full per-sample array shift instead of a circular buffer — roughly doubles cost of the 2 hottest DSP routines. Golden-vector-gated; **do not** vectorize the dot product as part of this fix (breaks bit-parity) | `SearchBandpassFilter.cs:188`, `HilbertFmDemodulator.cs:275` |
-| T1-2 | Core.Sstv | `WaterfallSource.Frames` is a bare `Subject<T>` called synchronously from the audio drain thread — no stated scheduler/slow-subscriber policy, exactly the regression CLAUDE.md's concurrency rule targets | `WaterfallSource.cs:23,55,133` |
-| T1-3 | Core.Sstv | `IAsyncEnumerable<float>` yields one sample at a time in the TX encoder — ~12.8M awaits for a PD290 transmission, no I/O involved | `AnalogFmSstvEncoder.cs:190,317,347` |
-| T1-4 | Core.Sstv | One `[LoggerMessage]` in 20,100 lines — a dozen user commands (ForceMode, RequestReSync, SetModeLock, etc.) and decoder-restart/reconfiguration-rejected events are unlogged | `AnalogFmSstvDecoder.cs` command handlers, `RestartableSstvDecoder.Swap:1464` |
-| T1-5 | Application | `SstvSessionService.PlayWithPttAsync` is an 844-line method with 12 fields tracking PTT physical state; two residual races are self-documented as narrowed-not-closed. Extract a `PttSafetyCoordinator`; needs its own plan-review round, driven by the existing `SstvSessionServicePttSafetyTests` suite | `SstvSessionService.cs:3254-4098` |
-| T1-6 | Application | Unverified sync-over-async on the audio drain thread — comment retracts its own prior safety claim, self-flagged as an open unknown on a safety path | `SstvSessionService.cs:1919` |
-| T1-7 | Application | Raw English exception text is the UI's error surface in several places (violates no-hardcoded-strings rule); `LogQsoAsync` discards the post-persist failure reason; an unguarded event-raise after a successful settings write can report "save failed" on a save that succeeded | `RadioSessionService.cs:81,104,179,209,292`; `LogbookSessionService.cs:99` |
-| T1-8 | Radio/CAT | Lifecycle calls (`Connect`/`Disconnect`/`Dispose`) are documented as caller-serialized but no caller actually serializes across each other (preset switch vs. Options Save). Needs a paper decision on inline-subscriber re-entrancy before adding a lock | `RadioController.cs:130-267`; callers in `ConfigurationPresetService.cs:378-382`, `OptionsWindowViewModel.cs:992,1032` |
-| T1-9 | Radio/CAT | Give-up threshold (5 attempts, ~7.5s) permanently drops the session on a cable pull with no auto-recovery — product decision, not a constant tweak | `RadioController.cs:36,367-407` |
-| T1-10 | Radio/CAT | "Rig unplugged" is a permanent give-up on Hamlib/rigctld but an infinite 250ms-cadence poll forever on flrig/OmniRig (different exception classification) — decide intended semantics, make uniform | `FlrigClientProtocol.cs:74`, `OmniRigRadioProtocol.cs:65` vs. `RadioController.cs:322-407` |
-| T1-11 | Cross-subsystem | "Test Connection" UI calls omit a cancellation token/timeout on 4 sites, unlike the sibling PTT-test calls — combined with T1-8/Hamlib timeout, can leave "Testing…" stuck indefinitely | `OptionsWindowViewModel.cs:1241,1326,1391,1539` |
-| T1-12 | UI | `MainWindow`'s cross-VM event wiring lives entirely inside `DataContextChanged` using `+=` with no re-entry guard — a second firing double-subscribes (2 Options windows, 2 viewer windows). Latent today (DataContext only assigned once), one-line guard | `Views/MainWindow.axaml.cs:147-780` |
-| T1-13 | UI | Frequency/SWR/ALC/PWR/duration values composed via raw string interpolation in ViewModels/converters, bypassing `ILocalizationService` — decimal separator and unit literals break on non-en-US culture | `RadioStatusViewModel.cs:535,536,562,578,583,588,1331`; `RxImagePaneViewModel.cs:469,470,596,598`; 3 more sites |
-| T1-14 `PARTIAL` | Audio/Imaging/Logbook | Every imaging operation (crop/resize/adjust/overlay/template/rotate) pays a full convert-in/convert-out; `RecomputePreview` fires per pointer-move — ~8 full-image conversions per preview frame, compounds with T0-12. **Corrected 2026-08-31:** the hot preview path (`TxImageEditorPaneViewModel.RecomputePreviewPipeline`) is fixed — see the "Tier D progress" note. The other 6 call sites named below are unchanged, deliberately (cold paths, not the "fires on every pointer-move" cost this item is about) | `TransmitImagePreparer.cs:1085-1121` (`ToImageSharp`/`FromImageSharp`) and 6 remaining call sites |
-| T1-15 | Audio/Imaging/Logbook | Same pixel-conversion loop duplicated in 7 places; already caused a real bug (`StockImageLibrary` missing an `AutoOrient` call `ImageFileLoader` had) | `ImageFileLoader.cs:35-54`, `StockImageLibrary.cs:94-113`, 5 more sites |
-| T1-16 | Audio/Imaging/Logbook | Timestamps stored as local-offset strings, compared lexicographically — diverges from chronological order across DST/timezone changes. Needs a migration decision before coding | `ReceiveHistoryRecorder.cs:373,428`; `SqliteReceiveHistoryStore.cs:419-422,142,462` |
-| T1-17 | Audio/Imaging/Logbook | `AdifImporter` assumes UTF-8 regardless of source file encoding; unguarded date-slice parsing throws the wrong exception type and aborts mid-import, discarding already-mapped records | `AdifImporter.cs:40,298-307` |
-| T1-18 | Infra | `CodePagesEncodingProvider` (mandatory per CLAUDE.md §4 for CP932 legacy files) is registered nowhere in the repo — latent until legacy `.ini`/`.mtm` import is attempted | repo-wide, none found |
+| T1-1 `DONE` (`09c79f0`) | Core.Sstv | Both hot-path FIR filters do a full per-sample array shift instead of a circular buffer — roughly doubles cost of the 2 hottest DSP routines. Golden-vector-gated; **do not** vectorize the dot product as part of this fix (breaks bit-parity) | `SearchBandpassFilter.cs:188`, `HilbertFmDemodulator.cs:275` |
+| T1-2 `DONE` (`0482045`) | Core.Sstv | `WaterfallSource.Frames` is a bare `Subject<T>` called synchronously from the audio drain thread — no stated scheduler/slow-subscriber policy, exactly the regression CLAUDE.md's concurrency rule targets | `WaterfallSource.cs:23,55,133` |
+| T1-3 `DONE` (`94d57c6`) | Core.Sstv | `IAsyncEnumerable<float>` yields one sample at a time in the TX encoder — ~12.8M awaits for a PD290 transmission, no I/O involved | `AnalogFmSstvEncoder.cs:190,317,347` |
+| T1-4 `DONE` (`0c267d9`) | Core.Sstv | One `[LoggerMessage]` in 20,100 lines — a dozen user commands (ForceMode, RequestReSync, SetModeLock, etc.) and decoder-restart/reconfiguration-rejected events are unlogged | `AnalogFmSstvDecoder.cs` command handlers, `RestartableSstvDecoder.Swap:1464` |
+| T1-5 `DONE` (`746ff03`) | Application | `SstvSessionService.PlayWithPttAsync` is an 844-line method with 12 fields tracking PTT physical state; two residual races are self-documented as narrowed-not-closed. Extract a `PttSafetyCoordinator`; needs its own plan-review round, driven by the existing `SstvSessionServicePttSafetyTests` suite | `SstvSessionService.cs:3254-4098` |
+| T1-6 `DONE` (`9411768`) | Application | Unverified sync-over-async on the audio drain thread — comment retracts its own prior safety claim, self-flagged as an open unknown on a safety path | `SstvSessionService.cs:1919` |
+| T1-7 `DONE` (`0810dce`) | Application | Raw English exception text is the UI's error surface in several places (violates no-hardcoded-strings rule); `LogQsoAsync` discards the post-persist failure reason; an unguarded event-raise after a successful settings write can report "save failed" on a save that succeeded | `RadioSessionService.cs:81,104,179,209,292`; `LogbookSessionService.cs:99` |
+| T1-8 `DONE` (`e0ccf0d`) | Radio/CAT | Lifecycle calls (`Connect`/`Disconnect`/`Dispose`) are documented as caller-serialized but no caller actually serializes across each other (preset switch vs. Options Save). Needs a paper decision on inline-subscriber re-entrancy before adding a lock | `RadioController.cs:130-267`; callers in `ConfigurationPresetService.cs:378-382`, `OptionsWindowViewModel.cs:992,1032` |
+| T1-9 `DONE` (`e0ccf0d`) | Radio/CAT | Give-up threshold (5 attempts, ~7.5s) permanently drops the session on a cable pull with no auto-recovery — product decision, not a constant tweak | `RadioController.cs:36,367-407` |
+| T1-10 `DONE` (`e0ccf0d`) | Radio/CAT | "Rig unplugged" is a permanent give-up on Hamlib/rigctld but an infinite 250ms-cadence poll forever on flrig/OmniRig (different exception classification) — decide intended semantics, make uniform | `FlrigClientProtocol.cs:74`, `OmniRigRadioProtocol.cs:65` vs. `RadioController.cs:322-407` |
+| T1-11 `DONE` (`0c267d9`) | Cross-subsystem | "Test Connection" UI calls omit a cancellation token/timeout on 4 sites, unlike the sibling PTT-test calls — combined with T1-8/Hamlib timeout, can leave "Testing…" stuck indefinitely | `OptionsWindowViewModel.cs:1241,1326,1391,1539` |
+| T1-12 `DONE` (`0c267d9`) | UI | `MainWindow`'s cross-VM event wiring lives entirely inside `DataContextChanged` using `+=` with no re-entry guard — a second firing double-subscribes (2 Options windows, 2 viewer windows). Latent today (DataContext only assigned once), one-line guard | `Views/MainWindow.axaml.cs:147-780` |
+| T1-13 `DONE` (`0810dce`) | UI | Frequency/SWR/ALC/PWR/duration values composed via raw string interpolation in ViewModels/converters, bypassing `ILocalizationService` — decimal separator and unit literals break on non-en-US culture | `RadioStatusViewModel.cs:535,536,562,578,583,588,1331`; `RxImagePaneViewModel.cs:469,470,596,598`; 3 more sites |
+| T1-14 `PARTIAL` (`69cdc91`) — **still open**, no follow-up commit | Audio/Imaging/Logbook | Every imaging operation (crop/resize/adjust/overlay/template/rotate) pays a full convert-in/convert-out; `RecomputePreview` fires per pointer-move — ~8 full-image conversions per preview frame, compounds with T0-12. **Corrected 2026-08-31:** the hot preview path (`TxImageEditorPaneViewModel.RecomputePreviewPipeline`) is fixed — see the "Tier D progress" note. The other 6 call sites named below are unchanged, deliberately (cold paths, not the "fires on every pointer-move" cost this item is about) | `TransmitImagePreparer.cs:1085-1121` (`ToImageSharp`/`FromImageSharp`) and 6 remaining call sites |
+| T1-15 `DONE` (`0810dce`) | Audio/Imaging/Logbook | Same pixel-conversion loop duplicated in 7 places; already caused a real bug (`StockImageLibrary` missing an `AutoOrient` call `ImageFileLoader` had) | `ImageFileLoader.cs:35-54`, `StockImageLibrary.cs:94-113`, 5 more sites |
+| T1-16 `DONE` (`10e06b7`) | Audio/Imaging/Logbook | Timestamps stored as local-offset strings, compared lexicographically — diverges from chronological order across DST/timezone changes. Needs a migration decision before coding | `ReceiveHistoryRecorder.cs:373,428`; `SqliteReceiveHistoryStore.cs:419-422,142,462` |
+| T1-17 `DONE` (`0810dce`) | Audio/Imaging/Logbook | `AdifImporter` assumes UTF-8 regardless of source file encoding; unguarded date-slice parsing throws the wrong exception type and aborts mid-import, discarding already-mapped records | `AdifImporter.cs:40,298-307` |
+| T1-18 `DONE` (`0c267d9`) | Infra | `CodePagesEncodingProvider` (mandatory per CLAUDE.md §4 for CP932 legacy files) is registered nowhere in the repo — latent until legacy `.ini`/`.mtm` import is attempted | repo-wide, none found |
 
 **Corrections (2026-08-31, Tier-1 roadmap planning — see `PROJECT_BRIEF.md` for the ranked plan):**
 - **T1-2:** the "no stated scheduler/slow-subscriber policy" premise is stale.
@@ -457,6 +564,13 @@ green.
 
 ## Tier 2 — medium priority, batch with adjacent work
 
+> **Re-verified open 2026-09-07** (the rest of this tier was not individually re-checked):
+> `SqliteCommand` is still never disposed — 21 `var command = connection.CreateCommand()` sites in
+> `Core.Logbook`, zero `using`. `history.db` still has no WAL mode and no busy timeout.
+> `TxControlsPaneViewModel.Dispose()` cancels its CTS but never disposes it, and unsubscribes no
+> editor handler. `IHost` is still built and never started — no `IHostedService`, and no
+> `Run`/`StartAsync` in `Program.cs`.
+
 - **Core.Sstv:** per-line array/delegate allocations in scanline decoders (`YCbCrSequentialScanlineDecoder.cs:16-18`, `YCbCrLinePairedScanlineDecoder.cs:18-21`); `PixelSampleReader` delegate indirection on the hottest read path; `WaterfallSource.BuildFrame` allocates 2 scratch arrays/frame; event fan-out allocates twice per raise (`AnalogFmSstvDecoder.cs:2211`, `RestartableSstvDecoder.cs:763,1730`); `SstvModeRegistry` uses 43-branch if-chains instead of tables (`:958-1004`); 4 near-identical scanline decoders share copy-pasted index-walk math (extract *only* the walker, not the channel logic); channel dispatch by magic string instead of enum; `AnalogFmSstvDecoder.cs` is 7,945 lines at ~62% review-history comments — extract the narrative to `docs/`, keep only the invariant statements inline (safe, additive, do this one); `WaterfallSource` has an unsynchronized `_accumulatedCount` cross-thread read/write and no `_disposed` guard on the audio thread.
 - **Application:** `ConfigurationPresetService` has 5 near-identical try/catch push blocks (collapses via Tier-0 `UpdateAsync` work); `OptionsSettingsService._loadedSettings` is now dead state; `OptionsSnapshot` mapping triplicated across `Defaults`/`LoadAsync`/`SaveAsync`; `TemplateStore.SaveAsync`/`ExportAdifFileAsync` write non-atomically (temp-file+rename fix, cheap); `ImportAdifFileAsync` does N individual transactions with no partial-failure reporting; fire-and-forget `Task.Run` work (audio auto-save encode, RxAudioAutoSaver completion) isn't tracked or drained on `DisposeAsync`.
 - **Radio/CAT:** 4 near-identical `AcquireAsync`/timeout-wrapper/lazy-connect implementations across the 4 backend projects — extract a shared base, but preserve 2 real asymmetries (unbounded vs. bounded wait, Rigctld's deliberate no-lock dispose); Hamlib does one `Task.Run` per native call (up to 6 pool hops per 250ms poll) — wrap the whole method body once instead; OmniRig has zero logging anywhere (the one backend that can't be tested locally, so diagnosability matters most); `RigctldClientProtocol.ReadLineAsync` has no max line length (unbounded growth against a mis-pointed host); Hamlib connect-cleanup can leak a handle if `RigCleanup` throws before `_rig` is cleared (2-line swap).
@@ -469,6 +583,12 @@ green.
 
 ## Tier 3 — low priority / nits (batch opportunistically, no urgency)
 
+> **Re-verified open 2026-09-07** (the rest of this tier was not individually re-checked):
+> `ScanlineStudio.Core.Radio.Cat` is still an empty project, with no `.cs` file outside `obj/`.
+> `ILogFileRelocator` is still registered twice (`Program.cs:148` and `:904`).
+> `ISstvDecoderReconfiguration` still lives in `Core.Sstv`, not `Abstractions`.
+> `MainWindow.axaml.cs` now has 35 `logger is not null` guards, up from the ~30 this audit recorded.
+
 Grouped by subsystem; see each audit's own report section for exact file:line if reviving this
 tier. Non-exhaustive here by design — these were the "safe to defer indefinitely" items each audit
 flagged, not omissions.
@@ -480,6 +600,168 @@ flagged, not omissions.
 - **Audio/Imaging/Logbook:** `WavFile` does per-sample virtual calls in both read and write directions (bulk-buffer fix, low risk); duplicate WAV `fmt `/`data` chunks silently override with no error; a test double (`FakeAudioEngine`) ships in the production assembly instead of a test project; undisposed `HttpResponseMessage`/`FormUrlEncodedContent` in the QRZ client (not a live leak under `IHttpClientFactory`, just non-idiomatic); unbounded raw-response-body logging on a QRZ upload failure.
 - **Infra:** `ILogFileRelocator` registered twice (last-wins, harmless); a stale doc comment claims `ScanlineStudio.Application` "has no real source files today"; `ScanlineStudio.Settings.csproj` has an unused `ProjectReference` to `Abstractions` contradicting its own documented layering; `ConfigurationPresetStore`'s filename validation allows Windows-reserved device names.
 - **Cross-subsystem:** `ISstvDecoderReconfiguration` lives in `Core.Sstv` while its 2 siblings live in `Abstractions` (asymmetric, causes an otherwise-unnecessary downcast); an empty `Core.Radio.Cat` project is referenced by `Application` for no current reason; one unresolvable `<see cref>` in a doc comment.
+
+---
+
+
+## Triage of the remaining open items (auditor pass, 2026-09-07)
+
+**Two auditor passes ran.** The first covered this document's own Tier 2, Tier 3 and test-suite
+items, below. The second consolidated every open bug and research item from the rest of the repo's
+markdown into this file — that pass is summarised in "Decode-path items folded in from other
+documents", immediately after this section.
+
+Every remaining Tier 2, Tier 3 and test-suite item was re-verified against current source, then
+triaged by the `auditor` subagent. **No item is a MUST FIX. No item needs a `principal` round.**
+Tier 0 and Tier 1 took the real defects.
+
+**Do these, best first:**
+
+1. **Golden-vector worst-row metric** (TT1-2). `MeasureAveragePerChannelDelta`
+   (`GoldenVectorTests.cs:966-988`) sums over the whole frame, and tolerances run 1.99 to 13.76. One
+   fully corrupted row out of 256 moves the average by at most 1.0, so it passes. Add a per-row max
+   in the same loop, measure the current worst row per fixture, pin at about 1.5x to 2x. Cheapest
+   change with the widest blast radius.
+2. **TX channel-order coverage** (TT1-5), starting with the mapping, not with captures. 11 real
+   legacy TX captures already exist in `Fixtures/GoldenVectors/TxCapture/`. The first action is to
+   map all 43 modes to their legacy `Main.cpp` `Line*` function and capture one fixture per
+   uncovered distinct function. CLAUDE.md §3 forbids assuming a sibling mode shares a covered mode's
+   order, and only that mapping says whether the real gap is 5 fixtures or 30.
+3. **WAL mode on `history.db`** (Tier 2). Two stores write one file. Without WAL a write blocks
+   readers, and the Gallery query has no row limit, so a slow SELECT can stall a
+   `ReceiveHistoryRecorder` insert. About 2 lines, and it degrades gracefully. Note: this is a
+   latency fix, not a crash fix — Microsoft.Data.Sqlite already retries `SQLITE_BUSY` until the 30 s
+   default `CommandTimeout`, so "no busy timeout" overstated the exposure.
+4. **`SqliteCommand` disposal at the two in-loop sites only** (Tier 2):
+   `SqliteReceiveHistoryStore.cs:490` and `:851`. Each iteration creates a command and re-prepares
+   identical SQL, so a large reconcile accumulates N live native statements. The other 19 sites are
+   harmless — the command is created on an `await using` connection that closes in the same method.
+5. **Locale-key existence assertion** (TT1-7). `NoHardcodedAxamlStringsTests.cs:19` is one regex over
+   `Content|Text|Header` in `.axaml` only. Enumerate every `{loc:Translate X}` key and assert it
+   resolves. A typo'd key ships today as a visibly broken label that nothing catches.
+6. **`MiniAudioDeviceMuteQuery` dispose-race test** (TT1-15). Its sibling `MiniAudioDeviceEnumerator`
+   already has one, so the harness exists. The failure class is an access violation at shutdown.
+7. **Scoped `MainWindow.axaml.cs` tests** (TT1-6). Target T1-12's `DataContextChanged` re-entry guard
+   plus the two or three highest-traffic cross-pane wirings. Do not chase 1268 lines. Budget it as a
+   coverage task, not a fix.
+8. **Five silent-pass tests → `[SkipOnWindowsFact]`** (TT1-18). The count of 9 overstates it: two are
+   required CA1416 analyzer guards and one computes an expected value. The genuine sites are
+   `ApplyPendingRelocationsTests.cs:219`, `AppLocationOverridesTests.cs:47`,
+   `AppLocationsServiceTests.cs:99` and `:192`, `JsonSettingsStoreTests.cs:185`.
+9. **QRZ status check plus one non-OK fixture** (TT1-16). The source half is confirmed still true: no
+   `EnsureSuccessStatusCode`, `IsSuccessStatusCode` or `StatusCode` anywhere in `Core.Logbook`.
+   Impact is bounded — a 503 HTML page surfaces as "Data at the root level is invalid" to the
+   operator. Error-message quality only.
+10. **Shared factory-match helper** (Tier 2). Only observable effect is three different error strings
+    for one condition. About 15 lines. Do it when already in those files.
+11. **The 35 `logger is not null` guards** (Tier 3). Only worth bundling after item 7 lands tests.
+
+**Investigate, do not build yet:**
+
+- **Gallery filter latency** (Tier 2). The real variable is N: `QueryAsync` is called with no row
+  limit (`RxHistoryPaneViewModel.cs:797`), so clearing "Show today only" loads the entire history.
+  Measure `UpdateFilteredEntries()` at N = 1 000 / 5 000 / 20 000. Above about 50 ms per keystroke,
+  add a 150 to 250 ms debounce — and consider a query row cap, which is the more fundamental fix.
+- **Hamlib header anchoring** (TT1-12). `hamlib/` is gitignored (`.gitignore:11`), so a
+  parse-and-compare test would silently not run on CI or any other machine — the same false-PASS
+  pattern TT1-18 complains about. The decision that settles it: vendor a pinned `rig.h` into the test
+  project, which needs a `LICENSES.md` entry per CLAUDE.md §5 since Hamlib is LGPL-2.1, or accept a
+  conditional skip. Worth deciding, because a wrong `RIG_LEVEL_*` bit-flag silently mis-reads SWR,
+  and the SWR auto-cutoff is a safety feature.
+
+**Dropped, with the reason (do not re-open without new evidence):**
+
+- **T1-14 imaging convert-in/convert-out.** Every remaining call site is a one-shot user action on an
+  image of at most 640x496. Sub-millisecond. The hot path was already fused.
+- **`TxControlsPaneViewModel.Dispose()`.** No leak. `_transmitCts` is created and disposed inside the
+  transmit method's own `finally` (`:1737`/`:1776`), and the VM is a DI singleton (`Program.cs:916`),
+  so its subscriptions live exactly as long as the publishers.
+- **`IHost` built but never started.** Zero `IHostedService` implementations exist, and the host is
+  disposed via `HandleLifetimeExit` (`Program.cs:469`). Avalonia owns the lifetime. The Generic Host
+  is deliberately a DI container here.
+- **Per-line `double[]` in the scanline decoders.** `DecodeLine` runs a few times per second, so this
+  is a few KB/s of gen0. Touching decode-path state triggers the mandatory 2-round plan plus 3-round
+  code review (CLAUDE.md §7) — review cost is orders of magnitude above the benefit.
+- **Four near-identical backend `AcquireAsync` implementations.** The audit itself requires two real
+  asymmetries to survive any shared base. Unifying PTT-critical acquire/timeout logic across four
+  backends is exactly the refactor that reintroduces a stuck transmitter.
+- **Empty `Core.Radio.Cat` project.** The "or document" half is already satisfied
+  (`spec/03-cat-layer.md:32`, `spec/01-architecture.md:61`). Deleting it costs edits to the `.sln`,
+  2 csprojs, `coverage-thresholds.json` and 3 spec docs, to remove a slot you intend to fill.
+- **`ILogFileRelocator` registered twice — FALSE POSITIVE.** The order is deliberate and correct.
+  `RegisterServices` (holding the `NoneLogFileRelocator` default at `:904`) runs at `:139`, and the
+  real `FileLoggerProvider` registers after it at `:148`. Last-wins therefore picks the real one.
+  Both sites carry comments explaining the ordering requirement.
+- **`ISstvDecoderReconfiguration` location — RATIONALE IS WRONG.** The `is` test is inherent to the
+  optional-side-channel design, and its sibling `ISstvEncoderReconfiguration` lives in Abstractions
+  and is pattern-matched the same way. `ScanlineStudio.Application.csproj:12` already references
+  Core.Sstv, so moving the file breaks no boundary that is not already crossed.
+- **`ConfigurationPresetStore` concurrent-writer test (TT1-19).** One preset is one whole file, so
+  concurrent saves are correctly last-writer-wins, unlike `JsonSettingsStore`'s
+  multiple-sections-in-one-file lost-update mode. One thing worth knowing: the temp path is a shared
+  `path + ".tmp"` (`:317`), safe only because of the in-process semaphore plus the single-instance
+  mutex. A per-save unique temp name would harden it more than any test here.
+
+**Four claims in this document were stale.** TT0-2, TT1-9, TT1-10 and TT1-11 are all already tested,
+at the layer that owns the guarantee. `ILogFileRelocator` and `ConfigurationPresetStore` hardening
+were also already fixed. Assume the same of any remaining unverified Tier 2 or Tier 3 line before
+spending on it.
+
+---
+
+## Decode-path items folded in from other documents (2026-09-07)
+
+`production_audit.md` is now the ONLY backlog. Every other document records measurements, decisions
+and history — none of them carries a work list. 14 candidates were verified present in current source
+and triaged. Three survived and are in the pick-up list at the top as items 0a, 0b and 0c.
+
+**Dropped, with the reason — do not re-open without new evidence:**
+
+- **rm8 colour tilt — RETRACTED, measurement artifact.** RM8 is `CreateMonoAveragedMode`
+  (`SstvModeRegistry.cs:602`), monochrome, one `"Y"` segment, so a decode is R = G = B by construction
+  and cannot carry a channel-dependent tilt. Comparing a grey decode against a colour source produces
+  exactly the shape that was recorded, invariant across demodulators. Retraction written into
+  `docs/known-decode-defects.md` §2 with its falsifier.
+- **PLL collapse at wide output cutoffs.** Unreachable in shipped configuration. The one thing that
+  had to survive is a constraint, not a task: a future output-cutoff control must range-limit per
+  demodulator. That is recorded in `docs/known-decode-defects.md` §3.
+- **VIS header fixed origin, 0-185 ms band** (`decoder_quality_improvement.md` §15 item 4). Reachable,
+  but the surviving residue after the anchor fold is an integer vertical shift of 1 to 3 lines out of
+  128 to 256. No operator notices that. The only visually real part is the unfolded AVT sub-line case,
+  and AVT is extinct.
+- **Mid-image narrow-restart stale filter cache** (§15 item 7). Needs an MN/MC transmission
+  interrupting an in-progress wide-mode image, affects about one line, and the fix is a
+  checkpoint/rewind mechanism for two stateful filter classes. One rider: if item 0b's cause turns out
+  to live in the narrow filter or mapping path, revisit this as part of that work, not on its own.
+- **AVT training runs H2 instead of H1** (§15 item 1). Still present
+  (`AnalogFmSstvDecoder.cs:1205-1211`). AVT is extinct on the air.
+- **Second `m_SyncAccuracyN` refresh trigger** (§15 item 2's residue). Unreachable by construction —
+  legacy gates it on `m_SyncAccuracy == 2`, an option this port never ported. Its practical effect is
+  largely covered: this port replays on every committed correction (`:604-606`). The missing
+  `docs/removed-features.md` entry that CLAUDE.md §2 requires has now been written.
+- **§15 items 6, 8, 13, 14, 15.** No decode effect, no reception win, or bounded with no constructible
+  failure and already deliberately deprioritized.
+- **CW-ID window dropped during a paused file decode.** Premise unreachable: `DecodeFromFileAsync`
+  throws on a paused start (`SstvSessionService.cs:2429-2432`), and `SetAutoDetectPaused(true)` drops
+  the arm anyway (`:500`). The once-proposed `_fileDecodeInFlight` gate would be safe but would buy
+  nothing.
+- **CW decoder robustness at high WPM.** `MinDotMs = 22.0` is derived, not guessed
+  (`ClassicalCwDecoder.cs:42-47`), and a clean 50 WPM decode is already pinned
+  (`ClassicalCwDecoderTests.cs:42-63`). The only hole is 50 WPM under noise, where the failure is
+  "no CW ID reported" on a rare fast ID. If anyone edits that file, add one noisy 50 WPM
+  `[InlineData]` row. Not a backlog item.
+- **Options "Currently using" field bug.** Carried for weeks with no symptom and no repro, and the
+  code it pointed at was rewritten by the 2026-08-27 live-apply change. Deleted. A real user report
+  would be a better starting point than this note ever was.
+- **`spec/14-roadmap.md`'s two deferral tables.** Not worth re-verifying row by row: 7 of 8
+  spot-checked rows were stale or already tracked here. Both tables now carry a
+  "historical record, not an open backlog" banner.
+
+**Deliberately NOT folded in.** `spec/06`, `spec/07`, `spec/15`, `spec/17`, `spec/19` and `spec/03`
+carry feature-scope deferrals, not defects — manual clock calibration, the drag-the-slant tool,
+VOX-mode ID variants, unwired telemetry fields, `TemplateCatProtocol` fallback. Those belong in the
+roadmap. `docs/functional-audit-playbook.md` holds scattered deferred nits across 8000 lines, each
+already reasoned harmless where it sits; extracting them is a large job with a low hit rate.
 
 ---
 
@@ -506,6 +788,9 @@ than "finishing the job" on adjacent code:
 ---
 
 ## Suggested sequencing
+
+> **Superseded 2026-09-07 — historical.** Every item in this order shipped. The live order is "What
+> to pick up next" near the top of this file.
 
 1. **T0-4** (DI validation) and **T0-9** (SQLite indexes) first — cheapest, zero-risk, immediate
    payoff, no design decisions needed.
@@ -565,15 +850,21 @@ the abstract — it found the *specific* reason a *specific* Tier-0 source bug s
 **Implementation status (2026-08-30): `docs/plans/test-suite-fixes-phase1-plan.md` closed 10 of the
 17 items below** (TT0-3 through TT0-7, TT1-1, TT1-3, TT1-8, TT1-17) — test-only in scope, 3
 plan-review rounds + 1 code-review round, both GO, every touched project's suite green, uncommitted
-in the working tree. Each closed item is marked `DONE` below. **Still open**: TT0-1 and TT0-2 (must
-pair with the T0-2/T0-1 *source* fixes, not test-only work — see each item's own note); TT1-13 (item
+and committed. Each closed item is marked `DONE` below. **Re-verified 2026-09-07: TT0-1 is closed
+too** — `FakeSettingsStore` now enforces real mutual exclusion and carries `SaveGate` and
+`LockAcquiredSignal` hooks, both tagged `T0-2` in its own doc comments. **TT0-2 is also closed** — the hang IS
+tested, at the layer that owns the guarantee: `RadioSessionServiceTests.cs:341`
+(`TestPttAsync_UnkeyAttempt1Hangs_Attempts2And3StillRunWithinABound`) drives a real hang via
+`FakeRadioProtocol.HangOnCallNumber` and an injected `unkeyAttemptWaitTimeoutForTests`. The retry
+loop lives in `RadioSessionService`, not in the Hamlib backend, so `FakeHamlibNative.CallDelay` was
+never the right instrument. **Still open**: TT1-13 (item
 9, deliberately deferred to its own future plan — concurrency work with unresolved design questions,
 see `docs/plans/test-suite-fixes-phase1-plan.md`'s own item 9 section for why). Everything else in
 Tier 2/3 below is still open, untouched.
 
 ## Test-suite Tier 0 — blockers (ship gates, either standalone or as a fix's regression test)
 
-### TT0-1. `FakeSettingsStore` cannot express the settings read-modify-write race (T0-2's blind spot)
+### TT0-1 `DONE` (closed alongside T0-2, verified 2026-09-07). `FakeSettingsStore` cannot express the settings read-modify-write race (T0-2's blind spot)
 `Application.Tests/FakeSettingsStore.cs:26-59` — `Gate` parks *before* `LoadAsync` returns, on the
 wrong side of the race window; `SaveAsync` has no hook at all. No test in `Application.Tests`,
 `Settings.Tests`, or `UI.Tests` exercises two callers racing a load-mutate-save. Don't mistake
@@ -586,7 +877,7 @@ resumes and saves, assert B's section survived. **Write this as part of the `ISe
 fix (T0-2), not separately** — it should fail today and pass once T0-2 lands, making it the
 regression gate for all ~25 migrated call sites.
 
-### TT0-2. The Hamlib PTT un-key retry is tested only against throws, never a hang (T0-1's blind spot)
+### TT0-2 `DONE` — **premise stale, corrected 2026-09-07**. The Hamlib PTT un-key retry is tested only against throws, never a hang (T0-1's blind spot)
 `Application.Tests/RadioSessionServiceTests.cs:298,321,346` script failures via
 `SetPttExceptionsToThrow`; `FakeRadioProtocolFactory.cs:62`'s `SetPttAsync` has no gate/hang hook
 (only `PollAsync` does, via `PollGate`). T0-1's actual failure mode — attempt 1 blocks forever in
@@ -684,24 +975,24 @@ anything, so a bad record aborts the import with **zero rows committed**, not a 
 | # | Subsystem | Finding |
 |---|---|---|
 | TT1-1 `DONE` | Core.Sstv | The flagship TX-validation test (`GoldenVectorTests.cs:120-180`, `LegacyDecode_OfThisPortsEncoderOutput_MatchesSourceImage`) reads two static BMPs and compares them — **invokes zero production code**, and its reference images are stale relative to the current encoder (regenerated `.mmv` set, not-regenerated `_RX.bmp` set). Rename to stop overclaiming + add a provenance-hash staleness check now (hours); the real close is refreshing the 11 reference BMPs against a real legacy install |
-| TT1-2 | Core.Sstv | Golden-vector image comparison is average-delta-only across the whole frame — a single fully-corrupted scanline (960 samples at max delta) still passes every fixture's tolerance. Add worst-row and outlier-fraction metrics alongside the existing average |
+| TT1-2 — **OPEN**, re-verified 2026-09-07 — no worst-row or outlier metric exists in `GoldenVectorTests.cs` | Core.Sstv | Golden-vector image comparison is average-delta-only across the whole frame — a single fully-corrupted scanline (960 samples at max delta) still passes every fixture's tolerance. Add worst-row and outlier-fraction metrics alongside the existing average |
 | TT1-3 `DONE` | Core.Sstv | `NoiseRobustnessTests.cs:62-123` computes a noise-floor metric across a 10-level SNR sweep and **never asserts on it** — a DSP regression that halves usable SNR range is green. One-line fix: pin the measured current value |
-| TT1-4 | Core.Sstv | Zero concurrency tests in 26,300 lines — the source audit's own concurrency findings (T0-7 decoder-swap lock, T1-2 waterfall `Subject`) will ship with no regression gate. Add throwing/slow-subscriber tests to `WaterfallSourceTests` (mirroring `DecoderSubscriberFailureTests`'s existing pattern) and a concurrent-reader-during-swap test to `RestartableSstvDecoderTests` |
-| TT1-5 | Core.Sstv | Channel *order* (the literal Scottie-incident failure mode) is pinned by golden vectors for only 11 of 43 modes; the other 32 rest on duration-sum + self-round-trip, which CLAUDE.md itself says is insufficient. Add a per-mode segment-order table transcribed from legacy `Main.cpp` `Line*` functions — mechanical, ~43 entries, zero design risk, biggest single structural gap found |
+| TT1-4 **PARTLY STALE (2026-09-07)** — `DecoderSubscriberFailureTests.cs` exists and 5 Core.Sstv test files use real threading. The gap is narrower than "zero" | Core.Sstv | Zero concurrency tests in 26,300 lines — the source audit's own concurrency findings (T0-7 decoder-swap lock, T1-2 waterfall `Subject`) will ship with no regression gate. Add throwing/slow-subscriber tests to `WaterfallSourceTests` (mirroring `DecoderSubscriberFailureTests`'s existing pattern) and a concurrent-reader-during-swap test to `RestartableSstvDecoderTests` |
+| TT1-5 **OPEN, smaller than stated (2026-09-07)** — 11 real legacy TX captures exist in `Fixtures/GoldenVectors/TxCapture/` (avt, martin-m1, mn110, mr73, pd90, r24, rm8, robot-36, robot-72, scottie-dx, scottie-s1), and TX captures are what pin channel order | Core.Sstv | Channel *order* (the literal Scottie-incident failure mode) is pinned by golden vectors for only 11 of 43 modes; the other 32 rest on duration-sum + self-round-trip, which CLAUDE.md itself says is insufficient. Add a per-mode segment-order table transcribed from legacy `Main.cpp` `Line*` functions — mechanical, ~43 entries, zero design risk, biggest single structural gap found |
 | TT1-6 | UI | `MainWindow.axaml.cs`'s ~780 lines of cross-VM wiring (where T1-12's `DataContextChanged` re-entry guard lives) has zero behavioral coverage — 6 separate test files disclaim the same seam explicitly. Extract to a testable `WireOnce(...)` before testing; don't try to test it through a real headless `Window` |
 | TT1-7 | UI | The no-hardcoded-strings guard (`NoHardcodedAxamlStringsTests.cs`) covers `.axaml` only, 3 attributes, and doesn't verify `{loc:Translate}`/`GetString` keys actually resolve against `en.json` — confirmed live `.cs` violations (T1-13) would not be caught. Add a `.cs`-literal rule and a key-existence check |
 | TT1-8 `DONE` | UI | Two tests claiming to prove off-UI-thread event marshaling (`PaneViewModelTests.cs:109-129,1681-1703`) raise the event from the same headless UI thread the assertion runs on — **cannot fail** if the marshaling were deleted. Raise from `Task.Run` instead and assert `Dispatcher.UIThread.CheckAccess()` inside the handler |
-| TT1-9 | Application | `OptionsSettingsService` (8 of the 16 Application-layer settings RMW sites) has zero tests in this project. Add a full round-trip test and a `Defaults()` vs. `LoadAsync(empty)` equivalence test — the latter catches the whole `OptionsSnapshot` triplication-drift class (Tier-2 source finding) in one assertion |
-| TT1-10 | Application | `LogQsoAsync`'s post-persist-failure test (`LogbookSessionServiceTests.cs:72-91`) asserts the record survives but nothing about the failure being *reported* — currently ratifies the lossy behavior T1-7 flags as a bug |
-| TT1-11 | Radio/CAT | Zero test coverage for lifecycle-call serialization (T1-8) in either direction — neither the undefined-behavior half (`Connect`/`Disconnect` racing) nor the claimed-safe half (`SetPttAsync` racing `Disconnect`). Add a characterization test (pin current behavior, not desired) so T1-8's eventual lock has a red/green signal instead of a paper argument |
+| TT1-9 `DONE` — **premise stale, 2026-09-07**: not untested, only untested in `Application.Tests`. `OptionsWindowViewModelTests.cs` builds the real `OptionsSettingsService` at 194 sites against a real store | Application | `OptionsSettingsService` (8 of the 16 Application-layer settings RMW sites) has zero tests in this project. Add a full round-trip test and a `Defaults()` vs. `LoadAsync(empty)` equivalence test — the latter catches the whole `OptionsSnapshot` triplication-drift class (Tier-2 source finding) in one assertion |
+| TT1-10 `DONE` (2026-09-07) — `LogQsoAsync_PostPersistStepThrows_...` asserts `PostPersistError == "network unreachable"`; the reason is surfaced | Application | `LogQsoAsync`'s post-persist-failure test (`LogbookSessionServiceTests.cs:72-91`) asserts the record survives but nothing about the failure being *reported* — currently ratifies the lossy behavior T1-7 flags as a bug |
+| TT1-11 `DONE` — **premise stale, 2026-09-07**: `RadioControllerTests.cs:102` drives the Connect-versus-Dispose race deterministically against the real `_lifecycleLock`, where T1-8's guarantee lives | Radio/CAT | Zero test coverage for lifecycle-call serialization (T1-8) in either direction — neither the undefined-behavior half (`Connect`/`Disconnect` racing) nor the claimed-safe half (`SetPttAsync` racing `Disconnect`). Add a characterization test (pin current behavior, not desired) so T1-8's eventual lock has a red/green signal instead of a paper argument |
 | TT1-12 | Radio/CAT | No test is anchored to the real `hamlib/include/hamlib/rig.h` header — every P/Invoke constant is hand-typed, comment-verified only. Add a `HamlibNativeLayoutTests` with `Marshal.SizeOf`/offset assertions on the `value_t` union (catches a silently-reinterpreted-meter-reading class of bug with no compiler-catchable signal today) plus a table-driven constant-vs-citation test |
 | TT1-13 `DEFERRED` — own future plan | Radio/CAT | `HamlibRadioProtocolTests.cs:393-427` sequences a 3-way dispose/PTT/poll race using `CallDelay` + two bare `Task.Delay(20)` calls — assumed ordering, not enforced; this is the regression gate for a physically-keyed-transmitter-on-disposed-handle bug and is a real CI flake risk. Replace with explicit gates per this project's own "deterministic gates, not shared race" rule |
 | TT1-14 `DONE` | Audio/Imaging/Logbook | Closed alongside T1-16 (2026-08-31). `SqliteReceiveHistoryStore`'s own mixed-offset ordering bug is fixed; the pinned-bug test is renamed (`QueryAsync_DateRangeCompareIsInstantBased_NotLexicographicOnStoredOffset`) and flipped to assert the correct result, plus a new dedicated real-DST-transition test and 3 migration/backfill tests (including a self-healing-after-a-NULL-row test, added during code-review). `SqliteLogbookRepository` was checked and does NOT share this bug class — its own `StartUtc` column is already UTC, not local-offset (`ORDER BY StartUtc DESC`) |
-| TT1-15 | Audio/Imaging/Logbook | `MiniAudioDeviceMuteQuery` has one happy-path test and no dispose-race test, while its sibling `MiniAudioDeviceEnumerator` has exactly the missing test (`DisposeAsync_RacingConcurrentRefreshAsync`). Copy it verbatim — cheap, closes a native-context-use-after-release class of bug (a crash, not a wrong value) |
-| TT1-16 | Audio/Imaging/Logbook | Every QRZ HTTP test fixture is `HttpStatusCode.OK` — zero `EnsureSuccessStatusCode`/status-code handling anywhere in source or tests. A 5xx currently surfaces as a nonsense XML-parse error instead of "QRZ is down." Cheap `[Theory]` addition, the `FakeHttpMessageHandler.ResponseFactory` seam already supports it |
+| TT1-15 — **OPEN**, re-verified 2026-09-07 — no dispose-race test for the mute query | Audio/Imaging/Logbook | `MiniAudioDeviceMuteQuery` has one happy-path test and no dispose-race test, while its sibling `MiniAudioDeviceEnumerator` has exactly the missing test (`DisposeAsync_RacingConcurrentRefreshAsync`). Copy it verbatim — cheap, closes a native-context-use-after-release class of bug (a crash, not a wrong value) |
+| TT1-16 — **OPEN**, re-verified 2026-09-07 — no non-OK `HttpStatusCode` fixture in `Core.Logbook.Tests` | Audio/Imaging/Logbook | Every QRZ HTTP test fixture is `HttpStatusCode.OK` — zero `EnsureSuccessStatusCode`/status-code handling anywhere in source or tests. A 5xx currently surfaces as a nonsense XML-parse error instead of "QRZ is down." Cheap `[Theory]` addition, the `FakeHttpMessageHandler.ResponseFactory` seam already supports it |
 | TT1-17 `DONE` | Infra | Fixed shared paths in `JsonSettingsStoreTests.cs:102,121,156` (`/tmp/relocated`, `/tmp/fresh-install-target`, `/tmp/conflict`) with inline cleanup that's **skipped on any assertion failure** — one failed run permanently poisons every subsequent run on that machine. Two-line fix: derive from the per-test temp subdirectory |
-| TT1-18 | Infra | 4 tests silently `return` (report **passed**, not skipped) on Windows instead of asserting anything, relying on `File.SetUnixFileMode` denial — which root ignores, so if the Linux CI leg runs as root these are vacuous everywhere, not just on Windows. Investigate CI's user first, then gate with a real skip attribute |
-| TT1-19 | Infra | No concurrent-writer test for `JsonSettingsStore`/`ConfigurationPresetStore`'s atomic-write claim beyond "no `.tmp` left behind on success" — doesn't prove crash-mid-write recovery. Add: garbage `.tmp` present + `LoadAsync` still returns good content; garbage `.tmp` present + `SaveAsync` new content + assert result is the new content, not a merge |
+| TT1-18 — **OPEN**, re-verified 2026-09-07 — 9 `OperatingSystem.IsWindows()` early-returns remain | Infra | 4 tests silently `return` (report **passed**, not skipped) on Windows instead of asserting anything, relying on `File.SetUnixFileMode` denial — which root ignores, so if the Linux CI leg runs as root these are vacuous everywhere, not just on Windows. Investigate CI's user first, then gate with a real skip attribute |
+| TT1-19 `DROP` (2026-09-07) — `JsonSettingsStore` is covered. `ConfigurationPresetStore` needs no equivalent: every method runs under its own `SemaphoreSlim`, and one preset is one whole file, so concurrent saves are correctly last-writer-wins | Infra | No concurrent-writer test for `JsonSettingsStore`/`ConfigurationPresetStore`'s atomic-write claim beyond "no `.tmp` left behind on success" — doesn't prove crash-mid-write recovery. Add: garbage `.tmp` present + `LoadAsync` still returns good content; garbage `.tmp` present + `SaveAsync` new content + assert result is the new content, not a merge |
 
 ---
 
@@ -727,6 +1018,8 @@ anything, so a bad record aborts the import with **zero rows committed**, not a 
 ---
 
 ## Suggested sequencing (test-suite work)
+
+> **Superseded 2026-09-07 — historical.** See "What to pick up next" near the top of this file.
 
 **Steps 1, 2, 4-6 done** (`docs/plans/test-suite-fixes-phase1-plan.md`, 2026-08-30 — see the
 implementation-status banner above the Test-suite Tier 0 section). Step 3 (TT0-1/TT0-2) remains

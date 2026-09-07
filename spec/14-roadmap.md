@@ -660,6 +660,15 @@ best available code and the widest available real-audio coverage, not the other 
 
 **Inventory (first pass, NOT YET independently verified — auditor review pending):**
 
+> **SUPERSEDED 2026-09-07 — historical record, NOT an open backlog.** An `auditor` spot-check of 8
+> rows found 7 stale or already tracked elsewhere: `CHILL` narrow-mode retune closed by Band-2 item
+> S6, the extended-VIS 7-versus-8-bit escape closed by S10, mid-image MN/MC re-lock closed by S8, the
+> AVT PLL domain row closed by S11, narrow-FSK fixed-nominal commit closed by
+> `SamplesSinceBitClockOrigin`, CQ100 already has a `docs/removed-features.md` entry, and the `m_Type`
+> demodulator selector is moot now all three are selectable. The one live row, `m_sint1/2/3`, is
+> tracked in `production_audit.md`. Do not re-mine these tables — the hit rate is low and the read
+> cost is high.
+
 | Item | Legacy mechanism (citation) | Why deferred | Risk tier | Roadmap/source citation |
 |---|---|---|---|---|
 | Lock-dependent bandpass filter never switches — Piece B's `SearchBandpassFilter` (H2) runs continuously regardless of lock state | Legacy switches `HBPFS` (search/pre-lock) vs `HBPF`/`HBPFN` (locked) (`sstv.cpp:1826-1832`) | Auditor-assessed (earlier, scoping pass) as "the only version without correctness risk" given this port's upfront-buffer architecture has no real-time lock state at filter-selection time; deliberate safety-first scope cut, not an oversight | C | roadmap lines 136, 161, 757-764, 880-882 |
@@ -745,6 +754,15 @@ demodulator (`sstv.cpp:1492`/`2256`) — is **closed by Piece 14**, not open. Ra
 harness at 825-873 — genuinely new test infra with no legacy mechanism to diverge from).
 
 New items found (same table shape as the existing inventory):
+
+> **SUPERSEDED 2026-09-07 — historical record, NOT an open backlog.** An `auditor` spot-check of 8
+> rows found 7 stale or already tracked elsewhere: `CHILL` narrow-mode retune closed by Band-2 item
+> S6, the extended-VIS 7-versus-8-bit escape closed by S10, mid-image MN/MC re-lock closed by S8, the
+> AVT PLL domain row closed by S11, narrow-FSK fixed-nominal commit closed by
+> `SamplesSinceBitClockOrigin`, CQ100 already has a `docs/removed-features.md` entry, and the `m_Type`
+> demodulator selector is moot now all three are selectable. The one live row, `m_sint1/2/3`, is
+> tracked in `production_audit.md`. Do not re-mine these tables — the hit rate is low and the read
+> cost is high.
 
 | Item | Legacy mechanism (citation) | Why deferred | Risk tier | Roadmap/source citation |
 |---|---|---|---|---|

@@ -377,6 +377,30 @@ and its resolution, verified directly against current source, not inferred from 
   interference) — the fix is a new `SstvDecoderSettings` flag mirroring `SyncRestartEnabled`'s own
   existing wiring, not a DSP change.
 
+## `m_SyncAccuracy` 3-way sync-accuracy option
+
+- **Legacy**: a persisted, user-settable 3-way radio group on the RX options page
+  (`KRI1`/`KRI2`/`KRI3`, `Main.cpp:11969-11979` reads the state back, `:13408-13414` writes it), ini
+  key `Define/SyncAccuracy` (`Main.cpp:1861` read, `:2432` write), default 1 (`:730`). It gates the
+  sync-accuracy re-derivation entirely: value 0 disables it, value 1 arms one re-derivation per image
+  once 16 lines have decoded (`:3558`, `!(m_SyncAccuracyN & 1) && (m_AY >= 16)`), and value 2 arms a
+  SECOND re-derivation at 32 lines with twice the data (`:3554`,
+  `(m_SyncAccuracy == 2) && !(m_SyncAccuracyN & 2) && (m_AY >= 32)`). It also participates in the
+  RX-buffer decision at `:3760`.
+- **Replacement**: partial, and by different means. This port never ported the option itself — no
+  setting, no UI, no ini key. `AnalogFmSstvDecoder.cs:625-630` ports only legacy's FIRST trigger bit
+  and says so. The practical effect of legacy's value-2 second trigger is however largely covered
+  already: this port sets `_pendingReplayRequested` from every committed correction
+  (`ProcessSlantTrackingSample`, `:604-606`), so it replays on each correction rather than once or
+  twice per image.
+- **Impact**: unaffected at shipped defaults, since legacy defaults to 1 and this port always behaves
+  as at-least-1. Two legacy behaviours have no equivalent here. A user who set it to 0 cannot turn
+  sync-accuracy re-derivation off in this port. A user who set it to 2 got a specific
+  second-pass-at-32-lines refresh whose exact timing this port does not reproduce, although the
+  port's own replay-per-correction behaviour is arguably more aggressive, not less. No
+  decode-correctness or golden-vector impact. Not worth building as decode work — recorded here
+  because CLAUDE.md §2's removal rule requires an entry, and this one was missing.
+
 ## RX history retention limit (auto-delete beyond newest 32)
 
 - **Legacy**: `sys.m_HistMax = 32` (`Main.cpp:898`, read from ini `[Window]/HistMax`,

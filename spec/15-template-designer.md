@@ -30,8 +30,9 @@ not the current state. Known gaps still open, confirmed against the current code
 - **Element resize** — built 2026-08-18: 8-handle resize (`TxImageEditorPaneView.ResizeHandle` — 4
   corners + 4 edges — via `ComputeElementResize`) plus Shift-drag aspect-lock, closing auditor finding
   2026-08-17 item 18. Multi-select move is unrelated and still not built — see next bullet.
-- Multi-select move (mentioned under Layout aids below) was never built — z-order/lock/duplicate/
-  align-to-crop exist, single-element only.
+- Multi-select move — **built, claim above corrected 2026-09-07.** Shipped as "group-ops-lite"
+  (`a3484fa`): `TxImageEditorPaneViewModel` has the multi-selection set, `NudgeSelectedElements`,
+  `RemoveSelectedElements`, and a multi-clone that lands in ONE undo step.
 
 ## Redesign note (2026-08-16) — supersedes this document's own original scope
 

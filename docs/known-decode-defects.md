@@ -1,5 +1,8 @@
 # Known decode defects
 
+> **The work list lives in `production_audit.md`, not here.** This file records the measurements.
+> What to actually do about them, and in what order, is in that file's "What to pick up next".
+
 Measured, reproducible defects in the decode path that are **not yet fixed**. Distinct from
 [impairment-bench-coverage.md](impairment-bench-coverage.md), which records what the bench does and
 does not exercise. A defect leaves this file only when it is fixed or proven not to be a defect.
@@ -63,6 +66,15 @@ AMPLITUDE error — colours return less saturated than sent — and Fault A's ma
 Ruled out: the output smoother (flat against cutoff), the demodulator (Hilbert +4.7 against
 zero-crossing +5.6), and any single mode or encoding.
 
+**Cheapest decisive probe (auditor, 2026-09-07), do this before anything expensive.** The Fault-A
+model was run per RGB triple, so it never exercised the spatial layer — chroma subsampling, line
+pairing, the encoder's own row averaging, and `ToRgb`'s clamp. Extend that same model to a whole
+image: run a photographic source through the real encoder's channel layout, transport the channel
+bytes ideally (no modulation, no filters, no demodulation), reassemble through the matching scanline
+decoder, and measure green bias. Reading about +4.7 means Fault B is protocol or TX-side and closes
+as a parity decision exactly like Fault A. Reading about +2.3 means the loss is in the DSP chain and
+earns the full review cadence. No shipping code is touched either way.
+
 **The impairment bench cannot attribute this**, because it encodes and decodes with our own code.
 Settling it needs either a decoder instrumented to report raw Y / R-Y / B-Y against what the encoder
 intended, or a genuine off-air recording whose source picture is known. A throwaway probe for the
@@ -75,12 +87,19 @@ Every golden-vector fixture was the same smooth gradient, mean horizontal pixel 
 43-54 for a real received picture. A chroma error has almost nothing to distort there. It was found
 by eye, on a photographic source, and only after a narrow smoother made it obvious.
 
-## 2. rm8 colour tilt
+## 2. rm8 colour tilt — RETRACTED 2026-09-07, measurement artifact
 
-**Status:** observed, not investigated. Found 2026-09-06.
+**Not a defect.** RM8 is `CreateMonoAveragedMode` (`SstvModeRegistry.cs:602`), a monochrome mode with
+a single `"Y"` scan segment, so a decoded RM8 image is R = G = B by construction and cannot carry a
+channel-dependent tilt. Comparing a grey decode against a colour source produces exactly the reported
+shape: R_err = Y - R below zero, B_err = Y - B above zero, G_err small and negative, invariant across
+demodulators — which is why "consistent across all three" was observed and read as significant.
 
-`rm8` shows no green bias (-0.2) but a channel-dependent tilt on a clean signal: R -9.3, G -3.7,
-B +2.3, consistent across all three demodulators. A different fault from defect 1, and unexplained.
+Original measurement, kept so the retraction is checkable: R -9.3, G -3.7, B +2.3 on a clean signal.
+
+If anyone wants the falsifier: re-measure rm8 against a **desaturated** source. The tilt must collapse
+to one common offset. Only that residual common offset — the 256/224 RM gain-correction path — could
+be a real finding, and it is not what was recorded here.
 
 ## 3. PLL collapses at wide output cutoffs
 
@@ -93,7 +112,9 @@ bandwidth is the suspect.
 
 Not reachable in shipped configuration — `pllOutputCutoffHz` defaults to 900 Hz and no UI exposes it.
 It matters only if an output-cutoff control is ever added: **the safe range is not the same for all
-three demodulators.**
+three demodulators.** Triaged 2026-09-07: no work item. The single thing that must survive is that
+constraint — any future output-cutoff control range-limits per demodulator instead of sharing one
+range. That sentence is the whole deliverable, and it lives here.
 
 ## 4. Right-edge column error on MN and MC modes
 
@@ -111,8 +132,19 @@ It renders as a coloured stripe down the right edge of the picture. `mp140` show
 (12.6 mid-image, 11.2 and 10.7 at the edge), so it is specific to these families and not a general
 end-of-line effect.
 
-It is present with every DSP option off, so it is not caused by any optional filter. Likely
-candidates, none checked: the end-of-line window running past the last pixel centre, or the sync
+**Localized to one variable (auditor, 2026-09-07).** MN140 and MP140 are structurally identical —
+both `YCbCrLinePaired`, 320x256, 9.0 ms sync, 1.0 ms porch, four 270.0 ms segments
+(`SstvModeRegistry.cs:418-438` against `:489-511`). The ONLY differences are sync 1900 against
+1200 Hz, porch 2044 against 1500 Hz, and `LuminanceMin/MaxHz` 2044-2300 against the default
+1500-2300. MP140 is clean and MN140 is not. MC is `RgbSequential` and is also affected, so colour
+encoding, line geometry and segment count are all ruled out by observation. **The defect follows the
+narrow frequency plan and nothing else.** That makes MN140 against MP140 on one source a ready-made
+controlled probe, and it points at narrow band and sync-tone handling — a 256 Hz band is 3.1x more
+level-sensitive per Hz than an 800 Hz one — rather than a generic end-of-line off-by-one, which would
+have shown in MP140 too.
+
+It is present with every DSP option off, so it is not caused by any optional filter. Earlier
+candidates, neither checked and both now lower-ranked than the frequency-plan lead above: the end-of-line window running past the last pixel centre, or the sync
 search consuming samples the last pixels need. The first step is to decode a clean, noise-free
 signal and see whether the artefact survives — if it does, it is a pure timing bug rather than a
 noise-sensitivity one.
