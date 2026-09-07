@@ -16,13 +16,22 @@ test coverage).
 >   "partial" and no follow-up exists.
 > - **Tier 2 — open.** Four items were re-verified as still open, listed in that section.
 > - **Tier 3 — open.** Four items were re-verified as still open, listed in that section.
-> - **Test-suite Tier 0 — 6 of 7 done.** Only **TT0-2** is open.
+> - **Test-suite Tier 0 — all 7 done.** TT0-1 and TT0-2 were both re-verified closed on 2026-09-07;
+>   an earlier draft of this line still called TT0-2 open, which contradicted its own entry below.
 > - **Test-suite Tier 1 — 5 done, 1 deferred, the rest open.** Five were re-verified as open and are
 >   marked in the table. **TT1-19** looks closed but is not fully confirmed.
 > - **Test-suite Tier 2/3 — untouched.**
 >
-> - **Triage, 2026-09-07:** an `auditor` pass over every remaining open item returned **no MUST FIX
->   and no `principal` round needed**. See "Triage of the remaining open items" below.
+> - **Triage, 2026-09-07:** an `auditor` pass over every remaining open item in THIS document returned
+>   **no MUST FIX and no `principal` round needed**. See "Triage of the remaining open items" below.
+> - **External audit folded in, 2026-09-07:** all 37 P1/P2 findings from `astra-audit.md` were
+>   verified against current source — **zero false positives**. That pass DID find must-fix work,
+>   including two transmitter-safety defects. **Two items filed P2 were raised to P1.** See "External
+>   audit folded in" below, and items 00a to 00c at the top of the pick-up list.
+>
+> **Shipping status: not a go.** Three verified defects block a release — a cancelled action that can
+> key the transmitter, an exit path that can leave it keyed, and a CAT desync that reports a false
+> transmit state and never self-heals.
 >
 > **This file is now the ONLY backlog in the repo.** Every other document records measurements,
 > decisions and history. If it is not in "What to pick up next" below, nobody is meant to be working
@@ -41,6 +50,40 @@ Everything not on this list is either done or deliberately dropped. Do not re-de
 from the tiers below, and do not re-derive it from any other document — this is the only one that
 carries work. Reasons and dropped-item rationale are in "Triage of the remaining open items"
 further down.
+
+**Transmitter safety and wrong-data defects — these outrank everything else on this list.**
+All three come from the external `astra-audit.md` pass, all three are verified, and **two of them were
+filed as P2 when they are not.** My correction and the reason for it are recorded per item. Full
+provenance in "External audit folded in" below.
+
+00a. **A pending direct-fire can key the transmitter after Cancel** (`ASTRA-020`, filed P1, agreed).
+   `TxImageEditorPaneViewModel.Dispose()` sets `_disposed` and nothing else. It does not bump the
+   template-load generation, and it deliberately does not detach `DirectFireRequested`, so the guard
+   at the end of `LoadTemplateAsync` passes and the invoke at `:890` fires.
+   `TxControlsPaneViewModel.OnEditorDirectFire` never compares the editor it was handed to
+   `_currentEditor`, so it transmits and then reopens the editor the operator just closed.
+   **Why it is worse than the item claims:** with no unsaved edits, Cancel is a single click and is
+   not busy-gated — the code's own comment says "Cancel/Apply have no busy gate". The `cf72594`
+   direct-fire guard does not cover this path.
+
+00b. **Application exit does not wait for PTT-test cleanup** (`ASTRA-040`, filed P2 — **raise to P1**).
+   The test protocol is created locally in `RadioSessionService`, keyed, then unkeyed with bounded
+   retries. `RadioSessionService` implements neither `IDisposable` nor `IAsyncDisposable`, so the
+   host's bounded `DisposeAsync` owns nothing here. Closing Options only cancels the token.
+   **Why I raise it:** the outcome is a transmitter left keyed on air. An auditor searched `docs/`
+   and found **no recorded acceptance** anywhere, and this is a different failure class from the two
+   shutdown-drain items that ARE accepted (`ASTRA-036`, `ASTRA-037`) — those lose data, this
+   transmits. "Accepted in kind" does not transfer across that line.
+
+00c. **rigctld response-stream desync reports a false transmit state, permanently**
+   (`ASTRA-003`, filed P2 — **raise to P1**). `SetBandwidthAsync` throws on an empty mode line
+   before reading the following passband line, leaving one unread line in an open socket.
+   **Why I raise it, and why the item understates itself:** the exception is classified
+   command-level, so `RadioController` keeps the connection and never rebuilds it. The auditor traced
+   the next poll on a leftover `2400`: frequency reads 2400, mode reads the real frequency line as a
+   mode token and yields `Unknown`, and the transmit query parses 2400 successfully — so
+   **`IsTransmitting` latches true forever**, and no exception is ever raised to trigger the only
+   recovery path. Silent wrong data the operator cannot diagnose.
 
 **Decode-path work — do the probe first, it may close the biggest item for free:**
 
@@ -80,9 +123,12 @@ further down.
    — add a per-row max beside the frame average, measure the current worst row per fixture, pin at
    about 1.5x to 2x. One corrupted row currently passes.
 2. **Map all 43 modes to their legacy `Main.cpp` `Line*` function**, then capture one TX golden
-   fixture per uncovered function. 11 captures already exist in
-   `tests/ScanlineStudio.Core.Sstv.Tests/Fixtures/GoldenVectors/TxCapture/`. Do the mapping first —
-   it tells you whether the gap is 5 fixtures or 30.
+   fixture per uncovered function. **Corrected 2026-09-07 — do not rely on the existing 11.** All 11
+   `TxCapture/*.provenance` files read `UNKNOWN-STALE-PENDING-RECAPTURE`, `StaleFixtureTheoryAttribute`
+   skips the comparison, and the `.mmv` files are this port's own TX output rather than
+   legacy-generated audio. The Scottie-class guard therefore does **not currently run**. Do the
+   mapping first — it still tells you whether the gap is 5 fixtures or 30 — but treat current TX
+   channel-order coverage as zero, not as 11.
 3. **WAL mode on `history.db`.** About 2 lines at connection open, in both
    `SqliteLogbookRepository` and `SqliteReceiveHistoryStore`. Latency, not crashes.
 4. **Hoist the command out of the loop** at `src/ScanlineStudio.Core.Logbook/SqliteReceiveHistoryStore.cs:490`
@@ -622,7 +668,10 @@ Tier 0 and Tier 1 took the real defects.
    fully corrupted row out of 256 moves the average by at most 1.0, so it passes. Add a per-row max
    in the same loop, measure the current worst row per fixture, pin at about 1.5x to 2x. Cheapest
    change with the widest blast radius.
-2. **TX channel-order coverage** (TT1-5), starting with the mapping, not with captures. 11 real
+2. **TX channel-order coverage** (TT1-5), starting with the mapping, not with captures.
+   **CORRECTED 2026-09-07 — the sentence below is wrong and is kept only so the correction is
+   traceable. The 11 captures are stale and their comparison is skipped; treat current coverage as
+   zero. See the pick-up list item 2 and the RP-1 section.** Original text: 11 real
    legacy TX captures already exist in `Fixtures/GoldenVectors/TxCapture/`. The first action is to
    map all 43 modes to their legacy `Main.cpp` `Line*` function and capture one fixture per
    uncovered distinct function. CLAUDE.md §3 forbids assuming a sibling mode shares a covered mode's
@@ -671,8 +720,13 @@ Tier 0 and Tier 1 took the real defects.
 
 **Dropped, with the reason (do not re-open without new evidence):**
 
-- **T1-14 imaging convert-in/convert-out.** Every remaining call site is a one-shot user action on an
-  image of at most 640x496. Sub-millisecond. The hot path was already fused.
+- ~~**T1-14 imaging convert-in/convert-out.**~~ **DROP WITHDRAWN 2026-09-07.** The reason given —
+  "every remaining call site is a one-shot user action on an image of at most 640x496" — used the
+  working-copy bound (`WorkingCopyScaleFactor`, `TxImageEditorPaneViewModel.cs:202`, applied at
+  `:6724`). The full original is retained and is what gets cropped for final output and rotated, so
+  that bound does not apply to those paths. Correct status: **unmeasured**. Measure a representative
+  large source image before closing it again. The hot preview path really was fused, and that half
+  stands.
 - **`TxControlsPaneViewModel.Dispose()`.** No leak. `_transmitCts` is created and disposed inside the
   transmit method's own `finally` (`:1737`/`:1776`), and the VM is a DI singleton (`Program.cs:916`),
   so its subscriptions live exactly as long as the publishers.
@@ -762,6 +816,374 @@ carry feature-scope deferrals, not defects — manual clock calibration, the dra
 VOX-mode ID variants, unwired telemetry fields, `TemplateCatProtocol` fallback. Those belong in the
 roadmap. `docs/functional-audit-playbook.md` holds scattered deferred nits across 8000 lines, each
 already reasoned harmless where it sits; extracting them is a large job with a low hit rate.
+
+---
+
+## External audit folded in — `astra-audit.md`, verified 2026-09-07
+
+**Provenance.** `astra-audit.md` (repo root, gitignored, produced by a third party against commit
+`7b14b15`) lists 42 findings: 1 at P1, 36 at P2, 4 at P3, 1 withdrawn by its own author. All 37 at
+P1/P2 were checked against current source — 13 by me directly, 24 across three `auditor` passes split
+by subsystem.
+
+**Headline result: zero false positives in 37.** Every premise held. For an external audit of a
+75,000-line codebase that is unusually clean, and it is the reason the items below are folded in
+rather than re-litigated. Where I disagree with the audit, I disagree about **priority and scope**,
+never about whether the defect exists.
+
+**What "zero false positives" means, per their RP-1 correction, accepted:** source corroboration of
+the listed mechanisms — not 37 runtime-confirmed active bugs. Two of the 37 are accepted limitations,
+so their own active count is 35 at P1/P2 plus 4 untriaged at P3. Nothing here was reproduced against
+running hardware; every verdict on both sides is a source trace.
+
+### RP-1 — the rest of their reconciliation, recorded in full
+
+The three reversals and six disputes below are the sharp end. Their reconciliation also carried
+material that is not a dispute at all but should not be lost. All of it is theirs unless marked.
+
+**Corrections to claims WE made that are stale or wrong:**
+
+- **ADIF partial-failure reporting — our claim is stale.** The whole file is parsed before any insert
+  (`LogbookSessionService:146-164`), so a later malformed record cannot leave earlier records
+  committed, and the UI does warn through `ImportPartial` (`LogbookPaneViewModel:891-905`,
+  `en.json:976`). Transaction batching remains a separate choice.
+- **Logbook offset sorting — our reasoning was wrong even though the item is right.** This document
+  inferred normalization from the column NAME `StartUtc`. The column stores offset-bearing
+  `ToString("O")` text (`SqliteLogbookRepository:123,129,132,226-227`). The receive-history migration
+  did not fix this separate store.
+- **`TT1-15` — a missing test is not a proven crash.** We wrote that it "guards a native crash". The
+  Linux mute path uses the same context mutex as teardown (`native/scanline_audio.c:1502-1542`,
+  `:134-142`), Windows uses per-call COM resources, and macOS does not touch that shared context. The
+  test is still worth adding; the asserted access violation is not established.
+- **Hamlib cleanup leak — unproven.** A throwing fake does not show the production C path leaks; the
+  real adapter calls a C function returning an int. Defensive handling is still reasonable.
+- **`TT1-4` "zero concurrency tests" — false.** `WaterfallSourceTests:248-303` already covers a
+  throwing first subscriber and stale-frame prevention. Only broader reconfiguration/swap coverage is
+  missing.
+- **`TT1-2` — our framing overreaches slightly.** A single maximally wrong row in an otherwise perfect
+  256-row frame moves the mean by at most `255/256`, which is under the tolerances. That does not
+  prove corrupting any row of every already-imperfect fixture always passes. Add spatial and
+  worst-row metrics anyway.
+- **CI coverage gate — it IS wired** (`.github/workflows/ci.yml:53-121`). Absent per-backend
+  thresholds are a scope question, not proof the gate is unrun.
+- **`TT1-13` is not closed by the phase-1 plan.** It still relies on a 150 ms fake delay and two 20 ms
+  waits (`HamlibRadioProtocolTests:393-427`). Deterministic gates would prove the ordering.
+
+**They confirm several of our Tier 2/Tier 3 drops as correct and deliberate:** Generic Host as a DI
+container with no hosted services, the documented empty CAT project, the duplicate log-relocator
+registration that deliberately leaves the real provider last, the TX CTS disposed in its `finally`,
+and singleton subscriptions that are not leaks. Backend acquire/timeout asymmetries must not be
+erased merely to deduplicate.
+
+**Hardening they raise that this document never listed** — none is a demonstrated failure, all are
+worth knowing:
+
+- **No byte-length ceiling on rigctld line reads** (`RigctldClientProtocol:538-551`). A mispointed
+  server is relevant because the endpoint is user-configurable, though request and transport timeouts
+  bound the time. Distinct from `ASTRA-003`.
+- **Cross-process fixed temp names**, particularly when the single-instance guard is bypassed
+  (`Program:586-601`). Unique temp names do not solve shared-document lost updates, and durable
+  flushing is a separate power-loss guarantee.
+- **QRZ upload logs the full response body on failure** (`QrzLogbookUploader:58,126-127`) and rotation
+  happens after writing. Bounded diagnostics are worthwhile.
+- **Eight synchronous bundled-font loads** at `TransmitImagePreparer:34-58`, a startup-cost and
+  fallback-policy question.
+- **Translation handler retention** (`TranslateExtension:67-95`) keeps small weak closures until a
+  culture change. Some growth is real; a visible problem was not established.
+- **Per-line logger cost**, `HamlibProtocolFactoryTests:146-192` raising the process-wide minimum
+  thread count without restoring it, and `ApplyPendingRelocationsTests:172`'s 1200 ms delay.
+- **Unpromoted:** `PttSafetyCoordinator:297-305` checks an epoch before separately clearing flags,
+  which can interleave. Their own note, not promoted to a finding.
+
+**Their four P3 items, which nobody has triaged** — listing them so "not triaged" is checkable:
+`ASTRA-013` native stopped-flag read/clear can lose a notification; `ASTRA-033` a transient log-file
+error permanently disables the provider silently; `ASTRA-034` QRZ HTTP failures are reported as
+response-format errors; `ASTRA-035` preset-name validation accepts Windows device names.
+
+**Their process critique of this document, which I accept.** Their omissions table argues that six
+active findings plus two accepted limitations were missing here because files were marked "reviewed"
+while concrete failure paths went unrecorded — coverage of source was complete, coverage of defects
+was not. Their proposed method, worth adopting: keep a claim ledger with an evidence-backed
+disposition per claim; apply one failure-scenario matrix to every boundary (partial writes, malformed
+input, external failure status, cancellation, overlapping requests, disposal, shutdown); verify
+comments and historical decisions against current callers; judge test evidence quality (real
+production path, independent oracle, fixture provenance, skipped execution, metrics that mask
+localized corruption); and report source coverage separately from defect coverage.
+
+### RP-1 exchange — where they said "this is a defect" and we had said otherwise
+
+**This is the part that mattered.** The severity arguments changed nothing we do. These three did:
+each is a place where we **closed or dismissed something**, they said it is still a real problem, and
+**I checked and they are right.** All three are now reopened.
+
+**1. PLL collapse at a wide output cutoff — we closed it on a FALSE premise. Reopened.**
+On 2026-09-07 we wrote into `docs/known-decode-defects.md` §3 "Not reachable in shipped configuration
+— `pllOutputCutoffHz` defaults to 900 Hz and no UI exposes it", and added "Triaged 2026-09-07: no
+work item." **That claim is wrong.** Verified: `OptionsWindowView.axaml:986` is a
+`NumericUpDown` bound to `PllOutputCutoffHz` with `Minimum="1" Maximum="3900"`, and
+`OptionsWindowViewModel.cs:3413` applies it live through `RequestPllTuning`. The demodulator's own
+clamp is `Math.Clamp(cutoffHz, 1.0, _sampleRate * 0.45)`, which at 11025 Hz permits 4961 Hz — so 3600
+passes. **A user can reach, from the Options UI, a setting that made the picture break into a
+herringbone pattern on a clean signal.** Their qualification is fair and adopted: the historical
+sweep's own experiment code was not located, so which demodulator cutoff it changed is unconfirmed,
+and advanced tuning may legitimately permit poor combinations. That argues for a range or a warning,
+not for closing it.
+
+**2. The 11 TX golden captures do not provide the coverage we claimed. Pick-up item 2 corrected.**
+We wrote that "11 real legacy TX captures already exist" and used that to say channel-order coverage
+is better than `TT1-5` stated. **Verified false.** All 11 `TxCapture/*.provenance` files contain
+exactly `UNKNOWN-STALE-PENDING-RECAPTURE` — 11 of 11 — and `StaleFixtureTheoryAttribute` **skips**
+the comparison entirely. That attribute's own skip message is the warning we should have read: the
+round-1 version hashed the current `.mmv` against itself, "producing a permanently-green,
+permanently-lying result". The `.mmv` files are this port's own TX output, not legacy-generated
+audio. **So the Scottie-class guard we believed we had does not currently run.** This makes `TT1-5`
+more urgent than we filed it, not less, and it does not change the recommended first step — map the
+43 modes to distinct legacy TX paths — it only removes the false comfort attached to it.
+
+**3. T1-14 (cold imaging conversions) — dismissed on a wrong size premise. Reopened as unmeasured.**
+We dropped it because "every remaining call site is a one-shot user action on an image of at most
+640x496, sub-millisecond". That bound is `WorkingCopyScaleFactor`, which caps the **working copy**
+only (`TxImageEditorPaneViewModel.cs:202`, applied at `:6724`). They point out the full original is
+retained and is what gets cropped for final output and rotated. So the size premise behind our
+dismissal does not hold. Correct disposition: **unmeasured, not dismissed** — measure a
+representative large source image before closing it again.
+
+**One wording correction I accept for three items we dropped.** We dropped the AVT H1/H2 gap, the VIS
+fixed-origin 0-185 ms band, and the mid-image narrow-restart cache. Their objection is that "AVT is
+extinct" and "no operator notices" are **prioritization, not correctness evidence**, and our text
+should not read as though the defects were disproved. Agreed. All three remain source-proven parity
+defects that we are choosing not to fix. That is a different statement from "not a bug", and the
+drop entries below should be read that way.
+
+**One internal inconsistency they caught in this document, now fixed.** The status banner said
+"Test-suite Tier 0 — 6 of 7 done, only TT0-2 is open" while the TT0-2 entry itself had already been
+corrected to DONE in the same pass. Their broader point stands: treat this document as evidence to
+verify, not as an authoritative current count.
+
+### RP-1 exchange, 2026-09-07 — what we agreed after pushback
+
+The Astra author responded to the section below with a rebuttal pass, recorded in `astra-audit.md`
+under **"External-feedback review pass RP-1"**. Everything in this subsection comes from that
+exchange. It is here so a reader can see which of our positions survived contact and which did not.
+
+**The useful result first: the exchange changed almost nothing about what to fix.** Of six
+disputes, five are arguments about wording or severity on items BOTH sides agree are real and belong
+on the fix list. Only one — `ASTRA-003` — could change what we do, because it decides whether that
+item blocks a release.
+
+**We were wrong, corrected here:**
+
+- **`ASTRA-026` — we withdraw "overstated".** Our argument was that both apply paths are modal
+  dialogs, so a transmission cannot start while one is open. That misread the trigger. Their order is
+  the reverse: footer preparation starts FIRST, then Options is opened during it (`MainViewModel`
+  permits this, and Save is not TX-gated). Modality never applied. **Reachability stands as they
+  filed it.**
+- **`ASTRA-027` — we withdraw "no visible design lost".** Our conclusion assumed the whole quad is
+  sub-pixel. Only ONE edge has to fail the minimum-edge check, so a quad tapering from about 0.288 px
+  to 5.44 px across 128 px is rejected by the preview while being plainly visible. Their
+  counterexample defeats our framing. Our terminology correction (working-copy width is about 640 px,
+  not 1920 px) was adopted by them and stands.
+- **`ASTRA-041` — we withdraw "Windows-only".** Our own auditor hedged that word ("essentially
+  Windows-only"), which is not a finding. The honest trigger is **failed image deletion with a
+  readable directory and a writable database**, whatever the platform.
+- **`ASTRA-040` — we withdraw one sentence, not the priority.** We wrote that its original P2 rating
+  came from mentally grouping it with the accepted limitations. We could not know that, and they say
+  it reflected conditional shutdown evidence. The claim was unsupported and is removed. **The raise to
+  P1 stands on consequence alone** — a transmitter left keyed on air — which is how it was argued
+  anyway, and they accepted that raise.
+- **`ASTRA-042`, the composition claim — half wrong.** We wrote "fix either one and the chain
+  breaks". They are right that a deletion-tombstone fix on `ASTRA-041` would NOT stop `ASTRA-042`'s
+  orphan, because that orphan was never deleted and carries no deletion intent to record. The correct
+  statement is narrower: **fix `ASTRA-042` and the chain breaks.** Fixing 041 alone does not.
+
+**Where we were talking past each other, now settled by wording:**
+
+- **`ASTRA-029` — adjudicated: each side right about a different proposition.** We are right that the
+  consequence is genuinely reachable, not merely a failed `File.Create`: writer A releases its
+  exclusive handle at the end of its `await using` block **before** its `File.Move`, so writer B's
+  `File.Create` landing in that gap gets the pathname and POSIX `rename()` lets A publish B's
+  incomplete file. `LoadForBootstrap` then swallows every exception type and returns `Empty`, and
+  because every caller does load-modify-save over the whole record, one `Empty` read plus any later
+  Apply permanently drops the other two overrides. They are right that it is **conditional, not
+  entailed** — it needs POSIX rename semantics (on Windows A's `File.Move` fails on B's open handle),
+  plus B's create landing in a narrow same-continuation window, plus B's write failing, or else B's
+  completed JSON lands at the real path and the file self-heals. Our "both follow from its own
+  window" asserted entailment and was overstated. Wording sharpened below.
+  **New, from the adjudication, described in neither document:** in that same interleaving, writer B
+  throws `FileNotFoundException` from its own `File.Move` because its temp was renamed away, and
+  **rolls back its relocation while its setting is actually persisted** — leaving the app and the
+  file disagreeing. Worth folding into whatever fix `ASTRA-029` gets.
+- **`ASTRA-042`, the acceptance question.** They say the recorded scope cut covers audio only, so
+  image and history loss needs its own explicit decision. That is what this document already said —
+  nothing on paper covers it. Our "covered in spirit" line was a recommendation to the user, not a
+  claim about the record. **Reframed: this is a project decision to make, not an acceptance to
+  inherit.**
+
+**Their corrections to our framing, accepted:**
+
+- "Zero false positives in 37" means **source corroboration of the listed mechanisms**, not 37 active
+  runtime-confirmed bugs. Their own count is 35 active P1/P2 plus 4 untriaged P3, because two of the
+  37 are accepted limitations.
+- **`ASTRA-030` was independent verification, not independent discovery.** It reached their report
+  through an earlier reconciliation with this document. Agreement between two source reads is weaker
+  evidence than we implied, and neither substitutes for a legacy-captured interference waveform.
+- **`ASTRA-020`, `-021` and `-025` already described** cancellation-when-clean, multiple text styles
+  with stale Redo, and stale gesture state respectively. Our added detail is useful, but should not
+  be credited as mechanisms they missed.
+
+**The one dispute we win — `ASTRA-003` stays P1. Adjudicated against all three rebuttal points.**
+
+Their rebuttal was that recovery is possible: transport failures can rebuild the protocol, timeouts
+remain possible, and different responses or capabilities change the sequence. **Each fails on source.**
+
+1. **"Different responses or capabilities change the sequence" — no.** Every read in the poll path is
+   paired with its own write: `GetSingleLineOrThrowAsync` is 1 write and 1 read
+   (`RigctldClientProtocol.cs:507-513`), `TryGetMeterAsync` 1 and 1 (`:438-441`), `GetModeAsync` 1
+   write and 2 reads matching rigctld's 2-line `m` response (`:492-497`). Lines read per poll always
+   equals lines produced per poll, for **every** capability combination, so the one-line offset is
+   invariant. It does not drift back into alignment.
+2. **"Timeouts remain possible" — not from this defect.** Over-reading is only possible at
+   `GetModeAsync`'s second read, and `ThrowIfErrorLine` (`:496`) aborts before it whenever a one-line
+   `RPRT` lands in the mode slot. Reads never block, so `WithRequestTimeoutAsync`'s `TimeoutException`
+   (`:334-347`) — the only transport-class exception that reaches the rebuild — is never produced by
+   the desync itself. A timeout requires an unrelated stall.
+3. **"Transport failures can rebuild the protocol" — they can, but this defect never raises one.**
+   When the desync does throw (the meters-enabled variant, where a meter float lands in the frequency
+   slot and `long.TryParse` fails, `:120-123`), it is a `RadioProtocolException`.
+   `RadioController.cs:431-458` resets backoff, publishes `CommandFailed`, and continues — it never
+   disposes the protocol. Disposal and reassignment happen only in the generic transport branch
+   (`:459-475`), and `EnsureConnectedAsync` short-circuits on `_transport.IsOpen` (`:302-307`), so the
+   socket is never rebuilt. On a `CommandFailed` poll no state is published at all, so the last
+   published `IsTransmitting = true` simply persists.
+
+**It is also worse than a stuck indicator.** `state.IsTransmitting` gates the SWR cutoff evaluation
+(`TxControlsPaneViewModel.cs:705,768`), and the desynced frequency reads as `0`, which is what gets
+persisted into history and QSO rows (`ReceiveHistoryRecorder.cs:450`). So the defect corrupts logged
+data and feeds a safety cutoff, not just a UI light. The trigger is user-reachable from the bandwidth
+control (`RadioStatusViewModel.cs:938-945`).
+
+**Escalation judged unnecessary** — the verdict rests on read source, not inference. If you want
+belt-and-braces before shipping the P1, the scripted multi-poll test **they themselves proposed**
+settles it empirically in about an hour, and I would take that offer.
+
+**Both sides already agree on the fix regardless of rating:** consume the passband before validating
+the mode token, and invalidate the connection when a transaction cannot be fully consumed.
+
+### Priority corrections, with reasons
+
+The audit filed one P1. **Two more belong there**, and they are now items 00b and 00c in the pick-up
+list above.
+
+- **`ASTRA-040` P2 → P1 — agreed by both sides in RP-1.** It leaves a transmitter keyed on air at
+  exit. No acceptance for it exists in `docs/` — an auditor searched. (An earlier version of this
+  line asserted why the original P2 rating was chosen. That assertion was unsupported and is
+  withdrawn; the priority rests on consequence.)
+- **`ASTRA-003` P2 → P1 — disputed by them, ADJUDICATED IN OUR FAVOUR 2026-09-07.** All three of
+  their rebuttal points fail on source: the read/write pairing makes the one-line offset invariant
+  across every capability combination, no starvation means no timeout, and the exception the desync
+  does raise is command-level, which never disposes the protocol. `IsTransmitting` therefore latches
+  true and stays published. It also gates the SWR cutoff and corrupts the frequency written into
+  history rows. Full proof in "RP-1 exchange" above. **The fix is agreed regardless of rating.**
+
+### Seven items are UNDERSTATED — worse than their own text says
+
+- **`ASTRA-003`** — permanent and silent, not one bad response. See 00c above.
+- **`ASTRA-029` (storage-location Apply race)** — the item disclaims lost-update and corruption, but
+  both are reachable through its own window. The temp filename is fixed and shared, so one
+  operation's `File.Move` **can** publish another's half-written temp. If that happens, the loader
+  swallows the JSON error and returns empty, discarding all three overrides at once — which defeats
+  the atomicity guarantee `SaveAsync`'s own doc comment claims. **Conditional on losing the race, not
+  inevitable** (wording tightened in RP-1 at their request; the mechanism itself was never disputed).
+  Confirmed separately: T0-2's `UpdateAsync` serialization covers `settings.json` only and does not
+  reach this file.
+- **`ASTRA-010` (auto-follow clobbers quick-mode slots)** — not a one-time loss. The only other
+  writer is the reassign path, so **every** launch with auto-follow enabled re-clobbers the
+  operator's assignments. Custom quick-mode buttons can never survive a restart while that flag is
+  on.
+- **`ASTRA-018` (late radio test marks an edited endpoint tested)** — six unconditional publish
+  sites, not three. The two the item missed are the **Hamlib and flrig PTT tests**, which feed the
+  keying half of the gate. A late result can also silently undo a Reset-to-defaults.
+- **`ASTRA-015` (radial gradient preview)** — for text, preview and transmitted output resolve their
+  brushes against different rectangles, so Horizontal and Vertical gradients are wrong too, with no
+  non-square box needed. Second miss in the same file: bitmap-pattern fill tiles in canvas-display
+  pixels against the output's output-pixels, so tile density drifts with zoom and crop.
+- **`ASTRA-021` (text edits bypass undo)** — every text style except font size and solid colour, not
+  just Bold: stroke, shadow, stack, gradient, bitmap fill, rotation. Boxes got their hooks wired and
+  text did not. The redo half is the damaging one — a post-Undo text edit leaves a stale redo branch
+  live, and one Redo click silently discards work.
+- **`ASTRA-025` (cancelled placement drag undoes the preceding edit)** — a second trigger needing no
+  drag movement at all, because the gesture flag is never cleared on pointer release. The in-code
+  comment asserting the flag "is always false for this mode" is simply wrong.
+
+### Items we called OVERSTATED — three withdrawn in RP-1, one survives
+
+We originally narrowed four items. After their rebuttal, **only one narrowing stands.**
+
+- **`ASTRA-011` (export overwrites a different file) — narrowing SURVIVES, partly.** The GTK case is
+  demonstrated and the file's own doc records that Win32 rewrites the path itself. Their
+  qualification, accepted: treat non-GTK platforms as **unverified**, not as excluded. macOS was
+  never checked in either direction.
+- **`ASTRA-027` — narrowing WITHDRAWN.** Only one edge must fail the check, so a visibly tapering
+  quad is rejected. Our "sub-pixel hairline" reasoning does not hold. Our terminology correction
+  (working-copy width about 640 px, not 1920 px) was adopted by them and stands.
+- **`ASTRA-026` — narrowing WITHDRAWN.** We misread the trigger order. Preparation starts before
+  Options is opened, so modality never applied.
+- **`ASTRA-041` — narrowing WITHDRAWN.** "Windows-class delete failure" was a hedge, not a finding.
+  The trigger is a failed image deletion, on any platform.
+
+The reasoning for each withdrawal is in "RP-1 exchange" above.
+
+### Corroboration worth recording
+
+**`ASTRA-030` is the same `m_sint1` defect this project's own auditor reached today from different
+evidence**, and it is already pick-up item 0c. Two independent passes converging on one narrow
+decode-path gap is the strongest signal on either list.
+
+### One composition nobody filed — corrected in RP-1
+
+An interrupted save under **`ASTRA-042`** leaves a truncated orphan PNG that **`ASTRA-041`**'s disk
+reconciliation then imports as a new Gallery entry. Each item is individually narrow. Chained, they
+produce a corrupt entry the operator never created.
+
+**Correction:** our original "fix either one and the chain breaks" was wrong. A deletion-tombstone
+fix on `ASTRA-041` would NOT stop this, because the truncated orphan was never deleted and carries no
+deletion intent to record. **Fix `ASTRA-042` and the chain breaks.** They adopted the composition and
+rejected the "either" claim, correctly. Their suggested belt-and-braces addition: publish through a
+temporary filename and validate image completeness at reconciliation, so a truncated file is
+quarantined rather than imported.
+
+### Disposition of all 37
+
+**Fold into the work list (see the pick-up list above for the top three):** `ASTRA-020`, `-040`,
+`-003` as P1. Then, roughly by value: `-021`, `-022`, `-023`, `-024`, `-025` (TX editor, UI-tier
+review, several near-one-liners), `-016`, `-018`, `-029`, `-010`, `-009`, `-012`, `-017`, `-019`,
+`-039`, `-031`, `-008`, `-006`, `-001`, `-002`, `-032`, `-005`, `-015` (radial half only).
+
+**Already tracked here:** `ASTRA-030` = pick-up item 0c.
+
+**Accepted limitations, not new bugs — the audit says so itself:** `ASTRA-036` (a UI-blocking
+tradeoff documented in `MiniAudioEngine.cs`, not a shutdown-drain item) and `ASTRA-037` (user-approved
+v1 scope cut in `docs/plans/step12-auto-save-rx-audio-plan.md`).
+
+**`ASTRA-042` needs your decision, and I withdraw the recommendation I attached to it.** The recorded
+scope cut is audio-only, so nothing on paper covers image and history loss. I previously suggested
+treating it as covered in spirit. They rejected that, and they are right that it is not an acceptance
+anyone can inherit — it is a separate call to make. Two things to weigh: the window is roughly the
+same as the audio one you already accepted, but this item also feeds the truncated-orphan composition
+above, which the audio one does not.
+
+**Low priority, real:** `ASTRA-011`, `-038`, `-041`, `-014`, `-027`, `-026`, `-028`, `-004`.
+
+**Two open questions from the verification itself, both cheap to settle:**
+
+1. `ASTRA-038` rests on System.Text.Json assigning an explicit JSON `null` over a `= new()` property
+   initializer under source generation. A five-line deserialize test settles it definitively.
+2. `ASTRA-028`'s severity turns on whether `_levelAgcProcessedUpTo` can sit persistently ahead of
+   `_consumedSamples`. If it can, channel 0 finishes up to a line-time early and the missed capture
+   becomes routine rather than rare — which would move that item to UNDERSTATED.
+
+**Not triaged:** the 4 P3 items (`ASTRA-013`, `-033`, `-034`, `-035`) and `ASTRA-007`, which its own
+author withdrew after checking the view. Nobody has checked the P3 four.
 
 ---
 
