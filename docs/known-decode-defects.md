@@ -111,10 +111,21 @@ same setting. PLL's loop cutoff defaults to 1500 Hz, so an output cutoff far abo
 bandwidth is the suspect.
 
 Not reachable in shipped configuration — `pllOutputCutoffHz` defaults to 900 Hz and no UI exposes it.
-It matters only if an output-cutoff control is ever added: **the safe range is not the same for all
-three demodulators.** Triaged 2026-09-07: no work item. The single thing that must survive is that
-constraint — any future output-cutoff control range-limits per demodulator instead of sharing one
-range. That sentence is the whole deliverable, and it lives here.
+**REOPENED 2026-09-07 — the "not reachable" premise above is FALSE.** An external review pass caught
+it and I verified it. `OptionsWindowView.axaml:986` is a `NumericUpDown` bound to
+`PllOutputCutoffHz` with `Minimum="1" Maximum="3900"`, and `OptionsWindowViewModel.cs:3413` applies
+the value live through `RequestPllTuning`. `PllFmDemodulator`'s own clamp is
+`Math.Clamp(cutoffHz, 1.0, _sampleRate * 0.45)`, which permits 4961 Hz at 11025 Hz — so 3600 passes.
+A user can reach this from the Options UI today. Strike the sentence above claiming no UI exposes it.
+
+**What is NOT established, and must not be overclaimed:** the experiment code behind the original
+sweep was not located, so which demodulator cutoff that sweep actually changed is unconfirmed. Do not
+assert guaranteed PLL collapse, and do not prescribe a new tuning range from this entry alone.
+Advanced tuning may legitimately permit poor combinations.
+
+**The surviving constraint stays true either way:** the safe range is not the same for all three
+demodulators, so an output-cutoff control must range-limit per demodulator instead of sharing one
+range. Tracked as an open item in `production_audit.md`.
 
 ## 4. Right-edge column error on MN and MC modes
 
