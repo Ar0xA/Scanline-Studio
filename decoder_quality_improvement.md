@@ -4,6 +4,15 @@ Date: 2026-09-01
 
 Status: source-level audit and recommendation report. No production or test code was changed as part of this review, and no tests were run.
 
+> **CLOSED 2026-09-07 — decode-quality improvement workstream.** The user stopped this workstream.
+> No further DSP improvement candidate is queued from this document. Sections 5 through 16 are a
+> historical record now, not a backlog. Shipped results and measured negatives stay listed where
+> they are.
+>
+> This closure covers improvements only. Known decode **defects** stay open as bugs — see
+> `docs/known-decode-defects.md`. Fixing a listed defect is still in scope. Re-opening a candidate
+> from this document is not, unless new evidence arrives and the user asks for it.
+
 ## 1. Executive conclusion
 
 Scanline Studio already has a broad, legacy-faithful SSTV receiver: all 43 registered modes map to a decoder, all 43 have synthetic 44.1 kHz round-trip coverage, and the three YONIQ demodulator choices are present. Hilbert should remain the compatibility default.
