@@ -610,6 +610,28 @@ port-first strength. See the plan file for the next investigation.~~
 
 ## 15. Remaining legacy-parity gaps (2026-09-05 exhaustive sweep)
 
+> **TRIAGED 2026-09-07 — one item survives, and it lives in `production_audit.md` now.** An
+> `auditor` pass over every item below returned: **items 5+11 (sync-bypass trackers not frozen during
+> VIS-bit decode) = WORTH FIXING**, everything else DROP. Two corrections it made to this section's
+> own text:
+>
+> - **Items 5+11 are partly stale, in a way that makes the fix CHEAPER.** `m_sint2` and `m_sint3` are
+>   no longer ungated — the S12 fix added `_visLockStateMachine.IsAtOrBeforeConfirmLock` and
+>   `IsSearching` gates (`AnalogFmSstvDecoder.cs:4611`, `:4642`). Only **`m_sint1`** remains, at
+>   `:4563` and the sibling threshold block at `:4679-4694`, both gated solely on
+>   `_syncBypass1PrimaryHeld`, which drops on the routine d12 dips the 1100/1300 Hz VIS data-bit tones
+>   cause. Legacy's freeze is real: `m_sint1.SyncStart()` is case-0-only (`sstv.cpp:1900`), `SyncMax`
+>   is case-1-only (`:1960`), and cases 2/9/3 contain no `m_sint1` code at all. The remaining fix is
+>   the same two-gate shape S12 already shipped and reviewed.
+> - **Item 2's second `m_SyncAccuracyN` trigger is unreachable, not deferred.** Legacy gates it on
+>   `m_SyncAccuracy == 2` (`Main.cpp:3554`), a user-settable 3-way option this port never ported at
+>   all. Its practical effect is largely covered here anyway: `_pendingReplayRequested` is set from
+>   every committed correction (`:604-606`), so this port replays per correction, not once per image.
+>   It now has its own `docs/removed-features.md` entry, which was missing.
+>
+> Items 4, 7, 1, 6, 8, 13, 14 and 15 were all dropped with reasons — see
+> `production_audit.md`'s triage section. Do not re-open them from this list.
+
 After §5.3 shipped, a two-pass sweep re-verified every gap-shaped claim in this document (§5.4-§5.8)
 and in the codebase's own comments against CURRENT source -- not taken at face value, per this
 session's own repeated lesson (4 stale claims already caught this way). All 15 items below are
