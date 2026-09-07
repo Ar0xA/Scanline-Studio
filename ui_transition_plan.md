@@ -1,5 +1,10 @@
 # UI transition plan — from ui_findings.md (second pass), source-audited 2026-08-28
 
+> **CLOSED 2026-09-07.** Every step is resolved. Steps 1 to 13, 15, and 16 shipped and are pushed.
+> Step 14 is rejected outright by user decision, not deferred. This document is a historical design
+> record. It is kept for step 14's rejected design, the Tier 3 scope-decision log, and the
+> DSP/concurrency call-outs that set review-cadence precedent.
+
 Working plan. Findings references (T1-n/T2-n) map to `ui_findings.md`'s original tiers.
 
 ## Status (2026-08-30)

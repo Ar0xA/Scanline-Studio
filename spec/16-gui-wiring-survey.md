@@ -1,5 +1,60 @@
 # 16 — GUI Wiring Survey
 
+> ## CLOSED 2026-09-07 — re-verified, then closed
+>
+> **What this pass verified against current source:** every STUB, PLACEHOLDER, and FAKE-LIVE claim
+> in this document, the Options tab list, the menu bar, the radio header, the locale file's
+> placeholder strings, and the view-file inventory.
+>
+> **What it did NOT re-derive:** the per-row `:line` citations. Every `.axaml` file grew since
+> 2026-08-22 — `MainWindow.axaml` 1612 → 1937, `OptionsWindowView.axaml` 837 → 1249,
+> `TxImageEditorPaneView.axaml` 2015 → 2590, `RadioHeaderView.axaml` 370 → 464,
+> `TxControlsPaneView.axaml` 436 → 461. **Treat every line number below as stale.** The
+> classification in each row is corrected by the findings here, which win on any conflict.
+>
+> ### Current state, verified 2026-09-07
+>
+> 1. **FAKE-LIVE: zero.** The last one is gone. `RadioStatus.VfoCaption` is now
+>    `VfoCaptionRx`/`VfoCaptionTx`, chosen by `IsKeyed` (`RadioStatusViewModel.cs:375`), and reads
+>    "RX" or "TX" — not the old static "VFO A · RX · M1".
+> 2. **Options window: zero disabled controls, and 10 tabs, not 9.** Appearance is new (dark mode
+>    plus font-size presets, commits `0108c8d`, `c3f1f87`). The **Advanced tab is real**, not a
+>    100 % stub (`docs/plans/options-advanced-stub-backlog-plan.md`, commit `9051699`). Sound-file
+>    station ID is implemented. OmniRig is implemented and gated to Windows (`c0d81ce`). RX/TX FIFO
+>    and sound-thread priority were removed 2026-08-27. The 7 waterfall colour buttons were removed
+>    2026-08-28. The tune-satellite trigger was removed 2026-08-28.
+> 3. **Menu bar: fully commanded.** Save frame as, Loopback self-test, Tone generator, Re-decode
+>    from WAV, Export session log, Macros, User guide, Open website, GitHub, Application log, and
+>    About all bind real commands. Clock calibration and Slant reference are gone. The only
+>    `IsEnabled="False"` menu item left is the Configurations "none saved" empty-list placeholder.
+> 4. **Abort and Re-decode are real.** `RxImage.AbortCommand` and `RxImage.RedecodeCommand` exist,
+>    and the Gallery has `RedecodeSelectedEntryCommand`. This document's "likely permanently
+>    infeasible — no raw audio is retained" note is obsolete: RX audio auto-save shipped.
+> 5. **Only one deliberate disabled control remains in the whole shell:** the waterfall Bins/px
+>    stepper, which shows a derived value and is not meant to be an input. The read-only bandwidth
+>    border in the radio header is a `!CanReadBandwidth` fallback, not a stub.
+> 6. **Radio header favourites are real:** Store current, Select, and Edit list
+>    (`OpenFavouritesEditorCommand`). Import and Scan are gone.
+> 7. **The Notch row is real** (`NotchEnabled` toggle, `NotchStatusDisplay`, `TuneNotchCommand`).
+>    The Noise-floor row and its locale key were removed.
+> 8. **Placeholder strings: 2 of 993 locale keys** still hold a bare em-dash
+>    (`Panes.TxControls.AutoPicksValue.None`, `Panes.TxControls.Telemetry.TxClockIdle`). Both are
+>    legitimate empty states, not fake data.
+> 9. **Surfaces this document never covered.** Cards: RX DSP with a live AFC toggle (`378cf1a`),
+>    Stations Heard, the CW ID row, and the decoder-trace controls. Windows and dialogs:
+>    `FavouritesEditorWindowView`, `ImageViewerWindowView`, `LoopbackSelfTestResultWindowView`,
+>    `MacrosReferenceWindowView`, `RadioConnectionGaveUpWindowView`, `TextPromptWindowView`,
+>    `ToneGeneratorWindowView`, `ConfirmActionDialogView`, `HamlibLibraryReloadFailedDialogView`,
+>    `QuickSwitchFailedDialogView`, `RestartRequiredDialogView`, and
+>    `SampleRateChangeDeferredDialogView`.
+>
+> **Why it is closed, not re-derived.** The survey existed to find dishonest UI — stubs, dead
+> controls, and static values posing as live data. That inventory is now empty. A fresh
+> re-derivation would produce a list of real bindings with no finding in it. If a future change
+> reintroduces a stub, record it where the control lives, not by reviving this file.
+>
+> **Everything below this banner is the 2026-08-22 record, unchanged apart from this header.**
+
 **Date:** 2026-08-22 — full re-derivation from source. Every classification and every line citation
 below was re-verified against the current `.axaml`/`.axaml.cs`/ViewModel files; **nothing was carried
 forward from the previous revision of this document.** The prior revision (dated 2026-08-09 …
@@ -722,6 +777,10 @@ Opened modally from the Gallery's "Open in Log" (`MainWindow.axaml:1137`). 460×
 ---
 
 ## Summary
+
+> **Superseded 2026-09-07 by the banner at the top of this file.** The counts below were true on
+> 2026-08-22. The STUB and FAKE-LIVE rows in particular are now wrong: FAKE-LIVE is zero, the
+> Options Advanced tab is real, and the menu bar is fully commanded.
 
 **Counts are approximate** — deliberately so. They count individually-classified interactive or
 data-displaying controls (grid/table rows, buttons, sliders, chips), not decorative card headers,

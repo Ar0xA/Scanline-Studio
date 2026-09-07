@@ -1,8 +1,8 @@
 # Test-suite fixes, Phase 1 — plan
 
-**Status: DONE, 2026-08-30.** All 10 items implemented, 1 code-review round (GO, no blockers, ship
-as-is), every touched project's test suite green, full solution builds clean. Uncommitted — sitting
-in the working tree. See `production_audit.md`'s Test-suite Tier 0/1 sections for the corresponding
+**Status: DONE and CLOSED, 2026-08-30.** All 10 items implemented, 1 code-review round (GO, no
+blockers, ship as-is), every touched project's test suite green, full solution builds clean. The
+work is committed and pushed. See `production_audit.md`'s Test-suite Tier 0/1 sections for the corresponding
 `DONE` markers, and `PROJECT_BRIEF.md` for the session summary. Kept here as the implementation
 record (each item's plan-review corrections are load-bearing context for why the code looks the way
 it does) — not deleted now that it's done.

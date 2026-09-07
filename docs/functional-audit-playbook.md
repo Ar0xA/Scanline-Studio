@@ -1,5 +1,10 @@
 # Functional Bug Sweep Playbook
 
+> **CLOSED 2026-08-22 — full scope, all tiers.** Tier A, Tier B, and Tier C are each FULLY CLOSED
+> over the whole `src/` tree. The per-tier closing summaries are at the bottom of this file. This
+> document is a historical record and a method reference now, not a live sweep. Re-run it only if
+> you deliberately start a new sweep.
+
 Run this when you want an exhaustive, disciplined `yoniq-auditor` pass across production
 code hunting **functional/C# correctness bugs** — not legacy parity. Complementary
 to [`docs/audit-playbook.md`](audit-playbook.md), not a replacement: that one verifies

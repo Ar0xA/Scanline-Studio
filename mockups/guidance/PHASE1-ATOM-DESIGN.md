@@ -1,4 +1,4 @@
-# Phase 1 — Atom design (review draft, round 2 — no code yet)
+# Phase 1 — Atom design — CLOSED, implemented (was: review draft, round 2)
 
 **Historical — already implemented.** `Styles/Atoms.axaml`/`AtomsTokens.axaml` shipped; the whole
 8-phase Industry redesign (fonts/tokens → atoms → chrome → tab views → Options → cleanup) is done —
