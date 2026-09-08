@@ -98,6 +98,58 @@ public sealed class JsonLocalizationServiceTests : IDisposable
         Assert.Equal("en", service.AvailableCultures[0].TwoLetterISOLanguageName);
     }
 
+    [Theory]
+    [InlineData("\"Delete {0\"")]
+    [InlineData("\"Delete {1}\"")]
+    [InlineData("null")]
+    public async Task GetString_InvalidTranslation_UsesFormattedEnglishFallbackAndLogs(string translation)
+    {
+        WriteLocaleFile("en", """{ "Configurations.ConfirmDeleteMessage": "Delete {0}?" }""");
+        WriteLocaleFile("de", "{\"Configurations.ConfirmDeleteMessage\":" + translation + "}");
+        var logger = new FakeLogger<JsonLocalizationService>();
+        ILocalizationService service = new JsonLocalizationService(_localeDirectory, logger);
+        await service.SetCultureAsync(CultureInfo.GetCultureInfo("de"));
+
+        Assert.Equal("Delete Field day?", service.GetString("Configurations.ConfirmDeleteMessage", "Field day"));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning
+            && e.Message.Contains("falling back to English", StringComparison.Ordinal));
+        if (translation != "null")
+        {
+            Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning
+                && e.Message.Contains("invalid format", StringComparison.Ordinal)
+                && e.Message.Contains("de", StringComparison.Ordinal));
+        }
+    }
+
+    [Theory]
+    [InlineData("\"Delete {0\"", "en")]
+    [InlineData("\"Delete {1}\"", "de")]
+    [InlineData("null", "en")]
+    [InlineData("null", "de")]
+    public async Task GetString_InvalidEnglishFallback_ReturnsKeyAndLogs(string translation, string culture)
+    {
+        WriteLocaleFile("en", "{\"Configurations.ConfirmDeleteMessage\":" + translation + "}");
+        WriteLocaleFile("de", "{}");
+        var logger = new FakeLogger<JsonLocalizationService>();
+        var service = new JsonLocalizationService(_localeDirectory, logger);
+        await service.SetCultureAsync(CultureInfo.GetCultureInfo(culture));
+
+        Assert.Equal("Configurations.ConfirmDeleteMessage", service.GetString("Configurations.ConfirmDeleteMessage", "Field day"));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning
+            && e.Message.Contains("missing in the English fallback locale", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GetString_NullUnformattedTranslation_UsesEnglishFallback()
+    {
+        WriteLocaleFile("en", """{ "Greeting": "Hello" }""");
+        WriteLocaleFile("de", """{ "Greeting": null }""");
+        var service = new JsonLocalizationService(_localeDirectory, NullLogger<JsonLocalizationService>.Instance);
+        await service.SetCultureAsync(CultureInfo.GetCultureInfo("de"));
+
+        Assert.Equal("Hello", service.GetString("Greeting"));
+    }
+
     // ------------------------------------------------------------------ Tier C audit findings
 
     [Fact]

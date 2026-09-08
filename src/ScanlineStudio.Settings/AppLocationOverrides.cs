@@ -69,13 +69,21 @@ public sealed record AppLocationOverrides(
             Directory.CreateDirectory(directory);
         }
 
-        var tempFilePath = path + ".tmp";
-        await using (var stream = File.Create(tempFilePath))
+        var tempFilePath = path + $".{Guid.NewGuid():N}.tmp";
+        try
         {
-            await JsonSerializer.SerializeAsync(stream, overrides, AppLocationOverridesJsonContext.Default.AppLocationOverrides, ct);
-        }
+            await using (var stream = new FileStream(tempFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            {
+                await JsonSerializer.SerializeAsync(stream, overrides, AppLocationOverridesJsonContext.Default.AppLocationOverrides, ct);
+            }
 
-        File.Move(tempFilePath, path, overwrite: true);
+            File.Move(tempFilePath, path, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(tempFilePath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     private static string GetDefaultOverridesFilePath()

@@ -454,6 +454,29 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
             }
         }
 
+        if (name.EndsWith(' ') || name.EndsWith('.'))
+        {
+            errorMessage = "Preset name cannot end with a space or period.";
+            return false;
+        }
+
+        // Apply Windows rules on every platform so a portable preset cannot become a device
+        // path when copied to Windows. Extensions do not make reserved basenames safe.
+        var dot = name.IndexOf('.');
+        var basename = (dot < 0 ? name : name[..dot]).TrimEnd(' ');
+        if (basename.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || basename.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || basename.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || basename.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+            || (basename.Length == 4
+                && (basename.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                    || basename.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                && (basename[3] is >= '1' and <= '9' or '¹' or '²' or '³')))
+        {
+            errorMessage = "Preset name cannot use a reserved Windows device name.";
+            return false;
+        }
+
         errorMessage = null;
         return true;
     }
