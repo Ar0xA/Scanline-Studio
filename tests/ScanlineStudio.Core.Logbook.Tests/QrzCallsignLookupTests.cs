@@ -5,6 +5,24 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 
 public sealed class QrzCallsignLookupTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task LookupAsync_HttpFailureAtLoginOrLookup_ReportsHttpStatus(bool loginFails)
+    {
+        var handler = new FakeHttpMessageHandler
+        {
+            ResponseFactory = request => !loginFails && IsLoginRequest(request)
+                ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(LoginSuccessXml) }
+                : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("<html>unavailable</html>") },
+        };
+        var lookup = new QrzCallsignLookup(new FakeHttpClientFactory(handler), NullLogger<QrzCallsignLookup>.Instance);
+        var result = await lookup.LookupAsync("W1AW", "user", "secret");
+        Assert.False(result.Success);
+        Assert.Contains("503", result.ErrorReason);
+        Assert.DoesNotContain("secret", result.ErrorReason);
+    }
+
     private const string LoginSuccessXml = """
         <?xml version="1.0" encoding="utf-8" ?>
         <QRZDatabase version="1.34" xmlns="http://xmldata.qrz.com">

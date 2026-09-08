@@ -42,14 +42,15 @@ public sealed partial class QrzLogbookUploader : IQrzLogbookUploader
         try
         {
             var client = _httpClientFactory.CreateClient(HttpClientName);
-            var content = new FormUrlEncodedContent(new Dictionary<string, string>
+            using var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["KEY"] = apiKey,
                 ["ACTION"] = "INSERT",
                 ["ADIF"] = adifText,
             });
 
-            var response = await client.PostAsync(Endpoint, content, ct).ConfigureAwait(false);
+            using var response = await client.PostAsync(Endpoint, content, ct).ConfigureAwait(false);
+            response.EnsureSuccessStatusCode();
             var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             var fields = ParseNameValueResponse(body);
 

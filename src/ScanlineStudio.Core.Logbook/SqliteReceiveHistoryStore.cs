@@ -3,6 +3,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Processing;
+using SixLabors.ImageSharp.Formats.Png;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Settings;
@@ -22,6 +23,9 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     private readonly string _connectionString;
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<SqliteReceiveHistoryStore> _logger;
+
+    internal Action<string> DeleteImageFileForTests { get; init; } = File.Delete;
+    internal Func<Task>? BeforeReconcileInsertForTests { get; init; }
 
     public event Action<ReceiveHistoryEntry>? Recorded;
     public event Action<ReceiveHistoryEntry>? Deleted;
@@ -150,7 +154,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId)
-            VALUES ($id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId)
+            SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId
+            WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistoryDeletion WHERE FilePath = $canonicalPath)
             """;
         command.Parameters.AddWithValue("$id", entry.Id);
         command.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
@@ -182,7 +187,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         command.Parameters.AddWithValue("$decodedCallsignSource", (object?)entry.DecodedCallsignSource ?? DBNull.Value);
         command.Parameters.AddWithValue("$decodedCwId", (object?)entry.DecodedCwId ?? DBNull.Value);
 
-        await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        command.Parameters.AddWithValue("$canonicalPath", CanonicalFilePath(entry.FilePath));
+        if (await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 0)
+        {
+            Log.DeletedImageRecordSuppressed(_logger, entry.FilePath);
+            return;
+        }
 
         // Round-2 user decision (2026-08-26): no automatic retention trim -- the Gallery tab's own
         // "All" filter must show every entry ever recorded, not the newest N. Legacy's own fixed-size
@@ -316,20 +326,41 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         return await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    /// <summary>See <see cref="IReceiveHistoryStore.DeleteAsync"/>. File removal happens FIRST,
-    /// before the DB row -- if the row were deleted first and the file delete then failed, a
-    /// later <see cref="ReconcileWithDiskAsync"/> pass would re-adopt that orphaned file as a
-    /// "new" entry, silently resurrecting something the operator just deleted. Doing the file
-    /// first means the worst case is the reverse (a row briefly outlives its file, already an
-    /// explicitly-tolerated state per <see cref="SetNoteAsync"/>'s own doc comment), not a
-    /// resurrection.</summary>
+    /// <summary>Persist deletion intent with the row removal before best-effort disk cleanup.
+    /// Reconciliation and delayed recorder writes must respect that intent even if cleanup fails.</summary>
     public async Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
     {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using (var transaction = connection.BeginTransaction(deferred: false))
+        {
+            using var tombstone = connection.CreateCommand();
+            tombstone.Transaction = transaction;
+            tombstone.CommandText = """
+                INSERT OR IGNORE INTO ReceiveHistoryDeletion (FilePath)
+                SELECT $path WHERE EXISTS (SELECT 1 FROM ReceiveHistory WHERE Id = $id)
+                """;
+            tombstone.Parameters.AddWithValue("$path", CanonicalFilePath(entry.FilePath));
+            tombstone.Parameters.AddWithValue("$id", entry.Id);
+            await tombstone.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = "DELETE FROM ReceiveHistory WHERE Id = $id";
+            command.Parameters.AddWithValue("$id", entry.Id);
+            var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            await transaction.CommitAsync(ct).ConfigureAwait(false);
+            if (rowsAffected == 0)
+            {
+                return false;
+            }
+        }
+
         try
         {
             if (File.Exists(entry.FilePath))
             {
-                File.Delete(entry.FilePath);
+                DeleteImageFileForTests(entry.FilePath);
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -356,18 +387,6 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             {
                 Log.DeleteFileFailed(_logger, audioFilePath, ex);
             }
-        }
-
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct).ConfigureAwait(false);
-
-        var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM ReceiveHistory WHERE Id = $id";
-        command.Parameters.AddWithValue("$id", entry.Id);
-        var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-        if (rowsAffected == 0)
-        {
-            return false;
         }
 
         // Isolated deliberately, same reasoning as RecordAsync's own Recorded-event try/catch: a
@@ -409,7 +428,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         {
             await connection.OpenAsync(ct).ConfigureAwait(false);
             var query = connection.CreateCommand();
-            query.CommandText = "SELECT FilePath FROM ReceiveHistory";
+            query.CommandText = "SELECT FilePath FROM ReceiveHistory UNION SELECT FilePath FROM ReceiveHistoryDeletion";
             await using var reader = await query.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
             {
@@ -470,6 +489,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             // The recorder's own filename timestamp is wall-clock local (ReceiveHistoryRecorder.cs
             // stamps DateTimeOffset.Now) -- reconstruct the SAME kind here, not UTC, matching what
             // every genuinely-recorded row already stores.
+            if (!await ValidateOrphanPngAsync(filePath, ct).ConfigureAwait(false))
+            {
+                continue;
+            }
+
             var receivedAt = new DateTimeOffset(localTimestamp, TimeZoneInfo.Local.GetUtcOffset(localTimestamp));
             var decodeState = match.Groups["partial"].Success ? ReceiveDecodeState.Abandoned : ReceiveDecodeState.Completed;
             toImport.Add(new ReceiveHistoryEntry(Guid.NewGuid().ToString(), receivedAt, match.Groups["mode"].Value, fullPath, LinkedQsoId: null, decodeState));
@@ -481,6 +505,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         }
 
         var importedCount = 0;
+        if (BeforeReconcileInsertForTests is { } beforeInsert)
+        {
+            await beforeInsert().ConfigureAwait(false);
+        }
+
         await using (var connection = new SqliteConnection(_connectionString))
         {
             await connection.OpenAsync(ct).ConfigureAwait(false);
@@ -508,6 +537,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                     INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, ReceivedAtUtc)
                     SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $receivedAtUtc
                     WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistory WHERE FilePath = $filePath)
+                      AND NOT EXISTS (SELECT 1 FROM ReceiveHistoryDeletion WHERE FilePath = $filePath)
                     """;
                 insert.Parameters.AddWithValue("$id", entry.Id);
                 insert.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
@@ -573,6 +603,69 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
         return rowsAffected > 0;
+    }
+
+    private static string CanonicalFilePath(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception ex) when (ex is ArgumentException or PathTooLongException or NotSupportedException)
+        {
+            // Malformed imported metadata cannot identify an actual orphan; still permit the
+            // operator to remove its row, as reconciliation already skips this same path class.
+            return path;
+        }
+    }
+
+    private async Task<bool> ValidateOrphanPngAsync(string path, CancellationToken ct)
+    {
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            // A decoder may accept a missing final chunk. Our own published PNGs always end
+            // with this complete zero-length IEND chunk; require it in recovered files too.
+            byte[] endChunk = [0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+            var actualEnd = new byte[endChunk.Length];
+            if (stream.Length < endChunk.Length)
+            {
+                throw new InvalidImageContentException("PNG is missing its IEND chunk.");
+            }
+
+            stream.Seek(-endChunk.Length, SeekOrigin.End);
+            await stream.ReadExactlyAsync(actualEnd, ct).ConfigureAwait(false);
+            if (!actualEnd.AsSpan().SequenceEqual(endChunk))
+            {
+                throw new InvalidImageContentException("PNG is missing its complete IEND chunk.");
+            }
+
+            stream.Position = 0;
+            using var image = await PngDecoder.Instance.DecodeAsync(
+                new PngDecoderOptions { PngCrcChunkHandling = PngCrcChunkHandling.IgnoreNone }, stream, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidImageContentException or UnknownImageFormatException)
+        {
+            Log.CorruptOrphanImage(_logger, path, ex);
+            try
+            {
+                var quarantine = Path.Combine(Path.GetDirectoryName(path)!, "quarantine");
+                Directory.CreateDirectory(quarantine);
+                File.Move(path, Path.Combine(quarantine, Path.GetFileName(path) + $".{Guid.NewGuid():N}.corrupt"));
+            }
+            catch (Exception moveError) when (moveError is IOException or UnauthorizedAccessException)
+            {
+                Log.OrphanImageAccessFailed(_logger, path, moveError);
+            }
+
+            return false;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.OrphanImageAccessFailed(_logger, path, ex);
+            return false;
+        }
     }
 
     /// <summary>Creates the table on a fresh DB, and migrates an existing pre-`Note`/`IsFlagged`/
@@ -804,6 +897,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_ReceivedAtUtc ON ReceiveHistory(ReceivedAtUtc)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_FilePath ON ReceiveHistory(FilePath)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_LinkedQsoId ON ReceiveHistory(LinkedQsoId)");
+        ExecuteNonQuery(connection, transaction, "CREATE TABLE IF NOT EXISTS ReceiveHistoryDeletion (FilePath TEXT COLLATE NOCASE PRIMARY KEY)");
 
         transaction.Commit();
     }
@@ -898,6 +992,15 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Ignored delayed history record for deleted image {Path}")]
+        public static partial void DeletedImageRecordSuppressed(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Orphan RX image {Path} is corrupt; excluding it from Gallery recovery")]
+        public static partial void CorruptOrphanImage(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not read or quarantine orphan RX image {Path}")]
+        public static partial void OrphanImageAccessFailed(ILogger logger, string path, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "A Recorded event subscriber threw for entry {EntryId}")]
         public static partial void RecordedSubscriberFailed(ILogger logger, string entryId, Exception ex);
 

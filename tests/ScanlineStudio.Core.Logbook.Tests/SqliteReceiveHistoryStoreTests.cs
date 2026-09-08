@@ -10,6 +10,159 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 public sealed class SqliteReceiveHistoryStoreTests
 {
     [Fact]
+    public async Task DeleteAsync_FailedPngDeleteRemainsDeletedAfterRestartAndDelayedRecord()
+    {
+        var dbPath = TempDbPath();
+        var images = Path.Combine(Path.GetTempPath(), $"scanline-deleted-image-{Guid.NewGuid():N}");
+        var settings = new FakeSettingsStore();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(settings, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath)
+            {
+                DeleteImageFileForTests = _ => throw new IOException("Injected image deletion failure"),
+            };
+            await store.SetImagesDirectoryAsync(images);
+            var imagePath = Path.Combine(images, "20260907-120000000_robot36_12345678.png");
+            await WriteTestPngAsync(imagePath);
+            var entry = new ReceiveHistoryEntry("deleted", DateTimeOffset.UtcNow, "robot36", Path.Combine(images, ".", Path.GetFileName(imagePath)), null, ReceiveDecodeState.Completed);
+            await store.RecordAsync(entry);
+            Assert.True(await store.DeleteAsync(entry));
+            Assert.True(File.Exists(imagePath));
+
+            var reopened = new SqliteReceiveHistoryStore(settings, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            Assert.Equal(0, await reopened.ReconcileWithDiskAsync());
+            var recorded = false;
+            reopened.Recorded += _ => recorded = true;
+            await reopened.RecordAsync(entry with { Id = "late", FilePath = imagePath });
+            Assert.False(recorded);
+            Assert.Empty(await reopened.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.True(File.Exists(imagePath));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(images))
+            {
+                Directory.Delete(images, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_DeleteAfterScanStillExcludesCandidateAtInsert()
+    {
+        var dbPath = TempDbPath();
+        var images = Path.Combine(Path.GetTempPath(), $"scanline-reconcile-delete-{Guid.NewGuid():N}");
+        var settings = new FakeSettingsStore();
+        var scanned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(settings, NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath)
+            {
+                DeleteImageFileForTests = _ => throw new IOException("Injected image deletion failure"),
+                BeforeReconcileInsertForTests = async () =>
+                {
+                    scanned.SetResult();
+                    await release.Task;
+                },
+            };
+            await store.SetImagesDirectoryAsync(images);
+            var imagePath = Path.Combine(images, "20260907-120000000_robot36_12345678.png");
+            await WriteTestPngAsync(imagePath);
+            var reconcile = store.ReconcileWithDiskAsync();
+            await scanned.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var entry = new ReceiveHistoryEntry("arrived", DateTimeOffset.UtcNow, "robot36", imagePath, null, ReceiveDecodeState.Completed);
+            await store.RecordAsync(entry);
+            Assert.True(await store.DeleteAsync(entry));
+            release.SetResult();
+            Assert.Equal(0, await reconcile.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+        }
+        finally
+        {
+            release.TrySetResult();
+            DeleteDb(dbPath);
+            if (Directory.Exists(images))
+            {
+                Directory.Delete(images, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(12)]
+    [InlineData(32)]
+    public async Task ReconcileWithDiskAsync_TruncatedRecognizedPngIsQuarantined(int removedBytes)
+    {
+        var dbPath = TempDbPath();
+        var images = Path.Combine(Path.GetTempPath(), $"scanline-corrupt-orphan-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(images);
+            var path = Path.Combine(images, "20260907-120000000_robot36_12345678.png");
+            await WriteTestPngAsync(path);
+            var original = await File.ReadAllBytesAsync(path);
+            var truncated = original[..^removedBytes];
+            if (removedBytes == 0)
+            {
+                // Keep the terminal IEND intact: a corrupt IDAT must fail full decoding/CRC,
+                // rather than passing a signature-and-trailer-only validation.
+                var idat = original.AsSpan().IndexOf("IDAT"u8);
+                Assert.True(idat >= 0);
+                truncated[idat + 4] ^= 1;
+            }
+            await File.WriteAllBytesAsync(path, truncated);
+            Assert.Equal(0, await store.ReconcileWithDiskAsync());
+            Assert.Empty(await store.QueryAsync(new ReceiveHistoryFilter()));
+            Assert.False(File.Exists(path));
+            var quarantined = Assert.Single(Directory.GetFiles(Path.Combine(images, "quarantine")));
+            Assert.Equal(truncated, await File.ReadAllBytesAsync(quarantined));
+            Assert.Equal(0, await store.ReconcileWithDiskAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(images))
+            {
+                Directory.Delete(images, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileWithDiskAsync_UnreadableValidPngIsSkippedWithoutQuarantining()
+    {
+        var dbPath = TempDbPath();
+        var images = Path.Combine(Path.GetTempPath(), $"scanline-locked-orphan-{Guid.NewGuid():N}");
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.SetImagesDirectoryAsync(images);
+            var path = Path.Combine(images, "20260907-120000000_robot36_12345678.png");
+            await WriteTestPngAsync(path);
+            using (var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                Assert.Equal(0, await store.ReconcileWithDiskAsync());
+                Assert.True(File.Exists(path));
+                Assert.False(Directory.Exists(Path.Combine(images, "quarantine")));
+            }
+
+            Assert.Equal(1, await store.ReconcileWithDiskAsync());
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+            if (Directory.Exists(images))
+            {
+                Directory.Delete(images, recursive: true);
+            }
+        }
+    }
+    [Fact]
     public async Task RecordAsync_ThenQueryAsync_RoundTripsTheEntry()
     {
         var dbPath = TempDbPath();
@@ -1585,8 +1738,8 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var completedPath = Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png");
             var abandonedPath = Path.Combine(imagesDirectory, "20260826-150000000_martin-m1_partial_e5f6a7b8.png");
-            File.WriteAllBytes(completedPath, []);
-            File.WriteAllBytes(abandonedPath, []);
+            await WriteTestPngAsync(completedPath);
+            await WriteTestPngAsync(abandonedPath);
 
             var imported = await store.ReconcileWithDiskAsync();
 
@@ -1635,7 +1788,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             await store.SetImagesDirectoryAsync(imagesDirectory);
 
             var oldShapePath = Path.Combine(imagesDirectory, "20260826-143052_robot36.png");
-            File.WriteAllBytes(oldShapePath, []);
+            await WriteTestPngAsync(oldShapePath);
 
             var imported = await store.ReconcileWithDiskAsync();
 
@@ -1671,7 +1824,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             await store.SetImagesDirectoryAsync(imagesDirectory);
 
             var realPath = Path.Combine(imagesDirectory, "20260825-004916556_martin-m2_1a081cf8.png");
-            File.WriteAllBytes(realPath, []);
+            await WriteTestPngAsync(realPath);
 
             var imported = await store.ReconcileWithDiskAsync();
 
@@ -1702,7 +1855,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             await store.SetImagesDirectoryAsync(imagesDirectory);
             // Month 13 -- matches the regex shape exactly (8 digits, 6 digits, mode, .png) but isn't
             // a real calendar date.
-            File.WriteAllBytes(Path.Combine(imagesDirectory, "20261345-120000_robot36.png"), []);
+            await WriteTestPngAsync(Path.Combine(imagesDirectory, "20261345-120000_robot36.png"));
 
             var imported = await store.ReconcileWithDiskAsync();
 
@@ -1730,7 +1883,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             await store.SetImagesDirectoryAsync(imagesDirectory);
 
             var filePath = Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png");
-            File.WriteAllBytes(filePath, []);
+            await WriteTestPngAsync(filePath);
             await store.RecordAsync(new ReceiveHistoryEntry("existing-id", DateTimeOffset.Now, "robot36", filePath, null, ReceiveDecodeState.Completed));
 
             var imported = await store.ReconcileWithDiskAsync();
@@ -1760,7 +1913,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.SetImagesDirectoryAsync(imagesDirectory);
-            File.WriteAllBytes(Path.Combine(imagesDirectory, "vacation-photo.png"), []);
+            await WriteTestPngAsync(Path.Combine(imagesDirectory, "vacation-photo.png"));
 
             var imported = await store.ReconcileWithDiskAsync();
 
@@ -1812,7 +1965,7 @@ public sealed class SqliteReceiveHistoryStoreTests
         {
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             await store.SetImagesDirectoryAsync(imagesDirectory);
-            File.WriteAllBytes(Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png"), []);
+            await WriteTestPngAsync(Path.Combine(imagesDirectory, "20260826-143052123_robot36_a1b2c3d4.png"));
 
             var raisedCount = 0;
             store.Recorded += _ => raisedCount++;
@@ -1918,6 +2071,12 @@ public sealed class SqliteReceiveHistoryStoreTests
         }
 
         return columns;
+    }
+
+    private static async Task WriteTestPngAsync(string path)
+    {
+        using var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(2, 2);
+        await image.SaveAsPngAsync(path);
     }
 
     private static string TempDbPath() => Path.Combine(Path.GetTempPath(), $"scanline-studio-history-test-{Guid.NewGuid()}.db");

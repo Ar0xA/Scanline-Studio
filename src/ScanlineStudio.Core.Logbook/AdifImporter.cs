@@ -75,9 +75,8 @@ public sealed class AdifImporter : IAdifImporter
     /// path.</summary>
     private static bool IsByteScanSafe(Encoding encoding) => encoding.IsSingleByte || encoding.CodePage == Encoding.UTF8.CodePage;
 
-    /// <summary>Scans for the first <c>&lt;eoh&gt;</c> tag (case-insensitive, like every other ADIF
-    /// tag) using the same tag-scanning logic as <see cref="ParseRecord"/> rather than a fixed
-    /// ASCII substring search — a real header could in principle spell it any case.</summary>
+    /// <summary>Finds a header terminator outside length-delimited values. A real record
+    /// terminator means the input is headerless; later tags cannot turn it into a header.</summary>
     private static int SkipHeader(byte[] bytes, Encoding encoding)
     {
         var position = 0;
@@ -102,6 +101,17 @@ public sealed class AdifImporter : IAdifImporter
             }
 
             position = tagEnd + 1;
+            if (tagContent.Equals("eor", StringComparison.OrdinalIgnoreCase))
+            {
+                return 0;
+            }
+
+            // Match ParseRecord's byte-length, optional type suffix and malformed-length rules.
+            var parts = tagContent.Split(':');
+            if (parts.Length >= 2 && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var byteLength) && byteLength >= 0)
+            {
+                position += Math.Min(byteLength, bytes.Length - position);
+            }
         }
     }
 

@@ -6,6 +6,22 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 public sealed class QrzLogbookUploaderTests
 {
     [Fact]
+    public async Task UploadAsync_HttpFailureWithSuccessShapedBody_ReportsHttpStatus()
+    {
+        var handler = new FakeHttpMessageHandler
+        {
+            ResponseFactory = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                { Content = new StringContent("RESULT=OK&LOGID=12345") },
+        };
+        var uploader = new QrzLogbookUploader(new FakeHttpClientFactory(handler), NullLogger<QrzLogbookUploader>.Instance);
+        var result = await uploader.UploadAsync("<call:4>W1AW<eor>", "secret");
+        Assert.False(result.Success);
+        Assert.Contains("503", result.ErrorReason);
+        Assert.Null(result.LogId);
+        Assert.DoesNotContain("secret", result.ErrorReason);
+    }
+
+    [Fact]
     public async Task UploadAsync_ResultOk_ReturnsSuccessWithLogId()
     {
         var handler = new FakeHttpMessageHandler
