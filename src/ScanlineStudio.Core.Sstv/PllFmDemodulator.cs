@@ -80,7 +80,7 @@ internal sealed class PllFmDemodulator
         _wideLowHz = lowFrequencyHz;
         _wideHighHz = highFrequencyHz;
         _sampleRate = sampleRate;
-        _vcoGain = vcoGain;
+        _vcoGain = NormalizeVcoGain(vcoGain);
 
         _vco = new Vco(sampleRate, (lowFrequencyHz + highFrequencyHz) / 2.0);
         SetWidth(isNarrow: false);
@@ -160,12 +160,15 @@ internal sealed class PllFmDemodulator
     /// this method at all).</summary>
     public void SetTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz)
     {
-        _vcoGain = vcoGain;
+        _vcoGain = NormalizeVcoGain(vcoGain);
         _vco.SetGain(-_bandwidthHz * _vcoGain);
 
         _loopFilter.Design(ClampCutoffBelowNyquist(loopCutoffHz), _sampleRate, ClampFilterOrder(loopOrder));
         _outputFilter.Design(ClampCutoffBelowNyquist(outputCutoffHz), _sampleRate, ClampFilterOrder(outputOrder));
     }
+
+    // Matches the supported Options range. Corrupt presets use the legacy unity default.
+    internal static double NormalizeVcoGain(double gain) => double.IsFinite(gain) && gain is >= 0.35 and <= 10 ? gain : 1.0;
 
     /// <summary>Processes one input sample; returns the demodulated instantaneous frequency in Hz.</summary>
     public double ProcessSample(double input)

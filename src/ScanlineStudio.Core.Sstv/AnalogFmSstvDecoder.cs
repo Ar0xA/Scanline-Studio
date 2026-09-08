@@ -747,37 +747,10 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     // (d12>d19 && d12>SLvl && (d12-d19)>=SLvl) that also drives VisLockStateMachine's own Search/
     // ConfirmLock (sstv.cpp:1946-1950/1958-1972), via SyncTrig on that threshold's rising edge and
     // SyncMax while it holds -- not a lower, always-checked threshold like m_sint2/m_sint3's own.
-    // _syncBypass1PrimaryHeld is this port's own local case-0/case-1 latch for that same threshold,
-    // a deliberate second copy of what VisLockStateMachine already tracks internally. Round-1-review
-    // correction: this used to say "requires evaluating it inside this same loop, and this loop has
-    // no access to VisLockStateMachine's separate instance/cursor" -- false since the m_sint1
-    // decoder-ordering fix (TryInterleavedHeaderScan/TrySyncIntervalDetectionStep run interleaved,
-    // in the same class, with direct field access to _visLockStateMachine). The copy is still needed
-    // for a different reason: legacy computes its own d12/d19 once per Do() call and shares them
-    // (sstv.cpp:1841-1853); recombining that here would mean VisLockStateMachine no longer owning
-    // its own envelope detectors, a bigger change than that fix, left for a follow-up.
-    //
-    // Corrected by independent review -- an earlier version of this comment claimed the two latches
-    // "necessarily agree sample-for-sample," which is only true pre-lock. While locked, only
-    // VisLockStateMachine runs (TrySyncIntervalDetectionStep is hard-gated behind !m_Sync, matching
-    // legacy); its d12/d19 detectors keep running against the whole image, while this loop's own
-    // d12/d19 detectors (_syncBypass1200Detector/_syncBypass1900Detector) sit idle. EndOfImage then
-    // fast-forwards both cursors to the same resumeFrom, but the two detector pairs now carry
-    // different filter histories and produce different d12/d19 for the same samples until their
-    // resonators resettle -- so the latches can genuinely disagree for a short window at the start
-    // of every transmission after the first. Small (bounded by the envelope detectors' own settling
-    // time, the same order of magnitude as other already-accepted small imprecisions in this
-    // system), not eliminated, documented honestly rather than assumed away.
-    //
-    // S12 code-level review addition: since m_sint2/m_sint3 now gate on VisLockStateMachine's own
-    // state (see the S12 comments on those blocks below), a transient false Search->ConfirmLock->
-    // DecodeVis in THAT copy during this same resettle window doesn't just disagree with m_sint1's
-    // latch -- it also freezes m_sint2/m_sint3 for up to ~270ms (~540ms extended) where legacy would
-    // not. Bounded and low-probability (same settling-time order of magnitude as the disagreement
-    // above), and VisLockStateMachine's own state is the more legacy-faithful of the two available
-    // proxies -- not fixed, flagged so a future reader has the fuller picture.
+    // ASTRA-030 uses the actual VIS state for all three trackers: Search consumes/triggers
+    // peaks, ConfirmLock updates maxima, and VIS-bit states freeze peak work. Counters advance
+    // in every state. Separate envelope filter histories remain unchanged.
     private readonly SyncIntervalTracker _syncBypass1Tracker;
-    private bool _syncBypass1PrimaryHeld;
 
     // m_sint2 (sstv.cpp:1899-1924, sstv.h:701) -- recognizes Scottie1/Martin1/Martin2/SC2-180 from
     // sync-pulse periodicity alone, without ever decoding a VIS code. Unlike AFC/Slant's detectors,
@@ -1084,7 +1057,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _senseLevel = senseLevel is >= 0 and <= 3 ? senseLevel : 0;
         (_slvl, _slvl2, _slvl3) = SenseLevelPresets[_senseLevel];
         _demodType = demodType;
-        _pllVcoGain = pllVcoGain;
+        _pllVcoGain = PllFmDemodulator.NormalizeVcoGain(pllVcoGain);
         _pllLoopOrder = pllLoopOrder;
         _pllLoopCutoffHz = pllLoopCutoffHz;
         _pllOutputOrder = pllOutputOrder;
@@ -1615,7 +1588,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     /// are always set together as one group (never independently), so a plain exchange is correct --
     /// no CAS-merge needed, unlike <see cref="_desiredFlags"/>'s own 4-independent-property shape.</summary>
     public void RequestPllTuning(double vcoGain, int loopOrder, double loopCutoffHz, int outputOrder, double outputCutoffHz) =>
-        Interlocked.Exchange(ref _pendingPllTuningRequest, new PllTuningRequest(vcoGain, loopOrder, loopCutoffHz, outputOrder, outputCutoffHz));
+        Interlocked.Exchange(ref _pendingPllTuningRequest, new PllTuningRequest(PllFmDemodulator.NormalizeVcoGain(vcoGain), loopOrder, loopCutoffHz, outputOrder, outputCutoffHz));
 
     /// <summary>See <see cref="ISstvDecoder.RequestZeroCrossingTuning"/>. Same atomic-exchange shape as
     /// <see cref="RequestPllTuning"/> immediately above -- consumed at the top of the next
@@ -2943,7 +2916,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // on the next line makes _mode non-null immediately), but now genuinely matches EndOfImage's
         // pairing instead of only half of it.
         _syncBypass1Tracker.Reset();
-        _syncBypass1PrimaryHeld = false;
         _syncBypassTracker.Reset();
         _syncBypassNarrowTracker.Reset();
         _syncBypassNarrowPhaseActive = false;
@@ -4104,7 +4076,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _fixedWindowExhausted = false;
 
         _syncBypass1Tracker.Reset();
-        _syncBypass1PrimaryHeld = false;
         _syncBypassTracker.Reset();
         _syncBypassNarrowTracker.Reset();
         _syncBypassNarrowPhaseActive = false;
@@ -4538,36 +4509,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _syncBypassTracker.Increment();
         _syncBypassNarrowTracker.Increment();
 
-        // m_sint1 (sstv.cpp:1900-1904) -- checked FIRST every sample, top priority, no mode
-        // allowlist, but ONLY while NOT currently holding the primary threshold: legacy's
-        // SyncStart() is polled from case 0 alone (sstv.cpp:1900), never from case 1
-        // (sstv.cpp:1952-1973 calls SyncMax there, never SyncStart). Bug fixed by independent
-        // review: an earlier version called TryStart() unconditionally every sample, which meant
-        // the very next sample after Trigger() latched a peak would immediately consume it (via
-        // SyncIntervalTracker.TryStart's unconditional _peakAmplitude=0), before SyncMax ever got
-        // a chance to track the pulse's real running max -- anchoring every match at the
-        // threshold-crossing edge instead of the envelope peak GetSyncSegmentMidpointOffsetMs
-        // assumes, and (worse) letting VIS data-bit tones (1100/1300Hz, only ±100Hz from d12's
-        // 1200Hz/100Hz-bandwidth center) spuriously re-trigger it throughout every VIS-bit-decode
-        // attempt, polluting the interval history legacy's own case-2/9 freeze would have
-        // prevented. Gating on !_syncBypass1PrimaryHeld reproduces the case-0<->1 boundary for
-        // m_sint1. S12 code-level review correction: an earlier version of this comment claimed
-        // "m_sint2 already has an equivalent effect for free" -- false; m_sint2 needed (and, as of
-        // S12, has) its own explicit gate below, since _syncBypass1PrimaryHeld only tracks the
-        // case-0<->1 boundary, not case 2/9/3's real freeze (see m_sint2's own comment for the S12
-        // fix). m_sint1's own gate here has the SAME residual gap for case 2/9/3 that m_sint2/
-        // m_sint3 had before S12 -- _syncBypass1PrimaryHeld can go false mid-VIS-bit-decode if d12
-        // momentarily dips below SLvl, letting !_syncBypass1PrimaryHeld admit a stray TryStart()
-        // during real decode -- out of S12's own scope (m_sint1 specifically), not fixed here,
-        // left as a known follow-up rather than silently absorbed.
-        if (!_syncBypass1PrimaryHeld)
+        // Legacy RX case 0 (sstv.cpp:1900-1904): first priority, any recognized mode,
+        // Search only. Data-bit threshold dips must not consume the held primary peak.
+        var sint1Matched = TryStartPrimarySync();
+        if (sint1Matched is not null)
         {
-            var sint1Matched = _syncBypass1Tracker.TryStart();
-            if (sint1Matched is not null)
-            {
-                CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
-                return true;
-            }
+            CommitSyncBypassMatch(sint1Matched, _syncBypass1Tracker.LastPeakPositionSamples);
+            return true;
         }
 
         // m_sint2 (sstv.cpp:1899-1911). Piece 7c: full 3-term condition (sstv.cpp:1905), not just
@@ -4676,24 +4624,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         // d12/d19 once and shares them; recombining that here would mean VisLockStateMachine no
         // longer owning its own envelope detectors, a bigger change than this fix, left for a
         // follow-up).
-        if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
-        {
-            if (_syncBypass1PrimaryHeld)
-            {
-                _syncBypass1Tracker.UpdateMax(d12);
-            }
-            else
-            {
-                _syncBypass1Tracker.Trigger(d12);
-                _syncBypass1PrimaryHeld = true;
-            }
-        }
-        else
-        {
-            _syncBypass1PrimaryHeld = false;
-        }
+        UpdatePrimarySyncPeak(d12, d19);
 
         return false;
+    }
+
+    // Legacy case 0 consumes any peak held before a rejected VIS attempt once Search resumes.
+    internal SstvModeDefinition? TryStartPrimarySync() =>
+        _visLockStateMachine.IsSearching ? _syncBypass1Tracker.TryStart() : null;
+
+    internal SyncIntervalTracker PrimarySyncTrackerForTests => _syncBypass1Tracker;
+    internal VisLockStateMachine PrimaryVisStateMachineForTests => _visLockStateMachine;
+
+    internal void UpdatePrimarySyncPeak(double d12, double d19)
+    {
+        if (!_visLockStateMachine.IsAtOrBeforeConfirmLock) return;
+        if (d12 > d19 && d12 > _slvl && d12 - d19 >= _slvl)
+        {
+            if (_visLockStateMachine.IsSearching)
+            {
+                _syncBypass1Tracker.Trigger(d12);
+            }
+            else _syncBypass1Tracker.UpdateMax(d12);
+        }
     }
 
     // Piece: m_sint1 decoder-ordering fix (spec/14-roadmap.md: "m_sint1's decoder-level priority is

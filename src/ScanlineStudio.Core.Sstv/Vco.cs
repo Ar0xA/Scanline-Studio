@@ -41,6 +41,10 @@ internal sealed class Vco
     public double Process(double controlInput)
     {
         _phase += controlInput * _gainTableUnits + _centerIncrement;
+        // Retain legacy addition/subtraction order on ordinary phases. A corrupt extreme input
+        // otherwise makes these loops either enormous or unable to advance in double precision.
+        if (!double.IsFinite(_phase)) _phase = 0;
+        else if (Math.Abs(_phase) > 4.0 * _tableSize) _phase %= _tableSize;
         while (_phase >= _tableSize)
         {
             _phase -= _tableSize;
