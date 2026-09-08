@@ -565,15 +565,11 @@ struct scanline_audio_capture_session
 {
     ma_device device;
     scanline_audio_ring *ring;
-    volatile int stopped; /* set by capture_session_notification_callback, real-time thread; read
-                            * and cleared by scanline_audio_capture_session_check_and_clear_stopped,
-                            * managed thread -- a single int written from one side and read/cleared
-                            * from the other needs no separate lock (no ordering dependency on
-                            * anything else, a torn write of an int-sized value isn't a real
-                            * concern on any platform this project targets). */
-    volatile int overrun_count; /* Piece Engine 0: same single-writer (real-time callback)/
-                                  * single-reader (managed) reasoning as `stopped` above -- no lock
-                                  * needed. Mirrors scanline_audio_playback_session's underrun_count:
+    ma_uint32 stopped; /* seq_cst atomic store by the real-time callback; atomic exchange-to-zero
+                       * by the managed consumer. Notifications coalesce while the flag is set. */
+    volatile int overrun_count; /* Piece Engine 0: single-writer (real-time callback)/
+                                  * single-reader (managed) telemetry counter.
+                                  * Mirrors scanline_audio_playback_session's underrun_count:
                                   * an event counter (incremented once per callback that dropped
                                   * frames), not a dropped-frame counter, for the same reason --
                                   * this is a raw signal for the caller to interpret, not a verdict. */
@@ -657,7 +653,7 @@ static void capture_session_notification_callback(const ma_device_notification *
     if (pNotification->type == ma_device_notification_type_stopped)
     {
         scanline_audio_capture_session *session = (scanline_audio_capture_session *)pNotification->pDevice->pUserData;
-        session->stopped = 1;
+        ma_atomic_store_32(&session->stopped, 1);
     }
 }
 
@@ -695,7 +691,7 @@ scanline_audio_capture_session *scanline_audio_capture_session_open(const char *
         return NULL;
     }
 
-    session->stopped = 0;
+    ma_atomic_store_32(&session->stopped, 0);
     session->overrun_count = 0;
     session->channels = (options->channels == 2) ? 2 : 1;
     session->channel_select = options->channel_select;
@@ -785,9 +781,7 @@ int scanline_audio_capture_session_check_and_clear_stopped(scanline_audio_captur
         return 0;
     }
 
-    int was_stopped = session->stopped;
-    session->stopped = 0;
-    return was_stopped;
+    return (int)ma_atomic_exchange_32(&session->stopped, 0);
 }
 
 int scanline_audio_capture_session_overrun_count(scanline_audio_capture_session *session)
@@ -809,8 +803,7 @@ struct scanline_audio_playback_session
 {
     ma_device device;
     scanline_audio_ring *ring;
-    volatile int stopped;         /* see scanline_audio_capture_session's own comment on this field --
-                                    * same single-writer/single-reader reasoning applies here. */
+    ma_uint32 stopped;         /* same atomic coalescing flag as capture */
     volatile int underrun_count;
     int channels; /* 1 or 2, set once at open -- stereo-TX backlog item. No channel_select
                    * equivalent here: stereo TX always duplicates the same mono ring content to
@@ -896,7 +889,7 @@ static void playback_session_notification_callback(const ma_device_notification 
     if (pNotification->type == ma_device_notification_type_stopped)
     {
         scanline_audio_playback_session *session = (scanline_audio_playback_session *)pNotification->pDevice->pUserData;
-        session->stopped = 1;
+        ma_atomic_store_32(&session->stopped, 1);
     }
 }
 
@@ -928,7 +921,7 @@ scanline_audio_playback_session *scanline_audio_playback_session_open(const char
         return NULL;
     }
 
-    session->stopped = 0;
+    ma_atomic_store_32(&session->stopped, 0);
     session->underrun_count = 0;
     session->channels = (options->channels == 2) ? 2 : 1;
     session->ring = scanline_audio_ring_create(ring_capacity_frames, 1); /* ring is always mono -- see struct doc comment */
@@ -1031,9 +1024,7 @@ int scanline_audio_playback_session_check_and_clear_stopped(scanline_audio_playb
         return 0;
     }
 
-    int was_stopped = session->stopped;
-    session->stopped = 0;
-    return was_stopped;
+    return (int)ma_atomic_exchange_32(&session->stopped, 0);
 }
 
 int scanline_audio_resample_f32(const float *input, int input_frame_count, int sample_rate_in,
