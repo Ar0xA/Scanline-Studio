@@ -326,83 +326,6 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         return await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    /// <summary>Persist deletion intent with the row removal before best-effort disk cleanup.
-    /// Reconciliation and delayed recorder writes must respect that intent even if cleanup fails.</summary>
-    public async Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
-    {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct).ConfigureAwait(false);
-        using (var transaction = connection.BeginTransaction(deferred: false))
-        {
-            using var tombstone = connection.CreateCommand();
-            tombstone.Transaction = transaction;
-            tombstone.CommandText = """
-                INSERT OR IGNORE INTO ReceiveHistoryDeletion (FilePath)
-                SELECT $path WHERE EXISTS (SELECT 1 FROM ReceiveHistory WHERE Id = $id)
-                """;
-            tombstone.Parameters.AddWithValue("$path", CanonicalFilePath(entry.FilePath));
-            tombstone.Parameters.AddWithValue("$id", entry.Id);
-            await tombstone.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "DELETE FROM ReceiveHistory WHERE Id = $id";
-            command.Parameters.AddWithValue("$id", entry.Id);
-            var rowsAffected = await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
-            await transaction.CommitAsync(ct).ConfigureAwait(false);
-            if (rowsAffected == 0)
-            {
-                return false;
-            }
-        }
-
-        try
-        {
-            if (File.Exists(entry.FilePath))
-            {
-                DeleteImageFileForTests(entry.FilePath);
-            }
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            // Logged, not rethrown -- deliberately does not block the row delete below (see this
-            // method's own doc comment on the interface: "this entry disappears from the Gallery"
-            // is the promise, not "and disk space is reclaimed, guaranteed").
-            Log.DeleteFileFailed(_logger, entry.FilePath, ex);
-        }
-
-        // ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: same tolerant, isolated
-        // best-effort delete as the image file above -- a null AudioFilePath (no audio was ever
-        // attached) is simply skipped, not an error.
-        if (entry.AudioFilePath is { } audioFilePath)
-        {
-            try
-            {
-                if (File.Exists(audioFilePath))
-                {
-                    File.Delete(audioFilePath);
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                Log.DeleteFileFailed(_logger, audioFilePath, ex);
-            }
-        }
-
-        // Isolated deliberately, same reasoning as RecordAsync's own Recorded-event try/catch: a
-        // subscriber's own exception must not surface as if THIS delete had failed -- both the
-        // file removal attempt and the row delete already fully ran by this point.
-        try
-        {
-            Deleted?.Invoke(entry);
-        }
-        catch (Exception ex)
-        {
-            Log.DeletedSubscriberFailed(_logger, entry.Id, ex);
-        }
-
-        return true;
-    }
 
     /// <summary>See <see cref="IReceiveHistoryStore.ReconcileWithDiskAsync"/>. Matches
     /// <c>ReceiveHistoryRecorder</c>'s CURRENT filename shapes (`RecordCompletedImageAsync` writes
@@ -422,6 +345,11 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             // nothing to reconcile. Directory.GetFiles below would throw on a missing directory.
             return 0;
         }
+
+        // Prune before the nothing-to-import return, including when cleanup left an empty folder.
+        // The prune separately checks each stored path's own parent and keeps active/retryable
+        // intent; this configured-root check alone says nothing about historical directories.
+        await PruneSatisfiedDeletionTombstonesAsync(ct).ConfigureAwait(false);
 
         var existingPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await using (var connection = new SqliteConnection(_connectionString))
@@ -516,6 +444,17 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
             await using var transaction = connection.BeginTransaction();
             foreach (var entry in toImport)
             {
+                // Re-checked here, not just during the scan above: a successful delete no longer
+                // leaves a tombstone, so the guard in the INSERT below is not enough on its own to
+                // stop a candidate the operator removed while this pass was validating PNGs (a full
+                // decode per file). This narrows the window rather than closing it -- a delete
+                // landing between this check and the insert still leaves one thumbnail-less row,
+                // which the normal delete command removes.
+                if (!File.Exists(entry.FilePath))
+                {
+                    continue;
+                }
+
                 var insert = connection.CreateCommand();
                 insert.Transaction = transaction;
                 // Auditor-caught TOCTOU: a frame ReceiveHistoryRecorder is actively saving writes its
@@ -897,7 +836,20 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_ReceivedAtUtc ON ReceiveHistory(ReceivedAtUtc)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_FilePath ON ReceiveHistory(FilePath)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_ReceiveHistory_LinkedQsoId ON ReceiveHistory(LinkedQsoId)");
-        ExecuteNonQuery(connection, transaction, "CREATE TABLE IF NOT EXISTS ReceiveHistoryDeletion (FilePath TEXT COLLATE NOCASE PRIMARY KEY)");
+        ExecuteNonQuery(connection, transaction, "CREATE TABLE IF NOT EXISTS ReceiveHistoryDeletion (FilePath TEXT COLLATE NOCASE PRIMARY KEY, Token TEXT NOT NULL DEFAULT '')");
+        using (var columns = connection.CreateCommand())
+        {
+            columns.Transaction = transaction;
+            columns.CommandText = "PRAGMA table_info(ReceiveHistoryDeletion)";
+            var hasToken = false;
+            using (var reader = columns.ExecuteReader())
+            {
+                while (reader.Read()) hasToken |= string.Equals(reader.GetString(1), "Token", StringComparison.OrdinalIgnoreCase);
+            }
+
+            if (!hasToken)
+                ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistoryDeletion ADD COLUMN Token TEXT NOT NULL DEFAULT ''");
+        }
 
         transaction.Commit();
     }
@@ -1007,8 +959,23 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         [LoggerMessage(Level = LogLevel.Warning, Message = "A Deleted event subscriber threw for entry {EntryId}")]
         public static partial void DeletedSubscriberFailed(ILogger logger, string entryId, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the image file failed, the history row was removed anyway: {FilePath}")]
+        [LoggerMessage(Level = LogLevel.Warning, Message = "History file cleanup failed: {FilePath}")]
         public static partial void DeleteFileFailed(ILogger logger, string filePath, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Staged deletion of history entry {EntryId}")]
+        public static partial void DeleteStaged(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Deleted history entry {EntryId}")]
+        public static partial void DeleteCompleted(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "History deletion did not complete for entry {EntryId}; retained state can be retried")]
+        public static partial void DeleteIncomplete(ILogger logger, string entryId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not confirm removal of history image {FilePath}; retaining deletion protection")]
+        public static partial void DeleteAbsenceUnconfirmed(ILogger logger, string filePath);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Could not establish absence of history image {FilePath}")]
+        public static partial void DeletePathProbeFailed(ILogger logger, string filePath, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "RX images directory set to {Directory}")]
         public static partial void ImagesDirectorySet(ILogger logger, string? directory);
