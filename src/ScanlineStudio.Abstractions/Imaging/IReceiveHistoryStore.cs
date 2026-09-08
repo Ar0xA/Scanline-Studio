@@ -275,18 +275,22 @@ public interface IReceiveHistoryStore
     /// retention-cap AUTO-delete was removed outright by deliberate user decision
     /// (`docs/removed-features.md` "RX history retention limit") and this does not reintroduce one;
     /// it's the operator explicitly discarding one bad capture (noise, a duplicate, a wrong sync).
-    /// Removes the DB row, the image file at <see cref="ReceiveHistoryEntry.FilePath"/>, AND the
-    /// linked audio file at <see cref="ReceiveHistoryEntry.AudioFilePath"/> if one is set
-    /// (ui_transition_plan.md step 12 Step 4). Either file already being gone is NOT an error (an
-    /// orphaned row pointing at a manually-deleted-on-disk file is exactly the state this exists to
-    /// let the operator clean up) -- only a real deletion FAILURE (e.g. permission denied on an
-    /// existing file) is logged and otherwise swallowed,
-    /// deliberately: the row still gets removed regardless, since the primary contract this method
-    /// promises is "this entry disappears from the Gallery," not "and disk space is reclaimed,
-    /// guaranteed." Deletion intent persists so disk reconciliation or a delayed recorder write
-    /// cannot restore an image whose disk cleanup failed. Returns <see langword="false"/> (not an exception) if the row no longer existed
-    /// -- same defensive contract as <see cref="SetNoteAsync"/> -- and does NOT raise
-    /// <see cref="Deleted"/> in that case.</summary>
+    /// Removes only the selected DB row. Image and linked-audio cleanup is best-effort; files
+    /// referenced by another history row and that row's metadata are preserved. Uses the persisted
+    /// paths, which may have changed since the caller captured this entry.
+    /// For an unshared image, suppression is committed before filesystem work while retaining the
+    /// history row as an ordinary retry target. Row removal and confirmed-success suppression
+    /// retirement then commit atomically. Database failure or cancellation before finalization
+    /// leaves a retryable row; it does not report a successful deletion. Failed or uncertain image
+    /// cleanup is logged and leaves suppression after row removal, preventing delayed records and
+    /// reconciliation from restoring an image whose cleanup failed. An unavailable parent is not
+    /// proof of absence. Confirmed successful cleanup permits later restoration and re-import.
+    /// Returns <see langword="false"/> without filesystem effects if the selected ID is already
+    /// missing when the operation starts, or without final DB changes if another operation
+    /// superseded its staged intent. Raises <see cref="Deleted"/> only for committed row removal;
+    /// subscriber/diagnostic failures cannot turn that committed result into a failure.
+    /// Deletions are serialized within a store instance; filesystem changes by other instances or
+    /// external programs are not transactional with the database.</summary>
     Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default);
 
     /// <summary>Disk/DB reconciliation, user-reported 2026-08-26: a real divergence can leave image
