@@ -277,6 +277,9 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                 await WriteCommandAsync("m", requestCt).ConfigureAwait(false);
                 var modeLine = await ReadLineAsync(requestCt).ConfigureAwait(false);
                 ThrowIfErrorLine(modeLine);
+                // A non-error mode reply always owns a second (passband) line, even when
+                // the mode token is empty. Consume it before rejecting the transaction.
+                _ = await ReadLineAsync(requestCt).ConfigureAwait(false);
                 // Code-review finding: rig_strrmode() (Hamlib's own src/misc.c) returns "" for
                 // RIG_MODE_NONE AND for any mode not in its own mode_str[] table -- rigctld's `get_mode`
                 // prints that empty line unconditionally, it is NOT an RPRT error line, so
@@ -289,7 +292,6 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
                     throw new RadioProtocolException("rigctld 'm' returned an empty mode token -- cannot set bandwidth without a mode to echo back.");
                 }
 
-                _ = await ReadLineAsync(requestCt).ConfigureAwait(false); // passband -- consumed to stay in sync, same as GetModeAsync
                 await SendSetCommandAsync($"M {modeLine} {bandwidthHz ?? 0}", requestCt).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
@@ -542,13 +544,24 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
         {
             if (b == (byte)'\n')
             {
-                break;
+                return Encoding.ASCII.GetString(bytes.ToArray()).TrimEnd('\r');
             }
 
             bytes.Add(b);
         }
 
-        return Encoding.ASCII.GetString(bytes.ToArray()).TrimEnd('\r');
+        // A transport may end its enumeration on EOF. Partial replies are never usable:
+        // invalidate the connection while the request lock is still held.
+        try
+        {
+            await _transport.CloseAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.IncompleteResponseCloseFailed(_logger, ex);
+        }
+
+        throw new IOException("rigctld disconnected before terminating its response line.");
     }
 
     private static bool IsErrorLine(string line) => line.StartsWith("RPRT ", StringComparison.Ordinal);
@@ -609,6 +622,9 @@ public sealed partial class RigctldClientProtocol : IRadioProtocol
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to close rigctld after an incomplete response")]
+        public static partial void IncompleteResponseCloseFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "rigctld connect timed out after {ConnectTimeout}")]
         public static partial void ConnectTimedOut(ILogger logger, TimeSpan connectTimeout);
 

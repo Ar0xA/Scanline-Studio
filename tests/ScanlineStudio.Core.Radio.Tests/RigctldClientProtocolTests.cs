@@ -436,7 +436,7 @@ public class RigctldClientProtocolTests
         // the M command is ever sent.
         var script = Script(
             ["14074000", "USB", "0", "0", .. MetersUnsupportedProbe],
-            [""]); // SetBandwidthAsync's own "m" query returns an empty mode line
+            ["", "2400"]); // Non-error m replies still include a passband after an empty mode.
         var transport = new FakeRadioTransport(script);
         var sut = new RigctldClientProtocol(transport, ConnectTimeout);
 
@@ -501,6 +501,136 @@ public class RigctldClientProtocolTests
         Encoding.ASCII.GetBytes(string.Join(string.Empty, lines.Select(static l => l + "\n")));
 
     private static byte[] Script(params string[][] lineGroups) => Script(lineGroups.SelectMany(g => g).ToArray());
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task SetBandwidthAsync_EmptyModeDoesNotShiftFollowingPolls(bool signalMeter, bool modeErrorOnSecondPoll)
+    {
+        var probeMeters = signalMeter ? new[] { "RPRT -11", "RPRT -11", "RPRT -11", "-70" } : MetersUnsupportedProbe;
+        var lines = new List<string> { "14074000", "USB", "2400", "0" };
+        lines.AddRange(probeMeters);
+        lines.AddRange(["", "2400"]);
+        for (var i = 0; i < 3; i++)
+        {
+            lines.Add((14074000 + i * 1000).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            var modeError = i == 1 && modeErrorOnSecondPoll;
+            lines.Add(modeError ? "RPRT -1" : "USB");
+            if (modeError)
+            {
+                // The poll aborts here; neither PTT nor the meter command is issued.
+                continue;
+            }
+
+            lines.Add("2400");
+            lines.Add("0");
+            if (signalMeter)
+            {
+                lines.Add("-60");
+            }
+        }
+
+        var transport = new FakeRadioTransport(Script(lines.ToArray()));
+        await using var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+        await Assert.ThrowsAsync<RadioProtocolException>(() => sut.SetBandwidthAsync(2100, CancellationToken.None));
+
+        for (var i = 0; i < 3; i++)
+        {
+            if (i == 1 && modeErrorOnSecondPoll)
+            {
+                await Assert.ThrowsAsync<RadioProtocolException>(() => sut.PollAsync(CancellationToken.None));
+                continue;
+            }
+
+            var state = await sut.PollAsync(CancellationToken.None);
+            Assert.Equal(14074000 + i * 1000, state.FrequencyHz);
+            Assert.False(state.IsTransmitting);
+            Assert.Equal(RadioMode.Usb, state.Mode);
+            Assert.Equal(2400, state.BandwidthHz);
+            Assert.Equal(signalMeter ? -60 : (int?)null, state.SignalStrengthDb);
+        }
+    }
+
+    [Fact]
+    public async Task SetBandwidthAsync_OneLineModeErrorLeavesFollowingPollAligned()
+    {
+        var transport = new FakeRadioTransport(Script(
+            ["14074000", "USB", "2400", "0", .. MetersUnsupportedProbe],
+            ["RPRT -1", "14230000", "USB", "2400", "0"]));
+        await using var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+        await Assert.ThrowsAsync<RadioProtocolException>(() => sut.SetBandwidthAsync(2100, CancellationToken.None));
+        var state = await sut.PollAsync(CancellationToken.None);
+        Assert.Equal(14230000, state.FrequencyHz);
+        Assert.False(state.IsTransmitting);
+    }
+
+    [Theory]
+    [InlineData("", false)]
+    [InlineData("USB", false)]
+    [InlineData("\n", false)]
+    [InlineData("\n24", false)]
+    [InlineData("\n24", true)]
+    public async Task SetBandwidthAsync_IncompleteReplyClosesAndReconnects(string incompleteReply, bool closeThrows)
+    {
+        var probe = Script(["14074000", "USB", "2400", "0", .. MetersUnsupportedProbe]);
+        var first = probe.Concat(Encoding.ASCII.GetBytes(incompleteReply)).ToArray();
+        var second = probe.Concat(Script("14230000", "USB", "2400", "0")).ToArray();
+        var transport = new ReconnectingEofTransport(first, second) { ThrowWhenClosing = closeThrows };
+        await using var sut = new RigctldClientProtocol(transport, ConnectTimeout);
+
+        var error = await Assert.ThrowsAsync<IOException>(() => sut.SetBandwidthAsync(2100, CancellationToken.None));
+        Assert.Contains("disconnected before terminating", error.Message);
+        Assert.False(transport.IsOpen);
+        var state = await sut.PollAsync(CancellationToken.None);
+        Assert.Equal(2, transport.OpenCount);
+        Assert.Equal(14230000, state.FrequencyHz);
+        Assert.False(state.IsTransmitting);
+    }
+
+    private sealed class ReconnectingEofTransport(params byte[][] sessions) : IRadioTransport
+    {
+        private byte[] _bytes = [];
+        private int _position;
+        public int OpenCount { get; private set; }
+        public bool IsOpen { get; private set; }
+        public bool ThrowWhenClosing { get; set; }
+        public Task OpenAsync(CancellationToken ct)
+        {
+            _bytes = sessions[OpenCount++];
+            _position = 0;
+            IsOpen = true;
+            return Task.CompletedTask;
+        }
+
+        public Task CloseAsync()
+        {
+            IsOpen = false;
+            if (ThrowWhenClosing)
+            {
+                ThrowWhenClosing = false;
+                throw new IOException("Injected close failure");
+            }
+
+            return Task.CompletedTask;
+        }
+
+        public Task WriteAsync(ReadOnlyMemory<byte> data, CancellationToken ct) => Task.CompletedTask;
+        public async IAsyncEnumerable<byte> ReadAsync([EnumeratorCancellation] CancellationToken ct)
+        {
+            while (_position < _bytes.Length)
+            {
+                ct.ThrowIfCancellationRequested();
+                yield return _bytes[_position++];
+            }
+
+            // Exercise transports that report EOF by ending enumeration, rather than throwing.
+            await Task.CompletedTask;
+        }
+
+        public ValueTask DisposeAsync() => new(CloseAsync());
+    }
 
     private sealed class NeverOpensTransport : IRadioTransport
     {

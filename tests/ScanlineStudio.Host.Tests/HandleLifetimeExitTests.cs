@@ -6,6 +6,85 @@ namespace ScanlineStudio.Host.Tests;
 public sealed class HandleLifetimeExitTests
 {
     [Fact]
+    public async Task ImageDrain_CompletesBeforeGenericHostDisposalBudgetStarts()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        var exit = Task.Run(() => Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, null,
+            disposeTimeout: TimeSpan.FromMilliseconds(30), drainImagesTests: async () =>
+            {
+                entered.SetResult();
+                await release.Task;
+                return true;
+            }));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(80);
+            Assert.False(exit.IsCompleted);
+            Assert.False(host.DisposeAsyncCalled);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await exit.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.True(restarter.StartNewInstanceCalled);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ImageDrainFailure_StillDisposesHostAndHonorsRequestedRestart(bool throws)
+    {
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, null,
+            drainImagesTests: () => throws ? Task.FromException<bool>(new IOException("Image drain failed")) : Task.FromResult(false));
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.True(restarter.StartNewInstanceCalled);
+    }
+
+    [Fact]
+    public void PttCleanupFailure_StillDisposesHostAndHonorsRequestedRestart()
+    {
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, null,
+            drainPttTests: () => Task.FromException(new TimeoutException("PTT cleanup timed out")));
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.True(restarter.StartNewInstanceCalled);
+    }
+
+    [Fact]
+    public async Task PttCleanup_CompletesBeforeGenericHostDisposalStarts()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        var exit = Task.Run(() => Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, null,
+            disposeTimeout: TimeSpan.FromMilliseconds(50), drainPttTests: async () =>
+            {
+                entered.SetResult();
+                await release.Task;
+            }));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.Delay(100);
+        Assert.False(exit.IsCompleted);
+        Assert.False(host.DisposeAsyncCalled);
+        Assert.False(restarter.StartNewInstanceCalled);
+        release.SetResult();
+        await exit.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.True(restarter.StartNewInstanceCalled);
+    }
+
+    [Fact]
     public void WhenRestartNotRequested_DisposesTheHost_AndDoesNotSpawn()
     {
         var host = new FakeAsyncDisposableHost();

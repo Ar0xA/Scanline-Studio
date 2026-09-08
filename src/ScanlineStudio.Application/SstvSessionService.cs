@@ -14,6 +14,9 @@ namespace ScanlineStudio.Application;
 
 public sealed partial class SstvSessionService : ISstvSessionService
 {
+    // Test seam for holding file resolution across rate-change, cancellation and timeout races.
+    internal Func<string, int, float[]?>? SoundFileSamplesResolverForTests { get; init; }
+
     private readonly IAudioEngine _audioEngine;
     private readonly IAudioDeviceEnumerator _deviceEnumerator;
     private readonly IAudioDeviceMuteQuery _deviceMuteQuery;
@@ -2082,6 +2085,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 "Abandoned RX-resume: the caller gave up waiting before StartCaptureAsync finished -- not publishing IsReceiving.", ct);
         }
 
+        // Reset before subscribing: capture is running, but its callbacks must not enter
+        // PushSamples while ResetAgc mutates the decoder's level-tracking state.
+        // A reset failure still leaves real capture available; preserve swallow-and-log behavior.
+        try
+        {
+            _decoder.ResetAgc();
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX start)", ex));
+        }
+
         _audioEngine.SamplesCaptured += _decoderHandler;
         _audioEngine.SamplesCaptured += _waterfallHandler;
         _audioEngine.SamplesCaptured += _levelMeterHandler;
@@ -2092,22 +2107,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
         // capture is confirmed genuinely open -- see this field's own doc comment for why it isn't
         // seeded at construction or read back from settings.
         _activeCaptureDeviceId = device.Id;
-
-        // ultracode audit finding #6: legacy resets its AGC (CLVL::Init) at every TX<->RX transition
-        // (Sound.cpp:398,443) -- this is that transition point on the RX-resuming side.
-        //
-        // Round-21 finding (risk 6/6b): previously unguarded -- a throwing ResetAgc() propagated out
-        // of this method even though capture had already genuinely started and _isReceiving was
-        // already latched true above, and skipped Log.RxStarted below. Swallow-and-log instead: the
-        // capture-started state is real regardless of whether AGC reset itself succeeded.
-        try
-        {
-            _decoder.ResetAgc();
-        }
-        catch (Exception ex)
-        {
-            SafeLog(() => Log.CleanupStepFailed(_logger, "ResetAgc (RX start)", ex));
-        }
 
         // Round-22 finding (nit): round 21's own ResetAgc() fix above justified itself partly as "no
         // longer skips Log.RxStarted below" -- but this call itself was still unwrapped, so a throwing
@@ -2761,32 +2760,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public async Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {
         Log.TxStarting(_logger, mode.Id, image.Width, image.Height);
-        var (stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz) = await ResolveTransmitSettingsAsync(resolveSoundFile: true, ct).ConfigureAwait(false);
 
-        // Plan-review finding: MUST reuse this SAME resolved stationId/sampleRateOffsetHz for the
-        // estimate below, not re-resolve either independently -- MacroTextResolver's CW-ID text can
-        // be time-dependent (DateTime.UtcNow), so two independent resolutions aren't guaranteed to
-        // produce the same footer duration, which would make the estimate silently disagree with
-        // what EncodeBatchedAsync actually emits (T1-3: real playback now goes through the batched
-        // method -- see PlayWithPttAsync's own comment). Clock calibration plan-review (round 2): same requirement
-        // now applies to sampleRateOffsetHz -- a settings change mid-resolution must not let the
-        // estimate and the real encode see different effective rates.
-        //
-        // Code-review finding: EstimateSampleCount is a real traversal of every scanline segment
-        // (its own doc comment says so), not O(1) metadata math -- Task.Run keeps it off whichever
-        // thread called TransmitAsync (the caller's own await above may not have yielded at all, e.g.
-        // JsonSettingsStore.LoadAsync returns synchronously when no settings file exists yet), so a
-        // large image's estimate can't delay PTT keying/RX pause by running inline on the UI thread.
-        // Restart-required-settings backlog item 4 (2026-08-27): brackets the WHOLE window from the
-        // first _encoder.SampleRate-derived read (EstimateSampleCount below) through PlayWithPttAsync's
-        // playback fully draining -- see ISstvEncoderReconfiguration's own doc comment for why a
-        // queued sample-rate change must never land between "read the rate" and "generate tones at
-        // it," and round-4 plan-review finding C3 for why this must open BEFORE PlayWithPttAsync's own
-        // _transmitInFlight guard, not after.
+        // Freeze the encoder before rate-dependent footer preparation, including asynchronous
+        // file reads. Keep the lease until playback drains, and release it on every failure.
         var encoderReconfig = _encoder as ISstvEncoderReconfiguration;
         encoderReconfig?.BeginTransmission();
         try
         {
+            var (stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz) = await ResolveTransmitSettingsAsync(resolveSoundFile: true, ct).ConfigureAwait(false);
+            // Reuse the exact resolved options for estimation and encoding. Estimation traverses
+            // the scanlines, so keep that work off the caller's UI thread.
             var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
             await PlayWithPttAsync(_encoder.EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
         }
@@ -2921,8 +2904,25 @@ public sealed partial class SstvSessionService : ISstvSessionService
         if (resolveSoundFile && soundFileIdEnabled)
         {
             var mmvPath = stationIdSettings.SoundFileMmvPath!;
-            var resolvedSamples = await Task.Run(() => TryResolveSoundFileSamples(mmvPath, _encoder.SampleRate), ct)
-                .WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+            // The transmission lease is already held. Capture the rate before scheduling so
+            // even an abandoned worker cannot read a later encoder configuration.
+            var targetSampleRate = _encoder.SampleRate;
+            var resolver = SoundFileSamplesResolverForTests ?? TryResolveSoundFileSamples;
+            var resolveTask = Task.Run(() => resolver(mmvPath, targetSampleRate), ct);
+            float[]? resolvedSamples;
+            try
+            {
+                resolvedSamples = await resolveTask.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+            {
+                _ = resolveTask.ContinueWith(
+                    task => SafeLog(() => Log.SoundFileIdReadFailed(_logger, mmvPath, task.Exception!)),
+                    CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                    TaskScheduler.Default);
+                throw;
+            }
 
             // Deliberately an `if`, NOT a ternary ("soundFileSamples = resolvedSamples is null ? null
             // : new ReadOnlyMemory<float>(resolvedSamples)") -- confirmed by a real failing test, not

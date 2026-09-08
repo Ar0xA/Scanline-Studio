@@ -171,6 +171,61 @@ public sealed class SstvSessionServiceTests
         Assert.Equal(2, decoder.ResetAgcCallCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StartReceivingAsync_DoesNotDeliverSamplesUntilAgcResetCompletes(bool restart)
+    {
+        var (service, audio, decoder, _, _, _, _) = CreateService();
+        await using var lifetime = service;
+        if (restart)
+        {
+            await service.StartReceivingAsync();
+            await service.StopReceivingAsync();
+        }
+
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        decoder.OnResetAgc = () =>
+        {
+            entered.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Test did not release AGC reset");
+            }
+        };
+        var start = Task.Run(() => service.StartReceivingAsync());
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            audio.PushCapturedSamples(TwoSamplePush);
+            Assert.Empty(decoder.PushedSamples);
+        }
+        finally
+        {
+            release.Set();
+            await start.WaitAsync(TimeSpan.FromSeconds(5));
+            decoder.OnResetAgc = null;
+        }
+
+        audio.PushCapturedSamples(TwoSamplePush);
+        Assert.Single(decoder.PushedSamples);
+        Assert.True(service.IsReceiving);
+    }
+
+    [Fact]
+    public async Task StartReceivingAsync_ResetFailureStillPublishesCapture()
+    {
+        var (service, audio, decoder, _, _, _, _) = CreateService();
+        await using var lifetime = service;
+        decoder.OnResetAgc = () => throw new InvalidOperationException("Injected reset failure");
+        await service.StartReceivingAsync();
+        audio.PushCapturedSamples(TwoSamplePush);
+        Assert.True(service.IsReceiving);
+        Assert.Single(decoder.PushedSamples);
+        decoder.OnResetAgc = null;
+    }
+
     [Fact]
     public void DecoderRestartOverdue_RaisesMaintenanceWarningRaised()
     {
