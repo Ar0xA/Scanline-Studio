@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ScanlineStudio.Settings;
 
@@ -16,11 +17,21 @@ namespace ScanlineStudio.Settings;
 /// <see cref="AppSettingsSectionExtensions.GetSection{T}"/>/<see cref="AppSettingsSectionExtensions.WithSection{T}"/>,
 /// supplying its own source-generated <c>JsonTypeInfo&lt;T&gt;</c> — <c>ScanlineStudio.Settings</c> itself never
 /// needs to know any module-specific type, preserving the strict downward-only dependency rule.</summary>
-public sealed record AppSettings
+public sealed record AppSettings : IJsonOnDeserialized
 {
     public const int CurrentSchemaVersion = 1;
 
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
 
     public Dictionary<string, JsonElement> Sections { get; init; } = new();
+
+    void IJsonOnDeserialized.OnDeserialized()
+    {
+        // Nullable annotations do not reject an explicit JSON null. Validate at the shared
+        // deserialize boundary so settings and preset stores both use their logged recovery.
+        if (Sections is null)
+        {
+            throw new JsonException("The settings section map cannot be null.");
+        }
+    }
 }

@@ -26,6 +26,55 @@ public sealed class AppLocationsServiceTests : IDisposable
         new(settingsRelocator ?? new FakeSettingsFileRelocator(), logRelocator ?? new FakeLogFileRelocator(), NullLogger<AppLocationsService>.Instance, _overridesFilePath);
 
     [Fact]
+    public async Task OverlappingLocationUpdates_AreSerializedAndPreserveAllOverrides()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var relocator = new FakeSettingsFileRelocator { Gate = async () => { entered.SetResult(); await release.Task; } };
+        var logs = new FakeLogFileRelocator();
+        var service = CreateService(relocator, logs);
+        var config = NewSubdirectory("config");
+        var log = NewSubdirectory("log");
+        var database = NewSubdirectory("db");
+        var first = service.SetConfigDirectoryAsync(config);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = service.SetLogDirectoryAsync(log);
+        var third = service.SetDatabaseDirectoryAsync(database);
+        Assert.Empty(logs.RequestedDirectories);
+        Assert.False(second.IsCompleted);
+        Assert.False(third.IsCompleted);
+        release.SetResult();
+        await Task.WhenAll(first, second, third);
+        var result = AppLocationOverrides.LoadForBootstrap(_overridesFilePath);
+        Assert.Equal(config, result.ConfigDirectory);
+        Assert.Equal(log, result.LogDirectory);
+        Assert.Equal(database, result.PendingDatabaseDirectory);
+        Assert.Equal(config, relocator.CurrentDirectory);
+        Assert.Equal(log, logs.LastRequestedDirectory);
+        Assert.Empty(Directory.GetFiles(_rootDirectory, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task QueuedLocationCancellation_DoesNotRelocateAndGateRecoversAfterFailure()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var relocator = new FakeSettingsFileRelocator { Gate = () => release.Task, NextMoved = false };
+        var logs = new FakeLogFileRelocator();
+        var service = CreateService(relocator, logs);
+        var first = service.SetConfigDirectoryAsync(NewSubdirectory("config-failed"));
+        using var cts = new CancellationTokenSource();
+        var queued = service.SetLogDirectoryAsync(NewSubdirectory("log-cancelled"), cts.Token);
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued);
+        Assert.Empty(logs.RequestedDirectories);
+        release.SetResult();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => first);
+        var log = NewSubdirectory("log-success");
+        await service.SetLogDirectoryAsync(log);
+        Assert.Equal(log, AppLocationOverrides.LoadForBootstrap(_overridesFilePath).LogDirectory);
+    }
+
+    [Fact]
     public async Task SetConfigDirectoryAsync_DelegatesLiveToTheSettingsFileRelocator()
     {
         var relocator = new FakeSettingsFileRelocator();
@@ -229,13 +278,15 @@ public sealed class AppLocationsServiceTests : IDisposable
 
     private sealed class FakeSettingsFileRelocator : ISettingsFileRelocator
     {
+        public Func<Task>? Gate { get; set; }
         public bool NextMoved { get; set; } = true;
         public string CurrentDirectory { get; set; } = "";
         public string? LastRequestedDirectory { get; private set; }
         public List<string> RequestedDirectories { get; } = [];
 
-        public Task<(bool Moved, string PreviousDirectory)> RelocateAsync(string newDirectory, CancellationToken ct = default)
+        public async Task<(bool Moved, string PreviousDirectory)> RelocateAsync(string newDirectory, CancellationToken ct = default)
         {
+            if (Gate is not null) await Gate();
             LastRequestedDirectory = newDirectory;
             RequestedDirectories.Add(newDirectory);
             var previous = CurrentDirectory;
@@ -244,7 +295,7 @@ public sealed class AppLocationsServiceTests : IDisposable
                 CurrentDirectory = newDirectory;
             }
 
-            return Task.FromResult((NextMoved, previous));
+            return (NextMoved, previous);
         }
     }
 }

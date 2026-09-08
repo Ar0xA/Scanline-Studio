@@ -95,24 +95,43 @@ public sealed partial class JsonLocalizationService : ILocalizationService
         // ILocalizationService's own documented "a UI never shows a blank string" guarantee. Treated
         // the same as a genuinely missing key: falls through to the English fallback, then to the
         // raw key itself -- both of which the interface's contract already covers.
-        if (map is not null && map.TryGetValue(key, out var value) && value.Length > 0)
+        if (map is not null && map.TryGetValue(key, out var value)
+            && TryFormat(key, cultureCode, value, args, out var formatted))
         {
-            return Format(value, args);
+            return formatted;
         }
 
         if (!string.Equals(cultureCode, FallbackCultureCode, StringComparison.OrdinalIgnoreCase)
-            && _fallbackMap.TryGetValue(key, out var fallbackValue) && fallbackValue.Length > 0)
+            && _fallbackMap.TryGetValue(key, out var fallbackValue)
+            && TryFormat(key, FallbackCultureCode, fallbackValue, args, out var fallbackFormatted))
         {
             Log.KeyMissingFallingBackToEnglish(_logger, key, CurrentCulture.Name);
-            return Format(fallbackValue, args);
+            return fallbackFormatted;
         }
 
         Log.KeyMissingInFallbackLocale(_logger, key);
         return key;
     }
 
-    private static string Format(string template, object[] args)
-        => args.Length == 0 ? template : string.Format(CultureInfo.InvariantCulture, template, args);
+    private bool TryFormat(string key, string culture, string? template, object[] args, out string formatted)
+    {
+        formatted = string.Empty;
+        if (string.IsNullOrEmpty(template))
+        {
+            return false;
+        }
+
+        try
+        {
+            formatted = args.Length == 0 ? template : string.Format(CultureInfo.InvariantCulture, template, args);
+            return true;
+        }
+        catch (FormatException ex)
+        {
+            Log.InvalidTranslationFormat(_logger, key, culture, ex);
+            return false;
+        }
+    }
 
     // Tier C audit finding (blocker): this method and its two siblings below run from the
     // constructor with no exception handling at all -- a corrupt/malformed locale file (this
@@ -231,6 +250,9 @@ public sealed partial class JsonLocalizationService : ILocalizationService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Localization key '{Key}' has an invalid format for culture '{Culture}'; using fallback.")]
+        public static partial void InvalidTranslationFormat(ILogger logger, string key, string culture, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "Localization key '{Key}' missing for culture '{Culture}'; falling back to English.")]
         public static partial void KeyMissingFallingBackToEnglish(ILogger logger, string key, string culture);
 

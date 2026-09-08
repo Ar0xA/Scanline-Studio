@@ -8,12 +8,22 @@ namespace ScanlineStudio.Settings;
 /// <c>Program.cs</c> uses. Config and Log both need a live relocator instead
 /// (<see cref="ISettingsFileRelocator"/>/<see cref="ILogFileRelocator"/>), since both rows apply
 /// immediately rather than staging a pending move.</summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1001:Types that own disposable fields should be disposable",
+    Justification = "The singleton's async-only semaphore never creates a wait handle; retain it so admitted relocation/rollback tasks can finish during shutdown.")]
 public sealed partial class AppLocationsService : IAppLocationsService
 {
     private readonly ISettingsFileRelocator _settingsFileRelocator;
     private readonly ILogFileRelocator _logFileRelocator;
     private readonly ILogger<AppLocationsService> _logger;
     private readonly string? _overridesFilePath;
+    private readonly SemaphoreSlim _updateGate = new(1, 1);
+
+    private async Task UpdateLocationAsync(Func<Task> update, CancellationToken ct)
+    {
+        await _updateGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await update().ConfigureAwait(false); }
+        finally { _updateGate.Release(); }
+    }
 
     public AppLocationsService(ISettingsFileRelocator settingsFileRelocator, ILogFileRelocator logFileRelocator, ILogger<AppLocationsService> logger, string? overridesFilePath = null)
     {
@@ -33,7 +43,10 @@ public sealed partial class AppLocationsService : IAppLocationsService
     /// the two steps. Accepted, not fixed: the window is narrow (one file move plus one small JSON
     /// write, not a long-running operation) and this is the exact same shape
     /// <see cref="SetLogDirectoryAsync"/> already has, unremediated, for <c>app.log</c>.</summary>
-    public async Task SetConfigDirectoryAsync(string? directory, CancellationToken ct = default)
+    public Task SetConfigDirectoryAsync(string? directory, CancellationToken ct = default) =>
+        UpdateLocationAsync(() => SetConfigDirectoryCoreAsync(directory, ct), ct);
+
+    private async Task SetConfigDirectoryCoreAsync(string? directory, CancellationToken ct)
     {
         var normalized = NormalizeTargetDirectory(directory, AppConfigPaths.GetDefaultConfigDirectory());
 
@@ -87,7 +100,10 @@ public sealed partial class AppLocationsService : IAppLocationsService
     public Task<string?> GetPendingDatabaseDirectoryAsync(CancellationToken ct = default) =>
         Task.FromResult(AppLocationOverrides.LoadForBootstrap(_overridesFilePath).PendingDatabaseDirectory);
 
-    public async Task SetDatabaseDirectoryAsync(string? directory, CancellationToken ct = default)
+    public Task SetDatabaseDirectoryAsync(string? directory, CancellationToken ct = default) =>
+        UpdateLocationAsync(() => SetDatabaseDirectoryCoreAsync(directory, ct), ct);
+
+    private async Task SetDatabaseDirectoryCoreAsync(string? directory, CancellationToken ct)
     {
         var overrides = AppLocationOverrides.LoadForBootstrap(_overridesFilePath);
         var currentDirectory = overrides.DatabaseDirectory ?? AppDatabasePaths.GetDefaultDatabaseDirectory();
@@ -99,7 +115,10 @@ public sealed partial class AppLocationsService : IAppLocationsService
     public Task<string> GetLogDirectoryAsync(CancellationToken ct = default) =>
         Task.FromResult(AppLogPaths.GetLogDirectory(_overridesFilePath));
 
-    public async Task SetLogDirectoryAsync(string? directory, CancellationToken ct = default)
+    public Task SetLogDirectoryAsync(string? directory, CancellationToken ct = default) =>
+        UpdateLocationAsync(() => SetLogDirectoryCoreAsync(directory, ct), ct);
+
+    private async Task SetLogDirectoryCoreAsync(string? directory, CancellationToken ct)
     {
         var currentDirectory = AppLogPaths.GetLogDirectory(_overridesFilePath);
         var normalized = NormalizeTargetDirectory(directory, AppLogPaths.GetDefaultLogDirectory());
