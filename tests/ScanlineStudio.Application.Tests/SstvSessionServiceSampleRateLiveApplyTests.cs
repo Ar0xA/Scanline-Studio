@@ -203,6 +203,146 @@ public sealed class SstvSessionServiceSampleRateLiveApplyTests
 
     private static readonly IImageSource TestImage = new ArrayImageSource(1, 1, new Rgb24[1]);
 
+    [Theory]
+    [InlineData("success")]
+    [InlineData("cancel")]
+    [InlineData("timeout")]
+    [InlineData("throw")]
+    public async Task TransmitAsync_FooterPreparationHoldsRateLeaseAndAlwaysReleasesIt(string outcome)
+    {
+        var entered = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var workerFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var footer = Enumerable.Repeat(0.25f, 480).ToArray();
+        var (service, encoder, audio, _) = CreateFooterResolutionService((_, rate) =>
+        {
+            entered.SetResult(rate);
+            try
+            {
+                if (!release.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    throw new TimeoutException("Test did not release footer preparation");
+                }
+
+                if (outcome != "success")
+                {
+                    throw new IOException("Injected resolver failure, possibly after abandonment");
+                }
+
+                return footer;
+            }
+            finally
+            {
+                workerFinished.SetResult();
+            }
+        }, outcome == "timeout" ? TimeSpan.FromMilliseconds(400) : TimeSpan.FromSeconds(5));
+        await using var lifetime = service;
+        using var cancellation = new CancellationTokenSource();
+        TransmitProgressInfo? lastProgress = null;
+        service.TransmitProgressChanged += progress => lastProgress = progress;
+        var transmission = service.TransmitAsync(TestMode, TestImage, cancellation.Token);
+        try
+        {
+            Assert.Equal(48000, await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)));
+            await service.RequestSampleRateAsync(44100);
+            Assert.Equal(48000, encoder.SampleRate);
+
+            if (outcome == "cancel")
+            {
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => transmission);
+            }
+            else if (outcome == "timeout")
+            {
+                await Assert.ThrowsAsync<TimeoutException>(() => transmission);
+            }
+            else
+            {
+                release.Set();
+                if (outcome == "throw")
+                {
+                    await Assert.ThrowsAsync<IOException>(() => transmission);
+                }
+                else
+                {
+                    await transmission.WaitAsync(TimeSpan.FromSeconds(5));
+                    Assert.Equal(footer, audio.PlaybackSamples.TakeLast(footer.Length));
+                    Assert.NotNull(lastProgress);
+                    Assert.Equal(TimeSpan.FromSeconds(audio.PlaybackSamples.Count / 48000.0), lastProgress.Value.Elapsed);
+                }
+            }
+
+            Assert.Equal(44100, encoder.SampleRate);
+            if (outcome != "success")
+            {
+                Assert.Empty(audio.PlaybackSamples);
+            }
+        }
+        finally
+        {
+            release.Set();
+            await workerFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TransmitAsync_FailureBeforeFooterWorkerReleasesLease(bool preCancelled)
+    {
+        var resolverCalled = false;
+        var (service, encoder, audio, settings) = CreateFooterResolutionService((_, _) =>
+        {
+            resolverCalled = true;
+            return [];
+        }, TimeSpan.FromSeconds(5));
+        await using var lifetime = service;
+        using var cancellation = new CancellationTokenSource();
+        if (preCancelled)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.TransmitAsync(TestMode, TestImage, cancellation.Token));
+        }
+        else
+        {
+            settings.LoadAsyncException = new IOException("Injected settings load failure");
+            await Assert.ThrowsAsync<IOException>(() => service.TransmitAsync(TestMode, TestImage));
+            settings.LoadAsyncException = null;
+        }
+
+        encoder.RequestSampleRate(44100);
+        Assert.Equal(44100, encoder.SampleRate);
+        Assert.False(resolverCalled);
+        Assert.Empty(audio.PlaybackSamples);
+    }
+
+    private static (SstvSessionService Service, RestartableSstvEncoder Encoder, FakeAudioEngine Audio, FakeSettingsStore Settings)
+        CreateFooterResolutionService(Func<string, int, float[]?> resolver, TimeSpan cleanupTimeout)
+    {
+        var audio = new FakeAudioEngine();
+        var encoder = new RestartableSstvEncoder(48000);
+        var settings = new FakeSettingsStore
+        {
+            Settings = new AppSettings()
+                .WithSection(AudioDeviceSettings.SectionKey,
+                    new AudioDeviceSettings { PlaybackDeviceId = "playback-1", TxBpfEnabled = false, TxVolumePercent = 100 },
+                    AudioSettingsJsonContext.Default.AudioDeviceSettings)
+                .WithSection(StationIdSettings.SectionKey,
+                    new StationIdSettings { CwIdMode = CwIdMode.SoundFile, SoundFileMmvPath = "gated.mmv" },
+                    StationIdSettingsJsonContext.Default.StationIdSettings),
+        };
+        var service = new SstvSessionService(audio,
+            new FakeAudioDeviceEnumerator { OutputDevices = [new AudioDeviceInfo("playback-1", "Playback", 0, 1, [48000, 44100])] },
+            new FakeAudioDeviceMuteQuery(), settings, new FakeSstvDecoder { SampleRate = 48000 }, encoder,
+            new MacroTextResolver(), new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(),
+            new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance,
+            cleanupTimeout, null, null, null)
+        {
+            SoundFileSamplesResolverForTests = resolver,
+        };
+        return (service, encoder, audio, settings);
+    }
+
     [Fact]
     public async Task TransmitAsync_ActuallyOpensTheEncoderBracket_ClosesItAfterwards()
     {

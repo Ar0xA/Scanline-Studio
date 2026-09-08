@@ -5,7 +5,7 @@ using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Application;
 
-public sealed partial class RadioSessionService : IRadioSessionService
+public sealed partial class RadioSessionService : IRadioSessionService, IAsyncDisposable
 {
     private readonly IRadioController _controller;
     private readonly ISettingsStore _settingsStore;
@@ -125,7 +125,90 @@ public sealed partial class RadioSessionService : IRadioSessionService
         }
     }
 
-    private int _testPttInFlight;
+    private readonly object _pttLifetimeGate = new();
+    private readonly CancellationTokenSource _pttShutdown = new();
+    private TaskCompletionSource? _pttCompletion;
+    private TaskCompletionSource? _pttDisposeCompletion;
+
+    public Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default)
+    {
+        TaskCompletionSource? completion = null;
+        lock (_pttLifetimeGate)
+        {
+            if (_pttDisposeCompletion is null && _pttCompletion is null)
+            {
+                completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _pttCompletion = completion;
+            }
+        }
+
+        if (completion is null)
+        {
+            Log.TestPttAlreadyInFlight(_logger, spec.GetType().Name);
+            return Task.FromResult(new RadioConnectionTestResult(false, null, RadioCapabilities.None,
+                "A PTT test or shutdown is already in progress."));
+        }
+        return RunOwnedPttTestAsync(spec, duration, completion, ct);
+    }
+
+    private async Task<RadioConnectionTestResult> RunOwnedPttTestAsync(
+        RadioConnectionSpec spec, TimeSpan duration, TaskCompletionSource completion, CancellationToken ct)
+    {
+        try
+        {
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _pttShutdown.Token);
+            return await TestPttCoreAsync(spec, duration, linked.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_pttLifetimeGate)
+            {
+                _pttCompletion = null;
+                completion.TrySetResult();
+            }
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        TaskCompletionSource disposal;
+        Task active;
+        lock (_pttLifetimeGate)
+        {
+            if (_pttDisposeCompletion is not null) return new ValueTask(_pttDisposeCompletion.Task);
+            disposal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _pttDisposeCompletion = disposal;
+            active = _pttCompletion?.Task ?? Task.CompletedTask;
+        }
+
+        _ = DrainPttTestAsync(active, disposal);
+        return new ValueTask(disposal.Task);
+    }
+
+    private async Task DrainPttTestAsync(Task active, TaskCompletionSource disposal)
+    {
+        Log.TestPttShutdownStarted(_logger);
+        try
+        {
+            var cancellation = CancelPttTestsAsync();
+            // Three 15s off attempts, retry delays and 10s protocol disposal must finish before
+            // the host starts its separate general DI teardown timeout. Native hangs remain bounded.
+            await Task.WhenAll(active, cancellation).WaitAsync(TimeSpan.FromSeconds(75)).ConfigureAwait(false);
+            disposal.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            Log.TestPttShutdownFailed(_logger, ex);
+            disposal.TrySetException(ex);
+        }
+        // Retain the CTS: an admitted native operation may outlive the timeout and still use it.
+    }
+
+    private async Task CancelPttTestsAsync()
+    {
+        try { await _pttShutdown.CancelAsync().ConfigureAwait(false); }
+        catch (Exception ex) { Log.TestPttShutdownCancellationFailed(_logger, ex); }
+    }
 
     /// <summary>See <see cref="IRadioSessionService.TestPttAsync"/>'s own doc comment for the safety
     /// contract. Structured as a linear "compute a result, then always un-key/dispose" sequence
@@ -140,14 +223,8 @@ public sealed partial class RadioSessionService : IRadioSessionService
     /// wedging. Only the un-key retry (<see cref="TryUnkeyWithRetryAsync"/>) and the final dispose
     /// are bounded. <see cref="SstvSessionService"/> watchdogs its own key command; this method does
     /// not, unlike that class.</summary>
-    public async Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default)
+    private async Task<RadioConnectionTestResult> TestPttCoreAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct)
     {
-        if (Interlocked.CompareExchange(ref _testPttInFlight, 1, 0) != 0)
-        {
-            Log.TestPttAlreadyInFlight(_logger, spec.GetType().Name);
-            return new RadioConnectionTestResult(false, null, RadioCapabilities.None, "A PTT test is already in progress.");
-        }
-
         try
         {
             var matches = _protocolFactories.Where(f => f.CanHandle(spec)).ToList();
@@ -175,7 +252,9 @@ public sealed partial class RadioSessionService : IRadioSessionService
                 RadioConnectionTestResult result;
                 try
                 {
+                    ct.ThrowIfCancellationRequested();
                     await protocol.PollAsync(ct).ConfigureAwait(false);
+                    ct.ThrowIfCancellationRequested();
 
                     if (!protocol.Capabilities.HasFlag(RadioCapabilities.PttControl))
                     {
@@ -248,9 +327,10 @@ public sealed partial class RadioSessionService : IRadioSessionService
                 return new RadioConnectionTestResult(false, null, RadioCapabilities.None, ex.Message);
             }
         }
-        finally
+        catch (Exception ex)
         {
-            Interlocked.Exchange(ref _testPttInFlight, 0);
+            Log.TestPttFailed(_logger, spec.GetType().Name, ex);
+            return new RadioConnectionTestResult(false, null, RadioCapabilities.None, ex.Message);
         }
     }
 
@@ -386,6 +466,15 @@ public sealed partial class RadioSessionService : IRadioSessionService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Draining temporary PTT tests before shutdown")]
+        public static partial void TestPttShutdownStarted(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "PTT shutdown cancellation callback failed")]
+        public static partial void TestPttShutdownCancellationFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "PTT test cleanup did not complete during shutdown; check the transmitter")]
+        public static partial void TestPttShutdownFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "Resolved radio spec from settings: backend={BackendId}")]
         public static partial void ResolvedSpecFromSettings(ILogger logger, string backendId);
 
