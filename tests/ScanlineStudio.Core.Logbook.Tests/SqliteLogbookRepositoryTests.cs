@@ -8,6 +8,51 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 public sealed class SqliteLogbookRepositoryTests
 {
     [Fact]
+    public async Task SearchAsync_UsesUtcInstantsForOffsetsBoundsAndUpdates()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var start = DateTimeOffset.Parse("2026-09-07T00:30:00.1234567+02:00", System.Globalization.CultureInfo.InvariantCulture);
+            var record = new QsoRecord("offset", "PA0AA", start, start.AddMinutes(5), null, null, null, null, null, null, null, null, null, null, null, false, false);
+            await repository.AddAsync(record);
+            var day = await repository.SearchAsync(new LogbookQuery(From: new DateTimeOffset(2026, 9, 6, 0, 0, 0, TimeSpan.Zero), To: new DateTimeOffset(2026, 9, 6, 23, 59, 59, TimeSpan.Zero)));
+            Assert.Equal(record, Assert.Single(day));
+            var boundary = start.ToOffset(TimeSpan.FromHours(-5));
+            Assert.Equal(record, Assert.Single(await repository.SearchAsync(new LogbookQuery(From: boundary, To: boundary))));
+            Assert.Empty(await repository.SearchAsync(new LogbookQuery(From: boundary.AddTicks(1))));
+
+            var updated = record with { StartUtc = start.AddDays(1) };
+            await repository.UpdateAsync(updated);
+            Assert.Empty(await repository.SearchAsync(new LogbookQuery(To: boundary)));
+            Assert.Equal(updated, Assert.Single(await repository.SearchAsync(new LogbookQuery(From: updated.StartUtc.ToUniversalTime(), To: updated.StartUtc.ToUniversalTime()))));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task SearchAsync_SortsAcrossDaylightSavingOffsetsByInstant()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var summer = new QsoRecord("summer", "PA0AA", new DateTimeOffset(2026, 10, 25, 2, 45, 0, TimeSpan.FromHours(2)), null, null, null, null, null, null, null, null, null, null, null, null, false, false);
+            await repository.AddAsync(summer);
+            await repository.AddAsync(summer with { Id = "winter", StartUtc = new DateTimeOffset(2026, 10, 25, 2, 15, 0, TimeSpan.FromHours(1)) });
+            Assert.Equal(["winter", "summer"], (await repository.SearchAsync(new LogbookQuery())).Select(r => r.Id));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
     public async Task AddAsync_ThenSearchAsync_RoundTripsEveryField()
     {
         var dbPath = TempDbPath();
@@ -337,7 +382,7 @@ public sealed class SqliteLogbookRepositoryTests
 
                 var insert = seedConnection.CreateCommand();
                 insert.CommandText = "INSERT INTO Qso (Id, Callsign, StartUtc) VALUES ('1', 'N0CALL', $startUtc)";
-                insert.Parameters.AddWithValue("$startUtc", DateTimeOffset.UtcNow.ToString("O"));
+                insert.Parameters.AddWithValue("$startUtc", "2026-09-07T00:30:00.1234567+02:00");
                 await insert.ExecuteNonQueryAsync();
             }
 
@@ -347,12 +392,18 @@ public sealed class SqliteLogbookRepositoryTests
             var columns = await ReadColumnNamesAsync(dbPath);
             Assert.Equal(
                 ["Id", "Callsign", "StartUtc", "EndUtc", "FrequencyHz", "Mode", "SstvModeId", "RstSent", "RstReceived",
-                    "Name", "Qth", "GridSquare", "Country", "Notes", "ReceivedImageId", "QslSent", "QslReceived"],
+                    "Name", "Qth", "GridSquare", "Country", "Notes", "ReceivedImageId", "QslSent", "QslReceived", "StartUtcTicks"],
                 columns);
 
             var loaded = Assert.Single(await repository.SearchAsync(new LogbookQuery()));
             Assert.False(loaded.QslSent);
             Assert.False(loaded.QslReceived);
+            var instant = DateTimeOffset.Parse("2026-09-06T22:30:00.1234567+00:00", System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal(loaded, Assert.Single(await repository.SearchAsync(new LogbookQuery(From: instant, To: instant))));
+            Assert.Equal(TimeSpan.FromHours(2), loaded.StartUtc.Offset);
+            Assert.Empty(await repository.SearchAsync(new LogbookQuery(From: instant.AddTicks(1))));
+            var reopened = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            Assert.Equal(loaded, Assert.Single(await reopened.SearchAsync(new LogbookQuery(From: instant, To: instant))));
         }
         finally
         {
@@ -411,17 +462,17 @@ public sealed class SqliteLogbookRepositoryTests
             _ = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
 
             var indexNames = await ReadIndexNamesAsync(dbPath, "Qso");
-            Assert.Contains("IX_Qso_StartUtc", indexNames);
+            Assert.Contains("IX_Qso_StartUtcTicks", indexNames);
             Assert.Contains("IX_Qso_Callsign_NoCase", indexNames);
 
             // Name-only assertions above would still pass if the index silently pointed at the
             // wrong column or dropped its collation -- the exact failure mode that would make this
             // index a no-op against SearchAsync's `Callsign = $callsign COLLATE NOCASE` query.
-            var startUtcColumns = await ReadIndexColumnsAsync(dbPath, "IX_Qso_StartUtc");
+            var startUtcColumns = await ReadIndexColumnsAsync(dbPath, "IX_Qso_StartUtcTicks");
             var callsignColumns = await ReadIndexColumnsAsync(dbPath, "IX_Qso_Callsign_NoCase");
 
             var startUtcColumn = Assert.Single(startUtcColumns);
-            Assert.Equal("StartUtc", startUtcColumn.ColumnName);
+            Assert.Equal("StartUtcTicks", startUtcColumn.ColumnName);
 
             var callsignColumn = Assert.Single(callsignColumns);
             Assert.Equal("Callsign", callsignColumn.ColumnName);

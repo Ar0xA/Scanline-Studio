@@ -169,7 +169,8 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
     {
         var url = $"{Endpoint}?username={Uri.EscapeDataString(username)}&password={Uri.EscapeDataString(password)}&agent={Agent}";
         var client = _httpClientFactory.CreateClient(HttpClientName);
-        var response = await client.GetAsync(url, ct).ConfigureAwait(false);
+        using var response = await client.GetAsync(url, ct).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
         var doc = XDocument.Parse(body);
@@ -183,7 +184,8 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
     {
         var url = $"{Endpoint}?s={Uri.EscapeDataString(sessionKey)}&callsign={Uri.EscapeDataString(callsign)}";
         var client = _httpClientFactory.CreateClient(HttpClientName);
-        var response = await client.GetAsync(url, ct).ConfigureAwait(false);
+        using var response = await client.GetAsync(url, ct).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 
         var doc = XDocument.Parse(body);

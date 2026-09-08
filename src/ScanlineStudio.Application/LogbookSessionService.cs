@@ -138,9 +138,31 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         var stationCallsign = appSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)?.Callsign;
 
-        await using var writer = new StreamWriter(filePath);
-        _adifExporter.Export(records, writer, stationCallsign);
-        Log.AdifExported(_logger, filePath, records.Count);
+        var temporaryPath = filePath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write))
+            await using (var writer = new StreamWriter(stream))
+            {
+                _adifExporter.Export(records, writer, stationCallsign);
+            }
+
+            // StreamWriter disposal can fail while flushing. Publish only after it succeeds.
+            ct.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, filePath, overwrite: true);
+            Log.AdifExported(_logger, filePath, records.Count);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.AdifTemporaryFileCleanupFailed(_logger, temporaryPath, ex);
+            }
+        }
     }
 
     public async Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default)
@@ -330,6 +352,9 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to remove temporary ADIF export {Path}")]
+        public static partial void AdifTemporaryFileCleanupFailed(ILogger logger, string path, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} (ADIF-UDP sent={AdifUdpSentCount}/{AdifUdpEnabledCount}, QRZ uploaded={QrzUploaded})")]
         public static partial void QsoLogged(ILogger logger, string id, int adifUdpSentCount, int adifUdpEnabledCount, bool qrzUploaded);
 

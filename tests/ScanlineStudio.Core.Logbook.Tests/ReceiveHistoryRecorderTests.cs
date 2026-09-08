@@ -8,6 +8,213 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 
 public sealed class ReceiveHistoryRecorderTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DrainAsync_WaitsForCompletedAndAbandonedImageAndDatabaseStages(bool abandoned, bool gateDatabase)
+    {
+        var decoder = new FakeSstvDecoder();
+        var history = new FakeReceiveHistoryStore();
+        var settings = TempImagesDirectorySettings();
+        var directory = await ReceiveHistorySettings.ResolveDirectoryAsync(settings);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (gateDatabase)
+        {
+            history.BeforeRecord = async entry =>
+            {
+                Assert.True(File.Exists(entry.FilePath));
+                entered.SetResult();
+                await release.Task;
+            };
+        }
+
+        await using var recorder = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), history, settings,
+            new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance)
+        {
+            BeforeImagePublicationForTests = gateDatabase ? null : async temporaryPath =>
+            {
+                Assert.True(File.Exists(temporaryPath));
+                entered.SetResult();
+                await release.Task;
+            },
+        };
+        try
+        {
+            RaiseImageForSave(decoder, abandoned);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var drain = recorder.DrainAsync();
+            Assert.Same(drain, recorder.DrainAsync());
+            Assert.False(drain.IsCompleted);
+            Assert.Empty(history.RecordedEntries);
+            if (!gateDatabase)
+            {
+                Assert.Empty(Directory.GetFiles(directory, "*.png"));
+            }
+
+            release.SetResult();
+            Assert.True(await drain.WaitAsync(TimeSpan.FromSeconds(5)));
+            var saved = Assert.Single(history.RecordedEntries);
+            Assert.Equal(abandoned ? ReceiveDecodeState.Abandoned : ReceiveDecodeState.Completed, saved.DecodeState);
+            AssertSavedFileMatchesColoredFakeImage(saved.FilePath);
+            Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
+            RaiseImageForSave(decoder, abandoned: false);
+            Assert.Single(history.RecordedEntries);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await recorder.DisposeAsync();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DrainAsync_PartialStagingFailurePublishesNoPngOrHistoryAndReportsFailure()
+    {
+        var decoder = new FakeSstvDecoder();
+        var history = new FakeReceiveHistoryStore();
+        var settings = TempImagesDirectorySettings();
+        var directory = await ReceiveHistorySettings.ResolveDirectoryAsync(settings);
+        await using var recorder = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), history, settings,
+            new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance)
+        {
+            BeforeImagePublicationForTests = async path =>
+            {
+                await File.WriteAllBytesAsync(path, new byte[] { 137, 80, 78, 71 });
+                throw new IOException("Injected interrupted PNG write");
+            },
+        };
+        try
+        {
+            RaiseImageForSave(decoder, abandoned: false);
+            Assert.False(await recorder.DrainAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Empty(history.RecordedEntries);
+            Assert.Empty(Directory.GetFiles(directory));
+        }
+        finally
+        {
+            await recorder.DisposeAsync();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DrainAsync_TimeoutReportsIncompleteWhileOwnedDatabaseWorkCanFinish()
+    {
+        var decoder = new FakeSstvDecoder();
+        var history = new FakeReceiveHistoryStore();
+        var settings = TempImagesDirectorySettings();
+        var directory = await ReceiveHistorySettings.ResolveDirectoryAsync(settings);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        history.BeforeRecord = async _ =>
+        {
+            entered.SetResult();
+            await release.Task;
+        };
+        await using var recorder = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), history, settings,
+            new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+        try
+        {
+            RaiseImageForSave(decoder, abandoned: false);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(await recorder.DrainAsync(TimeSpan.FromMilliseconds(30)).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Empty(history.RecordedEntries);
+            release.SetResult();
+            await history.WaitForRecordAsync();
+            Assert.Single(history.RecordedEntries);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await recorder.DisposeAsync();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    private static void RaiseImageForSave(FakeSstvDecoder decoder, bool abandoned)
+    {
+        var mode = MakeMode(abandoned ? 100 : 4);
+        decoder.RaiseModeDetected(mode);
+        for (var line = 0; line < (abandoned ? 66 : 4); line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, ColoredFakeImage));
+        }
+
+        if (abandoned)
+        {
+            decoder.RaiseDecodeRestarted(mode);
+        }
+    }
+
+    [Fact]
+    public async Task DrainAsync_IncludesSaveRegisteredByAnAlreadyAdmittedCallback()
+    {
+        var decoder = new FakeSstvDecoder();
+        var history = new FakeReceiveHistoryStore();
+        var settings = TempImagesDirectorySettings();
+        var directory = await ReceiveHistorySettings.ResolveDirectoryAsync(settings);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var radio = new CallbackRadioStateProvider(() =>
+        {
+            entered.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(5)))
+            {
+                throw new TimeoutException("Test did not release the admitted callback");
+            }
+        });
+        await using var recorder = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), history, settings,
+            radio, NullLogger<ReceiveHistoryRecorder>.Instance);
+        var callback = Task.Run(() => RaiseImageForSave(decoder, abandoned: false));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var drain = recorder.DrainAsync();
+            Assert.False(drain.IsCompleted);
+            Assert.Empty(history.RecordedEntries);
+            release.Set();
+            await callback.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(await drain.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Single(history.RecordedEntries);
+        }
+        finally
+        {
+            release.Set();
+            await callback.WaitAsync(TimeSpan.FromSeconds(5));
+            await recorder.DisposeAsync();
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    private sealed class CallbackRadioStateProvider(Action onRead) : IRadioStateProvider
+    {
+        public RadioState? Current
+        {
+            get
+            {
+                onRead();
+                return null;
+            }
+        }
+    }
+
+
     /// <summary>ui_transition_plan.md step 6 (T2-4): the rig's state must be captured SYNCHRONOUSLY
     /// inside OnLineDecoded (before the fire-and-forget Task.Run that actually writes the entry),
     /// not re-read later -- auditor plan-review (2026-08-29) confirmed the alternative reopens a
