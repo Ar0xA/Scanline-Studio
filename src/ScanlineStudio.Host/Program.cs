@@ -198,9 +198,10 @@ internal static partial class Program
         // dependency somewhere else the way ReceivedImageBuffer's own subscription does. Guarded
         // (previously wasn't) -- a failure here used to be an unlogged crash before the window ever
         // appeared; logged and continued, matching every other startup step's own defensive shape.
+        ReceiveHistoryRecorder? imageRecorder = null;
         try
         {
-            host.Services.GetRequiredService<ReceiveHistoryRecorder>();
+            imageRecorder = host.Services.GetRequiredService<ReceiveHistoryRecorder>();
         }
         catch (Exception ex)
         {
@@ -408,7 +409,10 @@ internal static partial class Program
         // dispose-then-ClearAllPools-then-conditional-restart-spawn ordering this feature adds is
         // directly unit-testable, not a documented manual step.
         var applicationRestarter = host.Services.GetRequiredService<IApplicationRestarter>();
-        lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider, singleInstanceMutex: singleInstanceMutex);
+        var radioShutdown = host.Services.GetRequiredService<IRadioSessionService>() as IAsyncDisposable;
+        lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider,
+            singleInstanceMutex: singleInstanceMutex, drainPttTests: radioShutdown is null ? null : () => radioShutdown.DisposeAsync().AsTask(),
+            drainImagesTests: imageRecorder is null ? null : () => imageRecorder.DrainAsync());
 
         try
         {
@@ -446,7 +450,7 @@ internal static partial class Program
     /// alone. <paramref name="singleInstanceMutex"/> (single-instance code-review finding) is
     /// disposed right before the restart spawn, for the same "this process is still alive at this
     /// point" reason -- see that disposal's own call-site comment for the full reasoning.</summary>
-    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null, Mutex? singleInstanceMutex = null)
+    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null, Mutex? singleInstanceMutex = null, Func<Task>? drainPttTests = null, Func<Task<bool>>? drainImagesTests = null)
     {
         // disposeTimeout is a testability seam only (test-suite fixes phase 1, item 5) -- the real
         // call site never passes it, so this is a no-op default-preserving parameter, not a behavior
@@ -457,6 +461,39 @@ internal static partial class Program
         // new test for the real reproduction.
         Log.ShuttingDown(logger);
         var disposedCleanly = true;
+        if (drainPttTests is not null)
+        {
+            try
+            {
+                // RadioSessionService owns the bounded off/retry budget. Drain before other DI
+                // services can block teardown, and outside the generic 10-second timeout.
+                Task.Run(drainPttTests).GetAwaiter().GetResult();
+            }
+            catch (Exception ex)
+            {
+                disposedCleanly = false;
+                Log.TeardownThrew(logger, ex);
+            }
+        }
+        if (drainImagesTests is not null)
+        {
+            try
+            {
+                // Image persistence owns an independent 30-second budget. Drain before
+                // starting the generic host-disposal cutoff or closing other DI services.
+                if (!Task.Run(drainImagesTests).GetAwaiter().GetResult())
+                {
+                    disposedCleanly = false;
+                    Log.ImagePersistenceDrainIncomplete(logger);
+                }
+            }
+            catch (Exception ex)
+            {
+                disposedCleanly = false;
+                Log.TeardownThrew(logger, ex);
+            }
+        }
+
         try
         {
             // T0-5: Task.Run, not a direct host.DisposeAsync().AsTask() -- HandleLifetimeExit runs on
@@ -1239,6 +1276,9 @@ internal static partial class Program
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
+        public static partial void ImagePersistenceDrainIncomplete(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "Scanline Studio starting; logging to {LogPath} (minimum level {MinimumLevel})")]
         public static partial void Starting(ILogger logger, string logPath, LogLevel minimumLevel);
 

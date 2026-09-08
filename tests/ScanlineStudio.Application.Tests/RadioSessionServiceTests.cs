@@ -8,6 +8,68 @@ namespace ScanlineStudio.Application.Tests;
 public sealed class RadioSessionServiceTests
 {
     [Fact]
+    public async Task DisposeAsync_DrainsPendingUnkeyRetryAndRejectsNewTests()
+    {
+        var offEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseOff = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        var offCalls = 0;
+        protocol.PttGate = async tx =>
+        {
+            if (tx) return;
+            if (++offCalls == 1) throw new IOException("first off failed");
+            offEntered.TrySetResult();
+            await releaseOff.Task;
+        };
+        var service = new RadioSessionService(new FakeRadioController(), new FakeSettingsStore(),
+            [new FakeRadioProtocolFactory(protocol)], NullLogger<RadioSessionService>.Instance);
+        var spec = new RigctldConnectionSpec("localhost", 4532);
+        var testing = service.TestPttAsync(spec, TimeSpan.FromSeconds(30));
+        Assert.Equal([true], protocol.SetPttCalls);
+        var shutdown = service.DisposeAsync().AsTask();
+        await offEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(shutdown.IsCompleted);
+        Assert.False(protocol.Disposed);
+        Assert.Same(shutdown, service.DisposeAsync().AsTask());
+        Assert.False((await service.TestPttAsync(spec, TimeSpan.Zero)).Success);
+        releaseOff.SetResult();
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True((await testing).Success);
+        Assert.Equal([true, false], protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DuringPoll_NeverKeysAfterPollReturns()
+    {
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl, PollGate = gate.Task };
+        var service = new RadioSessionService(new FakeRadioController(), new FakeSettingsStore(),
+            [new FakeRadioProtocolFactory(protocol)], NullLogger<RadioSessionService>.Instance);
+        var testing = service.TestPttAsync(new RigctldConnectionSpec("localhost", 4532), TimeSpan.Zero);
+        var shutdown = service.DisposeAsync().AsTask();
+        Assert.False(shutdown.IsCompleted);
+        gate.SetResult();
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False((await testing).Success);
+        Assert.Empty(protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
+    public async Task TestPttAsync_AlreadyCancelled_NeverKeys()
+    {
+        var protocol = new FakeRadioProtocol { Capabilities = RadioCapabilities.PttControl };
+        await using var service = new RadioSessionService(new FakeRadioController(), new FakeSettingsStore(),
+            [new FakeRadioProtocolFactory(protocol)], NullLogger<RadioSessionService>.Instance);
+        var result = await service.TestPttAsync(new RigctldConnectionSpec("localhost", 4532), TimeSpan.Zero,
+            new CancellationToken(canceled: true));
+        Assert.False(result.Success);
+        Assert.Empty(protocol.SetPttCalls);
+        Assert.True(protocol.Disposed);
+    }
+
+    [Fact]
     public async Task ConnectUsingSettingsAsync_NoSectionConfigured_ConnectsWithNoneConnectionSpec()
     {
         var controller = new FakeRadioController();
@@ -280,7 +342,11 @@ public sealed class RadioSessionServiceTests
         var service = new RadioSessionService(controller, new FakeSettingsStore(), [factory], NullLogger<RadioSessionService>.Instance);
         var spec = new RigctldConnectionSpec("127.0.0.1", 4532);
 
-        var result = await service.TestPttAsync(spec, TimeSpan.FromSeconds(30), new CancellationToken(canceled: true));
+        using var cancellation = new CancellationTokenSource();
+        var testing = service.TestPttAsync(spec, TimeSpan.FromSeconds(30), cancellation.Token);
+        Assert.Equal([true], protocol.SetPttCalls);
+        cancellation.Cancel();
+        var result = await testing;
 
         Assert.True(result.Success);
         Assert.Equal([true, false], protocol.SetPttCalls);

@@ -380,7 +380,7 @@ public sealed class SstvCompositionRootTests
         using var provider = services.BuildServiceProvider();
 
         var resolvedDecoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
-        var encoder = Assert.IsType<AnalogFmSstvEncoder>(provider.GetRequiredService<ISstvEncoder>());
+        var encoder = Assert.IsType<RestartableSstvEncoder>(provider.GetRequiredService<ISstvEncoder>());
         var waterfall = Assert.IsType<WaterfallSource>(provider.GetRequiredService<IWaterfallSource>());
 
         Assert.Equal(22050, resolvedDecoder.SampleRate);
@@ -404,7 +404,7 @@ public sealed class SstvCompositionRootTests
         using var provider = services.BuildServiceProvider();
 
         var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
-        var encoder = Assert.IsType<AnalogFmSstvEncoder>(provider.GetRequiredService<ISstvEncoder>());
+        var encoder = Assert.IsType<RestartableSstvEncoder>(provider.GetRequiredService<ISstvEncoder>());
         var waterfall = Assert.IsType<WaterfallSource>(provider.GetRequiredService<IWaterfallSource>());
 
         Assert.Equal(SstvSampleRate.Default, decoder.SampleRate);

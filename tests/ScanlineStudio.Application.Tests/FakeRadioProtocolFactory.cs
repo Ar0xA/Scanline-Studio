@@ -71,6 +71,8 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
     private int _pttCallCount;
     private readonly TaskCompletionSource _pttNeverCompletes = new();
 
+    public Func<bool, Task>? PttGate { get; set; }
+
     public Task SetPttAsync(bool tx, CancellationToken ct)
     {
         var callNumber = Interlocked.Increment(ref _pttCallCount);
@@ -79,7 +81,13 @@ internal sealed class FakeRadioProtocol : IRadioProtocol
             return _pttNeverCompletes.Task;
         }
 
-        return CompleteSetPtt(tx);
+        return PttGate is null ? CompleteSetPtt(tx) : CompleteGatedPttAsync(tx);
+    }
+
+    private async Task CompleteGatedPttAsync(bool tx)
+    {
+        await PttGate!(tx).ConfigureAwait(false);
+        await CompleteSetPtt(tx).ConfigureAwait(false);
     }
 
     private Task CompleteSetPtt(bool tx)
