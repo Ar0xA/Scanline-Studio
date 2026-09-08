@@ -178,7 +178,7 @@ public sealed record SstvDecoderSettings
         DemodType: DemodType is { } dt && Enum.IsDefined(dt) ? dt : Abstractions.Sstv.DemodType.Hilbert,
         RxBpfPreset: RxBpfPreset is { } bpf && Enum.IsDefined(bpf) ? bpf : Abstractions.Sstv.RxBpfPreset.Wide,
         RxBufferMode: RxBufferMode is { } rxb && Enum.IsDefined(rxb) ? rxb : Abstractions.Sstv.RxBufferMode.On,
-        PllVcoGain: PllVcoGain ?? 1.0,
+        PllVcoGain: PllFmDemodulator.NormalizeVcoGain(PllVcoGain ?? 1.0),
         // Code-review round 1 finding: unlike SenseLevel/DemodType/RxBpfPreset above, these two had
         // NO range guard at all -- legacy itself validates both to (0,32] on every edit
         // (Option.cpp:515,521). A hand-edited settings.json/preset file with order<=0 would either
