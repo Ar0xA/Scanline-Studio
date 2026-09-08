@@ -316,10 +316,16 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
             // Keep the original offset for round trips, and index the instant at full .NET
             // precision. SQLite date functions would discard sub-millisecond ticks.
             ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN StartUtcTicks INTEGER NOT NULL DEFAULT 0");
-            connection.CreateFunction<string, long>("qso_utc_ticks", value =>
-                DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).UtcTicks);
-            ExecuteNonQuery(connection, transaction, "UPDATE Qso SET StartUtcTicks = qso_utc_ticks(StartUtc)");
         }
+
+        // TryParse, not Parse: SQLite does not enforce the declared column type, so one externally
+        // written or corrupted StartUtc must not be able to abort the migration. Parsing threw out
+        // of ExecuteNonQuery, the transaction never committed, and the constructor then failed
+        // identically on every subsequent launch -- taking the whole app's startup with it, since
+        // MainViewModel resolves this repository.
+        connection.CreateFunction<string, long>("qso_utc_ticks", value =>
+            DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parsed) ? parsed.UtcTicks : 0L);
 
         // Every logbook view query sorts/filters by StartUtc or Callsign; without these, each is a
         // full table scan (T0-9). CREATE INDEX IF NOT EXISTS is idempotent, so this runs
@@ -331,27 +337,46 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_StartUtcTicks ON Qso(StartUtcTicks)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_Callsign_NoCase ON Qso(Callsign COLLATE NOCASE)");
 
-        transaction.Commit();
-        if (!existingColumns.Contains("StartUtcTicks"))
+        // Runs unconditionally, below the index so the equality predicate can use it from the second
+        // launch onward. Catches rows an older build wrote without the column as well as the initial
+        // backfill; ticks 0 is DateTimeOffset.MinValue, so recomputing an already-correct row is a
+        // no-op. Isolated so a backfill failure the TryParse above cannot cover -- a non-TEXT
+        // storage class, say -- still leaves the ALTER and both indexes committed.
+        var backfilled = 0;
+        try
         {
-            Log.TimestampIndexMigrated(_logger);
+            backfilled = ExecuteNonQuery(connection, transaction,
+                "UPDATE Qso SET StartUtcTicks = qso_utc_ticks(StartUtc) WHERE StartUtcTicks = 0");
+        }
+        catch (SqliteException ex)
+        {
+            Log.TimestampBackfillFailed(_logger, ex);
+        }
+
+        transaction.Commit();
+        if (backfilled > 0)
+        {
+            Log.TimestampIndexMigrated(_logger, backfilled);
         }
     }
 
-    private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
+    private static int ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
     {
         var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = commandText;
-        command.ExecuteNonQuery();
+        return command.ExecuteNonQuery();
     }
 
     private static string GetDefaultDbFilePath() => Path.Combine(AppDatabasePaths.DatabaseDirectory, "history.db");
 
     private static partial class Log
     {
-        [LoggerMessage(Level = LogLevel.Information, Message = "Logbook UTC timestamp index migrated")]
-        public static partial void TimestampIndexMigrated(ILogger logger);
+        [LoggerMessage(Level = LogLevel.Information, Message = "Logbook UTC timestamp index migrated ({Rows} rows backfilled)")]
+        public static partial void TimestampIndexMigrated(ILogger logger, int rows);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Logbook UTC timestamp backfill failed; ordering and date filters may miss rows until it succeeds")]
+        public static partial void TimestampBackfillFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} ({Callsign})")]
         public static partial void QsoAdded(ILogger logger, string id, string callsign);
