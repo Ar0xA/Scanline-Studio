@@ -178,6 +178,26 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadAsync_NullSections_ReturnsUsableDefaultsAndLogs()
+    {
+        const string json = """{"Sections":null}""";
+        await File.WriteAllTextAsync(_settingsFilePath, json);
+        var logger = new RecordingLogger<JsonSettingsStore>();
+        using var store = new JsonSettingsStore(logger, _settingsFilePath);
+
+        var loaded = await store.LoadAsync();
+
+        Assert.Empty(loaded.Sections);
+        Assert.Null(loaded.GetSection(SampleSection.SectionKey, SampleSectionJsonContext.Default.SampleSection));
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error);
+        Assert.Equal(json, await File.ReadAllTextAsync(_settingsFilePath));
+
+        var sample = new SampleSection("recovered", 42);
+        await store.UpdateAsync(s => s.WithSection(SampleSection.SectionKey, sample, SampleSectionJsonContext.Default.SampleSection));
+        Assert.Equal(sample, (await store.LoadAsync()).GetSection(SampleSection.SectionKey, SampleSectionJsonContext.Default.SampleSection));
+    }
+
+    [Fact]
     public async Task LoadAsync_UnreadableFile_ReturnsDefaultsRatherThanThrowing()
     {
         // Unix-only, same reasoning as AppLocationOverridesTests' identical test: UnauthorizedAccessException

@@ -266,6 +266,49 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task PresetNames_WindowsReservedNames_AreRejectedBeforeFileOperations()
+    {
+        var store = CreateStore();
+        await store.SavePresetAsync("Source", new AppSettings());
+        var reserved = new List<string> { "CON", "PRN", "AUX", "NUL" };
+        foreach (var port in "123456789¹²³")
+        {
+            reserved.Add("COM" + port);
+            reserved.Add("LPT" + port);
+        }
+
+        foreach (var name in reserved.SelectMany(n => new[] { n, n.ToLowerInvariant(), n + ".backup", n + " .backup" })
+                     .Concat(["Field day.", "Field day "]))
+        {
+            Assert.False(store.TryValidatePresetName(name, out var error), name);
+            Assert.False(string.IsNullOrWhiteSpace(error));
+            await Assert.ThrowsAsync<ArgumentException>(() => store.SavePresetAsync(name, new AppSettings()));
+            await Assert.ThrowsAsync<ArgumentException>(() => store.ClonePresetAsync("Source", name));
+            await Assert.ThrowsAsync<ArgumentException>(() => store.RenamePresetAsync("Source", name));
+        }
+
+        Assert.Equal("Source", Assert.Single(await store.ListPresetsAsync()));
+        Assert.Single(Directory.EnumerateFiles(_presetsDirectory));
+    }
+
+    [Theory]
+    [InlineData("COM0")]
+    [InlineData("COM10")]
+    [InlineData("LPT10")]
+    [InlineData("Console")]
+    [InlineData("Field.day")]
+    public async Task PresetNames_NonReservedLookalikes_RoundTrip(string name)
+    {
+        var store = CreateStore();
+        Assert.True(store.TryValidatePresetName(name, out var error));
+        Assert.Null(error);
+
+        await store.SavePresetAsync(name, new AppSettings());
+
+        Assert.NotNull(await store.LoadPresetAsync(name));
+    }
+
+    [Fact]
     public async Task LoadPresetAsync_NonExistent_ReturnsNull()
     {
         var store = CreateStore();
@@ -506,6 +549,20 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
         var loaded = await store.LoadPresetAsync("Corrupt");
 
         Assert.Null(loaded);
+        Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
+    }
+
+    [Fact]
+    public async Task LoadAndClonePresetAsync_NullSections_UseLoggedCorruptFileRecovery()
+    {
+        var logger = new RecordingLogger<ConfigurationPresetStore>();
+        var store = new ConfigurationPresetStore(logger, _presetsDirectory);
+        await File.WriteAllTextAsync(Path.Combine(_presetsDirectory, "Corrupt.json"), """{"Sections":null}""");
+
+        Assert.Null(await store.LoadPresetAsync("Corrupt"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => store.ClonePresetAsync("Corrupt", "Clone"));
+
+        Assert.False(File.Exists(Path.Combine(_presetsDirectory, "Clone.json")));
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning);
     }
 
