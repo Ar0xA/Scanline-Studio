@@ -11,6 +11,33 @@ namespace ScanlineStudio.UI.Tests;
 /// verification run observed) was never exercised by an automated test until now.</summary>
 public sealed class FilePickerServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NormalizedExistingSibling_RequiresItsOwnOverwriteConfirmation(bool confirm)
+    {
+        var directory = Directory.CreateTempSubdirectory("astra-picker-").FullName;
+        try
+        {
+            var picked = Path.Combine(directory, "frame.png");
+            var actual = Path.Combine(directory, "frame.jpg");
+            await File.WriteAllTextAsync(actual, "existing image");
+            var service = new FilePickerService(Microsoft.Extensions.Logging.Abstractions.NullLogger<FilePickerService>.Instance,
+                new FakeLocalizationService());
+            string? askedPath = null;
+            var result = await service.ResolveConfirmedDestinationAsync(picked, FilePickerService.JpegFileType, path =>
+            {
+                askedPath = path;
+                return Task.FromResult(confirm);
+            });
+            Assert.Equal(actual, askedPath);
+            Assert.Equal(confirm, result.HasValue);
+            if (confirm) Assert.Equal(actual, result!.Value.Path);
+            Assert.Equal("existing image", await File.ReadAllTextAsync(actual));
+        }
+        finally { Directory.Delete(directory, true); }
+    }
+
     [Fact]
     public void ResolveDestination_JpegSelected_PathHasNoExtension_AppendsJpg()
     {

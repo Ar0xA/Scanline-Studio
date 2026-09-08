@@ -1289,6 +1289,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _isTestingConnection;
 
+    // Owned by the UI thread: edit/reset invalidation is checked when queued results publish.
+    private int _radioTestConfigurationGeneration;
+    private int _pttTestRequestGeneration;
+
+    private void InvalidateRadioTests()
+    {
+        _radioTestConfigurationGeneration++;
+        RigctldTestSucceeded = false;
+        HamlibCatTestSucceeded = false;
+        HamlibPttTestSucceeded = false;
+        FlrigTestSucceeded = false;
+        FlrigPttTestSucceeded = false;
+        OmniRigTestSucceeded = false;
+        TestConnectionStatusMessage = null;
+        TestPttErrorMessage = null;
+    }
+
     private bool CanTestRigctldConnection() => !IsTestingConnection && !string.IsNullOrWhiteSpace(RigctldHost) && RigctldPort is > 0;
 
     [RelayCommand(CanExecute = nameof(CanTestRigctldConnection))]
@@ -1304,6 +1321,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         Log.TestRigctldConnectionInvoked(_logger, host, port);
+        var generation = _radioTestConfigurationGeneration;
         IsTestingConnection = true;
         // Reset for the duration of this fresh attempt -- Connect must not stay authorized on a
         // stale PREVIOUS success while a new verification is genuinely in flight and could fail.
@@ -1315,7 +1333,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var result = await _radioSession.TestConnectionAsync(new RigctldConnectionSpec(host, port), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                RigctldTestSucceeded = result.Success;
                 // Tier B audit finding: this posted lambda runs after the outer try/catch has already
                 // exited, so its GetString calls were previously unguarded. A locale file with a
                 // mismatched format placeholder throws FormatException out of GetString, which used to
@@ -1328,6 +1345,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 // trusted to safely produce ANY string here.
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
+                    RigctldTestSucceeded = result.Success;
                     TestConnectionStatusMessage = result.Success
                         ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
                         : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
@@ -1354,6 +1377,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
                     TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
                 }
                 catch (Exception formatEx)
@@ -1392,6 +1420,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         Log.TestFlrigConnectionInvoked(_logger, host, port);
+        var generation = _radioTestConfigurationGeneration;
         IsTestingConnection = true;
         FlrigTestSucceeded = false;
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
@@ -1401,9 +1430,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var result = await _radioSession.TestConnectionAsync(new FlrigConnectionSpec(host, port), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                FlrigTestSucceeded = result.Success;
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
+                    FlrigTestSucceeded = result.Success;
                     TestConnectionStatusMessage = result.Success
                         ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
                         : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
@@ -1426,6 +1460,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
                     TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
                 }
                 catch (Exception formatEx)
@@ -1458,6 +1497,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         Log.TestOmniRigConnectionInvoked(_logger);
+        var generation = _radioTestConfigurationGeneration;
         IsTestingConnection = true;
         OmniRigTestSucceeded = false;
         TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Testing");
@@ -1467,9 +1507,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var result = await _radioSession.TestConnectionAsync(new OmniRigConnectionSpec(), cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                OmniRigTestSucceeded = result.Success;
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
+                    OmniRigTestSucceeded = result.Success;
                     TestConnectionStatusMessage = result.Success
                         ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
                         : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
@@ -1492,6 +1537,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
                     TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
                 }
                 catch (Exception formatEx)
@@ -1517,18 +1567,21 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     partial void OnRigctldHostChanged(string? value)
     {
+        InvalidateRadioTests();
         TestRigctldConnectionCommand.NotifyCanExecuteChanged();
         RigctldTestSucceeded = false;
     }
 
     partial void OnRigctldPortChanged(int? value)
     {
+        InvalidateRadioTests();
         TestRigctldConnectionCommand.NotifyCanExecuteChanged();
         RigctldTestSucceeded = false;
     }
 
     partial void OnFlrigHostChanged(string? value)
     {
+        InvalidateRadioTests();
         TestFlrigConnectionCommand.NotifyCanExecuteChanged();
         FlrigTestSucceeded = false;
         FlrigPttTestSucceeded = false;
@@ -1536,13 +1589,17 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     partial void OnFlrigPortChanged(int? value)
     {
+        InvalidateRadioTests();
         TestFlrigConnectionCommand.NotifyCanExecuteChanged();
         FlrigTestSucceeded = false;
         FlrigPttTestSucceeded = false;
     }
 
+    partial void OnHamlibLibraryPathChanged(string? value) => InvalidateRadioTests();
+
     partial void OnHamlibModelChanged(uint? value)
     {
+        InvalidateRadioTests();
         TestHamlibConnectionCommand.NotifyCanExecuteChanged();
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
@@ -1553,24 +1610,28 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     // edit could wrongly authorize connecting under fields that were never actually tested.
     partial void OnHamlibSerialPortChanged(string? value)
     {
+        InvalidateRadioTests();
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
     }
 
     partial void OnHamlibBaudRateChanged(int? value)
     {
+        InvalidateRadioTests();
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
     }
 
     partial void OnHamlibPttTypeChanged(string? value)
     {
+        InvalidateRadioTests();
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
     }
 
     partial void OnHamlibPttPortChanged(string? value)
     {
+        InvalidateRadioTests();
         HamlibCatTestSucceeded = false;
         HamlibPttTestSucceeded = false;
     }
@@ -1598,6 +1659,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         Log.TestHamlibConnectionInvoked(_logger, model);
+        var generation = _radioTestConfigurationGeneration;
         IsTestingConnection = true;
         // Reset for the duration of this fresh attempt -- same reasoning as
         // TestRigctldConnectionAsync's own RigctldTestSucceeded reset above.
@@ -1616,9 +1678,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var result = await _radioSession.TestConnectionAsync(spec, cts.Token).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
-                HamlibCatTestSucceeded = result.Success;
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
+                    HamlibCatTestSucceeded = result.Success;
                     TestConnectionStatusMessage = result.Success
                         ? _localization.GetString("Options.Radio.TestConnection.Success", result.RigId ?? string.Empty)
                         : _localization.GetString("Options.Radio.TestConnection.Failed", result.ErrorMessage ?? string.Empty);
@@ -1641,6 +1708,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration)
+                    {
+                        return;
+                    }
+
                     TestConnectionStatusMessage = _localization.GetString("Options.Radio.TestConnection.Failed", ex.Message);
                 }
                 catch (Exception formatEx)
@@ -1697,6 +1769,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         Log.TestPttInvoked(_logger, model, MaxTestPttDuration.TotalSeconds);
         TestPttErrorMessage = null;
+        var generation = _radioTestConfigurationGeneration;
+        var request = ++_pttTestRequestGeneration;
         IsTestingPtt = true;
         // Reset for the duration of this fresh attempt -- same reasoning as
         // TestRigctldConnectionAsync's own RigctldTestSucceeded reset.
@@ -1719,7 +1793,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // un-key-failed-after-every-retry case, which must reach the operator, not be silently
             // dropped.
             var result = await _radioSession.TestPttAsync(spec, MaxTestPttDuration, cts.Token).ConfigureAwait(false);
-            Dispatcher.UIThread.Post(() => HamlibPttTestSucceeded = result.Success);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (generation == _radioTestConfigurationGeneration && request == _pttTestRequestGeneration)
+                {
+                    HamlibPttTestSucceeded = result.Success;
+                }
+            });
             if (!result.Success)
             {
                 // T1-7 (production_audit.md): used to assign result.ErrorMessage directly -- raw
@@ -1732,6 +1812,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 {
                     try
                     {
+                        if (generation != _radioTestConfigurationGeneration || request != _pttTestRequestGeneration)
+                        {
+                            return;
+                        }
+
                         TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", result.ErrorMessage ?? string.Empty);
                     }
                     catch (Exception ex)
@@ -1749,6 +1834,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration || request != _pttTestRequestGeneration)
+                    {
+                        return;
+                    }
+
                     TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", ex.Message);
                 }
                 catch (Exception displayEx)
@@ -1766,9 +1856,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // is nulled/disposed left a narrow window where a click's `_testPttCts?.Cancel()` could
             // race this finally's own cts.Dispose(), throwing ObjectDisposedException. With this
             // order, any click that observes IsTestingPtt == true finds _testPttCts still live.
-            _testPttCts = null;
-            cts.Dispose();
-            IsTestingPtt = false;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _testPttCts = null;
+                cts.Dispose();
+                IsTestingPtt = false;
+            });
         }
     }
 
@@ -1799,6 +1892,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         Log.TestFlrigPttInvoked(_logger, host, port, MaxTestPttDuration.TotalSeconds);
         TestPttErrorMessage = null;
+        var generation = _radioTestConfigurationGeneration;
+        var request = ++_pttTestRequestGeneration;
         IsTestingPtt = true;
         FlrigPttTestSucceeded = false;
         var cts = new CancellationTokenSource();
@@ -1809,7 +1904,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             // RadioSessionService.TestPttAsync's own contract: always returns a result, never
             // throws -- same reasoning as TestPttAsync's own call above.
             var result = await _radioSession.TestPttAsync(spec, MaxTestPttDuration, cts.Token).ConfigureAwait(false);
-            Dispatcher.UIThread.Post(() => FlrigPttTestSucceeded = result.Success);
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (generation == _radioTestConfigurationGeneration && request == _pttTestRequestGeneration)
+                {
+                    FlrigPttTestSucceeded = result.Success;
+                }
+            });
             if (!result.Success)
             {
                 // T1-7 (production_audit.md): same fix and reasoning as TestPttAsync's own equivalent
@@ -1818,6 +1919,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                 {
                     try
                     {
+                        if (generation != _radioTestConfigurationGeneration || request != _pttTestRequestGeneration)
+                        {
+                            return;
+                        }
+
                         TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", result.ErrorMessage ?? string.Empty);
                     }
                     catch (Exception ex)
@@ -1835,6 +1941,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
+                    if (generation != _radioTestConfigurationGeneration || request != _pttTestRequestGeneration)
+                    {
+                        return;
+                    }
+
                     TestPttErrorMessage = _localization.GetString("Options.Radio.TestPtt.Failed", ex.Message);
                 }
                 catch (Exception displayEx)
@@ -1847,9 +1958,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         finally
         {
             // Same ordering reasoning as TestPttAsync's own finally block above.
-            _testPttCts = null;
-            cts.Dispose();
-            IsTestingPtt = false;
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _testPttCts = null;
+                cts.Dispose();
+                IsTestingPtt = false;
+            });
         }
     }
 
@@ -2135,7 +2249,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// once, drag <see cref="TxVolumePercent"/> while watching the radio's own power meter for as
     /// long as needed, then stop manually -- capped at <see cref="MaxTuneDuration"/> either way as a
     /// safety backstop against a forgotten/stuck Tune keying the rig indefinitely.</summary>
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task TuneAsync()
     {
         if (IsTuning)
@@ -2166,9 +2280,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsTuning = false;
-            _tuneCts = null;
-            cts.Dispose();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                _tuneCts = null;
+                cts.Dispose();
+                IsTuning = false;
+            });
         }
     }
 
@@ -3701,6 +3818,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private void ResetRadioToDefault()
     {
+        InvalidateRadioTests();
         Log.ResetSectionInvoked(_logger, "Radio");
         var defaults = OptionsSettingsService.Defaults;
         RadioBackendId = defaults.RadioBackendId;
@@ -3889,10 +4007,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     {
         Log.ConfirmResetAllInvoked(_logger);
         ResetGeneralToDefault();
+        ResetAppearanceToDefault();
         ResetAudioToDefault();
         ResetRadioToDefault();
         ResetTxToDefault();
         ResetDecodeToDefault();
+        ResetAdvancedToDefault();
         ResetQrzToDefault();
         ResetIdentificationToDefault();
         ResetForwardingToDefault();
@@ -3904,6 +4024,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     partial void OnRadioBackendIdChanged(string value)
     {
+        InvalidateRadioTests();
         OnPropertyChanged(nameof(IsRigctldSelected));
         OnPropertyChanged(nameof(IsHamlibSelected));
         OnPropertyChanged(nameof(IsFlrigSelected));

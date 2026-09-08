@@ -512,9 +512,28 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
     private bool CanLog() => !string.IsNullOrWhiteSpace(FormCallsign);
 
+    private bool ValidateFrequencyForSubmission()
+    {
+        if (string.IsNullOrWhiteSpace(FormFrequencyMhzText)
+            || (double.TryParse(FormFrequencyMhzText, NumberStyles.Float, CultureInfo.InvariantCulture, out var mhz)
+                && double.IsFinite(mhz) && mhz is >= 0 and <= 1_000_000))
+        {
+            return true;
+        }
+
+        Log.InvalidFrequencySubmitted(_logger);
+        StatusMessage = _localization.GetString("Panes.Logbook.Error.InvalidFrequency");
+        return false;
+    }
+
     [RelayCommand(CanExecute = nameof(CanLog))]
     private async Task LogAsync()
     {
+        if (!ValidateFrequencyForSubmission())
+        {
+            return;
+        }
+
         // Tier B audit finding: LogQsoAsync can make a real, multi-second QRZ HTTPS upload
         // (LogbookSessionService.LogQsoAsync). Captured BEFORE that await -- if the user selects a
         // different row or clicks New while this is in flight, _formGeneration changes, and every
@@ -613,7 +632,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanUpdate))]
     private async Task UpdateAsync()
     {
-        if (_editingId is null)
+        if (_editingId is null || !ValidateFrequencyForSubmission())
         {
             return;
         }
@@ -962,6 +981,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Logbook submission rejected because frequency text is invalid")]
+        public static partial void InvalidFrequencySubmitted(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh invoked: callsign={Callsign}")]
         public static partial void RefreshInvoked(ILogger logger, string? callsign);
 

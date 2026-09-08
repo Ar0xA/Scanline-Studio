@@ -1179,6 +1179,10 @@ public sealed class OptionsWindowViewModelTests
         await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.HamlibLibraryPath = "/bad/path.so";
+        // Editing the radio configuration invalidates the prior test; verify the current
+        // configuration before exercising the implicit-save library-reload failure below.
+        await vm.TestRigctldConnectionCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
 
         await vm.ToggleRadioConnectionCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();

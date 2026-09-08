@@ -6,6 +6,69 @@ namespace ScanlineStudio.UI.Tests;
 
 public sealed class DecoderTracePaneViewModelTests
 {
+    private sealed class TraceClock : TimeProvider
+    {
+        public long Ticks { get; set; }
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Ticks;
+    }
+
+    [AvaloniaFact]
+    public void Capture_Channel1PublishedBetweenReads_IsCollected()
+    {
+        var session = new FakeSstvSessionService();
+        var vm = new DecoderTracePaneViewModel(session, new FakeLocalizationService());
+        vm.CaptureCommand.Execute(null);
+        double[] one = [2];
+        session.ReadingScopeChannel0 = () =>
+        {
+            session.ScopeCaptureChannel1ToReturn = one;
+            session.ScopeCaptureChannel0ToReturn = [1];
+        };
+        vm.PollCapture();
+        Assert.Same(one, vm.Channel1Snapshot);
+        Assert.False(vm.IsCapturing);
+    }
+
+    [AvaloniaFact]
+    public void Capture_LateChannel1_IsCollectedBeforeGraceExpires()
+    {
+        var session = new FakeSstvSessionService();
+        var clock = new TraceClock();
+        var vm = new DecoderTracePaneViewModel(session, new FakeLocalizationService(), timeProvider: clock);
+        vm.CaptureCommand.Execute(null);
+        session.ScopeCaptureChannel0ToReturn = [1];
+        vm.PollCapture();
+        Assert.True(vm.IsCapturing);
+        clock.Ticks = 500;
+        session.ScopeCaptureChannel1ToReturn = [2];
+        vm.PollCapture();
+        Assert.Same(session.ScopeCaptureChannel1ToReturn, vm.Channel1Snapshot);
+        Assert.False(vm.IsCapturing);
+    }
+
+    [AvaloniaFact]
+    public void Capture_AbsentChannel1_StopsAfterGrace_AndRearmResetsGrace()
+    {
+        var session = new FakeSstvSessionService();
+        var clock = new TraceClock();
+        var vm = new DecoderTracePaneViewModel(session, new FakeLocalizationService(), timeProvider: clock);
+        vm.CaptureCommand.Execute(null);
+        session.ScopeCaptureChannel0ToReturn = [1];
+        vm.PollCapture();
+        clock.Ticks = 900;
+        vm.CaptureCommand.Execute(null);
+        session.ScopeCaptureChannel0ToReturn = [3];
+        vm.PollCapture();
+        clock.Ticks = 1000;
+        vm.PollCapture();
+        Assert.True(vm.IsCapturing);
+        clock.Ticks = 1900;
+        vm.PollCapture();
+        Assert.False(vm.IsCapturing);
+        Assert.Null(vm.Channel1Snapshot);
+    }
+
     [AvaloniaFact]
     public void Defaults_MatchLegacysOwnScopeCppDefaults()
     {
@@ -107,6 +170,7 @@ public sealed class DecoderTracePaneViewModelTests
 
         var freshChannel0 = new double[] { 1.0, 2.0 }; // same VALUES, different array instance
         sstvSession.ScopeCaptureChannel0ToReturn = freshChannel0;
+        sstvSession.ScopeCaptureChannel1ToReturn = [3.0];
         await Task.Delay(400);
         Dispatcher.UIThread.RunJobs();
 

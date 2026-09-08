@@ -284,6 +284,27 @@ public sealed class TxControlsAutoFollowAndQuickModeGridTests
     }
 
     [AvaloniaFact]
+    public void QuickModeSlots_AutoFollowInitialization_PreservesCustomSlotsAcrossLaunches()
+    {
+        var customIds = QuickModeGridDefaults.Ids.Reverse().ToArray();
+        var settings = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(TxPaneUiSettings.SectionKey,
+                new TxPaneUiSettings { QuickModeGridIds = customIds, AutoFollowRxMode = true },
+                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
+        };
+        for (var launch = 0; launch < 3; launch++)
+        {
+            var vm = CreateViewModel(settings, new FakeSstvSessionService { AvailableModes = SstvModeRegistry.All });
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(vm.AutoFollowRxMode);
+            Assert.Equal(customIds, vm.QuickModeSlots.Select(s => s.CurrentMode.Id));
+            var persisted = settings.Settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings);
+            Assert.Equal(customIds, persisted!.QuickModeGridIds);
+        }
+    }
+
+    [AvaloniaFact]
     public async Task ReassignQuickModeSlot_UpdatesCurrentModeAndPersists_WithoutClobberingAutoFollowRxMode()
     {
         var settingsStore = new FakeSettingsStore

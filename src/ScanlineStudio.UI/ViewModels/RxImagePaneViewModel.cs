@@ -2382,10 +2382,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanLookupQrz))]
     private async Task LookupQrzAsync(CancellationToken ct)
     {
+        var generation = _qrzLookupGeneration;
+        var reception = _currentReceptionSequence;
         IsLookingUpQrz = true;
         try
         {
             var result = await _logbookSession.LookupCallsignAsync(OverrideCallsign!.Trim(), ct);
+            if (generation != _qrzLookupGeneration || reception != _currentReceptionSequence) return;
             if (result.Success)
             {
                 LookupName = result.Name;
@@ -2408,6 +2411,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            if (generation != _qrzLookupGeneration || reception != _currentReceptionSequence) return;
             QrzLookupErrorMessage = _localization.GetString("Panes.RxFrameMeta.Error.LookupFailed", ex.Message);
             Log.QrzLookupThrew(_logger, ex);
         }
@@ -2416,6 +2420,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             IsLookingUpQrz = false;
         }
     }
+
+    private int _qrzLookupGeneration;
 
     /// <summary>Fires automatically on every real callsign change -- unlike <see cref="LookupQrzAsync"/>,
     /// no manual button: this is a local, indexed SQLite query (sub-millisecond), none of the
@@ -2430,6 +2436,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // starting a new reception) must not let an in-flight query for the OLD callsign resolve and
         // latch a stale Found/None onto the new, unrelated state.
         _workedBeforeCts?.Cancel();
+
+        ++_qrzLookupGeneration;
 
         // fsk_cwid.md A3: unconditionally cleared here too, for the SAME reason -- ANY real change to
         // OverrideCallsign (auto-fill OR a manual edit) must not keep showing a stale source/time

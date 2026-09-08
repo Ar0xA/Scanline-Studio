@@ -1,4 +1,6 @@
 {
+  "FilePicker.OverwriteTitle": "Replace image?",
+  "FilePicker.OverwriteMessage": "The selected image format changes the destination to {0}. Replace the existing file?",
   "MainWindow.TitleWithVersion": "{0} v{1}",
   "MainWindow.TitleWithConfig": "{0} v{1} - Cfg: {2}",
   "MainWindow.Menu.File": "_File",
@@ -953,6 +955,7 @@
   "Panes.Logbook.Form.StartLabel": "Start (UTC)",
   "Panes.Logbook.Form.EndLabel": "End (UTC)",
   "Panes.Logbook.Form.FrequencyLabel": "Frequency (MHz)",
+  "Panes.Logbook.Error.InvalidFrequency": "Enter a valid frequency in MHz using a decimal point, or leave it blank to clear it.",
   "Panes.Logbook.Form.ModeLabel": "Mode",
   "Panes.Logbook.Form.NoModeOption": "(none)",
   "Panes.Logbook.Form.SstvModeLabel": "SSTV mode",

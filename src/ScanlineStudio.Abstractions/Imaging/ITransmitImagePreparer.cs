@@ -592,7 +592,11 @@ public interface ITransmitImagePreparer
     /// gradient ignored in this fallback specifically) -- the real, production
     /// <c>TransmitImagePreparer</c> always overrides this with the true warp; this default only matters
     /// to a test double that never exercises perspective rendering directly.</para></summary>
-    BgraPixelBuffer RenderWarpedElementPreview(TemplateElement element, int targetWidthPx, int targetHeightPx)
+    /// <remarks><paramref name="styleImageHeightPx"/> is the full output image height mapped into
+    /// the local preview bitmap's pixel scale, including crop/zoom/resolution limits. It is the
+    /// reference length for height-relative border and radius styles, not the element height.
+    /// Omission retains the local-target-height convention for callers without output context.</remarks>
+    BgraPixelBuffer RenderWarpedElementPreview(TemplateElement element, int targetWidthPx, int targetHeightPx, double? styleImageHeightPx = null)
     {
         targetWidthPx = Math.Max(1, targetWidthPx);
         targetHeightPx = Math.Max(1, targetHeightPx);

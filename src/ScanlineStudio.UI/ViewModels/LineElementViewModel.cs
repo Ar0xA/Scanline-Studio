@@ -1,3 +1,4 @@
+using ScanlineStudio.UI.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ScanlineStudio.Abstractions.Imaging;
@@ -209,6 +210,11 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
 
     public double TopPixels => (Y - (Height / 2)) * ImageHeight;
 
+    [ObservableProperty]
+    private ElementPreviewMetrics? _previewMetrics;
+
+    private double StyleImageHeight => PreviewMetrics?.ImageHeight ?? ImageHeight;
+
     public double CanvasWidthPixels => Width * ImageWidth;
 
     public double CanvasHeightPixels => Height * ImageHeight;
@@ -221,7 +227,7 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
 
     public Avalonia.Point CanvasEndPoint => new((X2 * ImageWidth) - LeftPixels, (Y2 * ImageHeight) - TopPixels);
 
-    public double CanvasStrokeThicknessPixels => StrokeThickness * ImageHeight;
+    public double CanvasStrokeThicknessPixels => StrokeThickness * StyleImageHeight;
 
     public double TargetModeHeightPx { get; init; }
 
@@ -283,6 +289,8 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
         OnPropertyChanged(nameof(CanvasStartPoint));
         OnPropertyChanged(nameof(CanvasEndPoint));
     }
+
+    partial void OnPreviewMetricsChanged(ElementPreviewMetrics? value) => OnPropertyChanged(nameof(CanvasStrokeThicknessPixels));
 
     partial void OnImageHeightChanged(double value)
     {
