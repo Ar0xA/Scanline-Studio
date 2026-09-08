@@ -34,6 +34,10 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
     private readonly object _lock = new();
     private StreamWriter _writer;
     private bool _disposed;
+    private bool _writerUnavailable;
+    private long _retryAfter;
+    internal Action<string>? BeforePublishForTests { get; set; }
+    internal StreamWriter WriterForTests { get => _writer; set => _writer = value; }
 
     public FileLoggerProvider(string filePath, long maxFileSizeBytes = 10 * 1024 * 1024, int maxBackupFileCount = 5)
     {
@@ -81,6 +85,8 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
                 return;
             }
 
+            if (_writerUnavailable && (Environment.TickCount64 < _retryAfter || !TryReopenWriter())) return;
+
             // Tier C audit finding (blocker): the write itself used to be unguarded -- AutoFlush
             // means every line is a real syscall, so a full disk, a removed/unmounted volume, or a
             // dropped network path threw IOException straight out of this method, past FileLogger.Log,
@@ -98,27 +104,15 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
-                _disposed = true;
+                MarkWriterUnavailable(ex);
                 return;
             }
 
             if (length >= _maxFileSizeBytes)
             {
-                _writer.Dispose();
+                CloseWriterSafely();
                 TryRotateBackups();
-
-                try
-                {
-                    _writer = OpenWriter(_filePath);
-                }
-                catch (IOException)
-                {
-                    _disposed = true;
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    _disposed = true;
-                }
+                TryReopenWriter();
             }
         }
     }
@@ -145,7 +139,7 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
 
             if (DirectoryPathComparer.AreEqual(Path.GetDirectoryName(_filePath)!, newDirectory))
             {
-                return true;
+                return !_writerUnavailable || TryReopenWriter();
             }
 
             var sourceFiles = CollectExistingLogFiles();
@@ -185,7 +179,7 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
                 }
             }
 
-            _writer.Dispose();
+            CloseWriterSafely();
 
             var newFilePath = Path.Combine(newDirectory, Path.GetFileName(_filePath));
             var moved = TryMoveAll(sourceFiles, newDirectory);
@@ -198,14 +192,7 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
             // (files rolled back there by TryMoveAll) on failure -- so a failed relocate never
             // leaves logging permanently dead. Only a failure to reopen at all disables further
             // writes, matching WriteLine's own existing failure contract.
-            try
-            {
-                _writer = OpenWriter(_filePath);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                _disposed = true;
-            }
+            TryReopenWriter();
 
             return moved;
         }
@@ -241,26 +228,32 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
     /// independent files with no atomic multi-file move primitive, so a failed relocate must leave
     /// them exactly where they started rather than half-migrated (a retry, or the caller's
     /// reopen-at-old-path fallback, would otherwise have to reason about a mixed state).</summary>
-    private static bool TryMoveAll(IReadOnlyList<string> sourceFiles, string newDirectory)
+    private bool TryMoveAll(IReadOnlyList<string> sourceFiles, string newDirectory)
     {
         var completed = new List<(string Source, string Destination)>();
         foreach (var source in sourceFiles)
         {
             var destination = Path.Combine(newDirectory, Path.GetFileName(source));
+            var staging = destination + $".{Guid.NewGuid():N}.tmp";
+            var published = false;
             try
             {
-                File.Move(source, destination);
+                File.Copy(source, staging, overwrite: false);
+                BeforePublishForTests?.Invoke(destination);
+                File.Move(staging, destination, overwrite: false);
+                published = true;
+                File.Delete(source);
                 completed.Add((source, destination));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                // File.Move's cross-volume copy+delete fallback can leave a partial destination
-                // file if the copy step itself fails partway -- clean that up before rolling the
-                // rest back, so a retry isn't blocked by a false conflict against our own debris.
-                TryDeleteIfExists(destination);
+                // Never delete a final path whose publication failed: it may belong to a racer.
+                // If deleting the source failed, keep at least one complete copy.
+                if (published && File.Exists(source)) TryDeleteIfExists(destination);
                 RollBack(completed);
                 return false;
             }
+            finally { TryDeleteIfExists(staging); }
         }
 
         return true;
@@ -302,6 +295,44 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
 
     private static StreamWriter OpenWriter(string filePath) =>
         new(new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+
+    private void CloseWriterSafely()
+    {
+        try { _writer.Dispose(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ObjectDisposedException)
+        { MarkWriterUnavailable(ex); }
+    }
+
+    private bool TryReopenWriter()
+    {
+        CloseWriterSafely();
+        try
+        {
+            _writer = OpenWriter(_filePath);
+            if (_writerUnavailable) ReportWriterState($"File logging recovered: {_filePath}");
+            _writerUnavailable = false;
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MarkWriterUnavailable(ex);
+            return false;
+        }
+    }
+
+    private void MarkWriterUnavailable(Exception error)
+    {
+        if (!_writerUnavailable) ReportWriterState($"File logging unavailable; will retry: {_filePath}: {error.Message}");
+        _writerUnavailable = true;
+        _retryAfter = Environment.TickCount64 + 1000;
+    }
+
+    private static void ReportWriterState(string message)
+    {
+        // ILogger would recurse into this provider. stderr is the independent diagnostic path.
+        try { Console.Error.WriteLine(message); }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException) { }
+    }
 
     /// <summary>Shifts <c>app.log.1..N-1</c> up to <c>.2..N</c> (dropping whatever was already at
     /// <c>.N</c>), then moves the live file to <c>.1</c>. Assumes the live file is not held open by
@@ -355,7 +386,7 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
             }
 
             _disposed = true;
-            _writer.Dispose();
+            CloseWriterSafely();
         }
     }
 }

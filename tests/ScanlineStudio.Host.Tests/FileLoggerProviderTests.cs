@@ -27,6 +27,68 @@ public sealed class FileLoggerProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task Relocation_RacingDestinationIsPreservedAndOriginalStillLogs()
+    {
+        using var provider = new FileLoggerProvider(_logPath);
+        WriteLines(provider, "test", 1, "original");
+        var destinationDirectory = Path.Combine(_directory, "new");
+        provider.BeforePublishForTests = destination => File.WriteAllText(destination, "foreign log");
+        Assert.False(await provider.RelocateAsync(destinationDirectory));
+        Assert.Equal("foreign log", File.ReadAllText(Path.Combine(destinationDirectory, "app.log")));
+        WriteLines(provider, "test", 1, "still working");
+        Assert.Contains("still working", File.ReadAllText(_logPath));
+        Assert.Empty(Directory.GetFiles(destinationDirectory, "*.tmp"));
+    }
+
+    [Fact]
+    public async Task FailedWriter_AutomaticallyRetriesAfterThrottle()
+    {
+        using var provider = new FileLoggerProvider(_logPath);
+        provider.WriterForTests.Dispose();
+        WriteLines(provider, "test", 1, "unavailable");
+        WriteLines(provider, "test", 1, "throttled");
+        Assert.DoesNotContain("throttled", File.ReadAllText(_logPath));
+        await Task.Delay(1100);
+        WriteLines(provider, "test", 1, "automatic recovery");
+        Assert.Contains("automatic recovery", File.ReadAllText(_logPath));
+    }
+
+    private sealed class FailingDisposeWriter : StreamWriter
+    {
+        public FailingDisposeWriter() : base(new MemoryStream()) { AutoFlush = true; }
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            throw new IOException("injected close failure");
+        }
+    }
+
+    [Fact]
+    public void RotationAndRecovery_AbsorbWriterDisposeFailure()
+    {
+        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 1);
+        provider.WriterForTests.Dispose();
+        provider.WriterForTests = new FailingDisposeWriter();
+        WriteLines(provider, "test", 1, "trigger rotation");
+        WriteLines(provider, "test", 1, "recovered after close failure");
+        Assert.Contains("recovered after close failure", File.ReadAllText(_logPath + ".1"));
+    }
+
+    [Fact]
+    public async Task FailedWriter_CanRecoverThroughSameDirectoryRelocation()
+    {
+        using var provider = new FileLoggerProvider(_logPath);
+        provider.WriterForTests.Dispose();
+        WriteLines(provider, "test", 1, "lost while unavailable");
+        Assert.True(await provider.RelocateAsync(_directory));
+        WriteLines(provider, "test", 1, "recovered");
+        Assert.Contains("recovered", File.ReadAllText(_logPath));
+        provider.Dispose();
+        WriteLines(provider, "test", 1, "must stay disposed");
+        Assert.DoesNotContain("must stay disposed", File.ReadAllText(_logPath));
+    }
+
+    [Fact]
     public void CreateLogger_WritesLinesToTheConfiguredPath()
     {
         using var provider = new FileLoggerProvider(_logPath);
