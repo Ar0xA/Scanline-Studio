@@ -17,8 +17,13 @@ namespace ScanlineStudio.UI.Imaging;
 /// gradient brushes support relative coordinates directly; ImageSharp's don't).</summary>
 internal static class GradientBrushFactory
 {
-    public static IBrush Build(TextGradientKind kind, Rgb24 startColor, Rgb24 endColor)
+    public static IBrush Build(TextGradientKind kind, Rgb24 startColor, Rgb24 endColor,
+        double width = 1, double height = 1, ElementPreviewMetrics? metrics = null)
     {
+        width = width > 0 && double.IsFinite(width) ? width : 1;
+        height = height > 0 && double.IsFinite(height) ? height : 1;
+        var pixelSize = metrics?.PixelSize ?? new Size(1, 1);
+        var radius = Math.Max(width / pixelSize.Width, height / pixelSize.Height) / 2;
         var stops = new GradientStops
         {
             new GradientStop(ToAvaloniaColor(startColor), 0),
@@ -45,11 +50,11 @@ internal static class GradientBrushFactory
             {
                 Center = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
                 GradientOrigin = new RelativePoint(0.5, 0.5, RelativeUnit.Relative),
-                RadiusX = new RelativeScalar(0.5, RelativeUnit.Relative),
-                RadiusY = new RelativeScalar(0.5, RelativeUnit.Relative),
+                RadiusX = new RelativeScalar(radius * pixelSize.Width / width, RelativeUnit.Relative),
+                RadiusY = new RelativeScalar(radius * pixelSize.Height / height, RelativeUnit.Relative),
                 GradientStops = stops,
             },
-            TextGradientKind.BitmapPattern => BuildPatternBrush(startColor, endColor),
+            TextGradientKind.BitmapPattern => BuildPatternBrush(startColor, endColor, pixelSize, metrics?.OutputOrigin ?? default),
             _ => throw new NotSupportedException($"Unrecognized {nameof(TextGradientKind)}: {kind}."),
         };
     }
@@ -65,7 +70,7 @@ internal static class GradientBrushFactory
         { false, false, true, false },
     };
 
-    private static DrawingBrush BuildPatternBrush(Rgb24 startColor, Rgb24 endColor)
+    private static DrawingBrush BuildPatternBrush(Rgb24 startColor, Rgb24 endColor, Size pixelSize, Point outputOrigin)
     {
         var foreBrush = new SolidColorBrush(ToAvaloniaColor(startColor));
         var backBrush = new SolidColorBrush(ToAvaloniaColor(endColor));
@@ -90,8 +95,11 @@ internal static class GradientBrushFactory
         {
             Drawing = drawingGroup,
             TileMode = TileMode.Tile,
-            DestinationRect = new RelativeRect(tile, RelativeUnit.Absolute),
-            Stretch = Stretch.None,
+            SourceRect = new RelativeRect(tile, RelativeUnit.Absolute),
+            DestinationRect = new RelativeRect(new Rect(
+                -(outputOrigin.X % 4) * pixelSize.Width, -(outputOrigin.Y % 4) * pixelSize.Height,
+                4 * pixelSize.Width, 4 * pixelSize.Height), RelativeUnit.Absolute),
+            Stretch = Stretch.Fill,
         };
     }
 

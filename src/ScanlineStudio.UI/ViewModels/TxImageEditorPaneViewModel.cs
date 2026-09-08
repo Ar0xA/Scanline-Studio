@@ -730,6 +730,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // operation still in flight when Dispose() runs (Cancel/Apply have no busy gate) would Lock()
         // an already-disposed pooled WriteableBitmap and NRE on the UI thread with no observer.
         _disposed = true;
+        ++_templateLoadGeneration;
 
         foreach (var element in OverlayElements)
         {
@@ -770,6 +771,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// ILogger-only.</summary>
     private async void OnReadyRackTemplateSelected(string templateId)
     {
+        if (_disposed) return;
         if (HasUnsavedEdits && _pendingRecallTemplateId != templateId)
         {
             _pendingRecallTemplateId = templateId;
@@ -837,6 +839,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     ///    ordinary manual one and chain the post-fire reopen only for this path.</summary>
     private async void OnReadyRackDirectFireRequested(string templateId)
     {
+        if (_disposed) return;
         if (_sourceBaseline is BlankImageSource)
         {
             StatusMessage = _localization.GetString("Panes.TxImageEditor.DirectFireNoPhoto");
@@ -865,7 +868,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        if (!loaded)
+        if (!loaded || _disposed || generation != _templateLoadGeneration)
         {
             // Superseded by a newer selection while loading -- expected pileup behavior, not a
             // failure. That newer selection will apply/fire its own result; this one is abandoned.
@@ -887,7 +890,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         Log.DirectFireInvoked(_logger, _targetMode.Id);
-        DirectFireRequested?.Invoke(BuildFinalOutput());
+        if (_disposed || generation != _templateLoadGeneration) return;
+        var final = BuildFinalOutput();
+        if (_disposed || generation != _templateLoadGeneration) return;
+        DirectFireRequested?.Invoke(final);
     }
 
     public ObservableCollection<ITemplateElementViewModel> OverlayElements { get; } = [];
@@ -1129,11 +1135,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(GuideLineXPixels));
         OnPropertyChanged(nameof(GuideLineYPixels));
         RefreshOverlayElementZoomedImageSize();
-        RefreshOverlayElementCanvasFontSizes();
+        RefreshOverlayElementCanvasStyles();
     }
 
     /// <summary>Pushes zoom-premultiplied <see cref="ImageWidth"/>/<see cref="ImageHeight"/> onto
-    /// every element (parent-pushed, same pattern as <see cref="RefreshOverlayElementCanvasFontSizes"/>)
+    /// every element (parent-pushed, same pattern as <see cref="RefreshOverlayElementCanvasStyles"/>)
     /// -- reuses each element's OWN existing <c>OnImageWidthChanged</c>/<c>OnImageHeightChanged</c>
     /// hooks (already wired to re-raise <c>LeftPixels</c>/<c>TopPixels</c>/<c>CanvasWidthPixels</c>/
     /// <c>CanvasHeightPixels</c>) to get every element's on-screen position/size correctly zoomed with
@@ -2765,6 +2771,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         element.CanvasFontSize = ComputeCanvasFontSize(element);
         element.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(element);
         element.PropertyChanged += OnOverlayElementPropertyChanged;
+        RefreshElementPreviewMetrics(element);
         return element;
     }
 
@@ -2850,6 +2857,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // doc comment for the real, found bug this fixes: a restored/loaded warped element would
         // otherwise stay silently invisible).
         element.RenderWarpedPreview = (w, h) => RenderWarpedElementPreview(element, w, h);
+        RefreshElementPreviewMetrics(element);
         return element;
     }
 
@@ -2879,7 +2887,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y)),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
-        return _preparer.RenderWarpedElementPreview(templateElement, targetWidthPx, targetHeightPx);
+        var scaleY = ComputeTargetToCanvasScaleY();
+        var displayHeight = element.Height * CanvasDisplayHeight;
+        var styleHeight = scaleY > 0 && displayHeight > 0
+            ? (_targetMode.ImageHeight / scaleY) * (targetHeightPx / displayHeight)
+            : targetHeightPx;
+        return _preparer.RenderWarpedElementPreview(templateElement, targetWidthPx, targetHeightPx, styleHeight);
     }
 
     /// <summary>Line counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
@@ -2929,6 +2942,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("LineStyle"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
+        RefreshElementPreviewMetrics(element);
         return element;
     }
 
@@ -3215,13 +3229,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private async Task<bool> LoadTemplateAsync(string templateId, int generation)
     {
         var document = await _templateStore.LoadAsync(templateId);
+        if (_disposed || generation != _templateLoadGeneration) return false;
         var snapshots = new List<RawElementSnapshot>(document.Elements.Count);
         foreach (var element in document.Elements)
         {
             snapshots.Add(await ToRawElementSnapshotAsync(templateId, element));
+            if (_disposed || generation != _templateLoadGeneration) return false;
         }
 
-        if (generation != _templateLoadGeneration)
+        if (_disposed || generation != _templateLoadGeneration)
         {
             // A newer template selection has already started (and will apply ITS OWN result) since
             // this one began -- discard this stale load rather than clobber the canvas with an
@@ -3256,7 +3272,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         try
         {
             var loadedMetadata = (await _templateStore.ListAsync()).FirstOrDefault(t => t.Id == templateId);
-            if (generation == _templateLoadGeneration)
+            if (!_disposed && generation == _templateLoadGeneration)
             {
                 NewTemplateName = loadedMetadata?.Name ?? string.Empty;
             }
@@ -3266,7 +3282,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Log.TemplateNamePrefillFailed(_logger, templateId, ex);
         }
 
-        return true;
+        return !_disposed && generation == _templateLoadGeneration;
     }
 
     private async Task<RawElementSnapshot> ToRawElementSnapshotAsync(string templateId, PersistedTemplateElement element)
@@ -4907,7 +4923,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // element's own Text -- an element reading e.g. "DIST {dist}" contains no "{his_grid}"
         // substring at all, so the plain Contains(token) check below never matched it, leaving the
         // canvas TextBlock showing a stale distance/bearing after a his_grid fill-bar edit even
-        // though RefreshOverlayElementCanvasFontSizes()/RecomputePreview() below both read
+        // though RefreshOverlayElementCanvasStyles()/RecomputePreview() below both read
         // ResolvedText fresh and updated correctly -- a canvas-vs-preview divergence.
         var alsoRefreshDistanceBearing = key == "his_grid";
         foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
@@ -4919,7 +4935,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             }
         }
 
-        RefreshOverlayElementCanvasFontSizes();
+        RefreshOverlayElementCanvasStyles();
         RecomputePreview();
     }
 
@@ -4976,7 +4992,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             element.NotifyResolvedTextChanged();
         }
 
-        RefreshOverlayElementCanvasFontSizes();
+        RefreshOverlayElementCanvasStyles();
         RecomputePreview();
     }
 
@@ -5534,12 +5550,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(CropBottomPixels));
 
         // T0-12: when coalesceRecompute is true, the pipeline pass above runs on a LATER tick, not
-        // synchronously after RefreshOverlayElementCanvasFontSizes() below -- this no longer
+        // synchronously after RefreshOverlayElementCanvasStyles() below -- this no longer
         // guarantees a same-tick ordering. Still correct either way: CanvasFontSize is filtered out
         // of OnOverlayElementPropertyChanged's own RecomputePreview trigger (it's canvas-chrome-only,
         // never feeds the real pipeline, see CanvasFontSize's own doc comment), and the deferred
-        // pipeline reads live state regardless of when RefreshOverlayElementCanvasFontSizes ran.
-        RefreshOverlayElementCanvasFontSizes();
+        // pipeline reads live state regardless of when RefreshOverlayElementCanvasStyles ran.
+        RefreshOverlayElementCanvasStyles();
     }
 
     // spec/18-path-to-1.0.md Medium item, undo/redo sub-piece -- On*Changing (fires BEFORE the
@@ -5569,7 +5585,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     partial void OnPreserveAspectChanged(bool value)
     {
         RecomputePreview();
-        RefreshOverlayElementCanvasFontSizes();
+        RefreshOverlayElementCanvasStyles();
     }
 
     // T0-12: coalesced -- each fires on every drag-delta tick of the bound Slider (plain TwoWay
@@ -5603,7 +5619,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// pre-Phase-1 text-only version, see each filtered name's own reasoning), so those are
     /// excluded here to avoid firing a full Crop-&gt;Resize-&gt;ApplyTemplate recompute for a change
     /// that can't affect its output; that matters concretely during a crop drag, where
-    /// <see cref="RefreshOverlayElementCanvasFontSizes"/> pushes a new
+    /// <see cref="RefreshOverlayElementCanvasStyles"/> pushes a new
     /// <see cref="OverlayElementViewModel.CanvasFontSize"/> to every TEXT element on every
     /// mouse-move frame (<see cref="NotifyCropRectDerivedPropertiesAndRecomputePreview"/>) -- without
     /// this filter, that would fire N additional redundant recomputes per frame instead of the one
@@ -5627,6 +5643,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     {
         if (e.PropertyName is nameof(ITemplateElementViewModel.ImageWidth)
             or nameof(ITemplateElementViewModel.ImageHeight)
+            or nameof(OverlayElementViewModel.PreviewMetrics)
             or nameof(OverlayElementViewModel.CanvasFontSize)
             // Backlog item (user request, 2026-08-17): canvas-preview outline fix -- pure
             // canvas-chrome derived from StrokeThickness/StrokeColor (both already independently
@@ -5783,6 +5800,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 or nameof(ITemplateElementViewModel.Height))
         {
             return;
+        }
+
+        if (sender is ITemplateElementViewModel previewElement)
+        {
+            RefreshElementPreviewMetrics(previewElement);
         }
 
         if (sender is OverlayElementViewModel textElement
@@ -6633,6 +6655,31 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             : targetHeight / cropHeightPixels;
     }
 
+    private void RefreshElementPreviewMetrics(ITemplateElementViewModel element)
+    {
+        var scaleY = ComputeTargetToCanvasScaleY();
+        if (scaleY <= 0 || !double.IsFinite(scaleY))
+        {
+            return;
+        }
+
+        var scaleX = PreserveAspect ? scaleY : _targetMode.ImageWidth / CropWidthPixels;
+        var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
+        // Rotated text is painted into an element-local bitmap before rotation in the final
+        // renderer; its pattern phase starts there, rather than at the full image origin.
+        var localPattern = element is OverlayElementViewModel textElement
+            && double.IsFinite(textElement.RotationDegrees) && textElement.RotationDegrees % 360 != 0;
+        var metrics = new ElementPreviewMetrics(_targetMode.ImageHeight / scaleY,
+            new Avalonia.Size(1 / scaleX, 1 / scaleY),
+            localPattern ? default : new Avalonia.Point(bounds.X * _targetMode.ImageWidth, bounds.Y * _targetMode.ImageHeight));
+        switch (element)
+        {
+            case OverlayElementViewModel text: text.PreviewMetrics = metrics; break;
+            case BoxElementViewModel box: box.PreviewMetrics = metrics; break;
+            case LineElementViewModel line: line.PreviewMetrics = metrics; break;
+        }
+    }
+
     private double ComputeCanvasFontSize(OverlayElementViewModel element)
     {
         var scaleY = ComputeTargetToCanvasScaleY();
@@ -6707,11 +6754,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         return (element.StrokeThickness * _targetMode.ImageHeight) / scaleY;
     }
 
-    /// <summary>TEXT elements only -- boxes have no font/shrink-to-fit concept.</summary>
-    private void RefreshOverlayElementCanvasFontSizes()
+    /// <summary>Refresh crop/zoom-dependent style lengths and text fitting on the canvas.</summary>
+    private void RefreshOverlayElementCanvasStyles()
     {
         foreach (var element in OverlayElements)
         {
+            RefreshElementPreviewMetrics(element);
             if (element is OverlayElementViewModel text)
             {
                 text.CanvasFontSize = ComputeCanvasFontSize(text);

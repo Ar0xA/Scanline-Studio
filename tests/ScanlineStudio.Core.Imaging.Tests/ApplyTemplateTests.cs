@@ -1883,6 +1883,53 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public void RenderWarpedElementPreview_SubframeBox_UsesFullImageStyleScale()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var corners = new PerspectiveCorners(.25, .25, .75, .25, .75, .5, .25, .5);
+        var element = new TemplateBoxElement(corners.ToBoundingBox(), 0, new Rgb24(0, 0, 255),
+            new Rgb24(255, 0, 0), .03125, 1, .0625, null, corners);
+        var preview = preparer.RenderWarpedElementPreview(element, 160, 64, styleImageHeightPx: 256);
+        var final = preparer.ApplyTemplate(new ArrayImageSource(320, 256, new Rgb24[320 * 256]), new TemplateDocument(null, [element]));
+
+        AssertBgraPixel(preview, 80, 4, 255, 0, 0, 255);
+        AssertPixel(final, 160, 68, 255, 0, 0);
+        AssertBgraPixel(preview, 1, 1, 0, 0, 0, 0);
+        AssertPixel(final, 81, 65, 0, 0, 0);
+        AssertBgraPixel(preview, 80, 20, 0, 0, 255, 255);
+    }
+
+    [Theory]
+    [InlineData(false, 1, false)]
+    [InlineData(true, 1, false)]
+    [InlineData(true, 2, false)]
+    [InlineData(false, 1, true)]
+    [InlineData(true, 2, true)]
+    public void RenderWarpedElementPreview_ThinQuad_UsesPixelGuardAndPreservesTransparency(bool taper, int cropProjection, bool image)
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var c = taper
+            ? new PerspectiveCorners(.1, .1, .1009, .1, .117, .6, .1, .6)
+            : new PerspectiveCorners(.1, .1, .1005, .1, .3005, .3, .3, .3);
+        var cropTop = cropProjection == 1 ? 0 : .1;
+        var corners = new PerspectiveCorners(c.Corner0X * cropProjection, (c.Corner0Y - cropTop) * cropProjection,
+            c.Corner1X * cropProjection, (c.Corner1Y - cropTop) * cropProjection, c.Corner2X * cropProjection, (c.Corner2Y - cropTop) * cropProjection,
+            c.Corner3X * cropProjection, (c.Corner3Y - cropTop) * cropProjection);
+        var bounds = corners.ToBoundingBox();
+        TemplateElement element = image
+            ? new TemplateImageElement(bounds, 0, new ArrayImageSource(2, 2, Enumerable.Repeat(new Rgb24(0, 0, 255), 4).ToArray()), ImageFitMode.Stretch, corners)
+            : new TemplateBoxElement(bounds, 0, new Rgb24(0, 0, 255), null, 0, 1, 0, null, corners);
+        var width = (int)Math.Ceiling(bounds.Width * 320);
+        var height = (int)Math.Ceiling(bounds.Height * 256);
+        var preview = preparer.RenderWarpedElementPreview(element, width, height);
+        var final = preparer.ApplyTemplate(new ArrayImageSource(320, 256, new Rgb24[320 * 256]), new TemplateDocument(null, [element]));
+
+        AssertBgraPixel(preview, width - 1, 0, 0, 0, 0, 0);
+        Assert.Contains(Enumerable.Range(0, width * height), i => preview.Pixels[(i * 4) + 3] > 0);
+        AssertAtLeastOneNonBackgroundPixelInsideBounds(final, bounds, (0, 0, 0));
+    }
+
+    [Fact]
     public void RenderWarpedElementPreview_Box_FillsTheQuadAndIsTransparentOutsideIt()
     {
         var preparer = new TransmitImagePreparer(FontPath);

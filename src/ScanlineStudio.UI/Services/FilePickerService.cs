@@ -6,16 +6,21 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Input.Platform;
 using Avalonia.Platform.Storage;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Localization;
+using ScanlineStudio.UI.ViewModels;
+using ScanlineStudio.UI.Views;
 
 namespace ScanlineStudio.UI.Services;
 
 public sealed partial class FilePickerService : IFilePickerService
 {
     private readonly ILogger<FilePickerService> _logger;
+    private readonly ILocalizationService _localization;
 
-    public FilePickerService(ILogger<FilePickerService> logger)
+    public FilePickerService(ILogger<FilePickerService> logger, ILocalizationService localization)
     {
         _logger = logger;
+        _localization = localization;
     }
 
     public async Task<string?> PickImageFileAsync()
@@ -208,7 +213,28 @@ public sealed partial class FilePickerService : IFilePickerService
             return null;
         }
 
-        return ResolveDestination(path, result.SelectedFileType);
+        return await ResolveConfirmedDestinationAsync(path, result.SelectedFileType, async destination =>
+        {
+            var dialog = new ConfirmActionDialogView
+            {
+                DataContext = new ConfirmActionDialogViewModel(
+                    _localization.GetString("FilePicker.OverwriteTitle"),
+                    _localization.GetString("FilePicker.OverwriteMessage", destination)),
+            };
+            return await dialog.ShowDialog<bool>(mainWindow);
+        });
+    }
+
+    public async Task<(string Path, ImageExportFormat Format)?> ResolveConfirmedDestinationAsync(
+        string pickedPath, FilePickerFileType? selectedType, Func<string, Task<bool>> confirmOverwrite)
+    {
+        var destination = ResolveDestination(pickedPath, selectedType);
+        if (!string.Equals(pickedPath, destination.Path, StringComparison.Ordinal) && File.Exists(destination.Path))
+        {
+            Log.ConfirmNormalizedOverwrite(_logger, destination.Path);
+            if (!await confirmOverwrite(destination.Path)) return null;
+        }
+        return destination;
     }
 
     public async Task<string?> PickSavePngFileAsync(string suggestedFileName)
@@ -415,6 +441,8 @@ public sealed partial class FilePickerService : IFilePickerService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Confirming image overwrite at normalized destination {Path}")]
+        public static partial void ConfirmNormalizedOverwrite(ILogger logger, string path);
         // [CallerMemberName] resolves to whichever Pick*Async method called this, NOT the
         // suppressed positional-argument name -- shared by all 3 pickers, so the log line no longer
         // hardcodes "PickImageFileAsync" for an ADIF-picker failure.
