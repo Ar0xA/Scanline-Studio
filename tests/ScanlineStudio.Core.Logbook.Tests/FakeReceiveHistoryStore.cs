@@ -66,15 +66,21 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     public Task<int> ReconcileWithDiskAsync(CancellationToken ct = default)
         => throw new NotSupportedException("Not exercised by ReceiveHistoryRecorderTests.");
 
-    public Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
+    public Func<ReceiveHistoryEntry, Task>? BeforeRecord { get; set; }
+
+    public async Task RecordAsync(ReceiveHistoryEntry entry, CancellationToken ct = default)
     {
+        if (BeforeRecord is { } beforeRecord)
+        {
+            await beforeRecord(entry);
+        }
+
         RecordedEntries.Add(entry);
         while (_waiters.TryDequeue(out var waiter))
         {
             waiter.TrySetResult(entry);
         }
 
-        return Task.CompletedTask;
     }
 
     /// <summary>Waits for the recorder's fire-and-forget background task to actually call

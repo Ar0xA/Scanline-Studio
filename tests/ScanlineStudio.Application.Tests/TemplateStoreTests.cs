@@ -15,6 +15,65 @@ public sealed class TemplateStoreTests : IDisposable
 
     private TemplateStore CreateStore() => new(_imageSourceWriter, _imageFileLoader, _preparer, NullLogger<TemplateStore>.Instance, _root);
 
+    [Fact]
+    public async Task SaveAsync_PartialManifestWriteFailurePreservesExistingTemplate()
+    {
+        var store = CreateStore();
+        var id = store.CreateTemplateId("Original");
+        await store.SaveAsync(id, "Original", new PersistedTemplateDocument([]));
+        var manifestPath = Path.Combine(_root, id, "template.json");
+        var original = await File.ReadAllBytesAsync(manifestPath);
+        var failingStore = new TemplateStore(_imageSourceWriter, _imageFileLoader, _preparer, NullLogger<TemplateStore>.Instance, _root)
+        {
+            WriteManifestFileAsync = async (path, json, ct) =>
+            {
+                await File.WriteAllTextAsync(path, json[..10], ct);
+                throw new IOException("Injected partial manifest write failure");
+            },
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => failingStore.SaveAsync(id, "Replacement", new PersistedTemplateDocument([])));
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(manifestPath));
+        Assert.Equal("Original", Assert.Single(await store.ListAsync()).Name);
+        Assert.Empty((await store.LoadAsync(id)).Elements);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, id), "*.tmp"));
+    }
+
+    [Fact]
+    public async Task SaveAsync_SuccessfullyOverwritesExistingManifest()
+    {
+        var store = CreateStore();
+        var id = store.CreateTemplateId("Original");
+        await store.SaveAsync(id, "Original", new PersistedTemplateDocument([]));
+        await store.SaveAsync(id, "Replacement", new PersistedTemplateDocument([]));
+        Assert.Equal("Replacement", Assert.Single(await store.ListAsync()).Name);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, id), "*.tmp"));
+    }
+
+    [Fact]
+    public async Task ExportAsync_SourceReadFailurePreservesExistingBundle()
+    {
+        var store = CreateStore();
+        var id = store.CreateTemplateId("Original");
+        await store.SaveAsync(id, "Original", new PersistedTemplateDocument([]));
+        var destination = Path.Combine(_root, "previous.sstemplate");
+        await store.ExportAsync(id, destination);
+        var original = await File.ReadAllBytesAsync(destination);
+        var assetPath = store.GetAssetPath(id, "locked.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+        await File.WriteAllTextAsync(assetPath, "asset bytes");
+        using (var locked = new FileStream(assetPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            await Assert.ThrowsAsync<IOException>(() => store.ExportAsync(id, destination));
+        }
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(destination));
+        using var archive = ZipFile.OpenRead(destination);
+        Assert.NotNull(archive.GetEntry("template.json"));
+        Assert.Empty(Directory.EnumerateFiles(_root, "*.tmp"));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_root))
@@ -581,6 +640,7 @@ public sealed class TemplateStoreTests : IDisposable
         await store.SaveAsync(originalId, "Field Day Card", new PersistedTemplateDocument(elements));
 
         var zipPath = Path.Combine(_root, "export.sstemplate");
+        await File.WriteAllTextAsync(zipPath, "Previous bundle");
         await store.ExportAsync(originalId, zipPath);
 
         var importedId = await store.ImportAsync(zipPath);

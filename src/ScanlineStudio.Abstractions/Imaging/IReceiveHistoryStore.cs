@@ -283,7 +283,8 @@ public interface IReceiveHistoryStore
     /// existing file) is logged and otherwise swallowed,
     /// deliberately: the row still gets removed regardless, since the primary contract this method
     /// promises is "this entry disappears from the Gallery," not "and disk space is reclaimed,
-    /// guaranteed." Returns <see langword="false"/> (not an exception) if the row no longer existed
+    /// guaranteed." Deletion intent persists so disk reconciliation or a delayed recorder write
+    /// cannot restore an image whose disk cleanup failed. Returns <see langword="false"/> (not an exception) if the row no longer existed
     /// -- same defensive contract as <see cref="SetNoteAsync"/> -- and does NOT raise
     /// <see cref="Deleted"/> in that case.</summary>
     Task<bool> DeleteAsync(ReceiveHistoryEntry entry, CancellationToken ct = default);

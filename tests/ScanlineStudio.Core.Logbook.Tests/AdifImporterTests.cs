@@ -5,6 +5,51 @@ namespace ScanlineStudio.Core.Logbook.Tests;
 
 public sealed class AdifImporterTests
 {
+    [Theory]
+    [InlineData("<EOH>")]
+    [InlineData("é<eOh><EOR>")]
+    public void Import_HeaderlessCommentTreatsDelimitersAsData(string comment)
+    {
+        var length = System.Text.Encoding.UTF8.GetByteCount(comment);
+        var adif = $"<CALL:5>PA0AA<QSO_DATE:8>20260907<TIME_ON:4>1200<COMMENT:{length}:S>{comment}<EOR>";
+        var record = Assert.Single(new AdifImporter().Import(new StringReader(adif)));
+        Assert.Equal("PA0AA", record.Callsign);
+        Assert.Equal(comment, record.Notes);
+    }
+
+    [Fact]
+    public void Import_HeaderFieldSkipsLiteralDelimitersUntilRealHeaderEnd()
+    {
+        const string value = "é<EOH><EOR><CALL:3>BAD";
+        var length = System.Text.Encoding.UTF8.GetByteCount(value);
+        var adif = $"Header<USERDEF:{length}:S>{value}<eOh><CALL:5>PA0AA<QSO_DATE:8>20260907<TIME_ON:4>1200<EOR>";
+        Assert.Equal("PA0AA", Assert.Single(new AdifImporter().Import(new StringReader(adif))).Callsign);
+    }
+
+    [Fact]
+    public void Import_HeaderlessRecordBeforeStrayHeaderEndIsRetained()
+    {
+        const string record = "<CALL:5>PA0AA<QSO_DATE:8>20260907<TIME_ON:4>1200<EOR>";
+        Assert.Equal(2, new AdifImporter().Import(new StringReader(record + "<EOH>" + record)).Count);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("no-length")]
+    [InlineData("2147483648")]
+    public void Import_HeaderScanMatchesMalformedAndZeroLengthRecordRules(string length)
+    {
+        var adif = $"<COMMENT:{length}><CALL:5>PA0AA<QSO_DATE:8>20260907<TIME_ON:4>1200<EOR>";
+        Assert.Equal("PA0AA", Assert.Single(new AdifImporter().Import(new StringReader(adif))).Callsign);
+    }
+
+    [Fact]
+    public void Import_TruncatedHeaderValueDoesNotFindEmbeddedHeaderEnd()
+    {
+        Assert.Empty(new AdifImporter().Import(new StringReader("<COMMENT:2147483647><EOH><CALL:5>PA0AA<EOR>")));
+    }
+
     [Fact]
     public void Export_ThenImport_RoundTripsTheRecord()
     {

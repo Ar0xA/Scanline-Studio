@@ -40,8 +40,8 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived)
-            VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived)
+            INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived, StartUtcTicks)
+            VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived, $startUtcTicks)
             """;
         BindParameters(command, record);
 
@@ -69,6 +69,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
             UPDATE Qso SET
                 Callsign = $callsign,
                 StartUtc = $startUtc,
+                StartUtcTicks = $startUtcTicks,
                 EndUtc = $endUtc,
                 FrequencyHz = $frequencyHz,
                 Mode = $mode,
@@ -119,17 +120,17 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         if (query.From is not null)
         {
-            command.CommandText += " AND StartUtc >= $from";
-            command.Parameters.AddWithValue("$from", query.From.Value.ToString("O"));
+            command.CommandText += " AND StartUtcTicks >= $from";
+            command.Parameters.AddWithValue("$from", query.From.Value.UtcTicks);
         }
 
         if (query.To is not null)
         {
-            command.CommandText += " AND StartUtc <= $to";
-            command.Parameters.AddWithValue("$to", query.To.Value.ToString("O"));
+            command.CommandText += " AND StartUtcTicks <= $to";
+            command.Parameters.AddWithValue("$to", query.To.Value.UtcTicks);
         }
 
-        command.CommandText += " ORDER BY StartUtc DESC";
+        command.CommandText += " ORDER BY StartUtcTicks DESC";
 
         var results = new List<QsoRecord>();
         await using var reader = await command.ExecuteReaderAsync(ct).ConfigureAwait(false);
@@ -224,6 +225,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         command.Parameters.AddWithValue("$id", record.Id);
         command.Parameters.AddWithValue("$callsign", record.Callsign);
         command.Parameters.AddWithValue("$startUtc", record.StartUtc.ToString("O"));
+        command.Parameters.AddWithValue("$startUtcTicks", record.StartUtc.UtcTicks);
         command.Parameters.AddWithValue("$endUtc", (object?)record.EndUtc?.ToString("O") ?? DBNull.Value);
         command.Parameters.AddWithValue("$frequencyHz", (object?)record.FrequencyHz ?? DBNull.Value);
         command.Parameters.AddWithValue("$mode", (object?)record.Mode?.ToString() ?? DBNull.Value);
@@ -309,6 +311,16 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
             ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN QslReceived INTEGER NOT NULL DEFAULT 0");
         }
 
+        if (!existingColumns.Contains("StartUtcTicks"))
+        {
+            // Keep the original offset for round trips, and index the instant at full .NET
+            // precision. SQLite date functions would discard sub-millisecond ticks.
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE Qso ADD COLUMN StartUtcTicks INTEGER NOT NULL DEFAULT 0");
+            connection.CreateFunction<string, long>("qso_utc_ticks", value =>
+                DateTimeOffset.Parse(value, System.Globalization.CultureInfo.InvariantCulture).UtcTicks);
+            ExecuteNonQuery(connection, transaction, "UPDATE Qso SET StartUtcTicks = qso_utc_ticks(StartUtc)");
+        }
+
         // Every logbook view query sorts/filters by StartUtc or Callsign; without these, each is a
         // full table scan (T0-9). CREATE INDEX IF NOT EXISTS is idempotent, so this runs
         // unconditionally on every startup rather than needing its own existingColumns-style probe.
@@ -316,10 +328,14 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         // table's indexes (SqliteReceiveHistoryStore.EnsureSchema), and SQLite's index namespace is
         // per-database, not per-table -- an accidental name collision would silently no-op under
         // IF NOT EXISTS with no error and no test failure.
-        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_StartUtc ON Qso(StartUtc)");
+        ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_StartUtcTicks ON Qso(StartUtcTicks)");
         ExecuteNonQuery(connection, transaction, "CREATE INDEX IF NOT EXISTS IX_Qso_Callsign_NoCase ON Qso(Callsign COLLATE NOCASE)");
 
         transaction.Commit();
+        if (!existingColumns.Contains("StartUtcTicks"))
+        {
+            Log.TimestampIndexMigrated(_logger);
+        }
     }
 
     private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
@@ -334,6 +350,9 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Logbook UTC timestamp index migrated")]
+        public static partial void TimestampIndexMigrated(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO logged: {Id} ({Callsign})")]
         public static partial void QsoAdded(ILogger logger, string id, string callsign);
 

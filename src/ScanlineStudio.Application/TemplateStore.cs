@@ -30,6 +30,10 @@ public sealed partial class TemplateStore : ITemplateStore
     private readonly ILogger<TemplateStore> _logger;
     private readonly string? _templatesRootOverride;
 
+    // Injectable only inside the assembly so failure tests can stop a write after real bytes
+    // reach the staging file. Production always uses the standard asynchronous file writer.
+    internal Func<string, string, CancellationToken, Task> WriteManifestFileAsync { get; init; } = File.WriteAllTextAsync;
+
     public TemplateStore(IImageSourceWriter imageSourceWriter, IImageFileLoader imageFileLoader, ITransmitImagePreparer preparer, ILogger<TemplateStore> logger)
         : this(imageSourceWriter, imageFileLoader, preparer, logger, templatesRootOverride: null)
     {
@@ -101,7 +105,19 @@ public sealed partial class TemplateStore : ITemplateStore
         // rather than rely on a default that no longer means "current."
         var manifest = new TemplateManifest(templateId, name, DateTimeOffset.Now, document.Elements, TemplateManifest.CurrentSchemaVersion);
         var json = JsonSerializer.Serialize(manifest, PersistedTemplateJsonContext.Default.TemplateManifest);
-        await File.WriteAllTextAsync(Path.Combine(directory, "template.json"), json, ct).ConfigureAwait(false);
+        var manifestPath = Path.Combine(directory, "template.json");
+        var temporaryPath = manifestPath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await WriteManifestFileAsync(temporaryPath, json, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, manifestPath, overwrite: true);
+            Log.TemplateSaved(_logger, templateId);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporaryPath);
+        }
     }
 
     public async Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default)
@@ -148,8 +164,8 @@ public sealed partial class TemplateStore : ITemplateStore
             }
 
             // Round-1 code-review finding (Tier A Batch 10 chunk 10b, real robustness gap fixed):
-            // File.WriteAllTextAsync in SaveAsync is not atomic (no temp-file-then-rename), so a
-            // crash/power-loss mid-save can leave a truncated/corrupt template.json -- a
+            // Older builds wrote manifests directly, so a crash mid-save could leave a
+            // truncated/corrupt template.json -- a
             // JsonException here previously killed the ENTIRE rack listing (every other template's
             // manifest too), not just this one, for a store whose whole design explicitly supports
             // hand-copying/moving folders around (real-world corruption risk, not theoretical). Skip
@@ -229,28 +245,50 @@ public sealed partial class TemplateStore : ITemplateStore
             throw new InvalidOperationException($"Template '{templateId}' does not exist.");
         }
 
-        // Checked BEFORE opening destinationZipPath (auditor finding): FileMode.Create truncates an
-        // existing file at that path immediately, so failing later (e.g. the manifest read below)
-        // would otherwise leave a 0-byte .sstemplate behind at a path the user may have chosen to
-        // overwrite a real, different file.
-        await using var zipStream = new FileStream(destinationZipPath, FileMode.Create, FileAccess.Write);
-        using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create);
-
-        await AddFileEntryAsync(archive, manifestPath, "template.json", ct).ConfigureAwait(false);
-
-        var thumbnailPath = Path.Combine(directory, "thumbnail.png");
-        if (File.Exists(thumbnailPath))
+        var temporaryPath = destinationZipPath + $".{Guid.NewGuid():N}.tmp";
+        try
         {
-            await AddFileEntryAsync(archive, thumbnailPath, "thumbnail.png", ct).ConfigureAwait(false);
-        }
-
-        var assetsDirectory = Path.Combine(directory, "assets");
-        if (Directory.Exists(assetsDirectory))
-        {
-            foreach (var assetPath in Directory.EnumerateFiles(assetsDirectory))
+            // Finish the central directory and close the file before publishing the ZIP.
+            await using (var zipStream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write))
             {
-                await AddFileEntryAsync(archive, assetPath, $"assets/{Path.GetFileName(assetPath)}", ct).ConfigureAwait(false);
+                using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create, leaveOpen: true);
+                await AddFileEntryAsync(archive, manifestPath, "template.json", ct).ConfigureAwait(false);
+
+                var thumbnailPath = Path.Combine(directory, "thumbnail.png");
+                if (File.Exists(thumbnailPath))
+                {
+                    await AddFileEntryAsync(archive, thumbnailPath, "thumbnail.png", ct).ConfigureAwait(false);
+                }
+
+                var assetsDirectory = Path.Combine(directory, "assets");
+                if (Directory.Exists(assetsDirectory))
+                {
+                    foreach (var assetPath in Directory.EnumerateFiles(assetsDirectory))
+                    {
+                        await AddFileEntryAsync(archive, assetPath, $"assets/{Path.GetFileName(assetPath)}", ct).ConfigureAwait(false);
+                    }
+                }
             }
+
+            ct.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, destinationZipPath, overwrite: true);
+            Log.TemplateExported(_logger, templateId, destinationZipPath);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporaryPath);
+        }
+    }
+
+    private void DeleteTemporaryFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.TemporaryFileCleanupFailed(_logger, path, ex);
         }
     }
 
@@ -655,6 +693,15 @@ public sealed partial class TemplateStore : ITemplateStore
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Information, Message = "Template {TemplateId} saved")]
+        public static partial void TemplateSaved(ILogger logger, string templateId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Template {TemplateId} exported to {Path}")]
+        public static partial void TemplateExported(ILogger logger, string templateId, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to remove temporary template file {Path}")]
+        public static partial void TemporaryFileCleanupFailed(ILogger logger, string path, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "Template manifest at '{ManifestPath}' is corrupt or truncated; skipping this template, the rest of the rack listing is unaffected")]
         public static partial void CorruptManifestSkipped(ILogger logger, string manifestPath, Exception ex);
 

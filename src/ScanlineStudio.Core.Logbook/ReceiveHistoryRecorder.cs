@@ -39,7 +39,7 @@ namespace ScanlineStudio.Core.Logbook;
 /// a lock: every event this class subscribes to fires synchronously from within
 /// <c>RestartableSstvDecoder.PushSamples</c>' own CAS-guarded, single-caller-at-a-time section, so
 /// this class is never touched by two threads at once.</summary>
-public sealed partial class ReceiveHistoryRecorder
+public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
 {
     // Notify-only -- this class never calls SaveAsync or reads Current on it (see
     // RecordCompletedImageAsync's own doc comment for why: an async read of Current races
@@ -52,6 +52,16 @@ public sealed partial class ReceiveHistoryRecorder
     private readonly ISettingsStore _settingsStore;
     private readonly IRadioStateProvider _radioState;
     private readonly ILogger<ReceiveHistoryRecorder> _logger;
+
+    private readonly object _saveLifecycleGate = new();
+    private readonly HashSet<Task> _pendingSaves = [];
+    private readonly TaskCompletionSource _handlersStopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private bool _stopping;
+    private int _activeHandlers;
+    private int _failedSaves;
+    private Task<bool>? _drainTask;
+
+    internal Func<string, Task>? BeforeImagePublicationForTests { get; init; }
 
     private SstvModeDefinition? _currentMode;
     private int? _previousLine;
@@ -125,6 +135,23 @@ public sealed partial class ReceiveHistoryRecorder
 
     private void OnModeDetected(SstvModeDefinition mode)
     {
+        if (!TryEnterHandler())
+        {
+            return;
+        }
+
+        try
+        {
+            OnModeDetectedCore(mode);
+        }
+        finally
+        {
+            ExitHandler();
+        }
+    }
+
+    private void OnModeDetectedCore(SstvModeDefinition mode)
+    {
         // Stash whatever's about to be overwritten, in case a DecodeRestarted for THIS
         // soon-to-be-abandoned image arrives AFTER this reset rather than before it -- see
         // OnDecodeRestarted's own doc comment for which ISstvDecoder event orderings need this.
@@ -172,6 +199,153 @@ public sealed partial class ReceiveHistoryRecorder
         _currentReceptionId = _decoder.ReceptionSequence;
     }
 
+    private bool TryEnterHandler()
+    {
+        lock (_saveLifecycleGate)
+        {
+            if (_stopping)
+            {
+                return false;
+            }
+
+            _activeHandlers++;
+            return true;
+        }
+    }
+
+    private void ExitHandler()
+    {
+        bool handlersStopped;
+        lock (_saveLifecycleGate)
+        {
+            _activeHandlers--;
+            handlersStopped = _stopping && _activeHandlers == 0;
+        }
+
+        if (handlersStopped)
+        {
+            _handlersStopped.TrySetResult();
+        }
+    }
+
+    private void QueueSave(Func<Task> save, string modeId, bool abandoned)
+    {
+        Task task;
+        lock (_saveLifecycleGate)
+        {
+            // An already admitted handler may register after drain starts. Drain waits for
+            // all admitted handlers before taking its final snapshot of pending work.
+            task = Task.Run(async () =>
+            {
+                try
+                {
+                    await save().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref _failedSaves);
+                    if (abandoned)
+                    {
+                        Log.RecordAbandonedImageFailed(_logger, modeId, ex);
+                    }
+                    else
+                    {
+                        Log.RecordCompletedImageFailed(_logger, modeId, ex);
+                    }
+                }
+            });
+            _pendingSaves.Add(task);
+        }
+
+        _ = task.ContinueWith(completed =>
+        {
+            _ = completed.Exception;
+            lock (_saveLifecycleGate)
+            {
+                _pendingSaves.Remove(completed);
+            }
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>Stops admitting decoder notifications and waits for all admitted image/history
+    /// writes, with a separate default 30-second shutdown budget. False means a save failed or
+    /// the budget expired; crash, storage failure and an expired drain cannot guarantee persistence.
+    /// Repeated calls share the same drain, including after timeout.</summary>
+    public Task<bool> DrainAsync(TimeSpan? timeout = null)
+    {
+        Task<bool> drain;
+        bool handlersStopped;
+        lock (_saveLifecycleGate)
+        {
+            if (_drainTask is not null)
+            {
+                return _drainTask;
+            }
+
+            _stopping = true;
+            handlersStopped = _activeHandlers == 0;
+            drain = _drainTask = Task.Run(() => DrainCoreAsync(timeout ?? TimeSpan.FromSeconds(30)));
+        }
+
+        if (handlersStopped)
+        {
+            _handlersStopped.TrySetResult();
+        }
+
+        return drain;
+    }
+
+    public ValueTask DisposeAsync() => new(DrainAsync());
+
+    private async Task<bool> DrainCoreAsync(TimeSpan timeout)
+    {
+        _decoder.ModeDetected -= OnModeDetected;
+        _decoder.LineDecoded -= OnLineDecoded;
+        _decoder.DecodeRestarted -= OnDecodeRestarted;
+        var saveWork = WaitForSavesAsync();
+        try
+        {
+            await saveWork.WaitAsync(timeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = saveWork.ContinueWith(completed => { _ = completed.Exception; },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+            int pending;
+            int active;
+            lock (_saveLifecycleGate)
+            {
+                pending = _pendingSaves.Count;
+                active = _activeHandlers;
+            }
+
+            Log.ImageDrainTimedOut(_logger, timeout, pending, active);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log.ImageDrainFailed(_logger, ex);
+            return false;
+        }
+
+        var failures = Volatile.Read(ref _failedSaves);
+        Log.ImageDrainCompleted(_logger, failures);
+        return failures == 0;
+    }
+
+    private async Task WaitForSavesAsync()
+    {
+        await _handlersStopped.Task.ConfigureAwait(false);
+        Task[] pending;
+        lock (_saveLifecycleGate)
+        {
+            pending = _pendingSaves.ToArray();
+        }
+
+        await Task.WhenAll(pending).ConfigureAwait(false);
+    }
+
     // Port of legacy's m_ReqSave (sstv.cpp:2134-2137, consumed at Main.cpp:4931-4934's DrawSSTV/
     // WriteHistory): saves the abandoned image if it was >=65% through its own extent when
     // superseded. Legacy's threshold is sample-position-based (m_rBase/m_LM, both confirmed sample
@@ -203,6 +377,23 @@ public sealed partial class ReceiveHistoryRecorder
     // recorded. `_pendingAbandonRecorded` (see its own field doc comment) is what lets "is there
     // something to save" stay a SEPARATE question from "which branch am I in" here.
     private void OnDecodeRestarted(SstvModeDefinition abandonedMode)
+    {
+        if (!TryEnterHandler())
+        {
+            return;
+        }
+
+        try
+        {
+            OnDecodeRestartedCore(abandonedMode);
+        }
+        finally
+        {
+            ExitHandler();
+        }
+    }
+
+    private void OnDecodeRestartedCore(SstvModeDefinition abandonedMode)
     {
         PixelSnapshot? candidateImage = null;
         int? candidateLine = null;
@@ -295,21 +486,28 @@ public sealed partial class ReceiveHistoryRecorder
         // already selected by the correct branch-specific discriminator, never re-read live.
         var receptionId = candidateReceptionId;
 
-        // Fire-and-forget, isolated -- same reasoning as OnLineDecoded's own completed-image save.
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await RecordAbandonedImageAsync(modeId, snapshot, radioState, receptionId).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Log.RecordAbandonedImageFailed(_logger, modeId, ex);
-            }
-        });
+        // Scheduled off the decoder callback, and owned through PNG + history completion.
+        QueueSave(() => RecordAbandonedImageAsync(modeId, snapshot, radioState, receptionId), modeId, abandoned: true);
     }
 
     private void OnLineDecoded(DecodedImageUpdate update)
+    {
+        if (!TryEnterHandler())
+        {
+            return;
+        }
+
+        try
+        {
+            OnLineDecodedCore(update);
+        }
+        finally
+        {
+            ExitHandler();
+        }
+    }
+
+    private void OnLineDecodedCore(DecodedImageUpdate update)
     {
         // Defensive: a decoded line for the CURRENT image proves any minority-ordering
         // DecodeRestarted for whatever was stashed before it has already arrived and been consumed
@@ -394,21 +592,7 @@ public sealed partial class ReceiveHistoryRecorder
         // Fire-and-forget, isolated -- must not block the caller (the audio drain thread, same
         // threading contract as SstvSessionService's own _decoderHandler/_waterfallHandler; disk +
         // SQLite I/O here would otherwise stall live decoding).
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await RecordCompletedImageAsync(modeId, snapshot, generation, radioState, receptionId).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                // Not rethrown -- same reasoning as SstvSessionService's fan-out handlers: a failed
-                // history save must never surface into/interrupt the live decode path. Now logged
-                // (previously fully silent) -- this is exactly the "it didn't record my image" bug
-                // class a user would otherwise have no way to diagnose.
-                Log.RecordCompletedImageFailed(_logger, modeId, ex);
-            }
-        });
+        QueueSave(() => RecordCompletedImageAsync(modeId, snapshot, generation, radioState, receptionId), modeId, abandoned: false);
     }
 
     private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation, RadioState? radioState, long receptionId)
@@ -498,7 +682,7 @@ public sealed partial class ReceiveHistoryRecorder
     // Same ImageSharp technique ReceivedImageBuffer.SaveAsync uses -- duplicated deliberately, not
     // shared, since that method reads IReceivedImageBuffer.Current (which this method must NOT do,
     // see RecordAbandonedImageAsync's own doc comment) rather than taking pixels as a parameter.
-    private static Task SaveSnapshotAsync(PixelSnapshot snapshot, string filePath) => Task.Run(() =>
+    private Task SaveSnapshotAsync(PixelSnapshot snapshot, string filePath) => Task.Run(async () =>
     {
         using var image = new SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(snapshot.Width, snapshot.Height);
         image.ProcessPixelRows(accessor =>
@@ -514,7 +698,29 @@ public sealed partial class ReceiveHistoryRecorder
                 }
             }
         });
-        image.Save(filePath);
+        var temporaryPath = filePath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            image.SaveAsPng(temporaryPath);
+            if (BeforeImagePublicationForTests is { } beforePublish)
+            {
+                await beforePublish(temporaryPath).ConfigureAwait(false);
+            }
+
+            // Publish only the complete, closed PNG, using a rename in the same directory.
+            File.Move(temporaryPath, filePath);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.TemporaryImageCleanupFailed(_logger, temporaryPath, ex);
+            }
+        }
     });
 
     // T0-10: copies ALL of source's rows into _scratch, every call -- not just the reported
@@ -576,6 +782,18 @@ public sealed partial class ReceiveHistoryRecorder
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to remove temporary RX image {Path}")]
+        public static partial void TemporaryImageCleanupFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "RX image drain timed out after {Timeout}: {Pending} saves and {Active} callbacks remain")]
+        public static partial void ImageDrainTimedOut(ILogger logger, TimeSpan timeout, int pending, int active);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "RX image drain failed")]
+        public static partial void ImageDrainFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "RX image drain completed; {Failures} saves failed during this session")]
+        public static partial void ImageDrainCompleted(ILogger logger, int failures);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to save completed RX image (mode={ModeId})")]
         public static partial void RecordCompletedImageFailed(ILogger logger, string modeId, Exception ex);
 

@@ -16,11 +16,12 @@ public sealed class LogbookSessionServiceTests
         FakeQrzLogbookUploader? qrzUploader = null,
         FakeQrzCallsignLookup? qrzLookup = null,
         FakeSettingsStore? settingsStore = null,
-        FakeReceiveHistoryStoreForLogbook? receiveHistoryStore = null)
+        FakeReceiveHistoryStoreForLogbook? receiveHistoryStore = null,
+        IAdifExporter? adifExporter = null)
     {
         return new LogbookSessionService(
             repository ?? new FakeLogbookRepository(),
-            new AdifExporter(),
+            adifExporter ?? new AdifExporter(),
             new AdifImporter(),
             adifUdpStreamer ?? new FakeAdifUdpStreamer(),
             qrzUploader ?? new FakeQrzLogbookUploader(),
@@ -28,6 +29,82 @@ public sealed class LogbookSessionServiceTests
             settingsStore ?? new FakeSettingsStore(),
             receiveHistoryStore ?? new FakeReceiveHistoryStoreForLogbook(),
             NullLogger<LogbookSessionService>.Instance);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExportAdifFileAsync_FailureAfterWritingPreservesPreviousExport(bool cancel)
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"scanline-adif-atomic-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "previous.adi");
+            await File.WriteAllTextAsync(path, "Previous good export");
+            using var cancellation = new CancellationTokenSource();
+            var service = CreateService(adifExporter: new CallbackAdifExporter(writer =>
+            {
+                writer.Write("Partial replacement export");
+                writer.Flush();
+                if (cancel)
+                {
+                    cancellation.Cancel();
+                }
+                else
+                {
+                    throw new IOException("Injected failure after flushing partial export");
+                }
+            }));
+
+            if (cancel)
+            {
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ExportAdifFileAsync(path, new LogbookQuery(), cancellation.Token));
+            }
+            else
+            {
+                await Assert.ThrowsAsync<IOException>(() => service.ExportAdifFileAsync(path, new LogbookQuery()));
+            }
+
+            Assert.Equal("Previous good export", await File.ReadAllTextAsync(path));
+            Assert.Equal([path], Directory.GetFiles(directory));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class CallbackAdifExporter(Action<TextWriter> write) : IAdifExporter
+    {
+        public void Export(IEnumerable<QsoRecord> records, TextWriter writer, string? stationCallsign = null) => write(writer);
+    }
+
+    [Fact]
+    public async Task ExportAdifFileAsync_WriterDisposalFailurePreservesPreviousExport()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"scanline-adif-disposal-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var path = Path.Combine(directory, "previous.adi");
+            await File.WriteAllTextAsync(path, "Previous good export");
+            var service = CreateService(adifExporter: new CallbackAdifExporter(writer =>
+            {
+                writer.Write("Buffered export awaiting final flush");
+                // Disposal must flush this buffered text into a stream that now rejects writes.
+                Assert.IsType<StreamWriter>(writer).BaseStream.Dispose();
+            }));
+
+            await Assert.ThrowsAsync<ObjectDisposedException>(() => service.ExportAdifFileAsync(path, new LogbookQuery()));
+
+            Assert.Equal("Previous good export", await File.ReadAllTextAsync(path));
+            Assert.Equal([path], Directory.GetFiles(directory));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     [Fact]
@@ -242,9 +319,11 @@ public sealed class LogbookSessionServiceTests
 
         try
         {
+            await File.WriteAllTextAsync(path, "Previous export");
             await service.ExportAdifFileAsync(path, new LogbookQuery());
             var content = await File.ReadAllTextAsync(path);
 
+            Assert.DoesNotContain("Previous export", content);
             Assert.Contains("<EOH>", content);
             Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(content, "<EOR>").Count);
         }
