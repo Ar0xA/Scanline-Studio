@@ -370,6 +370,15 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     public double TopPixels => (Y - (Height / 2)) * ImageHeight;
 
+    [ObservableProperty]
+    private ElementPreviewMetrics? _previewMetrics;
+
+    private double StyleImageHeight => PreviewMetrics?.ImageHeight ?? ImageHeight;
+
+    private double HorizontalStyleImageHeight => PreviewMetrics is { } metrics
+        ? metrics.ImageHeight * metrics.PixelSize.Width / metrics.PixelSize.Height
+        : ImageHeight;
+
     public double CanvasWidthPixels => Width * ImageWidth;
 
     public double CanvasHeightPixels => Height * ImageHeight;
@@ -491,7 +500,7 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// -- the shadow TextBlock is ALSO <c>IsVisible</c>-gated on <see cref="HasShadow"/>, so this only
     /// matters while it's actually shown.</summary>
     public Transform? ShadowRenderTransform => HasShadow
-        ? new TranslateTransform(ShadowOffsetX * ImageHeight, ShadowOffsetY * ImageHeight)
+        ? new TranslateTransform(ShadowOffsetX * HorizontalStyleImageHeight, ShadowOffsetY * StyleImageHeight)
         : null;
 
     /// <summary>Canvas-preview amendment, stack half -- auditor usability review follow-up
@@ -508,9 +517,9 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <see cref="ImageHeight"/> itself is in), not the raw relative <see cref="StackStepX"/>/Y --
     /// Avalonia bindings have no arithmetic syntax, so the multiply-by-ImageHeight has to happen
     /// here, not in the binding expression.</summary>
-    public double CanvasStackStepXPixels => HasStack ? StackStepX * ImageHeight : 0;
+    public double CanvasStackStepXPixels => HasStack ? StackStepX * HorizontalStyleImageHeight : 0;
 
-    public double CanvasStackStepYPixels => HasStack ? StackStepY * ImageHeight : 0;
+    public double CanvasStackStepYPixels => HasStack ? StackStepY * StyleImageHeight : 0;
 
     /// <summary>Canvas-preview amendment, gradient half -- the main TextBlock's own
     /// <c>Foreground</c>: a plain solid brush from <see cref="Color"/> (identical to the pre-Phase-8
@@ -524,7 +533,7 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     public IBrush ForegroundBrush => BitmapFillEnabled && CanvasBitmapFill is { } bitmapFill
         ? new Avalonia.Media.ImageBrush(bitmapFill) { Stretch = Stretch.Fill }
         : GradientEnabled
-            ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
+            ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor, CanvasWidthPixels, CanvasHeightPixels, PreviewMetrics)
             : new SolidColorBrush(ToAvaloniaColor(Color));
 
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
@@ -547,6 +556,44 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <see cref="ResolvedText"/> itself is filtered out of
     /// <c>TxImageEditorPaneViewModel.OnOverlayElementPropertyChanged</c>'s own recompute trigger).</summary>
     public void NotifyResolvedTextChanged() => OnPropertyChanged(nameof(ResolvedText));
+
+    partial void OnTextChanging(string value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnFontFamilyChanging(string value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnBoldChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnItalicChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnStrokeColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnStrokeThicknessChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnShadowColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnShadowOffsetXChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnShadowOffsetYChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnStackColorChanging(Rgb24? value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnStackStepXChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnStackStepYChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnRotationDegreesChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientEnabledChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientKindChanging(TextGradientKind value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientStartColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnGradientEndColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnBitmapFillEnabledChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnBitmapFillSourceChanging(IImageSource? value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     partial void OnFontSizeRelativeChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
 
@@ -572,24 +619,36 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     {
         OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(ForegroundBrush));
     }
 
     partial void OnHeightChanged(double value)
     {
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
+        OnPropertyChanged(nameof(ForegroundBrush));
+    }
+
+    partial void OnPreviewMetricsChanged(ElementPreviewMetrics? value)
+    {
+        OnPropertyChanged(nameof(ShadowRenderTransform));
+        OnPropertyChanged(nameof(CanvasStackStepXPixels));
+        OnPropertyChanged(nameof(CanvasStackStepYPixels));
+        OnPropertyChanged(nameof(ForegroundBrush));
     }
 
     partial void OnImageWidthChanged(double value)
     {
         OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(ForegroundBrush));
     }
 
     partial void OnImageHeightChanged(double value)
     {
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
+        OnPropertyChanged(nameof(ForegroundBrush));
         // Canvas-preview amendment: ShadowRenderTransform's own offset scales off ImageHeight too.
         OnPropertyChanged(nameof(ShadowRenderTransform));
         OnPropertyChanged(nameof(CanvasStackStepXPixels));

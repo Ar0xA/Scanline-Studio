@@ -926,6 +926,8 @@
                                                                FontWeight="{Binding CanvasFontWeight}"
                                                                FontStyle="{Binding CanvasFontStyle}"
                                                                Fill="{Binding ForegroundBrush}"
+                                                               FillWidth="{Binding CanvasWidthPixels}"
+                                                               FillHeight="{Binding CanvasHeightPixels}"
                                                                Stroke="{Binding StrokeColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"
                                                                StrokeThickness="{Binding CanvasStrokeThicknessPixels}"
                                                                StackFill="{Binding StackColor, Converter={x:Static conv:Rgb24ToBrushConverter.Instance}}"

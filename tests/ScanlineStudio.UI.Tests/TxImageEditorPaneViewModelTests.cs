@@ -7403,7 +7403,6 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddOverlayElementCommand.Execute(null);
         var element = (OverlayElementViewModel)vm.OverlayElements[0];
 
-        vm.PushUndoSnapshotForDragGesture(); // discrete step boundary, mirrors other style-property tests' own shape
         element.FontFamily = "Barlow";
         element.StrokeColor = new Rgb24(1, 2, 3);
         element.StrokeThickness = 0.07;
@@ -7418,6 +7417,97 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal("Barlow", restoredAfterRedo.FontFamily);
         Assert.Equal(new Rgb24(1, 2, 3), restoredAfterRedo.StrokeColor);
         AssertClose(0.07, restoredAfterRedo.StrokeThickness);
+    }
+
+    [AvaloniaFact]
+    public void TextStyle_BoldPropertyCreatesUndoStepAndNewTextInvalidatesRedo()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+
+        element.Bold = true;
+        vm.UndoCommand.Execute(null);
+
+        var restored = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.False(restored.Bold);
+        Assert.True(vm.RedoCommand.CanExecute(null));
+        restored.Text = "new text after undo";
+        Assert.False(vm.RedoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+        Assert.NotEqual("new text after undo", Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements)).Text);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("Text", "changed")]
+    [InlineData("FontFamily", "Barlow")]
+    [InlineData("Italic", true)]
+    [InlineData("StrokeThickness", .07)]
+    [InlineData("ShadowOffsetX", .07)]
+    [InlineData("ShadowOffsetY", .07)]
+    [InlineData("StackStepX", .07)]
+    [InlineData("StackStepY", .07)]
+    [InlineData("RotationDegrees", 20.0)]
+    [InlineData("GradientEnabled", true)]
+    [InlineData("BitmapFillEnabled", true)]
+    public void TextStyle_DirectPropertyBinding_CapturesUndo(string propertyName, object value)
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        var property = typeof(OverlayElementViewModel).GetProperty(propertyName)!;
+        var original = property.GetValue(element);
+        property.SetValue(element, value);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.Equal(original, property.GetValue(Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements))));
+        vm.RedoCommand.Execute(null);
+        Assert.Equal(value, property.GetValue(Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements))));
+    }
+
+    [AvaloniaFact]
+    public void TextStyle_ColorGradientAndBitmapProperties_CaptureUndo()
+    {
+        foreach (var name in new[] { "StrokeColor", "ShadowColor", "StackColor", "GradientStartColor", "GradientEndColor", "GradientKind", "BitmapFillSource" })
+        {
+            using var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+            vm.AddOverlayElementCommand.Execute(null);
+            var element = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+            var property = typeof(OverlayElementViewModel).GetProperty(name)!;
+            var original = property.GetValue(element);
+            object value = name switch
+            {
+                "GradientKind" => TextGradientKind.Radial,
+                "BitmapFillSource" => CreateSource(4, 4),
+                _ => new Rgb24(1, 2, 3),
+            };
+            property.SetValue(element, value);
+
+            vm.UndoCommand.Execute(null);
+
+            Assert.Equal(original, property.GetValue(Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements))));
+            vm.RedoCommand.Execute(null);
+            Assert.Equal(value, property.GetValue(Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements))));
+        }
+    }
+
+    [AvaloniaFact]
+    public void TextStyle_BitmapDisablesGradient_OneUndoRestoresBoth()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        element.GradientEnabled = true;
+        Dispatcher.UIThread.RunJobs();
+        element.BitmapFillEnabled = true;
+        Assert.False(element.GradientEnabled);
+
+        vm.UndoCommand.Execute(null);
+
+        var restored = Assert.IsType<OverlayElementViewModel>(Assert.Single(vm.OverlayElements));
+        Assert.True(restored.GradientEnabled);
+        Assert.False(restored.BitmapFillEnabled);
     }
 
     [AvaloniaFact]
@@ -7854,6 +7944,78 @@ public sealed class TxImageEditorPaneViewModelTests
         await readyRack.TogglePinCommand.ExecuteAsync(row); // slot 1
 
         return (vm, readyRack, templateId);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task DirectFire_CancelDuringLoad_NeverFires(bool metadataStage, bool failMetadata)
+    {
+        var store = new FakeTemplateStore();
+        var rack = CreateReadyRack(store);
+        using var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), store, rack);
+        const string id = "cancelled";
+        var document = new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]);
+        await store.SaveAsync(id, id, document);
+        await rack.RefreshAsync();
+        await rack.TogglePinCommand.ExecuteAsync(Assert.Single(rack.AllTemplates));
+        var documentGate = new TaskCompletionSource<PersistedTemplateDocument>();
+        var metadataGate = new TaskCompletionSource<IReadOnlyList<TemplateMetadata>>();
+        if (metadataStage) store.ListGate = metadataGate;
+        else store.LoadGates[id] = documentGate;
+        var fires = 0;
+        vm.DirectFireRequested += _ => fires++;
+        vm.Cancelled += vm.Dispose;
+
+        rack.DirectFireSlotCommand.Execute(1);
+        vm.CancelCommand.Execute(null);
+        if (vm.IsCancelArmed) vm.CancelCommand.Execute(null);
+        if (metadataStage)
+        {
+            if (failMetadata) metadataGate.SetException(new IOException("metadata unavailable"));
+            else metadataGate.SetResult([]);
+        }
+        else documentGate.SetResult(document);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(0, fires);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DirectFire_PlainRecallDuringMetadata_DoesNotTransmitNewCanvas(bool failMetadata)
+    {
+        var store = new FakeTemplateStore();
+        var rack = CreateReadyRack(store);
+        using var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), store, rack);
+        foreach (var id in new[] { "A", "B" })
+        {
+            await store.SaveAsync(id, id, new PersistedTemplateDocument([
+                new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+            ]));
+        }
+        await rack.RefreshAsync();
+        await rack.TogglePinCommand.ExecuteAsync(rack.AllTemplates.Single(t => t.Id == "A"));
+        await rack.TogglePinCommand.ExecuteAsync(rack.AllTemplates.Single(t => t.Id == "B"));
+        var gate = new TaskCompletionSource<IReadOnlyList<TemplateMetadata>>();
+        store.ListGate = gate;
+        var fires = 0;
+        vm.DirectFireRequested += _ => fires++;
+        rack.DirectFireSlotCommand.Execute(1);
+        store.ListGate = null;
+        rack.RecallSlotCommand.Execute(2);
+        rack.RecallSlotCommand.Execute(2);
+        Assert.Equal("B", vm.NewTemplateName);
+        if (failMetadata) gate.SetException(new IOException("metadata unavailable"));
+        else gate.SetResult([]);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(0, fires);
+        Assert.Equal("B", vm.NewTemplateName);
     }
 
     [AvaloniaFact]

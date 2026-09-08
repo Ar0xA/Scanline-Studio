@@ -30,6 +30,12 @@ public sealed class StrokedTextBlock : Control
     public static readonly StyledProperty<IBrush?> FillProperty =
         AvaloniaProperty.Register<StrokedTextBlock, IBrush?>(nameof(Fill));
 
+    public static readonly StyledProperty<double> FillWidthProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, double>(nameof(FillWidth));
+
+    public static readonly StyledProperty<double> FillHeightProperty =
+        AvaloniaProperty.Register<StrokedTextBlock, double>(nameof(FillHeight));
+
     public static readonly StyledProperty<IBrush?> StrokeProperty =
         AvaloniaProperty.Register<StrokedTextBlock, IBrush?>(nameof(Stroke));
 
@@ -69,7 +75,7 @@ public sealed class StrokedTextBlock : Control
     {
         AffectsRender<StrokedTextBlock>(
             TextProperty, FontFamilyProperty, FontSizeProperty, FillProperty, StrokeProperty, StrokeThicknessProperty, FontWeightProperty, FontStyleProperty,
-            StackFillProperty, StackStepXPixelsProperty, StackStepYPixelsProperty);
+            StackFillProperty, StackStepXPixelsProperty, StackStepYPixelsProperty, FillWidthProperty, FillHeightProperty);
         AffectsMeasure<StrokedTextBlock>(TextProperty, FontFamilyProperty, FontSizeProperty, FontWeightProperty, FontStyleProperty);
     }
 
@@ -101,6 +107,18 @@ public sealed class StrokedTextBlock : Control
     {
         get => GetValue(StrokeProperty);
         set => SetValue(StrokeProperty, value);
+    }
+
+    public double FillWidth
+    {
+        get => GetValue(FillWidthProperty);
+        set => SetValue(FillWidthProperty, value);
+    }
+
+    public double FillHeight
+    {
+        get => GetValue(FillHeightProperty);
+        set => SetValue(FillHeightProperty, value);
     }
 
     public double StrokeThickness
@@ -198,6 +216,19 @@ public sealed class StrokedTextBlock : Control
             context.DrawGeometry(null, new Pen(Stroke, StrokeThickness), geometry);
         }
 
-        context.DrawGeometry(Fill, null, geometry);
+        if (Fill is IGradientBrush or DrawingBrush && FillWidth > 0 && FillHeight > 0)
+        {
+            // The text control is centered inside the element. Paint the full element's brush
+            // rectangle through its glyph clip so unused bounds do not rescale the gradient.
+            var fillBounds = new Rect((Bounds.Width - FillWidth) / 2, (Bounds.Height - FillHeight) / 2, FillWidth, FillHeight);
+            using (context.PushGeometryClip(geometry))
+            {
+                context.DrawRectangle(Fill, null, fillBounds);
+            }
+        }
+        else
+        {
+            context.DrawGeometry(Fill, null, geometry);
+        }
     }
 }

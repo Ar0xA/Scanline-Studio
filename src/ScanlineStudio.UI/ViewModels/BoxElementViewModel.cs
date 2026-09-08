@@ -322,6 +322,11 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public double TopPixels => (Y - (Height / 2)) * ImageHeight;
 
+    [ObservableProperty]
+    private ElementPreviewMetrics? _previewMetrics;
+
+    private double StyleImageHeight => PreviewMetrics?.ImageHeight ?? ImageHeight;
+
     public double CanvasWidthPixels => Width * ImageWidth;
 
     public double CanvasHeightPixels => Height * ImageHeight;
@@ -339,7 +344,7 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// <see cref="OverlayElementViewModel.FontSizeRelative"/>, per spec/15-template-designer.md) --
     /// this converts it to the canvas's own pixel space, mirroring <see cref="TemplateBoxElement"/>'s
     /// pipeline-side rendering so the editor canvas is actually WYSIWYG for a bordered box.</summary>
-    public double CanvasBorderThicknessPixels => BorderThickness * ImageHeight;
+    public double CanvasBorderThicknessPixels => BorderThickness * StyleImageHeight;
 
     /// <summary>Same image-height-relative-to-canvas-pixel conversion as
     /// <see cref="CanvasBorderThicknessPixels"/>, for <see cref="CornerRadius"/> -- Avalonia's
@@ -351,7 +356,7 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// assemblies, same absence that motivated <see cref="Converters.DoubleToThicknessConverter"/>
     /// originally) -- the canvas binding uses a new, analogous
     /// <see cref="Converters.DoubleToCornerRadiusConverter"/>, not a bare binding.</summary>
-    public double CanvasCornerRadiusPixels => CornerRadius * ImageHeight;
+    public double CanvasCornerRadiusPixels => CornerRadius * StyleImageHeight;
 
     /// <summary>TX workflow modernization plan, Phase 1 (Fill &amp; Border flyout) -- same
     /// element-level px-conversion pattern as <see cref="OverlayElementViewModel.TargetModeHeightPx"/>/
@@ -422,7 +427,7 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// construction). The real pipeline side (<c>TransmitImagePreparer.BuildGradientBrush</c>) is
     /// ALREADY shared between text and box -- this brings the canvas-preview side in line too.</summary>
     public IBrush FillBrush => GradientEnabled
-        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor)
+        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor, CanvasWidthPixels, CanvasHeightPixels, PreviewMetrics)
         : new SolidColorBrush(ToAvaloniaColor(FillColor));
 
     /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- while perspective is on,
@@ -512,6 +517,8 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
         OnPropertyChanged(nameof(CanvasHeightPixels));
         OnPropertyChanged(nameof(CanvasCorner0Point));
         OnPropertyChanged(nameof(CanvasCorner1Point));
@@ -544,10 +551,25 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         }
     }
 
+    partial void OnPreviewMetricsChanged(ElementPreviewMetrics? value)
+    {
+        OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+        OnPropertyChanged(nameof(EffectiveBorderThicknessPixels));
+        OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
+
     partial void OnImageWidthChanged(double value)
     {
         OnPropertyChanged(nameof(LeftPixels));
         OnPropertyChanged(nameof(CanvasWidthPixels));
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
         OnPropertyChanged(nameof(CanvasCorner0Point));
         OnPropertyChanged(nameof(CanvasCorner1Point));
         OnPropertyChanged(nameof(CanvasCorner2Point));
@@ -562,7 +584,10 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     {
         OnPropertyChanged(nameof(TopPixels));
         OnPropertyChanged(nameof(CanvasHeightPixels));
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
         OnPropertyChanged(nameof(CanvasBorderThicknessPixels));
+        OnPropertyChanged(nameof(EffectiveBorderThicknessPixels));
         OnPropertyChanged(nameof(CanvasCornerRadiusPixels));
         OnPropertyChanged(nameof(CanvasCorner0Point));
         OnPropertyChanged(nameof(CanvasCorner1Point));
@@ -729,8 +754,11 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
             return;
         }
 
-        var targetWidth = Math.Max(1, (int)Math.Round(Math.Min(CanvasWidthPixels, PreviewSizeCeilingPx)));
-        var targetHeight = Math.Max(1, (int)Math.Round(Math.Min(CanvasHeightPixels, PreviewSizeCeilingPx)));
+        // Keep one uniform bitmap scale: independently clamping one dimension stretches
+        // borders/radii along that axis when the preview is displayed at its original aspect.
+        var scale = Math.Min(1, PreviewSizeCeilingPx / Math.Max(CanvasWidthPixels, CanvasHeightPixels));
+        var targetWidth = Math.Max(1, (int)Math.Round(CanvasWidthPixels * scale));
+        var targetHeight = Math.Max(1, (int)Math.Round(CanvasHeightPixels * scale));
         var buffer = RenderWarpedPreview(targetWidth, targetHeight);
 
         var old = WarpedCanvasBitmap;

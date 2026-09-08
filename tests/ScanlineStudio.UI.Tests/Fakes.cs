@@ -502,7 +502,12 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public double[]? ScopeCaptureChannel0ToReturn { get; set; }
 
-    public double[]? TryGetScopeCaptureChannel0() => ScopeCaptureChannel0ToReturn;
+    public Action? ReadingScopeChannel0 { get; set; }
+    public double[]? TryGetScopeCaptureChannel0()
+    {
+        ReadingScopeChannel0?.Invoke();
+        return ScopeCaptureChannel0ToReturn;
+    }
 
     public int RequestSenseLevelCallCount { get; private set; }
 
@@ -1021,11 +1026,18 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     // the regression the fix closes (default/CancellationToken.None has CanBeCanceled == false).
     public List<CancellationToken> TestConnectionTokens { get; } = [];
 
-    public Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default)
+    public Task? TestConnectionGate { get; set; }
+
+    public async Task<RadioConnectionTestResult> TestConnectionAsync(RadioConnectionSpec spec, CancellationToken ct = default)
     {
         TestConnectionCalls.Add(spec);
         TestConnectionTokens.Add(ct);
-        return Task.FromResult(TestConnectionResultToReturn);
+        if (TestConnectionGate is not null)
+        {
+            await TestConnectionGate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        return TestConnectionResultToReturn;
     }
 
     public RadioConnectionTestResult TestPttResultToReturn { get; set; } = new(true, "fake-rig", RadioCapabilities.PttControl, null);
@@ -1302,8 +1314,10 @@ internal sealed class FakeTemplateStore : ITemplateStore
     public Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default) =>
         LoadGates.TryGetValue(templateId, out var gate) ? gate.Task : Task.FromResult(_templates[templateId].Document);
 
+    public TaskCompletionSource<IReadOnlyList<TemplateMetadata>>? ListGate { get; set; }
+
     public Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyList<TemplateMetadata>>(
+        => ListGate?.Task ?? Task.FromResult<IReadOnlyList<TemplateMetadata>>(
             _templates.Select(kv => new TemplateMetadata(kv.Key, kv.Value.Name, kv.Value.SavedAt, $"/fake/templates/{kv.Key}/thumbnail.png")).ToList());
 
     public Task DeleteAsync(string templateId, CancellationToken ct = default)
@@ -1958,10 +1972,13 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
     /// <summary>Actually mutates <see cref="EntriesToReturn"/> (matching <see cref="QueryAsync"/>'s
     /// own "actually applies" convention above), so a Gallery-side test can verify a note/flag/
     /// QSO-link edit round-trips through a subsequent query, not just that the call was made.</summary>
-    public Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default)
+    public Func<string, string?, Task>? SetNoteGate { get; set; }
+
+    public async Task<bool> SetNoteAsync(string entryId, string? note, CancellationToken ct = default)
     {
         SetNoteCalls.Add((entryId, note));
-        return Task.FromResult(TryUpdateEntry(entryId, e => e with { Note = note }));
+        if (SetNoteGate is not null) await SetNoteGate(entryId, note);
+        return TryUpdateEntry(entryId, e => e with { Note = note });
     }
 
     public async Task<bool> SetFlaggedAsync(string entryId, bool isFlagged, CancellationToken ct = default)
@@ -2226,6 +2243,7 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
     }
 
     public QrzCallsignLookupResult LookupResultToReturn { get; set; } = new(true, "Test Name", "Test QTH", "AA00", null);
+    public Task<QrzCallsignLookupResult>? LookupGate { get; set; }
 
     public Exception? ThrowOnLookup { get; set; }
 
@@ -2258,7 +2276,7 @@ internal sealed class FakeLogbookSessionService : ILogbookSessionService
             throw ThrowOnLookup;
         }
 
-        return Task.FromResult(LookupResultToReturn);
+        return LookupGate ?? Task.FromResult(LookupResultToReturn);
     }
 
     public QrzLoginResult TestQrzLookupResultToReturn { get; set; } = new(true, null);

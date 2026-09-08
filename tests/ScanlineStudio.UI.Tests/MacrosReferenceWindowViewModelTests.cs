@@ -100,21 +100,17 @@ public sealed class MacrosReferenceWindowViewModelTests
         // still-default (empty-callsign) OperatorSettings this VM starts with.
         Assert.Equal(string.Empty, vm.PreviewText);
 
-        var raised = false;
+        var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(vm.PreviewText))
             {
-                raised = true;
+                raised.TrySetResult();
             }
         };
 
         gate.SetResult();
-        Dispatcher.UIThread.RunJobs();
-        await Task.Yield();
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(raised);
+        await raised.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("KD9TAW", vm.PreviewText);
     }
 

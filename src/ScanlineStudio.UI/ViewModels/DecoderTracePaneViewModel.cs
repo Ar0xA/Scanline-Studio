@@ -1,6 +1,8 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
 
@@ -52,6 +54,9 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
     /// caller watching for a transient null could miss it and hang forever.</summary>
     private double[]? _previousChannel0Snapshot;
     private double[]? _previousChannel1Snapshot;
+    private readonly TimeProvider _timeProvider;
+    private readonly ILogger<DecoderTracePaneViewModel> _logger;
+    private long? _channel0CompletedAt;
 
     [ObservableProperty]
     private double[]? _channel0Snapshot;
@@ -83,10 +88,13 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
 
     private readonly ILocalizationService _localization;
 
-    public DecoderTracePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
+    public DecoderTracePaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization,
+        ILogger<DecoderTracePaneViewModel>? logger = null, TimeProvider? timeProvider = null)
     {
         _sstvSession = sstvSession;
         _localization = localization;
+        _logger = logger ?? NullLogger<DecoderTracePaneViewModel>.Instance;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _pollTimer = new DispatcherTimer(CapturePollInterval, DispatcherPriority.Background, (_, _) => PollCapture());
     }
 
@@ -112,6 +120,8 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
     [RelayCommand]
     private void Capture()
     {
+        Log.CaptureRequested(_logger);
+        _channel0CompletedAt = null;
         // See _previousChannel0Snapshot's own doc comment -- captured BEFORE arming, so PollCapture
         // can tell a genuinely new fill apart from the still-published previous one.
         _previousChannel0Snapshot = _sstvSession.TryGetScopeCaptureChannel0();
@@ -123,15 +133,14 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
         _pollTimer.Start();
     }
 
-    /// <summary>Channel 0 always eventually fills (it writes on every sample regardless of lock
-    /// state) -- that's the stopping condition for the poll. Channel 1 may legitimately never fill
-    /// (no active reception since the arm, or AVT) -- once channel 0 is done, whatever channel 1
-    /// has (data or still <see langword="null"/>) is final for this capture, matching legacy's own
-    /// two independently-gated <c>CScope</c> instances.</summary>
-    private void PollCapture()
+    /// <summary>Collect both independently published snapshots. After channel 0 completes, allow
+    /// one second for channel 1: a UI grace policy, not a decoder completion bound. Channel 1 may
+    /// legitimately remain absent when idle or in AVT.</summary>
+    public void PollCapture()
     {
+        if (!IsCapturing) return;
         var channel1 = _sstvSession.TryGetScopeCaptureChannel1();
-        if (!ReferenceEquals(channel1, _previousChannel1Snapshot))
+        if (channel1 is not null && !ReferenceEquals(channel1, _previousChannel1Snapshot))
         {
             Channel1Snapshot = channel1;
         }
@@ -143,8 +152,21 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
         }
 
         Channel0Snapshot = channel0;
+        _channel0CompletedAt ??= _timeProvider.GetTimestamp();
+        // Publication can occur between the two reads above. Re-read before deciding to stop.
+        channel1 = _sstvSession.TryGetScopeCaptureChannel1();
+        if (channel1 is not null && !ReferenceEquals(channel1, _previousChannel1Snapshot))
+            Channel1Snapshot = channel1;
+        if (Channel1Snapshot is null && _timeProvider.GetElapsedTime(_channel0CompletedAt.Value) < TimeSpan.FromSeconds(1))
+            return;
         IsCapturing = false;
         _pollTimer.Stop();
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Decoder trace capture requested")]
+        public static partial void CaptureRequested(ILogger logger);
     }
 
     /// <summary>Port of legacy's <c>LeftBtnClick</c> (`Scope.cpp:247-254`) -- pan back by a quarter

@@ -583,14 +583,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             var settings = await _settingsStore.LoadAsync();
             var txPaneUi = settings.GetSection(TxPaneUiSettings.SectionKey, TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings) ?? new TxPaneUiSettings();
 
-            AutoFollowRxMode = txPaneUi.AutoFollowRxMode;
-
             var resolved = QuickModeGridAssignment.Resolve(txPaneUi.QuickModeGridIds, AvailableModes);
             for (var i = 0; i < resolved.Count; i++)
             {
                 QuickModeSlots[i].CurrentMode = resolved[i];
             }
 
+            // Setting auto-follow invokes persistence synchronously up to its first await.
+            // Restore every slot before that callback captures the settings snapshot.
+            AutoFollowRxMode = txPaneUi.AutoFollowRxMode;
             RecomputeQuickModeMenuEntryStates();
         }
         catch (Exception ex)
@@ -1427,6 +1428,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     private void OnEditorApplied(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
+        if (!ReferenceEquals(editor, _currentEditor)) return;
         // editor.CurrentSource, NOT the pre-rotation IImageSource this method used to receive as
         // its own "original" parameter -- round-1 plan-review finding on spec/18-path-to-1.0.md
         // High item 3: capturing the closure's original pre-rotation reference here meant a
@@ -1458,6 +1460,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// guard costs nothing and avoids depending on that staying true).</summary>
     private void OnEditorAppliedAndTransmit(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
+        if (!ReferenceEquals(editor, _currentEditor)) return;
         OnEditorApplied(fileName, editor, final);
         if (TransmitCommand.CanExecute(null))
         {
@@ -1488,6 +1491,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// behavior is completely unchanged.</summary>
     private async void OnEditorDirectFire(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
+        if (!ReferenceEquals(editor, _currentEditor)) return;
         var contactProvider = editor.CurrentContactProvider;
         OnEditorAppliedAndTransmit(fileName, editor, final);
         await ReopenEditorFromCurrentStateAsync(contactProvider);

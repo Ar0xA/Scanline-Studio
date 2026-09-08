@@ -3071,6 +3071,31 @@ public sealed class PaneViewModelTests
         Assert.True(vm.IsQrzLookupConfigured);
     }
 
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RxImagePaneViewModel_LookupQrzAsync_NewReceptionRejectsOldResult(bool fail)
+    {
+        var gate = new TaskCompletionSource<QrzCallsignLookupResult>();
+        var session = new FakeSstvSessionService();
+        var logbook = new FakeLogbookSessionService { LookupGate = gate.Task };
+        var vm = new RxImagePaneViewModel(session, new FakeLocalizationService(), logbook,
+            new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        vm.OverrideCallsign = "W1AW";
+        var pending = vm.LookupQrzCommand.ExecuteAsync(null);
+        session.RaiseModeDetected(TestMode);
+        Dispatcher.UIThread.RunJobs();
+        vm.OverrideCallsign = "K1ABC";
+        if (fail) gate.SetException(new IOException("old lookup failed"));
+        else gate.SetResult(new QrzCallsignLookupResult(true, "Old name", "Old place", "FN31", null));
+        await pending;
+        Assert.Null(vm.LookupName);
+        Assert.Null(vm.LookupQth);
+        Assert.Null(vm.LookupGrid);
+        Assert.Null(vm.QrzLookupErrorMessage);
+        Assert.False(vm.IsLookingUpQrz);
+    }
+
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_LookupQrzAsync_Success_PopulatesNameQthGrid_ClearsError()
     {
@@ -3882,6 +3907,40 @@ public sealed class PaneViewModelTests
     /// This version switches the live contact to a DIFFERENT station between fire #1 and fire #2 and
     /// asserts the NEW one, which only a genuine live re-seed on the reopened editor's own fire can
     /// produce.</summary>
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_DirectFire_CancelledEditorCannotTransmitAfterLoad()
+    {
+        var session = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var store = new FakeTemplateStore();
+        var vm = new TxControlsPaneViewModel(session,
+            new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) },
+            new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(),
+            new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(),
+            new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance,
+            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(),
+            new FakeReceiveHistoryStore(), store, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var initial = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        initial.ApplyCommand.Execute(null);
+        var editor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
+        const string id = "cancel-direct-fire";
+        var document = new PersistedTemplateDocument([
+            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "CQ", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
+        ]);
+        await store.SaveAsync(id, id, document);
+        await editor.ReadyRack.RefreshAsync();
+        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(Assert.Single(editor.ReadyRack.AllTemplates));
+        var gate = new TaskCompletionSource<PersistedTemplateDocument>();
+        store.LoadGates[id] = gate;
+        editor.ReadyRack.DirectFireSlotCommand.Execute(1);
+        editor.CancelCommand.Execute(null);
+        Assert.False(vm.IsEditorOpen);
+        gate.SetResult(document);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Empty(session.TransmitCalls);
+        Assert.False(vm.IsEditorOpen);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_DirectFire_ReopensWithRealPhoto_SecondFireSucceedsImmediatelyWithFreshContact()
     {
@@ -6163,6 +6222,65 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.Empty(historyStore.SetNoteCalls);
         Assert.Empty(historyStore.SetFlaggedCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RapidNotesOnDifferentEntries_BothSurviveReload()
+    {
+        var store = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [
+                new ReceiveHistoryEntry("A", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("B", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+        };
+        var vm = CreateRxHistoryPaneViewModel(store);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
+        vm.SelectedEntryNote = "note A";
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "B");
+        vm.SelectedEntryNote = "note B";
+        await Task.Delay(750);
+        Dispatcher.UIThread.RunJobs();
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal("note A", vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note);
+        Assert.Equal("note B", vm.Entries.Single(e => e.Entry.Id == "B").Entry.Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_NewerNoteWaitsForOlderWrite_AndWins()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var store = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [
+                new ReceiveHistoryEntry("A", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("B", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+            SetNoteGate = async (id, note) =>
+            {
+                if (id == "A" && note == "old") { entered.SetResult(); await release.Task; }
+            },
+        };
+        var vm = CreateRxHistoryPaneViewModel(store);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
+        vm.SelectedEntryNote = "old";
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "B");
+        vm.SelectedEntryNote = "B";
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
+        vm.SelectedEntryNote = "new";
+        await Task.Delay(750);
+        Assert.DoesNotContain(store.SetNoteCalls, c => c.Note == "new");
+        release.SetResult();
+        await Task.Delay(100);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("new", vm.SelectedEntryNote);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal("new", vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note);
+        Assert.Equal("B", vm.Entries.Single(e => e.Entry.Id == "B").Entry.Note);
     }
 
     [AvaloniaFact]

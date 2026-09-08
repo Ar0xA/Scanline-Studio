@@ -135,7 +135,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// this a fresh selection would immediately re-save its own just-loaded value back to the store.</summary>
     private bool _suppressSelectedEntryEdits;
 
-    private CancellationTokenSource? _notePersistCts;
+    // UI-thread-owned: debounce only the same entry, and serialize admitted writes per entry.
+    private readonly Dictionary<string, CancellationTokenSource> _noteDebounces = [];
+    private readonly Dictionary<string, Task> _noteWrites = [];
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedEntryCallsignSourceDisplay))]
@@ -1400,42 +1402,48 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return;
         }
 
-        _notePersistCts?.Cancel();
+        if (_noteDebounces.TryGetValue(entry.Entry.Id, out var previous)) previous.Cancel();
         var cts = new CancellationTokenSource();
-        _notePersistCts = cts;
-        _ = PersistNoteDebouncedAsync(entry.Entry.Id, value, cts.Token);
+        _noteDebounces[entry.Entry.Id] = cts;
+        _ = PersistNoteDebouncedAsync(entry.Entry.Id, value, cts);
     }
 
-    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationToken ct)
+    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationTokenSource debounce)
     {
         try
         {
-            await Task.Delay(NotePersistDebounce, ct).ConfigureAwait(false);
+            await Task.Delay(NotePersistDebounce, debounce.Token);
+            if (debounce.IsCancellationRequested || !ReferenceEquals(_noteDebounces.GetValueOrDefault(entryId), debounce))
+                return;
         }
         catch (TaskCanceledException)
         {
-            // Normal control flow -- a newer edit (to whichever entry is selected when it fires)
-            // superseded this one. Not worth a log line, same convention as
-            // RadioStatusViewModel.PersistVolumeDebouncedAsync's own identical catch.
             return;
         }
+        finally
+        {
+            if (_noteDebounces.TryGetValue(entryId, out var current) && ReferenceEquals(current, debounce))
+                _noteDebounces.Remove(entryId);
+            debounce.Dispose();
+        }
+
+        var previous = _noteWrites.GetValueOrDefault(entryId, Task.CompletedTask);
+        var write = PersistNoteAfterAsync(previous, entryId, note);
+        _noteWrites[entryId] = write;
+        await write;
+        if (ReferenceEquals(_noteWrites.GetValueOrDefault(entryId), write)) _noteWrites.Remove(entryId);
+    }
+
+    private async Task PersistNoteAfterAsync(Task previous, string entryId, string? note)
+    {
+        await previous.ConfigureAwait(false);
 
         Dispatcher.UIThread.Post(() => ErrorMessage = null);
 
         bool succeeded;
         try
         {
-            succeeded = await _historyStore.SetNoteAsync(entryId, note, ct).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // Auditor round-2 risk fix: the SAME ct also guards this call, not just the delay above
-            // -- a keystroke arriving while SetNoteAsync itself is in flight cancels it, and that
-            // must be treated as the identical "superseded by a newer edit" normal control flow as
-            // the TaskCanceledException catch above, not routed into the generic catch below (which
-            // used to show a false "Could not save the note" error for something that isn't an
-            // error).
-            return;
+            succeeded = await _historyStore.SetNoteAsync(entryId, note, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

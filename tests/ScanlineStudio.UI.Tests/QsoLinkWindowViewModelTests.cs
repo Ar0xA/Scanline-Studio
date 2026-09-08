@@ -3,6 +3,8 @@ using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
+using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Tests;
@@ -128,7 +130,29 @@ public sealed class QsoLinkWindowViewModelTests
         Assert.Equal(SampleEntry.ReceivedAt.ToUniversalTime(), logged.StartUtc);
         Assert.Equal(SampleEntry.Id, logged.ReceivedImageId);
         Assert.Equal(SampleEntry.ModeId, logged.SstvModeId);
+        Assert.Null(logged.FrequencyHz);
+        Assert.Null(logged.Mode);
         Assert.Equal(logged.Id, historyStore.EntriesToReturn[0].LinkedQsoId);
+    }
+
+    [AvaloniaFact]
+    public async Task CreateAndLinkAsync_CapturedRadioMetadata_ReachesRecordAndAdif()
+    {
+        var entry = SampleEntry with { FrequencyHz = 14_230_000, RigMode = RadioMode.Usb };
+        var logbook = new FakeLogbookSessionService();
+        var vm = CreateVm(logbook: logbook, entry: entry);
+        Dispatcher.UIThread.RunJobs();
+        vm.NewCallsign = "N0CALL";
+
+        await vm.CreateAndLinkCommand.ExecuteAsync(null);
+
+        var record = Assert.Single(logbook.Records);
+        Assert.Equal(entry.FrequencyHz, record.FrequencyHz);
+        Assert.Equal(entry.RigMode, record.Mode);
+        using var writer = new StringWriter(System.Globalization.CultureInfo.InvariantCulture);
+        new AdifExporter().Export([record], writer);
+        Assert.Contains("<FREQ:9>14.230000", writer.ToString(), StringComparison.Ordinal);
+        Assert.Contains("<APP_SCANLINESTUDIO_RADIOMODE:3>Usb", writer.ToString(), StringComparison.Ordinal);
     }
 
     [AvaloniaFact]

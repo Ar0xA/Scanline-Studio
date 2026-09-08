@@ -345,6 +345,7 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
+        _pushedUndoThisGesture = false;
         _placementAnchorPoint = point.Position;
         _dragMode = DragMode.Placing;
         _lastPointerPosition = point.Position;
@@ -918,7 +919,7 @@ public partial class TxImageEditorPaneView : UserControl
         // unconditional PushUndoSnapshotForDragGesture() call here, PLUS the endpoint setter's own
         // coalesced push), so the first Ctrl+Z after any endpoint drag silently did nothing -- the
         // exact bug class already fixed once at AlignSelectedElementToCrop.
-        if (!_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
+        if (_dragMode != DragMode.Placing && !_pushedUndoThisGesture && (dxNormalized != 0 || dyNormalized != 0))
         {
             // PerspectiveCorner/OverlayGroup excluded here for the SAME "pushes via the element's own
             // On*Changing-coalesced hook instead" reason as Overlay/ElementResize/LineEndpoint --
@@ -1360,6 +1361,7 @@ public partial class TxImageEditorPaneView : UserControl
         }
 
         _dragMode = DragMode.None;
+        _pushedUndoThisGesture = false;
         _draggedElement = null;
         _draggedGroup = [];
         e.Pointer.Capture(null);
@@ -1782,7 +1784,7 @@ public partial class TxImageEditorPaneView : UserControl
     /// <see cref="_dragMode"/>, so it correctly does nothing for an already-cancelled gesture).</summary>
     private void CancelActiveDrag(TxImageEditorPaneViewModel vm)
     {
-        if (_pushedUndoThisGesture && vm.UndoCommand.CanExecute(null))
+        if (_dragMode != DragMode.Placing && _pushedUndoThisGesture && vm.UndoCommand.CanExecute(null))
         {
             vm.UndoCommand.Execute(null);
         }
@@ -1804,6 +1806,7 @@ public partial class TxImageEditorPaneView : UserControl
         vm.GuideLineYNormalized = null;
 
         _dragMode = DragMode.None;
+        _pushedUndoThisGesture = false;
         _draggedElement = null;
         _draggedGroup = [];
     }

@@ -246,7 +246,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// default implementation from inside its own override (C# has no way to reach a DIM once a
     /// class provides its own), so that small amount of fallback logic is intentionally duplicated,
     /// not shared.</summary>
-    public BgraPixelBuffer RenderWarpedElementPreview(TemplateElement element, int targetWidthPx, int targetHeightPx)
+    public BgraPixelBuffer RenderWarpedElementPreview(TemplateElement element, int targetWidthPx, int targetHeightPx, double? styleImageHeightPx = null)
     {
         targetWidthPx = Math.Max(1, targetWidthPx);
         targetHeightPx = Math.Max(1, targetHeightPx);
@@ -258,7 +258,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             case TemplateImageElement image:
                 return BgraPixelBuffer.FromOpaqueSource(Resize(image.Source, targetWidthPx, targetHeightPx, preserveAspect: false));
             case TemplateBoxElement { Perspective: { } corners } box:
-                return RenderWarpedBoxPreview(box, corners, targetWidthPx, targetHeightPx);
+                return RenderWarpedBoxPreview(box, corners, targetWidthPx, targetHeightPx,
+                    styleImageHeightPx is > 0 && double.IsFinite(styleImageHeightPx.Value) ? styleImageHeightPx.Value : targetHeightPx);
             case TemplateBoxElement box:
                 return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
             default:
@@ -285,7 +286,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         return ToPremultipliedBgra(warped);
     }
 
-    private static BgraPixelBuffer RenderWarpedBoxPreview(TemplateBoxElement box, PerspectiveCorners corners, int targetWidthPx, int targetHeightPx)
+    private static BgraPixelBuffer RenderWarpedBoxPreview(TemplateBoxElement box, PerspectiveCorners corners, int targetWidthPx, int targetHeightPx, double styleImageHeightPx)
     {
         if (!TryComputeLocalWarpGeometry(corners, targetWidthPx, targetHeightPx, out var localCorners))
         {
@@ -293,10 +294,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         }
 
         using var contentBitmap = new Image<Rgba32>(targetWidthPx, targetHeightPx);
-        // No larger destination canvas here (unlike TryWarpBoxContent) -- the render TARGET is
-        // exactly this element's own bbox, so imageHeightPx for CornerRadius/BorderThickness's own
-        // height-relative convention is this element's own current on-canvas height.
-        contentBitmap.Mutate(ctx => DrawBoxContent(ctx, box, new PixelBounds(0, 0, targetWidthPx, targetHeightPx), targetHeightPx));
+        // Styles are relative to the full output image, converted by the caller to this local
+        // bitmap's resolution; the element bounding-box height is not the style reference.
+        contentBitmap.Mutate(ctx => DrawBoxContent(ctx, box, new PixelBounds(0, 0, targetWidthPx, targetHeightPx), styleImageHeightPx));
 
         var matrix = SolveHomography(localCorners, targetWidthPx, targetHeightPx);
         if (!IsWellConditioned(matrix, targetWidthPx, targetHeightPx))
@@ -316,14 +316,10 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// (normalized, crop-relative, raw pixels) since only their RELATIVE positions matter here.</summary>
     private static bool TryComputeLocalWarpGeometry(PerspectiveCorners corners, int targetWidthPx, int targetHeightPx, out PerspectiveCorners localCorners)
     {
-        if (!corners.IsConvexAndWellFormed())
-        {
-            localCorners = default;
-            return false;
-        }
-
         var bbox = corners.ToBoundingBox();
-        if (bbox.Width <= 0 || bbox.Height <= 0)
+        if (!double.IsFinite(bbox.X) || !double.IsFinite(bbox.Y)
+            || !double.IsFinite(bbox.Width) || !double.IsFinite(bbox.Height)
+            || bbox.Width <= 0 || bbox.Height <= 0)
         {
             localCorners = default;
             return false;
@@ -336,7 +332,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             (corners.Corner1X - bbox.X) * scaleX, (corners.Corner1Y - bbox.Y) * scaleY,
             (corners.Corner2X - bbox.X) * scaleX, (corners.Corner2Y - bbox.Y) * scaleY,
             (corners.Corner3X - bbox.X) * scaleX, (corners.Corner3Y - bbox.Y) * scaleY);
-        return true;
+        // The shared edge-length floor is in pixels, so apply it after mapping out of the
+        // caller's arbitrary (often normalized) coordinate space.
+        return localCorners.IsConvexAndWellFormed();
     }
 
     /// <summary>ImageSharp's own <see cref="Rgba32"/> is STRAIGHT (unpremultiplied) alpha;
@@ -1021,7 +1019,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// for the plain (unwarped) path, or sub-bitmap-LOCAL space (always starting at (0,0)) for the
     /// warp path -- same "wherever it's actually being drawn" convention <see cref="BuildGradientBrush"/>
     /// already documents for text's own rotation path.</summary>
-    private static void DrawBoxContent(IImageProcessingContext ctx, TemplateBoxElement element, PixelBounds bounds, int imageHeightPx)
+    private static void DrawBoxContent(IImageProcessingContext ctx, TemplateBoxElement element, PixelBounds bounds, double imageHeightPx)
     {
         var cornerRadiusPx = MathF.Max(0f, (float)(element.CornerRadius * imageHeightPx));
         var rect = BuildBoxPath(bounds.X, bounds.Y, bounds.Width, bounds.Height, cornerRadiusPx);
