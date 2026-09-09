@@ -5,7 +5,7 @@ using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Application;
 
-public sealed partial class RadioSessionService : IRadioSessionService, IAsyncDisposable
+public sealed partial class RadioSessionService : IRadioSessionService, IPttTestDrain, IAsyncDisposable
 {
     private readonly IRadioController _controller;
     private readonly ISettingsStore _settingsStore;
@@ -128,14 +128,18 @@ public sealed partial class RadioSessionService : IRadioSessionService, IAsyncDi
     private readonly object _pttLifetimeGate = new();
     private readonly CancellationTokenSource _pttShutdown = new();
     private TaskCompletionSource? _pttCompletion;
-    private TaskCompletionSource? _pttDisposeCompletion;
+    private TaskCompletionSource<bool>? _pttDrainCompletion;
+    // Set by DrainPttTestsAsync, not by DisposeAsync: the host's exit path calls the drain directly,
+    // so a gate keyed on the dispose path alone would never close there and a PTT test started
+    // during shutdown could key the rig.
+    private bool _pttStopping;
 
     public Task<RadioConnectionTestResult> TestPttAsync(RadioConnectionSpec spec, TimeSpan duration, CancellationToken ct = default)
     {
         TaskCompletionSource? completion = null;
         lock (_pttLifetimeGate)
         {
-            if (_pttDisposeCompletion is null && _pttCompletion is null)
+            if (!_pttStopping && _pttCompletion is null)
             {
                 completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 _pttCompletion = completion;
@@ -169,45 +173,91 @@ public sealed partial class RadioSessionService : IRadioSessionService, IAsyncDi
         }
     }
 
-    public ValueTask DisposeAsync()
+    /// <summary>See <see cref="IPttTestDrain.DrainPttTestsAsync"/>. Deliberately not <c>async</c>:
+    /// callers rely on repeated calls returning the identical task instance, which an async wrapper
+    /// around a cached task would not give them. The core starts OUTSIDE the lock and on this
+    /// thread, not through <see cref="Task.Run(System.Func{Task})"/>, so that
+    /// <see cref="_pttShutdown"/> is already flagged cancelled by the time this returns; deferring
+    /// the prefix to the thread pool let a poll complete first and proceed as though no shutdown
+    /// were under way. What that buys is narrower than it looks: <c>CancelAsync</c> flips the token
+    /// synchronously but runs registered callbacks asynchronously, so each test's own linked source
+    /// still learns of it slightly later. The drain waits for the un-key either way, so a test
+    /// admitted just before this point cannot leave the transmitter keyed. Running the prefix on the
+    /// caller's thread while holding <see cref="_pttLifetimeGate"/> is what the separate completion
+    /// source avoids, since <see cref="RunOwnedPttTestAsync"/>'s own <c>finally</c> takes that same
+    /// gate.</summary>
+    public Task<bool> DrainPttTestsAsync(TimeSpan? timeout = null)
     {
-        TaskCompletionSource disposal;
+        TaskCompletionSource<bool> completion;
         Task active;
         lock (_pttLifetimeGate)
         {
-            if (_pttDisposeCompletion is not null) return new ValueTask(_pttDisposeCompletion.Task);
-            disposal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            _pttDisposeCompletion = disposal;
+            if (_pttDrainCompletion is not null) return _pttDrainCompletion.Task;
+            _pttStopping = true;
             active = _pttCompletion?.Task ?? Task.CompletedTask;
+            completion = _pttDrainCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
-        _ = DrainPttTestAsync(active, disposal);
-        return new ValueTask(disposal.Task);
+        // Three 15s off attempts, retry delays and 10s protocol disposal must finish before the host
+        // starts its separate general DI teardown timeout. Native hangs remain bounded.
+        _ = PublishDrainResultAsync(active, timeout ?? TimeSpan.FromSeconds(75), completion);
+        return completion.Task;
     }
 
-    private async Task DrainPttTestAsync(Task active, TaskCompletionSource disposal)
+    /// <summary>Bridges the never-faulting core onto the cached completion. The try/catch is a
+    /// backstop only: if the core ever did fault, an uncompleted completion source would hang the
+    /// host's exit, which is strictly worse than reporting an unclean drain.</summary>
+    private async Task PublishDrainResultAsync(Task active, TimeSpan timeout, TaskCompletionSource<bool> completion)
     {
-        Log.TestPttShutdownStarted(_logger);
         try
         {
+            completion.TrySetResult(await DrainPttCoreAsync(active, timeout).ConfigureAwait(false));
+        }
+        catch (Exception)
+        {
+            completion.TrySetResult(false);
+        }
+    }
+
+    public ValueTask DisposeAsync() => new(DrainPttTestsAsync());
+
+    /// <summary>Every statement lives inside the one try, and every log call goes through
+    /// <see cref="LogSafely"/>, so the returned task can never fault. That matters beyond tidiness:
+    /// this instance is a container-owned singleton that is also disposed explicitly by the host, so
+    /// a faulted cached task would be re-thrown inside the container's disposal loop and abandon
+    /// every disposable it had not reached yet -- including the live radio connection.</summary>
+    private async Task<bool> DrainPttCoreAsync(Task active, TimeSpan timeout)
+    {
+        var drained = false;
+        try
+        {
+            LogSafely(() => Log.TestPttShutdownStarted(_logger));
             var cancellation = CancelPttTestsAsync();
-            // Three 15s off attempts, retry delays and 10s protocol disposal must finish before
-            // the host starts its separate general DI teardown timeout. Native hangs remain bounded.
-            await Task.WhenAll(active, cancellation).WaitAsync(TimeSpan.FromSeconds(75)).ConfigureAwait(false);
-            disposal.TrySetResult();
+            await Task.WhenAll(active, cancellation).WaitAsync(timeout).ConfigureAwait(false);
+            drained = true;
         }
         catch (Exception ex)
         {
-            Log.TestPttShutdownFailed(_logger, ex);
-            disposal.TrySetException(ex);
+            LogSafely(() => Log.TestPttShutdownFailed(_logger, ex));
         }
+
         // Retain the CTS: an admitted native operation may outlive the timeout and still use it.
+        return drained;
+    }
+
+    /// <summary>A throwing logger provider must not fault the drain task. Microsoft.Extensions.Logging
+    /// aggregates provider exceptions and rethrows them, so an unguarded log call anywhere in the
+    /// drain would reintroduce the abandoned-disposal-chain defect this shape exists to prevent.</summary>
+    private static void LogSafely(Action log)
+    {
+        try { log(); }
+        catch (Exception) { /* diagnostics only; never worth failing shutdown over */ }
     }
 
     private async Task CancelPttTestsAsync()
     {
         try { await _pttShutdown.CancelAsync().ConfigureAwait(false); }
-        catch (Exception ex) { Log.TestPttShutdownCancellationFailed(_logger, ex); }
+        catch (Exception ex) { LogSafely(() => Log.TestPttShutdownCancellationFailed(_logger, ex)); }
     }
 
     /// <summary>See <see cref="IRadioSessionService.TestPttAsync"/>'s own doc comment for the safety

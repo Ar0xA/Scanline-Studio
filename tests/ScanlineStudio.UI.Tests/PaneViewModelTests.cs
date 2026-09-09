@@ -6284,6 +6284,58 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_FailedNoteWriteWithThrowingLogger_DoesNotPoisonLaterEdits()
+    {
+        // The per-entry write chain stores the task it just awaited. If that task can fault, the
+        // faulted instance stays in the chain and every later edit for the entry rethrows it at its
+        // own `await previous`, silently -- the caller is fire-and-forget. A throwing dispatcher post
+        // is not injectable here (static dispatcher, real headless pump), so this drives the same
+        // mechanism through the catch arm: the store throws, then the logger inside that catch throws.
+        var store = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [
+                new ReceiveHistoryEntry("A", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+            ],
+            SetNoteGate = (id, note) => note == "first"
+                ? throw new IOException("Injected note write failure")
+                : Task.CompletedTask,
+        };
+        var vm = CreateRxHistoryPaneViewModel(store, logger: new ThrowOnSetNoteFailedLogger());
+        await vm.RefreshCommand.ExecuteAsync(null);
+        vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
+
+        vm.SelectedEntryNote = "first";
+        await Task.Delay(750);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryNote = "second";
+        await Task.Delay(750);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains(store.SetNoteCalls, c => c.EntryId == "A" && c.Note == "second");
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal("second", vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note);
+    }
+
+    /// <summary>Throws only for the note-failure message, so the rest of the pane's setup logging
+    /// still works -- a blanket throwing logger would derail RefreshCommand before the assertion.</summary>
+    private sealed class ThrowOnSetNoteFailedLogger : ILogger<RxHistoryPaneViewModel>
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (formatter(state, exception).Contains("note", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("logger provider failed");
+            }
+        }
+    }
+
+    [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_EditingSelectedEntryNote_PersistsAfterDebounceDelay()
     {
         var historyStore = new FakeReceiveHistoryStore
@@ -7977,11 +8029,12 @@ public sealed class PaneViewModelTests
         FakeRxAudioAutoSaver? audioAutoSaver = null,
         FakeLogbookSessionService? logbookSession = null,
         FakeLocalizationService? localization = null,
-        FakeRxStationIdAttacher? stationIdAttacher = null) =>
+        FakeRxStationIdAttacher? stationIdAttacher = null,
+        ILogger<RxHistoryPaneViewModel>? logger = null) =>
         new(
             historyStore,
             localization ?? new FakeLocalizationService(),
-            NullLogger<RxHistoryPaneViewModel>.Instance,
+            logger ?? NullLogger<RxHistoryPaneViewModel>.Instance,
             logbookSession ?? new FakeLogbookSessionService(),
             NullLogger<QsoLinkWindowViewModel>.Instance,
             frameExporter ?? new FakeReceivedFrameExporter(),
