@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.UI.Services;
 
@@ -5,6 +6,64 @@ namespace ScanlineStudio.Host.Tests;
 
 public sealed class HandleLifetimeExitTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void PttDrain_ReportsIncompleteCleanup(bool throws)
+    {
+        // A capturing logger is the only observable: disposedCleanly has no other visible effect
+        // here, so with NullLogger this would assert nothing at all.
+        var logger = new CapturingLogger();
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        Program.HandleLifetimeExit(logger, host, restarter, null,
+            drainPttTests: () => throws ? Task.FromException<bool>(new IOException("PTT drain failed")) : Task.FromResult(false));
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.True(restarter.StartNewInstanceCalled);
+        Assert.Contains(logger.Messages, m => throws
+            ? m.Contains("Teardown", StringComparison.OrdinalIgnoreCase)
+            : m.Contains("PTT test cleanup did not drain", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task PttDrain_ThatNeverCompletes_IsBoundedAndStillDisposesHost()
+    {
+        // The callee owns the real 75-second budget. This asserts the host's own backstop, which
+        // exists so a drain that never completes at all cannot block the UI thread forever.
+        var logger = new CapturingLogger();
+        var host = new FakeAsyncDisposableHost();
+        var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
+        var never = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exit = Task.Run(() => Program.HandleLifetimeExit(logger, host, restarter, null,
+            drainPttTests: () => never.Task, pttDrainTimeout: TimeSpan.FromMilliseconds(50)));
+
+        await exit.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(host.DisposeAsyncCompleted);
+        Assert.Contains(logger.Messages, m => m.Contains("PTT test cleanup did not drain", StringComparison.Ordinal));
+        never.TrySetResult(true);
+    }
+
+    private sealed class CapturingLogger : ILogger
+    {
+        private readonly List<string> _messages = [];
+
+        public IReadOnlyList<string> Messages
+        {
+            get { lock (_messages) { return [.. _messages]; } }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_messages) { _messages.Add(formatter(state, exception)); }
+        }
+    }
+
     [Fact]
     public async Task ImageDrain_CompletesBeforeGenericHostDisposalBudgetStarts()
     {
@@ -55,7 +114,7 @@ public sealed class HandleLifetimeExitTests
         var host = new FakeAsyncDisposableHost();
         var restarter = new FakeApplicationRestarter { RestartRequested = true, NextStartResult = true };
         Program.HandleLifetimeExit(NullLogger.Instance, host, restarter, null,
-            drainPttTests: () => Task.FromException(new TimeoutException("PTT cleanup timed out")));
+            drainPttTests: () => Task.FromException<bool>(new TimeoutException("PTT cleanup timed out")));
         Assert.True(host.DisposeAsyncCompleted);
         Assert.True(restarter.StartNewInstanceCalled);
     }
@@ -72,6 +131,7 @@ public sealed class HandleLifetimeExitTests
             {
                 entered.SetResult();
                 await release.Task;
+                return true;
             }));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await Task.Delay(100);
