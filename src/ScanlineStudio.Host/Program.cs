@@ -409,9 +409,9 @@ internal static partial class Program
         // dispose-then-ClearAllPools-then-conditional-restart-spawn ordering this feature adds is
         // directly unit-testable, not a documented manual step.
         var applicationRestarter = host.Services.GetRequiredService<IApplicationRestarter>();
-        var radioShutdown = host.Services.GetRequiredService<IRadioSessionService>() as IAsyncDisposable;
+        var radioShutdown = host.Services.GetRequiredService<IRadioSessionService>() as IPttTestDrain;
         lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider,
-            singleInstanceMutex: singleInstanceMutex, drainPttTests: radioShutdown is null ? null : () => radioShutdown.DisposeAsync().AsTask(),
+            singleInstanceMutex: singleInstanceMutex, drainPttTests: radioShutdown is null ? null : () => radioShutdown.DrainPttTestsAsync(),
             drainImagesTests: imageRecorder is null ? null : () => imageRecorder.DrainAsync());
 
         try
@@ -450,7 +450,7 @@ internal static partial class Program
     /// alone. <paramref name="singleInstanceMutex"/> (single-instance code-review finding) is
     /// disposed right before the restart spawn, for the same "this process is still alive at this
     /// point" reason -- see that disposal's own call-site comment for the full reasoning.</summary>
-    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null, Mutex? singleInstanceMutex = null, Func<Task>? drainPttTests = null, Func<Task<bool>>? drainImagesTests = null)
+    internal static void HandleLifetimeExit(ILogger logger, IAsyncDisposable host, IApplicationRestarter restarter, FileLoggerProvider? fileLoggerProvider, TimeSpan? disposeTimeout = null, Mutex? singleInstanceMutex = null, Func<Task<bool>>? drainPttTests = null, Func<Task<bool>>? drainImagesTests = null, TimeSpan? pttDrainTimeout = null)
     {
         // disposeTimeout is a testability seam only (test-suite fixes phase 1, item 5) -- the real
         // call site never passes it, so this is a no-op default-preserving parameter, not a behavior
@@ -466,8 +466,20 @@ internal static partial class Program
             try
             {
                 // RadioSessionService owns the bounded off/retry budget. Drain before other DI
-                // services can block teardown, and outside the generic 10-second timeout.
-                Task.Run(drainPttTests).GetAwaiter().GetResult();
+                // services can block teardown, and outside the generic 10-second timeout. The
+                // backstop is this method's own: the callee's budget is the authority, but nothing
+                // here may block the UI thread forever if that budget is somehow bypassed.
+                var pttDrain = Task.Run(drainPttTests);
+                if (Task.WhenAny(pttDrain, Task.Delay(pttDrainTimeout ?? TimeSpan.FromSeconds(80))).GetAwaiter().GetResult() != pttDrain)
+                {
+                    disposedCleanly = false;
+                    Log.PttDrainIncomplete(logger);
+                }
+                else if (!pttDrain.GetAwaiter().GetResult())
+                {
+                    disposedCleanly = false;
+                    Log.PttDrainIncomplete(logger);
+                }
             }
             catch (Exception ex)
             {
@@ -1278,6 +1290,9 @@ internal static partial class Program
     {
         [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
         public static partial void ImagePersistenceDrainIncomplete(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "PTT test cleanup did not drain successfully before shutdown")]
+        public static partial void PttDrainIncomplete(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Scanline Studio starting; logging to {LogPath} (minimum level {MinimumLevel})")]
         public static partial void Starting(ILogger logger, string logPath, LogLevel minimumLevel);

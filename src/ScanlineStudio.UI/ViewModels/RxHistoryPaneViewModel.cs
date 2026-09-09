@@ -57,7 +57,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <see cref="Task"/> field, not a <see cref="SemaphoreSlim"/>/other <see cref="IDisposable"/>
     /// primitive: this ViewModel isn't (and doesn't otherwise need to be) disposable, matching the
     /// existing convention elsewhere in this class of preferring non-disposable coordination (e.g.
-    /// <c>_notePersistCts</c>'s own cancel-and-drop pattern over anything requiring cleanup).</summary>
+    /// the per-entry <c>_noteWrites</c> chain, which is likewise a plain task per entry).</summary>
     private Task _pendingFlagPersist = Task.CompletedTask;
 
     // Auditor-caught race (batch 7): RefreshAsync captures its own `filter` at entry and is called
@@ -1254,7 +1254,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         if (value?.Entry.Id != _loadedEditsEntryId)
         {
             _loadedEditsEntryId = value?.Entry.Id;
-            // _notePersistCts is deliberately NOT cancelled here -- PersistNoteDebouncedAsync
+            // A pending note debounce is deliberately NOT cancelled here -- PersistNoteDebouncedAsync
             // captures its own target entryId at schedule time (not "whatever's currently selected"),
             // so a pending save for the entry just switched AWAY from is still correct to let
             // complete; cancelling on every selection change would silently drop an edit made just
@@ -1430,45 +1430,93 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         var previous = _noteWrites.GetValueOrDefault(entryId, Task.CompletedTask);
         var write = PersistNoteAfterAsync(previous, entryId, note);
         _noteWrites[entryId] = write;
-        await write;
-        if (ReferenceEquals(_noteWrites.GetValueOrDefault(entryId), write)) _noteWrites.Remove(entryId);
-    }
-
-    private async Task PersistNoteAfterAsync(Task previous, string entryId, string? note)
-    {
-        await previous.ConfigureAwait(false);
-
-        Dispatcher.UIThread.Post(() => ErrorMessage = null);
-
-        bool succeeded;
         try
         {
-            succeeded = await _historyStore.SetNoteAsync(entryId, note, CancellationToken.None).ConfigureAwait(false);
+            await write;
         }
         catch (Exception ex)
         {
-            Log.SetNoteFailed(_logger, entryId, ex);
-            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveNoteFailed"));
-            return;
+            // PersistNoteAfterAsync is written so it cannot fault. This observes a future
+            // reintroduced one instead of letting it surface as an unobserved task exception --
+            // the caller is fire-and-forget.
+            ReportSafely(() => Log.SetNoteFailed(_logger, entryId, ex));
         }
-
-        if (!succeeded)
+        finally
         {
-            // Defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: no automatic
-            // deletion path exists in this port's production store today (docs/removed-features.md,
-            // 2026-08-26), but a missing row is still a reachable state worth handling explicitly.
-            Log.SetNoteEntryMissing(_logger, entryId);
-            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
-            return;
+            // The ReferenceEquals guard is load-bearing: an unconditional remove would drop a NEWER
+            // in-flight write, so the next edit for this entry would chain onto Task.CompletedTask
+            // and run concurrently with it -- the exact ordering the per-entry chain exists to stop.
+            if (ReferenceEquals(_noteWrites.GetValueOrDefault(entryId), write)) _noteWrites.Remove(entryId);
         }
+    }
 
-        // Auditor round-2 BLOCKER fix: without writing the confirmed-persisted value back into
-        // Entries, ReceiveHistoryEntry's own immutability means nothing else ever updates it --
-        // switching away and back showed the pre-edit value even though the store had the new one,
-        // and the next keystroke on the stale display could re-persist the OLD text over the good
-        // one. UpdateEntryInPlace no-ops harmlessly if the entry was removed by a refresh that raced
-        // this same persist (TryUpdateEntry-equivalent lookup miss).
-        Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { Note = note }));
+    /// <summary>The whole body is guarded, including <c>await previous</c> and every dispatcher
+    /// post, so this task can never fault. A faulted task would stay in <see cref="_noteWrites"/>
+    /// -- the cleanup above only removes it on a completed await -- and every later edit for that
+    /// entry would rethrow it at its own <c>await previous</c>, silently, because nothing observes
+    /// a fire-and-forget caller.</summary>
+    private async Task PersistNoteAfterAsync(Task previous, string entryId, string? note)
+    {
+        try
+        {
+            await previous.ConfigureAwait(false);
+
+            Dispatcher.UIThread.Post(() => ErrorMessage = null);
+
+            bool succeeded;
+            try
+            {
+                succeeded = await _historyStore.SetNoteAsync(entryId, note, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                ReportSafely(() =>
+                {
+                    Log.SetNoteFailed(_logger, entryId, ex);
+                    Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveNoteFailed"));
+                });
+                return;
+            }
+
+            if (!succeeded)
+            {
+                // Defensive -- IReceiveHistoryStore.SetNoteAsync's own doc comment: no automatic
+                // deletion path exists in this port's production store today (docs/removed-features.md,
+                // 2026-08-26), but a missing row is still a reachable state worth handling explicitly.
+                ReportSafely(() =>
+                {
+                    Log.SetNoteEntryMissing(_logger, entryId);
+                    Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
+                });
+                return;
+            }
+
+            // Without writing the confirmed-persisted value back into Entries,
+            // ReceiveHistoryEntry's own immutability means nothing else ever updates it --
+            // switching away and back showed the pre-edit value even though the store had the new one,
+            // and the next keystroke on the stale display could re-persist the OLD text over the good
+            // one. UpdateEntryInPlace no-ops harmlessly if the entry was removed by a refresh that raced
+            // this same persist (TryUpdateEntry-equivalent lookup miss).
+            Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { Note = note }));
+        }
+        catch (Exception ex)
+        {
+            ReportSafely(() =>
+            {
+                Log.SetNoteFailed(_logger, entryId, ex);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveNoteFailed"));
+            });
+        }
+    }
+
+    /// <summary>Reporting a failure must not itself fault the caller's task. Both halves are covered
+    /// deliberately: <c>Dispatcher.Post</c> can throw once the dispatcher is shutting down, and
+    /// Microsoft.Extensions.Logging aggregates and rethrows provider exceptions, so an unguarded log
+    /// call inside a catch arm poisons the chain one level deeper than the post would.</summary>
+    private static void ReportSafely(Action report)
+    {
+        try { report(); }
+        catch (Exception) { /* diagnostics only; losing them must not cost the write chain */ }
     }
 
     partial void OnSelectedEntryIsFlaggedChanged(bool value)
@@ -1490,16 +1538,14 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     private async Task PersistFlaggedAsync(string entryId, bool isFlagged, Task previous)
     {
-        // Auditor round-3 risk fix: the ENTIRE body, including `await previous` itself and every
-        // Dispatcher.Post call, is now inside this one try/catch -- an earlier version claimed
-        // "previous is always already-completed successfully, nothing to catch here" and left both
-        // the await and the first Post call unguarded, which was FALSE: if Dispatcher.UIThread.Post
-        // itself throws (e.g. the dispatcher is shutting down during app close), the returned Task
-        // faults, gets stored in _pendingFlagPersist, and every LATER toggle rethrows that same stale
-        // exception at its own `await previous` -- permanently breaking flag persistence for the rest
-        // of this VM's lifetime, silently (nothing observes the fault). Wrapping everything guarantees
-        // this method's returned Task can never fault, which by induction keeps the whole chain safe
-        // from the very first call.
+        // The ENTIRE body, including `await previous` itself and every Dispatcher.Post call, is
+        // inside this one try/catch: if Dispatcher.UIThread.Post throws (e.g. the dispatcher is
+        // shutting down during app close), the returned Task faults, gets stored in
+        // _pendingFlagPersist, and every LATER toggle rethrows that same stale exception at its own
+        // `await previous` -- permanently breaking flag persistence for the rest of this VM's
+        // lifetime, silently (nothing observes the fault). The catch arm goes through ReportSafely
+        // for the same reason: its own log and post can throw on exactly the same trigger, which
+        // would fault the task from inside the guard meant to prevent that.
         try
         {
             await previous.ConfigureAwait(false);
@@ -1508,8 +1554,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             var succeeded = await _historyStore.SetFlaggedAsync(entryId, isFlagged).ConfigureAwait(false);
             if (!succeeded)
             {
-                Log.SetFlaggedEntryMissing(_logger, entryId);
-                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
+                ReportSafely(() =>
+                {
+                    Log.SetFlaggedEntryMissing(_logger, entryId);
+                    Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.EntryNoLongerExists"));
+                });
                 return;
             }
 
@@ -1518,8 +1567,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
         catch (Exception ex)
         {
-            Log.SetFlaggedFailed(_logger, entryId, ex);
-            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveFlagFailed"));
+            ReportSafely(() =>
+            {
+                Log.SetFlaggedFailed(_logger, entryId, ex);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("Panes.RxHistory.Error.SaveFlagFailed"));
+            });
         }
     }
 

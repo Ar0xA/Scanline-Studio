@@ -1,5 +1,28 @@
 # Production-readiness audit plan (2026-08-30)
 
+## Final Astra storage follow-up — implemented and verified 2026-09-08
+
+Storage implementation and tests: commit `d17005b` on `astra-fix`.
+
+The later storage-plan debate is closed by the actual implementation described in
+`astra-storage-implementation.md`, superseding the historical storage approval and
+rejected designs below. Token suppression is staged while retaining an ordinary
+retry row; cleanup outcome and selected-row removal finalize atomically. Per-parent
+pruning checks token ownership and keeps active/retryable intent. Shared metadata
+and referenced image/audio files are preserved; same-store deletion I/O is serialized.
+
+This closes the reproduced failed-delete late insertion, unavailable historical
+parent, stale prune/completion, successful restore and interrupted-finalization
+cases. Independent `audit_final_storage_fix` completed two plan and two code-review
+rounds; final combined verdict **APPROVE**, no required correctness fixes. The final
+suite counts are Core.Logbook 249, Application 515, Host 73 and UI 1604: **2,441
+passed**, including 16 new actual-store lifecycle regressions. No failures/skips.
+
+The user accepted the documented remaining risks after verification: filesystem
+observations/replacement are not transactional, separate application instances do
+not share the in-process deletion gate, and a late post-success recorder can leave
+a missing-image row. This scoped completion does not close unrelated backlog items.
+
 Senior-engineer review of the full `src/` tree (~75,600 lines, 18 projects), run as 7 parallel
 `auditor` passes (read-only): 6 scoped to one subsystem each, 1 scoped to the seams between them.
 Scope, method, and prompts: efficiency, optimization, dedup, correct API usage, logging/exception
@@ -29,9 +52,20 @@ test coverage).
 >   including two transmitter-safety defects. **Two items filed P2 were raised to P1.** See "External
 >   audit folded in" below, and items 00a to 00c at the top of the pick-up list.
 >
-> **Shipping status: not a go.** Three verified defects block a release — a cancelled action that can
-> key the transmitter, an exit path that can leave it keyed, and a CAT desync that reports a false
-> transmit state and never self-heals.
+> - **Fix branch verified, 2026-09-08:** the local branch `astra-fix` implements all 39 active
+>   `astra-audit.md` findings. Independent verification reproduced its build and every test count,
+>   and confirmed 00a/00b/00c are genuinely addressed — **but the branch introduces five new
+>   defects**, two of them proven by execution rather than argued. See "`astra-fix` branch
+>   verification" below, and items 00d to 00h at the top of the pick-up list.
+>
+> - **The five new defects are fixed, 2026-09-08.** Two plan-review rounds plus a principal review
+>   of the one real design decision, then implementation with a mutation gate per fix. Code review
+>   pending. See "Fixing 00d-00h" below.
+>
+> **Shipping status: pending code review of the 00d-00h fixes.** The three original blockers
+> (00a/00b/00c) are fixed on `astra-fix`. The five defects that fix introduced (00d-00h) now have
+> fixes with per-defect regression tests, each demonstrated to fail against the pre-fix code. No
+> known defect currently gates a release; the gate is the outstanding code-review round.
 >
 > **This file is now the ONLY backlog in the repo.** Every other document records measurements,
 > decisions and history. If it is not in "What to pick up next" below, nobody is meant to be working
@@ -52,11 +86,14 @@ carries work. Reasons and dropped-item rationale are in "Triage of the remaining
 further down.
 
 **Transmitter safety and wrong-data defects — these outrank everything else on this list.**
-All three come from the external `astra-audit.md` pass, all three are verified, and **two of them were
-filed as P2 when they are not.** My correction and the reason for it are recorded per item. Full
-provenance in "External audit folded in" below.
+Items 00a to 00c came from the external `astra-audit.md` pass, and **all three are now fixed on the
+local branch `astra-fix`**, verified 2026-09-08. Their entries are kept below with the original
+reasoning intact, because that reasoning is what the fix has to keep satisfying. Items 00d to 00h
+are new — they are defects the fix branch itself introduced, and they replace 00a to 00c as the
+release gate. Full provenance and proof in "`astra-fix` branch verification" below.
 
-00a. **A pending direct-fire can key the transmitter after Cancel** (`ASTRA-020`, filed P1, agreed).
+00a. `FIXED on astra-fix, verified 2026-09-08`. **A pending direct-fire can key the transmitter
+   after Cancel** (`ASTRA-020`, filed P1, agreed).
    `TxImageEditorPaneViewModel.Dispose()` sets `_disposed` and nothing else. It does not bump the
    template-load generation, and it deliberately does not detach `DirectFireRequested`, so the guard
    at the end of `LoadTemplateAsync` passes and the invoke at `:890` fires.
@@ -66,7 +103,8 @@ provenance in "External audit folded in" below.
    not busy-gated — the code's own comment says "Cancel/Apply have no busy gate". The `cf72594`
    direct-fire guard does not cover this path.
 
-00b. **Application exit does not wait for PTT-test cleanup** (`ASTRA-040`, filed P2 — **raise to P1**).
+00b. `FIXED on astra-fix, verified 2026-09-08 — but the fix introduced 00d and 00e`.
+   **Application exit does not wait for PTT-test cleanup** (`ASTRA-040`, filed P2 — **raise to P1**).
    The test protocol is created locally in `RadioSessionService`, keyed, then unkeyed with bounded
    retries. `RadioSessionService` implements neither `IDisposable` nor `IAsyncDisposable`, so the
    host's bounded `DisposeAsync` owns nothing here. Closing Options only cancels the token.
@@ -75,8 +113,8 @@ provenance in "External audit folded in" below.
    shutdown-drain items that ARE accepted (`ASTRA-036`, `ASTRA-037`) — those lose data, this
    transmits. "Accepted in kind" does not transfer across that line.
 
-00c. **rigctld response-stream desync reports a false transmit state, permanently**
-   (`ASTRA-003`, filed P2 — **raise to P1**). `SetBandwidthAsync` throws on an empty mode line
+00c. `FIXED on astra-fix, verified 2026-09-08`. **rigctld response-stream desync reports a false
+   transmit state, permanently** (`ASTRA-003`, filed P2 — **raise to P1**). `SetBandwidthAsync` throws on an empty mode line
    before reading the following passband line, leaving one unread line in an open socket.
    **Why I raise it, and why the item understates itself:** the exception is classified
    command-level, so `RadioController` keeps the connection and never rebuilds it. The auditor traced
@@ -84,6 +122,57 @@ provenance in "External audit folded in" below.
    mode token and yields `Unknown`, and the transmit query parses 2400 successfully — so
    **`IsTransmitting` latches true forever**, and no exception is ever raised to trigger the only
    recovery path. Silent wrong data the operator cannot diagnose.
+
+**New defects introduced by the `astra-fix` branch — these are the current release gate.**
+Each is argued in full, with its proof, in "`astra-fix` branch verification" below. None is caught
+by any test on the branch. Confidence is stated per item, and the two marked *proven* were settled
+by running code, not by reading it.
+
+00d. `FIXED 2026-09-08`. **Shutdown can leave the rig connection open** (*proven*; introduced by the `ASTRA-040` fix).
+   `RadioSessionService.DisposeAsync` (`:172-185`) caches a `TaskCompletionSource` that
+   `DrainPttTestAsync` can complete **faulted** (`:202`). The service is disposed twice: explicitly
+   at `Program.cs:470`, then again by the DI container inside `host.DisposeAsync()` at
+   `Program.cs:506`, because it is a container-owned singleton (`Program.cs:1118`). The second
+   dispose returns the cached faulted task and rethrows. **Proven:** the .NET DI container skips
+   every remaining disposal once one `IAsyncDisposable` faults. `RadioController` is a constructor
+   dependency of `RadioSessionService`, so it is created earlier and disposed later, which puts it
+   in the skipped set — the serial port or native Hamlib handle stays open, and the restart path at
+   `Program.cs:538-549` then races it.
+
+00e. `FIXED 2026-09-08`. **Exit can hang with no timeout** (*proven mechanism, narrow trigger*; same fix).
+   `DrainPttTestAsync` completes its `TaskCompletionSource` only inside the `try`, and
+   `Log.TestPttShutdownStarted` sits outside it at `:190`. **Proven:** `ILogger.Log` rethrows
+   provider exceptions as `AggregateException`. If that call throws, the fire-and-forget task at
+   `:184` swallows it, the completion source is never set, and `Program.cs:470` blocks the UI
+   thread on `GetAwaiter().GetResult()` with **no bound of its own** — unlike the host dispose at
+   `:507`, which does have one. The same hole exists in the catch arm at `:201-202`.
+
+00f. `FIXED 2026-09-08`. **One bad logbook row can block startup permanently** (*proven*; introduced by the `ASTRA-001`
+   fix). The ticks backfill calls `DateTimeOffset.Parse` inside a SQLite user function
+   (`SqliteLogbookRepository.cs:314-322`). **Proven** against the real class: one unparseable
+   `StartUtc` value makes the migration transaction fail, so `StartUtcTicks` is never added, so the
+   constructor (`:21`) throws identically on every subsequent launch. `MainViewModel` →
+   `LogbookPaneViewModel` → `ILogbookSessionService` → `ILogbookRepository` (`Program.cs:1033`)
+   resolves at startup, so the app does not start. On `master` the app started and only logbook
+   queries failed.
+
+00g. `FIXED 2026-09-08`. **A restored Gallery image can never be re-imported** (high confidence; introduced by the
+   `ASTRA-041` fix). `DeleteAsync` writes a deletion tombstone on **every** delete, not only a
+   failed one (`SqliteReceiveHistoryStore.cs:340`), and nothing anywhere deletes from that table.
+   Both `ReconcileWithDiskAsync` (`:540`) and `RecordAsync` (`:158`) then refuse that canonical path
+   forever. Restoring a deleted PNG from backup or the OS trash — the exact recovery reconcile
+   exists for — silently does nothing. Scope limit worth stating: new captures are unaffected,
+   because filenames carry a GUID token (`ReceiveHistoryRecorder.cs:610`).
+
+00h. `FIXED 2026-09-08`. **A note edit can be dropped silently, permanently, per entry** (high confidence; introduced by
+   the `ASTRA-006` fix). `PersistNoteAfterAsync` leaves `await previous` and both
+   `Dispatcher.UIThread.Post` calls outside its try/catch (`RxHistoryPaneViewModel.cs:1437-1441`,
+   `:1471`). A faulted task therefore stays in `_noteWrites[entryId]`, because the cleanup at
+   `:1434` only runs after `await write` succeeds, and every later edit for that entry rethrows at
+   its own `await previous`. The caller is fire-and-forget, so nothing observes it. **The argument
+   is the codebase's own:** the sibling `PersistFlaggedAsync` (`:1491-1523`) wraps its entire body
+   for exactly this reason, and its comment records an earlier review round finding and fixing this
+   same hazard.
 
 **Decode-path work — do the probe first, it may close the biggest item for free:**
 
@@ -105,7 +194,8 @@ provenance in "External audit folded in" below.
    end-of-line off-by-one. Full review cadence — this is decode-path state. Detail:
    `docs/known-decode-defects.md` §4.
 
-0c. **Freeze the `m_sint1` sync-bypass tracker during VIS-bit decode.** `AnalogFmSstvDecoder.cs:4563`
+0c. `DONE on astra-fix (ASTRA-030), verified 2026-09-08 — audited clean, no new bug`.
+   **Freeze the `m_sint1` sync-bypass tracker during VIS-bit decode.** `AnalogFmSstvDecoder.cs:4563`
    and the sibling threshold block at `:4679-4694` are gated only on `_syncBypass1PrimaryHeld`, which
    drops on the routine d12 dips that the 1100/1300 Hz VIS data-bit tones cause. Legacy freezes it:
    `m_sint1.SyncStart()` is case-0-only (`sstv.cpp:1900`), `SyncMax` is case-1-only (`:1960`), and
@@ -141,8 +231,9 @@ provenance in "External audit folded in" below.
 7. **Convert 5 silent-pass tests to `[SkipOnWindowsFact]`:** `ApplyPendingRelocationsTests.cs:219`,
    `AppLocationOverridesTests.cs:47`, `AppLocationsServiceTests.cs:99` and `:192`,
    `JsonSettingsStoreTests.cs:185`. Host.Tests needs its own copy of the attribute.
-8. **QRZ HTTP status check plus one non-OK fixture.** `Core.Logbook` has no status handling at all.
-   Error-message quality only — do it last, or with adjacent work.
+8. `DONE on astra-fix (ASTRA-034), verified 2026-09-08`. **QRZ HTTP status check plus one non-OK
+   fixture.** Status is now classified before any XML or form parsing, and responses are disposed.
+   Items 3 (WAL) and 7 (`SkipOnWindowsFact`) were checked on the branch and are **not** done.
 
 **Decide before writing any code:**
 
@@ -181,6 +272,487 @@ in this report:**
    transmitter is structurally inert on the Hamlib backend specifically.
 
 ---
+
+## `astra-fix` branch verification — 2026-09-08
+
+Independent verification of the local branch `astra-fix`, which implements fixes for all 39 active
+findings in `astra-audit.md`. Branch shape: 7 commits, 83 files, +4,243 / -443 lines, never pushed.
+
+**Method.** Full solution build. Every test project run to completion. Four read-only
+`yoniq-auditor` code reviews over the branch diff, split by subsystem (DSP, radio/session/native,
+persistence/atomic-file, UI/editor/imaging), each given the original finding text and the matching
+diff. Two throwaway executable probes, written specifically to settle framework-behaviour claims
+that source reading alone cannot settle. The probes matter: three of the reviews' highest-severity
+claims rested on assumed runtime behaviour, and this project has a recorded history of
+self-consistent-but-wrong conclusions, so an assumption was not accepted as proof.
+
+**Verdict. The fixes are real and the audit's evidence reproduces exactly — but the branch
+introduces five new defects, none of which its own tests catch.** Shipping status stays *not a go*,
+for different reasons than before.
+
+### What reproduced
+
+- `dotnet build ScanlineStudio.sln -c Debug` exits 0. This repo treats warnings as errors, so a
+  clean exit is a stronger signal here than in a typical project.
+- Every test project passes with zero failures: Application **510**, Core.Logbook **225**, Settings
+  **99**, Core.Localization **23**, Host **70**, UI **1603**, Core.Radio **292**, Core.Imaging
+  **138**, UI.Font **35**. Those are the nine counts `astra-audit.md` claims, and **each one matches
+  exactly**. Core.Sstv adds **1,703 passed and 10 skipped**; the skips are pre-existing harness and
+  fixture-generator entries, identifiable by name (`CutoffImageDump`, `TxCaptureFixtureGenerator`,
+  `ImpairmentSweepHarness`).
+- The native harness compiles and passes: 10,000 synchronized producer/consumer handoffs plus the
+  coalescing, null and repeated-consume cases.
+- `node docs/help/check-help.mjs` passes — 31 topics, 68 document IDs.
+- No test was weakened to make the branch green. `git diff master..astra-fix -- tests/` removes
+  exactly three assertions, and all three are disclosed in the audit's own "Final validation" text.
+
+**The audit's disclosure about those removed assertions is accurate, and I checked it rather than
+took it.** It claims two Host cases asserted a stale encoder type "despite the existing restartable
+registration". `git show master:src/ScanlineStudio.Host/Program.cs` shows `CreateSstvEncoder`
+already returning `RestartableSstvEncoder` on `master`, and the branch diff touches neither that
+factory nor `RegisterSstvServices`. `Assert.IsType` demands an exact type match, so those two cases
+were failing before this branch existed. The correction is honest, not a cover for a behaviour
+change on the branch.
+
+### The five new defects
+
+Ordered by cost of being wrong. Each states what it is, the proof, and why it is not a nit.
+
+#### 00d. Shutdown can leave the rig connection open — *proven*
+
+Introduced by the `ASTRA-040` fix (the P1 that item 00b raised).
+
+**What.** `RadioSessionService.DisposeAsync` (`RadioSessionService.cs:172-185`) creates a
+`TaskCompletionSource`, stores it in `_pttDisposeCompletion`, and returns its task. A repeat call
+returns the same cached task (`:178`). `DrainPttTestAsync` can complete that task **faulted**, via
+`disposal.TrySetException(ex)` at `:202` — reachable whenever the 75-second `WaitAsync` at `:196`
+times out, which the code's own comment at `:219-225` says is possible because the initial
+`PollAsync` and `SetPttAsync(true)` calls are genuinely unbounded.
+
+The service is then disposed **twice**. Once explicitly, as the drain: `Program.cs:414` wires
+`drainPttTests` to `radioShutdown.DisposeAsync().AsTask()`, invoked at `Program.cs:470`. Once
+implicitly, by the DI container, because it is a container-owned singleton registered at
+`Program.cs:1118` and reached by `host.DisposeAsync()` at `Program.cs:506`. The second call gets the
+cached faulted task and rethrows inside the container's disposal loop.
+
+**Proof.** The load-bearing claim is that the container abandons the rest of its disposal chain when
+one `IAsyncDisposable` faults. That is framework behaviour, so I ran it rather than assumed it — a
+throwaway console app registering two singleton `IAsyncDisposable` types, resolving `First` then
+`Second` so `Second` disposes first, and having `Second.DisposeAsync` return a faulted task:
+
+    DisposeAsync threw: InvalidOperationException
+    First.Disposed=False Second.Disposed=True
+
+`First` was never disposed. The second half is a source fact: `RadioController` is
+`IAsyncDisposable` (`RadioController.cs:24`), is registered as a singleton (`Program.cs:1091`), and
+is a **constructor dependency** of `RadioSessionService` (`RadioSessionService.cs:26`). Constructor
+dependencies are created earlier and therefore disposed later, which places `RadioController` in the
+skipped set.
+
+**Why it is not a nit.** The outcome is the live rig connection — serial port or native Hamlib
+handle — never closed, while `Program.cs:538-549` may spawn a restart that races it. That is the
+precise hazard the surrounding comment warns about. It also silently voids every other disposal
+sequenced after it. Note the asymmetry that makes this specific rather than stylistic: the other new
+drain on this branch, `ReceiveHistoryRecorder.DisposeAsync`, returns a task that **cannot** fault,
+because `DrainCoreAsync` catches everything and returns a `bool`. `RadioSessionService` is the one
+that lacks that property.
+
+**Fix shape.** Never cache a faulted disposal task. Log at Critical and complete successfully, or
+hand repeat callers a separate never-faulting completion.
+
+#### 00e. Exit can hang with no timeout — *proven mechanism, narrow trigger*
+
+Same fix, same ~20 lines.
+
+**What.** `DrainPttTestAsync` is fire-and-forget (`:184`), and it completes `disposal` **only inside
+the `try`**. `Log.TestPttShutdownStarted(_logger)` sits outside it at `:190`. If that call throws,
+the exception lands in the discarded task, `disposal` is never completed, and `Program.cs:470`
+blocks the UI thread on `Task.Run(drainPttTests).GetAwaiter().GetResult()` forever. The catch arm
+has the same shape: a throw from `Log.TestPttShutdownFailed` at `:201` escapes before
+`TrySetException` at `:202`.
+
+**Proof.** The premise is that `ILogger.Log` propagates a provider exception rather than swallowing
+it. Ran it:
+
+    Log threw: AggregateException / An error occurred while writing to logger(s). (provider boom)
+
+**Why it is not a nit, even at low probability.** The trigger is narrow — the only registered
+provider is `FileLoggerProvider` (`Program.cs:116`), whose `WriteLine` swallows `IOException`,
+`UnauthorizedAccessException` and `ObjectDisposedException`. But it is not closed: `TryReopenWriter`
+(`FileLoggerProvider.cs:306-320`) is called from **outside** that guarded block at `:88`, and it
+catches only `IOException` and `UnauthorizedAccessException`, so a `NotSupportedException` or
+`SecurityException` from `OpenWriter` escapes. The structural half stands regardless of the logger
+question: `HandleLifetimeExit` bounds `host.DisposeAsync()` at 10 seconds (`Program.cs:507`) but
+applies **no bound of its own** to either new drain. It trusts each callee's internal budget
+completely, and this callee's budget lives inside the `try` that may be bypassed. The consequence is
+a frozen window at exit that no timeout can end.
+
+**Fix shape.** Complete `disposal` from a `finally`, and add a host-side bound at
+`Program.cs:464-495` mirroring line 507.
+
+#### 00f. One bad logbook row can block startup permanently — *proven*
+
+Introduced by the `ASTRA-001` fix.
+
+**What.** The migration adds `StartUtcTicks` and backfills it through a SQLite user function that
+calls `DateTimeOffset.Parse` (`SqliteLogbookRepository.cs:314-322`). Any row whose `StartUtc` does
+not parse throws inside that function. SQLite does not enforce declared column types, and the value
+can come from an external tool, a hand edit or corruption.
+
+**Proof.** Ran the real class, not a model of it. A database was built with `master`'s schema (no
+`StartUtcTicks`), one valid row and one row with `StartUtc = 'not-a-timestamp'`, then
+`SqliteLogbookRepository` was constructed twice:
+
+    attempt 1: THREW SqliteException: SQLite Error 1: 'The string 'not-a-timestamp' was not
+               recognized as a valid DateTime. There is an unknown word starting at index '0'.'
+    attempt 2: THREW SqliteException: ... (identical)
+    StartUtcTicks column present after 2 attempts: 0
+
+The transaction never commits, so the column is never added, so the migration re-runs and fails
+identically on **every** launch. The failure is permanent, not transient.
+
+**Why it is not a nit, and why it is a real regression.** The blast radius is startup, not one
+query. `ILogbookRepository` is registered at `Program.cs:1033` and is reached through
+`MainViewModel` → `LogbookPaneViewModel` (`MainViewModel.cs:124`) → `ILogbookSessionService` →
+`ILogbookRepository`, and `MainViewModel` is resolved at `App.axaml.cs:148`. On `master` the same
+bad row was survivable: `MapRecord` used the identical parse at `:171`, so the app **started** and
+only logbook queries threw. The fix converts "the logbook pane errors" into "the application cannot
+start, forever, with no in-app remedy".
+
+**Fix shape.** `TryParse` to 0 with a log, or isolate the `UPDATE` so one row cannot abort the
+schema step.
+
+#### 00g. A restored Gallery image can never be re-imported — high confidence
+
+Introduced by the `ASTRA-041` fix.
+
+**What.** `DeleteAsync` writes a deletion tombstone **unconditionally**, before any disk cleanup is
+attempted (`SqliteReceiveHistoryStore.cs:335-346`) — not only when the file delete fails, which is
+the case the finding described. Both readers then enforce it forever:
+`ReconcileWithDiskAsync` merges tombstoned paths into the seen set (`:431`) and excludes them
+(`:540`), and `RecordAsync` refuses them (`:158`).
+
+**Proof.** A grep across `src/` returns five references to `ReceiveHistoryDeletion` and **zero**
+deletes: table creation (`:900`), one insert (`:340`), and three read sites. There is no prune, no
+expiry, no UI and no manual rescan, and reconcile runs once per session.
+
+**Why it is not a nit.** Reconciliation exists to recover images found on disk. The natural user
+recovery — restore the PNG from a backup or the OS trash into the images folder — now silently does
+nothing, with an Information-level log as the only trace, and the only remedy is hand-editing
+`history.db`. The fix converted a rare resurrection bug into a rarer but **unrecoverable**
+invisibility bug. The table also grows one row per delete, without bound.
+
+**Scope limit, stated so the severity is not overread.** A *new* capture can never collide with a
+tombstone: filenames are `yyyyMMdd-HHmmssfff_<mode>_<guid8>.png`
+(`ReceiveHistoryRecorder.cs:610`). Only the same canonical path is affected.
+
+**Fix shape.** Tombstone only when the file delete actually failed, or clear the tombstone once the
+file is confirmed gone. This one needs a design call, unlike the other four.
+
+#### 00h. A note edit can be dropped silently, permanently, per entry — high confidence
+
+Introduced by the `ASTRA-006` fix.
+
+**What.** The fix adds a per-entry write chain, `_noteWrites[entryId]`. `PersistNoteAfterAsync`
+leaves three statements **outside** its try/catch: `await previous` (`RxHistoryPaneViewModel.cs:1439`),
+`Dispatcher.UIThread.Post(() => ErrorMessage = null)` (`:1441`), and the final
+`Dispatcher.UIThread.Post(... UpdateEntryInPlace ...)` (`:1471`). If a `Post` throws, the returned
+task faults. The cleanup at `:1434` runs only after `await write` succeeds, so the **faulted** task
+stays in the dictionary, and every later edit for that entry rethrows immediately at its own
+`await previous`. The caller is fire-and-forget (`:1408`), so the exception is unobserved and
+`ErrorMessage` is never set.
+
+**Proof, and it is the codebase's own argument.** The immediate sibling `PersistFlaggedAsync`
+(`:1491-1523`) wraps its **entire** body, including `await previous` and its first `Post`, and its
+comment states that an earlier review round found precisely this: a faulted task stored in the
+pending-persist field "permanently breaking flag persistence for the rest of this VM's lifetime,
+silently (nothing observes the fault)". The new note path reproduces the pattern this repository has
+already adjudicated as a defect and fixed once.
+
+**Why it is not a nit.** Silent data loss, and leaving the two sibling methods asymmetric invites
+the next reader to "fix" the wrong one. The remaining uncertainty is only how often Avalonia's
+`Dispatcher.Post` throws — a shutdown window — which caps frequency, not consequence.
+
+**Fix shape.** Two-line move: wrap the whole body, matching the sibling.
+
+### Fixes that are correct but unreachable
+
+Not defects. Recorded so nobody later mistakes them for tested, working behaviour.
+
+- **`ASTRA-003`'s second half is dead code.** "Incomplete response lines invalidate the connection"
+  (`RigctldClientProtocol.cs:552-564`) cannot fire against either shipped transport: both
+  `TcpTransport.ReadAsync` (`:152-211`) and `FakeRadioTransport.ReadAsync` throw on EOF and never end
+  enumeration, so a legal TCP split mid-line is absorbed by the refill. The good news is the direct
+  answer to the obvious worry: it **cannot** tear down a connection on a benign partial read. Only a
+  bespoke test transport reaches it. The first half — consuming the passband line for an empty mode —
+  is the real fix and is correct.
+- **`ASTRA-033`'s "explicit same-directory recovery" has no production caller.**
+  `FileLoggerProvider.cs:142` is reachable only through `ILogFileRelocator.RelocateAsync`, and
+  `AppLocationsService.cs:126-129` returns *before* calling the relocator when the requested log
+  directory equals the current one. The test calls `RelocateAsync` directly. The 1-second auto-retry
+  does fix the reported defect; the claimed operator affordance does not exist.
+- **`ASTRA-013`'s native test cannot fail against the unfixed code, and never runs.** Producer and
+  consumer are strictly lock-stepped on `published`/`acknowledged`, so no store can land between the
+  consumer's load and its clear — the exact interleaving the finding describes. It also passes
+  against the pre-fix body. It is a standalone `.c` with a hand-written compile line, referenced by
+  no csproj and no CI. **The production fix itself is correct**: the atomics are seq_cst, `stopped`
+  is touched only through them, and exchange-to-zero can neither drop nor double-deliver.
+
+### Behaviour regressions smaller than a release gate
+
+- **`ASTRA-002` now loses records that `master` imported.** The length-respecting header scan
+  (`AdifImporter.cs:80-114`) skips past the real `<EOH>` when a header field declares an overstated
+  length, swallowing the first record. A new test, `Import_TruncatedHeaderValueDoesNotFindEmbeddedHeaderEnd`,
+  asserts `Assert.Empty` for input `master` imported successfully. Real-world ADIF is unaffected —
+  missing header, absent `<EOH>`, CRLF, lowercase tags and `<NAME:LEN:TYPE>` were all traced correct.
+  The trade is deliberate but undocumented as a trade.
+- **An early Stop click now surfaces as an error.** The new pre-key `ct.ThrowIfCancellationRequested()`
+  (`RadioSessionService.cs:255`) fires on the operator's Stop token as well as on shutdown, so a Stop
+  during `PollAsync` returns `Success=false` and renders a failure message. `master` folded that into
+  `Success=true`, and `OptionsWindowViewModel.cs:1789-1794` still asserts that in a now-stale comment.
+  The tell is that the rewritten test had to move its `Cancel()` to after keying to keep passing.
+- **Shutdown budgets are additive.** 75 seconds (PTT drain) + 30 seconds (image drain) + 10 seconds
+  (host dispose), sequential on the UI thread, against `master`'s 10. They cannot starve each other,
+  but the worst case is roughly 115 seconds of a frozen window with no progress indication — and an
+  OS logoff would kill the process first, defeating the drain it is paying for.
+- **A preset with a trailing period or space can no longer be saved over.** `ASTRA-035`'s validator
+  (`ConfigurationPresetStore.cs:457`) is applied to the name being overwritten at `:143`, so a preset
+  created before this change is now read-only. `CONIN$`, `CONOUT$` and `CLOCK$` are absent from the
+  reserved list.
+
+### Verified clean — stated so it is not re-litigated
+
+- **The DSP group is clean and production-ready.** `ASTRA-030`'s gating reproduces `sstv.cpp`'s
+  case-0 / case-1 / case-2-9 / case-3 discipline for `m_sint1` **more** faithfully than the
+  `_syncBypass1PrimaryHeld` latch it replaced, which had an acknowledged case-2/9/3 hole. The
+  consume-once semantics matches legacy `SyncStart`. `ASTRA-005`'s VCO bound was shown unreachable
+  for every legal configuration (worst-case phase ≈49,850 against a 88,200 bound), so the guard is
+  bit-identical to `CVCO::Do` in production while still terminating on corrupt input. The ~105-line
+  deletion dropped no behaviour. Item 0c above is closed by this work.
+- **The transmitted image did not shift.** This was the highest-risk question in the UI group,
+  because previews and TX share code. Every changed preview path was traced: `GradientBrushFactory`
+  is UI-only, TX uses `TransmitImagePreparer.BuildGradientBrush`, which is unmodified; the one shared
+  signature that changed (`RenderWarpedElementPreview`) is preview-only by call graph and defaults to
+  prior behaviour; `PerspectiveCorners.IsConvexAndWellFormed` is logic-unchanged, only relocated in a
+  path the final TX route does not use. The preview maths was re-derived independently and matches TX.
+- **`ASTRA-020`'s P1 guards hold.** Every route to `DirectFireRequested` is a single guarded site;
+  `_templateLoadGeneration` has exactly three writers, no third-party writer and no wrap risk; and
+  the opposite failure — "direct fire silently never transmits" — is not reachable.
+- **No generation guard added by `ASTRA-016`, `ASTRA-018` or `ASTRA-028` can strand the UI pending.**
+  Each resets its busy flag in a `finally` that still runs when the guard returns early.
+- **`ASTRA-042`'s ownership handshake is correct**, and its drain composes with the others rather
+  than racing them.
+
+### Residual gaps in the fixes, worth logging but not gating
+
+- `TxControlsPaneViewModel.Dispose()` (`:2175-2182`) still does not dispose or null `_currentEditor`,
+  so app or window close is not covered by `ASTRA-020`'s invalidation. **Pre-existing** — the branch
+  does not touch that method — and outside the finding's two stated triggers, but it is the same P1
+  class.
+- `OnEditorCancelled()` (`:1529`) is the one parent callback that did **not** get the
+  `ReferenceEquals(editor, _currentEditor)` guard the other three received. Not reachable today.
+- `PointerCaptureLost` still leaves `_dragMode` and `_pushedUndoThisGesture` stale, so a later Escape
+  can undo an unrelated edit — the `ASTRA-025` class through a path the fix did not close.
+- A row written without `StartUtcTicks` (an older build, a third-party writer) is invisible to every
+  date-filtered search, and the backfill never re-runs. The old `IX_Qso_StartUtc` index is also never
+  dropped on a migrated database.
+- `AnalogFmSstvDecoder.cs:4552-4558` still describes `_syncBypass1PrimaryHeld` as an open, unfixed
+  divergence. The same commit deleted that field and fixed the gap. A legacy-parity comment block was
+  also removed near `:747`; CLAUDE.md §3 exempts parity-pointer blocks from pruning in full.
+- `ASTRA-005` **snaps** an out-of-range PLL gain to 1.0 rather than clamping to the bound, and legacy
+  (`Option.cpp:512`) rejects by *keeping the current gain*. Unreachable through the bounded UI
+  control; reachable via a hand-edited settings or preset file.
+
+### Process gaps
+
+- The branch adds a new confirmation dialog (`FilePicker.OverwriteTitle` / `OverwriteMessage`) and a
+  new validation error (`Panes.Logbook.Error.InvalidFrequency`) without touching
+  `docs/help/index.html`. CLAUDE.md requires the help update in the same change. `check-help.mjs`
+  still passes, and no existing help text was made wrong, so this is a gap rather than a break. All
+  three new keys exist in `assets/locale/en.json` and all three are used.
+
+### Limits of this verification
+
+- No RF hardware, no interactive Windows or macOS file picker, and no real-window Avalonia run.
+- The five defects are argued from source plus, for 00d, 00e and 00f, from executed probes. 00g and
+  00h are source-proven mechanisms whose *frequency* is not measured.
+- The reviews were read-only and did not execute tests; the test evidence above is mine.
+- Passing tests are not evidence of absence here — none of the five defects is covered by any test
+  on the branch, which is the point.
+
+## Fixing 00d–00h — 2026-09-08
+
+Process: plan → two `yoniq-auditor` plan-review rounds → a `yoniq-principal` review of the one real
+design decision → implementation → per-fix mutation gate → `yoniq-auditor` code review. Plan round 1
+returned NOT READY (1 blocker, 4 majors); plan round 2 returned NOT READY (4 majors, all paper fixes)
+with "a v3 with those four pinned is a go". Plan v3 is the build spec, in `astra-newfix-plan.md`.
+**Code-review round 1 returned GO FOR PRODUCTION**, no blocker, with two MINORs it recommended as a
+same-session follow-up; both were applied and re-reviewed (see "Code review" below).
+
+**What review changed, so the reasoning is not lost:**
+
+1. **Round 1 caught a blocker that no test would have caught.** `TestPttAsync`'s admission gate keyed
+   on a field only `DisposeAsync` set. The host's exit path now calls the drain instead, so a gate
+   left keyed on that field would never close there, and a PTT test started during shutdown could key
+   the rig — `ASTRA-040`'s own failure class, reintroduced by its own fix. The flag now lives in the
+   drain.
+2. **Round 1 rejected my F3 design, correctly.** v1 chose "tombstone always, delete it after a
+   confirmed removal" and rejected "tombstone only on a failed delete" on the grounds that the latter
+   reopens `ASTRA-041`. That premise was **factually wrong**: `ASTRA-041`'s filed trigger is a failed
+   delete, not a crash (`astra-audit.md:161`, RP-1 at `:558`).
+3. **The principal review confirmed the reversal and corrected its trigger.** It verified all three
+   grounds — the filed trigger, the contract comment at `IReceiveHistoryStore.cs:286` already scoping
+   the guarantee to cleanup that "failed", and the recoverable-versus-unrecoverable ranking — then
+   found something both the auditor and I missed: keying the tombstone on a post-hoc `File.Exists`
+   is a worse proxy **in both directions**. A Windows delete against a `FILE_SHARE_DELETE` handle
+   returns without throwing while the file stays visible, and an inaccessible directory can leave
+   `File.Exists` false for a file that genuinely could not be removed. The tombstone is now written
+   from the caught exception.
+4. **Round 2 caught four more paper errors**, including one that would not have compiled (an
+   `internal` interface is not visible to `ScanlineStudio.Host`), one that would have deleted a newer
+   in-flight write from the note chain, and one that would have placed the tombstone prune after
+   `ReconcileWithDiskAsync`'s early returns, where it would almost never run.
+
+### The fixes
+
+**00d + 00e — `RadioSessionService` shutdown ownership.** `DisposeAsync` no longer owns the drain:
+`DrainPttTestsAsync(TimeSpan? timeout = null)` does, exposed through a new public `IPttTestDrain`
+(kept off `IRadioSessionService`, which is the UI-facing contract). `DisposeAsync` is now
+`new(DrainPttTestsAsync())`. The core keeps every statement inside one `try`, routes every log call —
+catch arms included — through a swallowing helper, and returns a `bool` set in the `try`. The host
+gets the same `if (!result)` branch the image drain already had, plus its own `pttDrainTimeout`
+backstop (80 s, over the callee's authoritative 75 s) so a drain that never completes cannot block
+the UI thread forever.
+
+**One regression caught by the existing suite during implementation, worth recording.** Round 2
+recommended `Task.Run` for the core, to keep its synchronous prefix off the lifetime gate. That broke
+`DisposeAsync_DuringPoll_NeverKeysAfterPollReturns`: the prefix requests cancellation, and deferring
+it to the thread pool let an in-flight poll complete before observing it. The core now starts on the
+caller's thread, outside the lock, with a separate completion source providing the cached-task
+identity. Both properties hold; neither was obvious on paper.
+
+**00f — logbook migration.** `qso_utc_ticks` uses `TryParse`, returning 0. The `CreateFunction`
+registration moved out of the add-column branch, the backfill runs unconditionally as
+`WHERE StartUtcTicks = 0` below the index creation, and it is wrapped so a failure the `TryParse`
+cannot cover still leaves the `ALTER TABLE` and both indexes committed. The unconditional predicate
+also closes the logged residual where a row written without the column was invisible to every
+date-filtered search.
+
+**00g — deletion tombstones.** Option (a). The row-delete transaction no longer writes a tombstone;
+the image delete's catch arm does, as a plain `INSERT OR IGNORE ... VALUES` (the old statement's
+row-exists guard is permanently false once the row is gone, so moving it verbatim would have written
+no tombstone at all and silently returned `ASTRA-041`). Reconcile re-checks `File.Exists` inside the
+insert loop, and prunes tombstones whose file has disappeared — unconditionally, before both early
+returns.
+
+**00h — note-write chain.** The whole `PersistNoteAfterAsync` body is guarded, every reporting path
+goes through a helper that swallows both its log and its dispatcher post, and the `_noteWrites`
+cleanup moved into a `finally` **keeping its `ReferenceEquals` guard**. `PersistFlaggedAsync`'s catch
+arm got the same treatment and its "can never fault" comment is now true rather than aspirational.
+
+### Verification
+
+Full solution builds clean (warnings are errors here). All ten suites pass on the final code:
+Application **515**, Core.Logbook **233**, Settings **99**, Core.Localization **23**, Host **73**,
+UI **1604**, Core.Radio **292**, Core.Imaging **138**, UI.Font **35**, Core.Sstv **1703 passed /
+10 skipped** (the same pre-existing harness and fixture-generator skips). New tests: 5 for the PTT
+drain, 2 for the host branch and backstop, 8 for the tombstone and migration, 1 for the note chain.
+
+**Every fix has a demonstrated mutation gate** — the test was shown to fail against the pre-fix
+behaviour, not merely to pass against the fix:
+
+| Fix | Mutation that must fail the test | Result |
+|---|---|---|
+| 00d/00e non-faulting drain | core rethrows **and** the bridge's backstop removed | 3 tests fail |
+| 00d/00e admission gate | gate ignores the stopping flag | 1 test fails |
+| 00f | `TryParse` reverted to `Parse` | fails |
+| 00g tombstone scope | tombstone written unconditionally again | fails |
+| 00g prune | prune call removed | fails |
+| 00g insert re-check | `File.Exists` re-check removed | fails |
+| 00h | outer guard **and** `finally` cleanup reverted | fails |
+
+**Two fixes are defence in depth, stated honestly because it changes how the tests read.** For 00d/00e
+the core's catch and the bridge's backstop each independently prevent a faulted task, and for 00h the
+body guard and the `finally` cleanup each independently prevent a poisoned chain. Mutating either
+layer alone is absorbed by the other, so each gate above mutates both. That is a property of the
+fixes, not a weakness of the tests — but a reader who mutates one layer and sees green should know
+why.
+
+One unrelated test failed once in a full-suite run and passed standalone
+(`SstvSessionServiceAudioAutoSaveTests.TrySaveReceptionAudioAsync_CalledTwiceForTheSameReception_SecondCallReturnsFalse`),
+in a file this change does not touch. Treated as the known parallel-load flake per project rule.
+
+### Code review
+
+**Round 1: GO FOR PRODUCTION.** It confirmed statement by statement that the cached drain task cannot
+fault or fail to complete, that the admission gate closes in both call orders, that nothing runs a
+continuation while the lifetime gate is held (the `RunContinuationsAsynchronously` option on both
+completion sources is what makes that true), that the host branch logs once per case and never
+swallows a real exception, and that `ASTRA-041`'s original failed-delete case is still closed with both
+pre-existing tombstone tests still meaningful rather than accidentally passing. It also independently
+confirmed the defence-in-depth characterisation above rather than taking it on trust.
+
+**Two MINORs it raised, both applied:**
+
+1. **The tombstone write was a new throwing statement after the row delete had already committed.**
+   A busy database or a cancelled token would surface as "delete failed" for a row that is in fact
+   gone — and the caller does not refresh on that path — while also writing no tombstone, which is the
+   `ASTRA-041` symptom. Now wrapped in its own try/catch with a `DeleteTombstoneFailed` warning.
+2. **The prune ran before the `Directory.Exists` early return, which was my error, not the plan's.**
+   Plan v3 said "before both early returns" and I implemented that literally. `File.Exists` is also
+   false for *unreachable*, so an unmounted share or a re-pointed images folder would wipe every
+   tombstone in one pass, and undeletable images would return when the volume came back. The prune now
+   sits after the directory check and before the nothing-to-import return, so it still runs in the case
+   it exists for. Covered by
+   `ReconcileWithDiskAsync_UnreachableImagesDirectory_KeepsTombstones`, mutation-gated by moving the
+   prune back above the directory check.
+
+**Round 2 (scoped to those two changes): GO FOR PRODUCTION**, and explicitly "do not dispatch another
+round" — fold its two remaining nits into whatever touches the file next. That was this change, so both
+were done rather than deferred:
+
+- I had claimed no seam existed to make the tombstone INSERT fail. The reviewer found one: the
+  image-delete hook runs between the commit and the tombstone write, so dropping
+  `ReceiveHistoryDeletion` from inside it makes the INSERT fail deterministically. Now covered by
+  `DeleteAsync_TombstoneWriteFails_StillReportsTheRowDeleted`, mutation-gated by unwrapping the
+  try/catch.
+- `IReceiveHistoryStore.DeleteAsync`'s contract still promised unconditionally that deletion intent
+  persists. After change 1 that is best-effort, and after option (a) a *successful* cleanup records
+  nothing at all. The doc now says both.
+
+One further correction from round 1, documentation only: a comment I wrote claimed an in-flight test
+"has to observe" the cancellation before `DrainPttTestsAsync` returns. `CancelAsync` flips the token
+synchronously but runs registered callbacks asynchronously, so each test's linked source learns of it
+slightly later. The comment now states what is actually guaranteed, and why it does not matter here —
+the drain waits for the un-key either way.
+
+Suites after the follow-up: Core.Logbook **233**, Application **515**, Host **73**, UI **1604**, zero
+failures.
+
+### Accepted residuals, recorded rather than fixed
+
+- If the drain never completes at all, the container's second dispose re-awaits the same cached task
+  and burns the 10 s host budget. The backstop bounds the explicit drain, not that second await.
+- `DrainPttTestsAsync`'s own gate body throws synchronously rather than returning a faulted task.
+  Nothing in it can realistically throw.
+- `MapRecord` still parses `StartUtc` on read, so an unparseable row still fails `SearchAsync` exactly
+  as on `master`. Startup no longer fails, which was the defect. The third option — skip-and-log the
+  row, which this codebase already chose for `ParseMode` two methods away — is deliberately out of
+  scope as pre-existing behaviour.
+- A delete landing between the row-delete commit and the unlink, while a once-per-session reconcile is
+  mid-insert, can leave one row whose file is gone. It renders without a thumbnail and the normal
+  delete command removes it. The same applies to the second tombstone consumer, `RecordAsync`. Both
+  are recoverable by deleting again, which is the entire basis for choosing option (a).
+- The additive 75+30+10 s exit budget is unchanged and still a separate open item. The host backstop
+  makes the worst case 80+30+10.
+- `CancellationTokenSource.CancelAsync` flips the token synchronously but runs registered callbacks
+  asynchronously, so an already-admitted test observing the shutdown at its next cancellation check is
+  a timing likelihood rather than an invariant. **Pre-existing** — the code before this change had the
+  identical prefix — and the drain still waits for the un-key, so it is not a stuck-transmitter path.
+  Recorded because a doc comment added here initially overstated it.
+- The migration's "timestamp index migrated (N rows backfilled)" line fires on every launch for a
+  database holding a permanently unparseable `StartUtc`, because SQLite counts a same-value write as a
+  change. Cosmetic wording, not a loop.
 
 ## Tier 0 — blockers (fix before calling this production-ready)
 
