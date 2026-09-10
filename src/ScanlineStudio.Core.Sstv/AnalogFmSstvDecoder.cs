@@ -5264,13 +5264,29 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             delta += _demodulator.HalfTap / 4;
         }
 
-        // Legacy's own equivalent of a negative result is DrawSSTVNormal skipping samples whose
-        // phase is still negative (`if (n<0) continue`, Main.cpp:4146) rather than reading earlier
-        // samples that were never buffered. Clamping to 0 here is the direct equivalent for a
-        // sample-cursor variable that cannot legitimately go negative (it indexes _rawSamples from
-        // its own start) -- flagged by review as a real edge case (a correction up to -OFP, ~118
-        // samples for Robot 36, applied very early in a short buffer could clamp) but expected to be
-        // rare in practice: real transmissions carry several seconds of lead-in before the image.
+        // Clamped deliberately, and NOT because it matches legacy -- it does not.
+        //
+        // An earlier comment here claimed this was the direct equivalent of legacy's
+        // `if (n<0) continue` (Main.cpp:4146). That was backwards. The sign conventions run opposite:
+        // legacy's `n` is a PHASE (`n = OFP - argmax`, Main.cpp:3784), this is a SAMPLE CURSOR.
+        // Legacy's `continue` branch fires on `m_rBase < 0`, which corresponds to a POSITIVE
+        // correction here and never reaches this guard. This branch corresponds to legacy's
+        // `m_rBase > 0`, where legacy does NOT skip -- it draws from page index 0 at phase
+        // `m_rBase`, keeping every pixel in its correct column and row and leaving row 0's left
+        // portion unpainted. So clamping discards registration where legacy preserves it.
+        //
+        // Left as-is by user decision 2026-09-10 after measurement, not by oversight:
+        //   - Reachable only via ForceMode within ~0.28s of a fresh decoder's first sample (Scottie
+        //     worst case). A mid-transmission tune-in CANNOT reach it -- VIS lock and narrow-FSK
+        //     anchor past the danger window, and the sync-bypass anchor is peak-derived so its
+        //     correction is ~0 by construction.
+        //   - The predicted failure (a vertical seam, up to ~65% of width on Scottie) could NOT be
+        //     reproduced. The branch does execute in a provoking harness, yet clamp and wrap produced
+        //     no difference this port could measure, at the top of the picture or the middle.
+        //   - Wrapping by `+(int)lineWidthSamples` is the closer-to-legacy behaviour and is a ~3-line
+        //     change if this is ever revisited. It was written, tested and reverted for want of any
+        //     test that could tell the two apart.
+        // Full analysis: BACKLOG.md D6.
         _consumedSamples = Math.Max(0, origin + delta);
         _idealLineStartSample = _consumedSamples; // MUST 4 -- see field's own doc comment
 
