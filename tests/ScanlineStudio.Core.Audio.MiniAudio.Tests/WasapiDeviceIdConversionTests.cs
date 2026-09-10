@@ -1,51 +1,47 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Audio;
+using Xunit.Abstractions;
 
 namespace ScanlineStudio.Core.Audio.MiniAudio.Tests;
 
 /// <summary>
 /// `BACKLOG.md` W3. WASAPI is the only backend whose device id is not a passthrough: the native shim
 /// converts between WASAPI's <c>wchar_t[64]</c> id and this project's UTF-8 ABI
-/// (<c>WideCharToMultiByte</c>/<c>MultiByteToWideChar</c>, `scanline_audio.c:171` and `:226`). That is
-/// real conversion logic with buffer-size arithmetic, and no test has ever executed it.
+/// (<c>WideCharToMultiByte</c> at `scanline_audio.c:171`, <c>MultiByteToWideChar</c> at `:226`). That
+/// is real conversion logic with buffer-size arithmetic, and no test has ever executed it.
 ///
-/// <para><b>Device cost: none beyond enumeration.</b> Every test here goes through
-/// <see cref="MiniAudioDeviceEnumerator"/>, which walks the device collection and reads each
-/// endpoint's property store. No stream is opened, nothing becomes audible, and no other application
-/// loses its device. Safe to run while the machine is playing audio.</para>
+/// <para><b>Device cost: enumeration only.</b> No stream is opened and nothing becomes audible, so
+/// these are safe to run while the machine is playing audio. One correction to an earlier version of
+/// this comment: enumeration is not merely a property-store read. <c>RefreshAsync</c> probes native
+/// formats per device, which activates an <c>IAudioClient</c> on each endpoint and calls
+/// <c>IsFormatSupported</c> — it never calls <c>Initialize</c> or <c>Start</c>, so nothing is taken
+/// from another application, but it is not free in TIME on a machine with many endpoints.</para>
 ///
-/// <para><b>What these can and cannot prove.</b> They exercise the conversion against whatever names
-/// the machine actually has. They cannot manufacture a non-ASCII or maximum-length device name — that
-/// needs a renamed endpoint, which is a manual step. So a green run here means "the conversion is
-/// sound for this machine's devices", not "the conversion is sound". The non-ASCII case is called out
-/// below and reports rather than passes silently, so a tester can see whether their machine covered
-/// it.</para>
+/// <para><b>Both directions are covered, and the second one is easy to miss.</b> The wide-to-UTF-8
+/// direction shows up directly in every device id. The UTF-8-to-wide direction at `:226` runs during
+/// format probing, and if it were broken the probe would fail, degrade to an empty format list, and
+/// every id assertion would still pass. So one test asserts on the probe's OUTPUT, which is only
+/// non-empty if the id round-tripped back to a real endpoint.</para>
 /// </summary>
-public sealed class WasapiDeviceIdConversionTests
+public sealed class WasapiDeviceIdConversionTests(ITestOutputHelper output)
 {
     [WindowsAudioReadOnlyFact]
-    public async Task EveryDeviceId_SurvivesTheUtf8Conversion_AsValidNonEmptyText()
+    public async Task EveryDeviceId_SurvivesTheUtf8Conversion_Intact()
     {
-        var devices = await EnumerateAsync();
+        var devices = await RequireDevicesAsync();
 
-        // A conversion that silently truncated or mis-sized its buffer shows up here first: WASAPI ids
-        // are endpoint paths, never empty, and never contain a lone surrogate or an embedded null.
         foreach (var device in devices)
         {
             Assert.False(
                 string.IsNullOrEmpty(device.Id),
-                $"device '{device.Name}' came back with an empty id, which a WASAPI endpoint never has.");
+                $"device '{device.Name}' came back with an empty id. That is what the shim produces "
+                + "when WideCharToMultiByte returns zero or negative and the buffer is blanked.");
 
-            Assert.DoesNotContain('\0', device.Id);
-
-            for (var i = 0; i < device.Id.Length; i++)
-            {
-                Assert.False(
-                    char.IsSurrogate(device.Id[i]) && !char.IsSurrogatePair(device.Id, i)
-                        && (i == 0 || !char.IsSurrogatePair(device.Id, i - 1)),
-                    $"device '{device.Name}' has a lone surrogate at index {i} of its id, which means "
-                    + "the wide-to-UTF-8 conversion split a character.");
-            }
+            // The replacement character is the live assertion here. A split multi-byte sequence
+            // decodes to U+FFFD -- whereas an embedded null cannot survive to be asserted on (the
+            // managed decoder cuts at the first one) and a lone surrogate cannot occur at all
+            // (UTF8.GetString emits U+FFFD instead). Asserting on those two would be unfalsifiable.
+            Assert.DoesNotContain('�', device.Id);
         }
     }
 
@@ -53,10 +49,10 @@ public sealed class WasapiDeviceIdConversionTests
     public async Task DeviceIds_AreStableAcrossRepeatedEnumeration()
     {
         // The conversion runs fresh on every enumeration, so an off-by-one in the buffer arithmetic
-        // could produce a different string on a second pass -- which would break device selection
-        // persistence without any single enumeration looking wrong.
-        var first = await EnumerateAsync();
-        var second = await EnumerateAsync();
+        // could produce a different string on a second pass -- breaking device-selection persistence
+        // without any single enumeration looking wrong.
+        var first = await RequireDevicesAsync();
+        var second = await RequireDevicesAsync();
 
         Assert.Equal(
             first.Select(d => d.Id).OrderBy(id => id, StringComparer.Ordinal),
@@ -64,36 +60,59 @@ public sealed class WasapiDeviceIdConversionTests
     }
 
     [WindowsAudioReadOnlyFact]
-    public async Task DeviceNames_ReportWhetherThisMachineCoversTheNonAsciiCase()
+    public async Task AtLeastOneDevice_ReportsSupportedFormats_WhichOnlyHappensIfTheIdConvertsBack()
     {
-        var devices = await EnumerateAsync();
+        // This is the only assertion that can fail if MultiByteToWideChar at `:226` is broken. That
+        // conversion turns our UTF-8 id back into a WASAPI id during format probing; if it produced
+        // garbage the probe returns -1, the enumerator logs and degrades to an empty format list, and
+        // every OTHER test in this file still passes. An empty list everywhere is the signature.
+        var devices = await RequireDevicesAsync();
+
+        Assert.Contains(
+            devices,
+            d => d.SupportedSampleRates.Count > 0);
+    }
+
+    [WindowsAudioReadOnlyFact]
+    public async Task NonAsciiDeviceNames_AreReportedAsCoverage_NotAsserted()
+    {
+        var devices = await RequireDevicesAsync();
         var nonAscii = devices.Where(d => d.Name.Any(c => c > 127)).ToList();
 
-        // Deliberately not an assertion. Whether a non-ASCII endpoint exists is a property of the
-        // machine, not of the code, so failing here would punish a tester for their hardware. It
-        // reports instead, so a run on a machine that DOES have one is recognisable as stronger
-        // evidence -- and so nobody later mistakes a green run on an all-ASCII box for coverage of
-        // the multi-byte path.
-        Assert.True(
-            true,
-            nonAscii.Count > 0
-                ? $"covered: {nonAscii.Count} device name(s) contain non-ASCII characters."
-                : "NOT covered on this machine: every device name is ASCII, so the multi-byte branch "
-                + "of the wide-to-UTF-8 conversion did not run. Rename an endpoint in Sound settings "
-                + "to exercise it.");
+        // Whether such a device exists is a property of the machine, not of the code, so asserting it
+        // would punish a tester for their hardware. It is written to test output instead -- xUnit only
+        // surfaces an assertion message on FAILURE, so an Assert.True(true, message) would print
+        // nothing and this note would silently do nothing at all.
+        output.WriteLine(nonAscii.Count > 0
+            ? $"COVERED: {nonAscii.Count} of {devices.Count} device names contain non-ASCII characters."
+            : $"NOT COVERED on this machine: all {devices.Count} device names are ASCII, so the "
+            + "multi-byte branch of the wide-to-UTF-8 conversion did not run. Rename an endpoint in "
+            + "Sound settings to exercise it.");
 
         foreach (var device in nonAscii)
         {
-            // If a name survived with its non-ASCII characters intact, the conversion handled a
-            // multi-byte sequence correctly rather than dropping or replacing it.
             Assert.DoesNotContain('�', device.Name);
         }
     }
 
-    private static async Task<IReadOnlyList<AudioDeviceInfo>> EnumerateAsync()
+    /// <summary>
+    /// Enumerates, and fails rather than passing vacuously when the machine has no audio endpoints.
+    /// That case is not hypothetical: it is the default state of a GitHub <c>windows-latest</c>
+    /// runner, which is the first machine these are likely to run on.
+    /// </summary>
+    private static async Task<IReadOnlyList<AudioDeviceInfo>> RequireDevicesAsync()
     {
         using var enumerator = new MiniAudioDeviceEnumerator(NullLogger<MiniAudioDeviceEnumerator>.Instance);
         await enumerator.RefreshAsync();
-        return [.. enumerator.InputDevices, .. enumerator.OutputDevices];
+
+        IReadOnlyList<AudioDeviceInfo> devices = [.. enumerator.InputDevices, .. enumerator.OutputDevices];
+
+        Assert.True(
+            devices.Count > 0,
+            "no audio devices were enumerated, so the WASAPI id conversion never ran and this test "
+            + "would otherwise pass without asserting anything. A headless CI runner with no audio "
+            + "endpoint is the usual cause.");
+
+        return devices;
     }
 }

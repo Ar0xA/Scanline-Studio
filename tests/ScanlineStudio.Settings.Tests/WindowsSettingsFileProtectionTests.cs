@@ -13,15 +13,16 @@ namespace ScanlineStudio.Settings.Tests;
 /// <para><b>Nobody had verified that.</b> It is a security assumption resting on a comment. These
 /// tests read the real ACL and check it, which is the difference between an assumption and a fact.</para>
 ///
-/// <para><b>Device cost: none.</b> No audio, no serial port, no network. These create files under the
-/// per-user application data directory and delete them again. They do not read, modify or overwrite
-/// the real <c>settings.json</c> — every test uses its own uniquely named subdirectory, so a run
-/// cannot disturb an installed configuration.</para>
+/// <para><b>Device cost: none.</b> No audio, no serial port, no network. These create a uniquely
+/// named subdirectory under the CONFIGURED settings directory and delete it again. They never read,
+/// modify or overwrite the real <c>settings.json</c>.</para>
 ///
-/// <para><b>Why the profile directory and not a temp path.</b> The claim under test is specifically
-/// about where settings actually live. <c>Path.GetTempPath()</c> on Windows is itself inside the user
-/// profile and inherits comparable protection, so testing there would pass for the wrong reason and
-/// would not catch a future move to a shared location.</para>
+/// <para><b>Why <c>AppConfigPaths.ConfigDirectory</c> and not <c>%APPDATA%</c> directly.</b>
+/// Relocation is a shipped feature. An operator who moved settings to a second drive or a network
+/// share is precisely the configuration where <c>BUILTIN\Users</c> normally DOES have read — the one
+/// case this assumption depends on, and the one a hardcoded <c>%APPDATA%</c> probe would report green
+/// for. A temp path would be worse still: <c>Path.GetTempPath()</c> on Windows sits inside the
+/// profile and inherits comparable protection, so it would pass for the wrong reason always.</para>
 /// </summary>
 [SupportedOSPlatform("windows")]
 public sealed class WindowsSettingsFileProtectionTests
@@ -36,32 +37,37 @@ public sealed class WindowsSettingsFileProtectionTests
                 .GetAccessControl()
                 .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier));
 
+            using var identity = WindowsIdentity.GetCurrent();
+
             foreach (FileSystemAccessRule rule in rules)
             {
-                if (rule.AccessControlType != AccessControlType.Allow)
+                // Only Allow rules that can actually READ the file matter. An inherited
+                // Traverse-or-ReadAttributes ACE for BUILTIN\Users is benign and some corporate
+                // policies set exactly that on profile roots -- flagging it would be a false alarm
+                // saying "your password is exposed".
+                if (rule.AccessControlType != AccessControlType.Allow
+                    || (rule.FileSystemRights & FileSystemRights.ReadData) == 0)
                 {
                     continue;
                 }
 
                 var sid = (SecurityIdentifier)rule.IdentityReference;
 
-                // These three are the ones that would make a plaintext password readable by another
-                // account on the same machine. SYSTEM and Administrators are expected and not a
-                // finding -- an administrator can read any file regardless of this ACL.
-                foreach (var wellKnown in new[]
-                {
-                    WellKnownSidType.WorldSid,
-                    WellKnownSidType.AuthenticatedUserSid,
-                    WellKnownSidType.BuiltinUsersSid,
-                })
-                {
-                    Assert.False(
-                        sid.IsWellKnown(wellKnown),
-                        $"a file created where settings.json lives grants {rule.FileSystemRights} to "
-                        + $"{wellKnown}. JsonSettingsStore skips owner-only permissions on Windows on "
-                        + "the grounds that the profile ACL is already private. On this machine it is "
-                        + "not, and settings.json can hold a QRZ.com password in plaintext.");
-                }
+                // A whitelist, deliberately. An enumerated deny-list would miss INTERACTIVE, Guests,
+                // domain groups such as Domain Users -- which are not well-known SIDs at all -- and
+                // any individual account explicitly granted read. SYSTEM and Administrators are
+                // expected and not a finding: an administrator can take ownership regardless.
+                var permitted = sid == identity.User
+                    || sid.IsWellKnown(WellKnownSidType.LocalSystemSid)
+                    || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)
+                    || sid.IsWellKnown(WellKnownSidType.CreatorOwnerSid);
+
+                Assert.True(
+                    permitted,
+                    $"a file created where settings.json lives grants read to {Describe(sid)}. "
+                    + "JsonSettingsStore skips owner-only permissions on Windows on the grounds that "
+                    + "the settings directory is already private. On this machine it is not, and "
+                    + "settings.json can hold a QRZ.com password in plaintext.");
             }
         }
         finally
@@ -85,15 +91,32 @@ public sealed class WindowsSettingsFileProtectionTests
 
             using var identity = WindowsIdentity.GetCurrent();
 
+            // Restricted deliberately: identity.Groups contains Everyone and Authenticated Users, so
+            // a membership test would accept a file owned by Everyone while claiming it was owned by
+            // the current user.
             Assert.True(
                 owner is SecurityIdentifier sid
-                    && (sid == identity.User || identity.Groups?.Contains(sid) == true),
+                    && (sid == identity.User
+                        || sid.IsWellKnown(WellKnownSidType.LocalSystemSid)
+                        || sid.IsWellKnown(WellKnownSidType.BuiltinAdministratorsSid)),
                 $"a file created where settings.json lives is owned by {owner}, not by the current "
-                + "user, so the per-user profile assumption does not hold for this location.");
+                + "user, so the private-directory assumption does not hold for this location.");
         }
         finally
         {
             Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static string Describe(SecurityIdentifier sid)
+    {
+        try
+        {
+            return $"{sid.Translate(typeof(NTAccount))} ({sid})";
+        }
+        catch (IdentityNotMappedException)
+        {
+            return sid.ToString();
         }
     }
 
@@ -104,13 +127,15 @@ public sealed class WindowsSettingsFileProtectionTests
     /// </summary>
     private static (string Directory, string FilePath) CreateProbeFile()
     {
-        var root = Environment.GetFolderPath(
-            Environment.SpecialFolder.ApplicationData,
-            Environment.SpecialFolderOption.DoNotVerify);
+        // AppConfigPaths, not %APPDATA% directly. Relocation is a shipped feature, and an operator
+        // who moved settings to a second drive or a share is exactly the case where BUILTIN\Users
+        // normally DOES have read -- the one configuration this assumption depends on and the one a
+        // hardcoded %APPDATA% probe would never see.
+        var root = AppConfigPaths.ConfigDirectory;
 
         Assert.False(
             string.IsNullOrEmpty(root),
-            "ApplicationData resolved to nothing, so the location settings live in could not be found.");
+            "the configured settings directory resolved to nothing, so its ACL could not be read.");
 
         var directory = Path.Combine(root, $"ScanlineStudio-acl-probe-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);

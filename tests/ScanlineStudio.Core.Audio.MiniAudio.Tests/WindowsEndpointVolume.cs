@@ -28,9 +28,34 @@ internal static class WindowsEndpointVolume
     private static readonly Guid MmDeviceEnumeratorClsid = new("BCDE0395-E52F-467C-8E3D-C4579291692E");
     private static readonly Guid AudioEndpointVolumeIid = new("5CDF2C82-841E-4546-9722-0CF74078229A");
 
+    /// <summary>Reads the endpoint's mute flag through this file's hand-declared vtable.</summary>
+    public static bool GetMute(string deviceId)
+    {
+        var read = false;
+        WithEndpointVolume(deviceId, volume => Marshal.ThrowExceptionForHR(volume.GetMute(out read)));
+        return read;
+    }
+
     /// <summary>Sets the endpoint's mute flag. <paramref name="deviceId"/> is the WASAPI endpoint id
-    /// as this project's enumerator reports it.</summary>
+    /// as this project's enumerator reports it.
+    ///
+    /// <para><b>Callers must cross-check <see cref="GetMute"/> against the production query first.</b>
+    /// The <c>IAudioEndpointVolume</c> vtable order below could not be verified against a real
+    /// <c>endpointvolume.h</c> when this was written. A shifted slot would make this call reach some
+    /// OTHER method on a live audio endpoint, so the reading check exists to fail loudly before
+    /// anything is written.</para></summary>
     public static void SetMute(string deviceId, bool mute)
+    {
+        WithEndpointVolume(deviceId, volume =>
+        {
+            // GUID_NULL rather than a null pointer: this caller publishes no volume notifications of
+            // its own, so there is no originating event to name.
+            var noEventContext = Guid.Empty;
+            Marshal.ThrowExceptionForHR(volume.SetMute(mute, ref noEventContext));
+        });
+    }
+
+    private static void WithEndpointVolume(string deviceId, Action<IAudioEndpointVolume> use)
     {
         var enumeratorType = Type.GetTypeFromCLSID(MmDeviceEnumeratorClsid)
             ?? throw new InvalidOperationException("MMDeviceEnumerator is not registered on this machine.");
@@ -49,10 +74,7 @@ internal static class WindowsEndpointVolume
                 var volume = (IAudioEndpointVolume)volumeObject;
                 try
                 {
-                    // A null event context means "no originating event GUID", which is correct for a
-                    // caller that is not itself publishing volume notifications.
-                    var noEventContext = Guid.Empty;
-                    Marshal.ThrowExceptionForHR(volume.SetMute(mute, ref noEventContext));
+                    use(volume);
                 }
                 finally
                 {
@@ -79,10 +101,13 @@ internal static class WindowsEndpointVolume
     {
         // Only the vtable slots up to the one used are declared, in order. EnumAudioEndpoints must be
         // present even though it is unused, or GetDevice would resolve to the wrong slot.
+        [PreserveSig]
         int EnumAudioEndpoints(int dataFlow, int stateMask, out IntPtr devices);
 
+        [PreserveSig]
         int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
 
+        [PreserveSig]
         int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
     }
 
@@ -91,6 +116,7 @@ internal static class WindowsEndpointVolume
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IMMDevice
     {
+        [PreserveSig]
         int Activate(
             ref Guid iid,
             int clsCtx,
@@ -103,31 +129,44 @@ internal static class WindowsEndpointVolume
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     private interface IAudioEndpointVolume
     {
-        // Same rule as above: every preceding vtable slot is declared so SetMute lands on slot 6.
+        // Same rule as above: every preceding vtable slot is declared so SetMute lands on slot 11.
+        [PreserveSig]
         int RegisterControlChangeNotify(IntPtr notify);
 
+        [PreserveSig]
         int UnregisterControlChangeNotify(IntPtr notify);
 
+        [PreserveSig]
         int GetChannelCount(out uint count);
 
+        [PreserveSig]
         int SetMasterVolumeLevel(float levelDb, ref Guid eventContext);
 
+        [PreserveSig]
         int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
 
+        [PreserveSig]
         int GetMasterVolumeLevel(out float levelDb);
 
+        [PreserveSig]
         int GetMasterVolumeLevelScalar(out float level);
 
+        [PreserveSig]
         int SetChannelVolumeLevel(uint channel, float levelDb, ref Guid eventContext);
 
+        [PreserveSig]
         int SetChannelVolumeLevelScalar(uint channel, float level, ref Guid eventContext);
 
+        [PreserveSig]
         int GetChannelVolumeLevel(uint channel, out float levelDb);
 
+        [PreserveSig]
         int GetChannelVolumeLevelScalar(uint channel, out float level);
 
+        [PreserveSig]
         int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, ref Guid eventContext);
 
+        [PreserveSig]
         int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 }
