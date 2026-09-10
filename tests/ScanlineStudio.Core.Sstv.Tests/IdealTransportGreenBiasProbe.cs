@@ -35,8 +35,6 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// </summary>
 public sealed class IdealTransportGreenBiasProbe
 {
-    private const int SampleRate = 11025;
-
     // Every mode §1 measured, so the printed table lines up against its own table row by row.
     // The two RgbSequential entries are controls, not subjects -- see the class doc comment.
     private static readonly string[] ProbeModeIds =
@@ -75,7 +73,7 @@ public sealed class IdealTransportGreenBiasProbe
             }
 
             var source = BmpFile.Read(sourcePath);
-            var decoded = DecodeThroughIdealTransport(mode, source);
+            var decoded = IdealTransport.Decode(mode, source);
             var bias = MeasureGreenBias(source, decoded, mode.ImageHeight);
 
             lines.Add($"| {modeId} | {mode.ColorEncoding} | {bias:+0.0;-0.0} | {expectedFromSectionOne[modeId]} |");
@@ -86,86 +84,6 @@ public sealed class IdealTransportGreenBiasProbe
         // a DSP investigation. Assert.Fail is how xunit surfaces it; this is a measurement run,
         // not a regression gate, which is why it skips by default.
         Assert.Fail(string.Join(Environment.NewLine, lines));
-    }
-
-    /// <summary>
-    /// The ideal channel. Runs the real encoder for every transmission line, then reads those
-    /// frequencies back through the real decoder with nothing in between.
-    /// </summary>
-    private static IImageSource DecodeThroughIdealTransport(SstvModeDefinition mode, IImageSource source)
-    {
-        var encoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
-        var decoder = ScanlineCodecFactory.CreateDecoder(mode.ColorEncoding);
-        var rowsPerLine = encoder.RowsPerTransmissionLine;
-
-        // Continuous time, not per-segment rounding. Laying each segment down as a whole number of
-        // samples would accumulate a fraction of a sample per segment across a line, which is a
-        // timing error this probe is specifically trying NOT to introduce -- it would show up as
-        // exactly the kind of channel bleed being measured.
-        var samplesPerLine = mode.LineDurationMs * SampleRate / 1000.0;
-
-        var lineSegments = new List<(double CumulativeEndMs, double FrequencyHz)[]>();
-        for (var lineIndex = 0; lineIndex < mode.ImageHeight; lineIndex += rowsPerLine)
-        {
-            var cumulative = 0.0;
-            var segments = encoder.GenerateLine(mode, source, lineIndex)
-                .Select(seg =>
-                {
-                    cumulative += seg.DurationMs;
-                    return (CumulativeEndMs: cumulative, seg.FrequencyHz);
-                })
-                .ToArray();
-
-            // If the encoder's own line does not sum to the mode's line duration, every sample index
-            // below is against the wrong clock and every number this probe prints is meaningless.
-            Assert.True(
-                Math.Abs(cumulative - mode.LineDurationMs) < 0.001,
-                $"[{mode.Id}] encoder line {lineIndex} sums to {cumulative:F4} ms, mode says {mode.LineDurationMs:F4} ms.");
-
-            lineSegments.Add(segments);
-        }
-
-        double FrequencyAt(int sampleIndex)
-        {
-            var line = (int)(sampleIndex / samplesPerLine);
-            if (line < 0 || line >= lineSegments.Count)
-            {
-                return mode.LuminanceMinHz;
-            }
-
-            var offsetMs = (sampleIndex - (line * samplesPerLine)) / SampleRate * 1000.0;
-            var segments = lineSegments[line];
-            foreach (var segment in segments)
-            {
-                if (offsetMs < segment.CumulativeEndMs)
-                {
-                    return segment.FrequencyHz;
-                }
-            }
-
-            return segments[^1].FrequencyHz;
-        }
-
-        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
-        for (var line = 0; line < lineSegments.Count; line++)
-        {
-            var lineStartSample = (int)Math.Round(line * samplesPerLine);
-            var nextLineStartSample = (int)Math.Round((line + 1) * samplesPerLine);
-
-            // Same construction as production (AnalogFmSstvDecoder.cs:3624-3629), so this probe
-            // reproduces the real per-pixel read policy -- bare against peak-picked -- rather than
-            // an idealised one. Getting this wrong would change the answer.
-            var reader = new PixelSampleReader(
-                FrequencyAt,
-                SstvModeRegistry.GetKsbSamples(mode, SampleRate),
-                nextLineStartSample,
-                mode.LuminanceMinHz,
-                SstvModeRegistry.NeverPeakPicks(mode));
-
-            decoder.DecodeLine(mode, SampleRate, lineStartSample, line * rowsPerLine, reader, pixels);
-        }
-
-        return new ArrayImageSource(mode.ImageWidth, mode.ImageHeight, pixels);
     }
 
     /// <summary>

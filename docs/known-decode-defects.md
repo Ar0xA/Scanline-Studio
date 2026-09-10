@@ -177,8 +177,42 @@ controlled probe, and it points at narrow band and sync-tone handling — a 256 
 level-sensitive per Hz than an 800 Hz one — rather than a generic end-of-line off-by-one, which would
 have shown in MP140 too.
 
-It is present with every DSP option off, so it is not caused by any optional filter. Earlier
-candidates, neither checked and both now lower-ranked than the frequency-plan lead above: the end-of-line window running past the last pixel centre, or the sync
-search consuming samples the last pixels need. The first step is to decode a clean, noise-free
-signal and see whether the artefact survives — if it does, it is a pure timing bug rather than a
-noise-sensitivity one.
+It is present with every DSP option off, so it is not caused by any optional filter.
+
+**FIRST STEP RUN 2026-09-10. The stripe does NOT survive ideal transport — it is in the DSP chain,
+not the scanline codecs.** Probe:
+`tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeColumnProbe.cs`, gated behind
+`SCANLINE_SOURCE_BMP`. Ideal transport is stronger than the "clean, noise-free signal" this section
+originally asked for: it removes modulation, filtering and demodulation entirely, so what remains is
+only the colour maths, the channel layout and the codecs' own pixel geometry.
+
+Mean absolute per-channel delta by column, `photo-city`, ideal transport:
+
+| mode | band | mid-image | col -2 | col -1 | col -1 / mid |
+|---|---|---|---|---|---|
+| mn140 | 256 Hz | 2.2 | 1.9 | 2.7 | **1.2x** |
+| mp140 | 800 Hz | 2.9 | 2.8 | 3.7 | **1.3x** |
+| mn73 | 256 Hz | 4.2 | 6.8 | 5.4 | **1.3x** |
+| martin-m1 | 800 Hz | 8.7 | 10.2 | 10.9 | **1.2x** |
+
+**Narrow and wide are indistinguishable at the edge here.** Every mode sits at 1.2-1.3x, including
+the clean wide-band control. Against the real chain's 4.7x for mn73 (23.2 mid against 108.8), that
+relocates the defect completely: no end-of-line off-by-one, no sync-search sample theft, no pixel
+geometry error. Those earlier candidates are ruled OUT, not merely lower-ranked.
+
+**The frequency-plan lead survives, but through a different mechanism than assumed.** It is not that
+the narrow plan makes the codec mis-index. It is that the narrow plan makes the DSP chain misbehave
+near a line boundary. The physically coherent version: MN's sync is 1900 Hz with a picture band
+starting at 2044, a 144 Hz gap, where MP's sync is 1200 against a band starting at 1500, a 300 Hz
+gap. Filter transition and group delay let the approaching NEXT-line sync transient reach the picture
+band early, and the right edge is exactly where "early" lands. That would explain the side of the
+image affected, the family selectivity, and why every DSP option being off does not help — the RX
+bandpass and demodulator are not optional.
+
+**Unexplained and not chased:** mc180 read 0.7 mid with 0.0 at both edge columns under ideal
+transport, far cleaner than its siblings. Either the mode is genuinely trivial to reconstruct at this
+source, or the probe mishandles it. Worth one look before relying on any mc180 number.
+
+**Next step is not another ideal-transport run.** It needs the real chain with the sync tone
+manipulated — for instance decoding an MN line whose following sync is replaced by silence or by
+MP's 1200 Hz, and watching whether the edge error follows.

@@ -51,7 +51,28 @@ zero-crossing +5.6), so a shared upstream stage is more likely than either.
 Review tier: **full** — this is DSP/codec math. Sizing note: this is no longer a cheap item, and it
 now competes with D2 rather than preceding it. D2 is the one a user can actually see.
 
-### D2. MN/MC right-edge stripe — the one confirmed visible defect
+### D2. MN/MC right-edge stripe — first step run, defect relocated to the DSP chain
+
+**Probe run 2026-09-10.** The stripe does **not** survive ideal transport: every mode sits at
+1.2-1.3x edge-to-mid, narrow and wide alike, against the real chain's 4.7x for mn73. Harness:
+`tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeColumnProbe.cs`.
+
+**Ruled OUT, not merely deprioritised:** an end-of-line window running past the last pixel centre,
+the sync search consuming samples the last pixels need, and any pixel-geometry error in the scanline
+codecs. All three were the standing candidates and none of them is it.
+
+**Still live:** the frequency plan, but acting through the DSP chain rather than through the codec.
+MN's sync sits 144 Hz below its picture band where MP's sits 300 Hz below its own, so filter
+transition and group delay can carry the approaching next-line sync transient into the picture band
+early — and the right edge is where early lands.
+
+**Next step is a real-chain experiment, not another ideal-transport run:** decode an MN line whose
+following sync is replaced by silence or by MP's 1200 Hz, and see whether the edge error follows the
+sync. Full table and reasoning: `docs/known-decode-defects.md` §4.
+
+Everything below is the original entry, kept because its measurements still stand.
+
+
 
 A coloured stripe on the right edge of every MN and MC decode. Six modes, deterministic, present with
 all DSP options off.
