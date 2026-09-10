@@ -81,18 +81,31 @@ divergence is documented, not actioned.
 Full evidence: `docs/known-decode-defects.md` §4. Harness:
 `tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeRealChainProbe.cs`.
 
-### D2-FIX. PARKED 2026-09-10 by user decision — legacy-faithful and not worth the cost
+### D2-FIX. OPEN, but DOWNGRADED in urgency 2026-09-10 — user still wants a fix if one is viable
 
-**User's call, after seeing 8x crops of the real artefact:** "noticable but not horrible, considering
-legacy does the same... not super noticable when a full picture is send unless you zoom in on it."
+**User's assessment, after seeing 8x crops of the real artefact:** "noticable but not horrible,
+considering legacy does the same... not super noticable when a full picture is send unless you zoom
+in on it." Followed by: **"i still want to fix it if we can."**
 
-The stripe is 1 to 4 pixels — 1.25% of width on a 320-wide mode, 0.63% on a 640-wide one — and it
-matches legacy on every mode measured against real legacy audio. So no user receives a worse picture
-than the reference implementation gives them. **Do not restart this unprompted.**
+So this is a priority downgrade, NOT a closure. The stripe is 1 to 4 pixels — 1.25% of width on a
+320-wide mode — and it matches legacy on every mode measured against real legacy audio, so nobody
+receives a worse picture than the reference implementation gives them. That removes the urgency. It
+does not remove the goal.
 
-**What would change the decision:** real legacy captures for the other 35 modes, which would make a
-correct per-mode correction derivable. That is a human task on Windows, not something to re-derive
-here. Until then the only non-circular basis covers 8 of 43 modes.
+**The blocker is measurement basis, not willingness.** A per-mode correction needs a non-circular
+attribution of registration to the receive path, and the only such basis today is real legacy audio,
+which covers 8 of 43 modes. A round trip through our own encoder cancels shared errors — `pd90` reads
+0.91 px that way against 13.95 px on real audio.
+
+**Two live routes out, in preference order:**
+
+1. **Drive the decoder from the mode's own segment table rather than from our encoder**
+   (`IdealTransport.cs` already builds such a stimulus). That excludes encoder arithmetic — phase
+   accumulation, per-line rounding, sample truncation — while the segment timings themselves are
+   wire-observable and independently pinned against legacy source. If sound, this yields a 43-mode
+   basis with no new captures. **Under review by `yoniq-principal` as of 2026-09-10.**
+2. Real legacy captures for the remaining 35 modes. A human task on Windows, tracked with the other
+   capture work.
 
 **Still open as genuine PORT DEFECTS**, because they diverge from legacy rather than match it — see
 D5 below. Those are separate from this parked item and need no §0a argument.
