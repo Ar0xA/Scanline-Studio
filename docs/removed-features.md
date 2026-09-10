@@ -604,7 +604,18 @@ and its resolution, verified directly against current source, not inferred from 
   `:4804`, the YC-paired Y channel `:4786`). What IS accurate: every CHROMA (R-Y/B-Y) extraction site
   stays a plain, undifferentiated `GetPixelLevel` read in every mode family, including RGB ones (the
   R/G/B "channels" in an RGB-family mode ARE its picture channels, not a chroma pair) — the
-  differentiator never touches a true chroma-difference channel, in any mode.
+  differentiator never touches a true chroma-difference channel **in any mode `DrawSSTVDiff` handles
+  explicitly**.
+  **Corrected again 2026-09-10 (`BACKLOG.md` RX2): `smPD160` is the exception, and it is a whole-mode
+  mapping divergence.** `smPD160` appears in `DrawSSTVNormal`'s 14-label PD/MP/MN case
+  (`Main.cpp:4370`) but is **absent from `DrawSSTVDiff`'s 13-label list** (`:4732-4744`). With the
+  differentiator on, PD160 therefore falls to `DrawSSTVDiff`'s `default:` — the 3-segment RGB handler
+  — so its Y, R-Y and B-Y segments map to R, G and B, its real chroma pair IS read through
+  `GetPictureLevelDiff` (`:4839`, `:4851`), and the second row `gp2` is never written even though the
+  prologue allocated the 2-row PD layout (`:4535-4544`). Whether legacy intended this or it is a
+  legacy bug is not determinable from the source. **Anyone porting the differentiator needs a separate
+  mapping table for `DrawSSTVDiff`, including this quirk — it is not derivable from
+  `DrawSSTVNormal`.**
 - **The real blocker: `GetPictureLevelDiff` itself calls `GetPixelLevel` internally** (`d =
   GetPixelLevel(ip+SSTVSET.m_KSB)` or `d = GetPixelLevel(ip)`, `Main.cpp:4079-4087`) — the exact
   same decoder-side pixel-level-correction hook already found missing from this port entirely (see

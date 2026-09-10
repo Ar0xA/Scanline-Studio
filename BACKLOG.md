@@ -322,26 +322,46 @@ per site whether a Windows equivalent is worth writing or whether the skip is th
 four rounds and is recorded in auto-memory (`project_windows_maximize_taskbar_bug`). Real-window
 geometry is not something a headless test settles — leave it to the manual checklist.
 
-### RX1. Robot 36's ambiguity fallback is implemented but never executed
+### RX1. DONE 2026-09-10 — Robot 36's ambiguity fallback is now tested
 
-Legacy's Robot 36 RX branch decides chroma identity from the selector tone, and when that tone is
-too weak to call (`|d| < 64`) it **toggles** the previous selection instead
-(`Main.cpp:4293-4295`). The port implements the toggle (`RobotScanlineDecoder.cs`).
+Legacy toggles the previous chroma selection when the selector tone is too weak to call
+(`Main.cpp:4289-4296`). The port already implemented it. No test reached it, because both tones in
+the existing test are full strength (`|d| = 128`).
 
-`LegacyRxChannelMappingTests` drives both tones at full strength (`|d| = 128`), so no test reaches
-the fallback. It is the branch that runs on a weak or noisy signal, which is when a decode matters
-most. Feed a selector segment at a frequency between the two tones and assert the toggle.
+Five rows added to `LegacyRxChannelMappingTests`, each running ONE decoder across two consecutive
+lines so the second inherits the first's selection. **No source change was needed.**
 
-Cheap. Review tier: **light** — one test, no source change expected.
+**The rails are asymmetric, and that is now pinned.** `d` truncates toward zero, so +200.0 Hz gives
+`d = 64` and IS decisive, while -200.0 Hz gives `d = -64`, which fails `d < -64` and is NOT. The low
+rail only bites at -203.125 Hz. Mutation-gated twice: removing the toggle fails the 3 ambiguous rows,
+and changing `d < -64` to `d <= -64` fails exactly the 1 row that pins the asymmetry.
 
-### RX2. A second legacy RX per-pixel switch was never compared
+### RX2. DONE 2026-09-10 — the second switch is live, and it diverges for exactly one mode
 
-`DrawSSTVDiff` (`Main.cpp:4508+`, its own MRT check at `:4855`) carries a second per-pixel decode
-switch beside the audited one at `:4180-4504`. The 2026-09-10 RX audit compared only the first.
-Establish whether the second is a live path or a variant, before assuming the RX mapping guard
-covers all of legacy's RX behaviour.
+`DrawSSTVDiff` (`Main.cpp:4508+`) is a **live RX path**, not a variant. `DrawSSTV` (`:4113-4120`)
+selects it whenever `sys.m_Differentiator` is set and the mode is not `smSCTDX`. That option defaults
+off (`:827`), is a user checkbox (`Option.cpp:253`), persists to `[Define] Differentiator`, and both
+replay paths re-enter the same dispatch (`:5711`, `:5747`, `:5752`).
 
-Sizing note: this is a read, not a build. Do it before the next milestone audit.
+**My first reading was wrong and the auditor refuted it.** I claimed `DrawSSTVDiff` was a
+channel-mapping clone differing only in the pixel read function. It is not. **`smPD160` is absent
+from `DrawSSTVDiff`'s 13-label PD/MP/MN case** (`:4732-4744`) while `DrawSSTVNormal` carries 14
+(`:4370`), so with the differentiator on PD160 falls to the RGB `default:` handler: Y, R-Y and B-Y map
+to R, G and B, its chroma pair IS differentiated (`:4839`, `:4851`), and `gp2` is never written though
+the prologue allocated the 2-row PD layout. Every other family agrees between the two switches.
+
+**No third switch exists.** The other `switch(SSTVSET.m_Mode)` sites are per-line scalar setup.
+
+**What this changes.** Nothing ships differently — the differentiator is a removed feature
+(`docs/removed-features.md`). Two records were corrected instead: that document's "never touches a
+true chroma-difference channel, in any mode" absolute now carries the PD160 exception, and
+`LegacyRxChannelMappingTests`'s class doc now says it pins one of legacy's two RX mappings, not all of
+legacy RX. **If the differentiator is ever ported it needs its own mapping table** — `DrawSSTVDiff`'s
+is not derivable from `DrawSSTVNormal`.
+
+Two smaller divergences recorded for the same future port: `DrawSSTVDiff` applies a one-column
+back-shift (`x = x ? x - 1 : 0`) at every differentiated site but not at chroma sites, and it skips
+the `x == 0` pixel in two families.
 
 ### PA-Two-more. After PA-5 or TT1-18 lands
 
