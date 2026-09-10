@@ -51,7 +51,7 @@ public sealed class LegacyAudioRegistrationProbe
         ["avt"] = "avt",
     };
 
-    private const double SearchRadiusPixels = 14.0;
+    private const double SearchRadiusPixels = 48.0;
     private const double SearchStep = 0.05;
 
     [Fact]
@@ -114,6 +114,28 @@ public sealed class LegacyAudioRegistrationProbe
                 + $"{ours.Value * pitchMs:F3} | {verdict} |");
         }
 
+        rows.Add("");
+        rows.Add("**Does LEGACY's own decode carry the edge stripe?** Mean per-channel error of the");
+        rows.Add("last four columns against the mid-image baseline, in legacy's own `_RX.bmp`:");
+        rows.Add("");
+        rows.Add("| mode | legacy mid-image | legacy last 4 cols | ratio |");
+        rows.Add("|---|---|---|---|");
+
+        foreach (var fixture in CapturedModes)
+        {
+            var modeId = FixtureToModeId[fixture];
+            var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+            var sourcePath = Path.Combine(directory, $"{fixture}.bmp");
+            var legacyDecodePath = Path.Combine(directory, $"{fixture}_RX.bmp");
+            if (!File.Exists(sourcePath) || !File.Exists(legacyDecodePath))
+            {
+                continue;
+            }
+
+            var (mid, edge) = MidAgainstEdgeError(BmpFile.Read(sourcePath), BmpFile.Read(legacyDecodePath), mode);
+            rows.Add($"| {modeId} | {mid:F1} | {edge:F1} | **{(mid > 0 ? edge / mid : double.NaN):F1}x** |");
+        }
+
         Assert.Fail(
             "Horizontal registration against REAL LEGACY AUDIO. Negative means the decode lands LEFT\n"
             + "of the transmitted source, i.e. the reads are LATE.\n\n"
@@ -145,11 +167,12 @@ public sealed class LegacyAudioRegistrationProbe
             var sourceLine = source.GetScanline(y).ToArray();
             var decodedLine = decoded.GetScanline(y).ToArray();
 
-            var best = double.MaxValue;
+            var best = double.MinValue;
             var bestShift = 0.0;
             for (var shift = -SearchRadiusPixels; shift <= SearchRadiusPixels; shift += SearchStep)
             {
-                var error = 0.0;
+                var reference = new List<double>();
+                var target = new List<double>();
                 var counted = 0;
                 for (var x = margin; x < mode.ImageWidth - margin; x++)
                 {
@@ -159,14 +182,15 @@ public sealed class LegacyAudioRegistrationProbe
                         continue;
                     }
 
-                    var delta = Luma(decodedLine[x]) - sampled.Value;
-                    error += delta * delta;
+                    reference.Add(sampled.Value);
+                    target.Add(Luma(decodedLine[x]));
                     counted++;
                 }
 
-                if (counted > 0 && error / counted < best)
+                var score = NormalisedCorrelation(reference, target);
+                if (counted > 8 && score > best)
                 {
-                    best = error / counted;
+                    best = score;
                     bestShift = shift;
                 }
             }
@@ -184,6 +208,34 @@ public sealed class LegacyAudioRegistrationProbe
         return shifts[shifts.Count / 2];
     }
 
+    /// <summary>
+    /// Pearson correlation. Invariant to a luma gain and offset difference between the two decodes,
+    /// which a plain squared-error fit is not — and the fixtures are gradients, where a gain error
+    /// mimics a shift almost exactly.
+    /// </summary>
+    private static double NormalisedCorrelation(List<double> a, List<double> b)
+    {
+        if (a.Count < 2)
+        {
+            return double.MinValue;
+        }
+
+        var meanA = a.Average();
+        var meanB = b.Average();
+        double covariance = 0, varianceA = 0, varianceB = 0;
+        for (var i = 0; i < a.Count; i++)
+        {
+            var da = a[i] - meanA;
+            var db = b[i] - meanB;
+            covariance += da * db;
+            varianceA += da * da;
+            varianceB += db * db;
+        }
+
+        var denominator = Math.Sqrt(varianceA * varianceB);
+        return denominator <= 0 ? double.MinValue : covariance / denominator;
+    }
+
     private static double? SampleLinear(Rgb24[] line, double x)
     {
         if (x < 0 || x >= line.Length - 1)
@@ -197,6 +249,46 @@ public sealed class LegacyAudioRegistrationProbe
     }
 
     private static double Luma(Rgb24 pixel) => (pixel.R + pixel.G + pixel.B) / 3.0;
+
+    /// <summary>
+    /// Mean absolute per-channel error over the middle half of the width, against the same over the
+    /// last four columns. If legacy's own decode shows the same edge ratio this port does, the stripe
+    /// was never a port question at all.
+    /// </summary>
+    private static (double Mid, double Edge) MidAgainstEdgeError(
+        IImageSource source,
+        IImageSource decoded,
+        SstvModeDefinition mode)
+    {
+        var rows = Math.Min(mode.ImageHeight, Math.Min(source.Height, decoded.Height));
+        double midSum = 0, edgeSum = 0;
+        int midCount = 0, edgeCount = 0;
+
+        for (var y = 0; y < rows; y++)
+        {
+            var sourceLine = source.GetScanline(y);
+            var decodedLine = decoded.GetScanline(y);
+            for (var x = 0; x < mode.ImageWidth; x++)
+            {
+                var delta = (Math.Abs(sourceLine[x].R - decodedLine[x].R)
+                    + Math.Abs(sourceLine[x].G - decodedLine[x].G)
+                    + Math.Abs(sourceLine[x].B - decodedLine[x].B)) / 3.0;
+
+                if (x >= mode.ImageWidth / 4 && x < mode.ImageWidth * 3 / 4)
+                {
+                    midSum += delta;
+                    midCount++;
+                }
+                else if (x >= mode.ImageWidth - 4)
+                {
+                    edgeSum += delta;
+                    edgeCount++;
+                }
+            }
+        }
+
+        return (midCount > 0 ? midSum / midCount : 0, edgeCount > 0 ? edgeSum / edgeCount : 0);
+    }
 
     private static IImageSource? DecodeLegacyAudio(SstvModeDefinition mode, float[] samples, int sampleRate)
     {
