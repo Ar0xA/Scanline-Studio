@@ -668,20 +668,51 @@ genuine capture endpoint rather than a special mode. Against that: it needs a ma
 on every machine, it cannot be created and torn down per test the way `pactl load-module` is, and its
 licence terms need checking before the project relies on it. Loopback needs none of that.
 
-#### W3. WASAPI device-id conversion — Windows-only code, never executed
+#### Device-cost tiers — read this before adding a Windows audio test
+
+The user's constraint: **do not hijack or take time from real audio devices where it can be
+prevented, and say so explicitly where it cannot.** That is structural, not a comment convention —
+`WindowsAudioFactAttributes.cs` encodes it in three attributes so a test's cost is visible at its
+declaration:
+
+| attribute | cost | runs |
+|---|---|---|
+| `[WindowsFact]` | no device at all | always, on Windows |
+| `[WindowsAudioReadOnlyFact]` | enumerates or reads endpoint state, opens no stream, inaudible | always, on Windows |
+| `[WindowsAudioExclusiveFact]` | opens a device or changes system state | **opt-in**, `SCANLINE_WINDOWS_AUDIO_EXCLUSIVE=1` |
+
+Any test in the third tier must state in its own doc comment what it takes and how it restores it.
+
+#### W3. DONE 2026-09-10 — WASAPI device-id conversion, 3 tests, enumeration only
+
+`WasapiDeviceIdConversionTests.cs`. Asserts every id survives the wide-to-UTF-8 conversion as valid
+non-empty text with no lone surrogates, and that ids are stable across repeated enumeration — an
+off-by-one in the buffer arithmetic would break device-selection persistence without any single
+enumeration looking wrong. **No stream is opened.**
+
+**The non-ASCII case reports rather than asserts.** Whether such a device exists is a property of the
+machine, so failing would punish a tester for their hardware. It prints whether the multi-byte branch
+was covered, so nobody mistakes a green run on an all-ASCII box for coverage of it.
+
+#### W4. DONE 2026-09-10 — WASAPI mute query, 4 tests, 3 of them free
+
+`WasapiMuteQueryTests.cs`. Three read-only: every enumerated device returns a definite answer, repeat
+reads agree, and a non-existent id returns null rather than a fabricated `false` — which would read as
+"not muted" and silently disable the transmit-time mute warning. `IAudioEndpointVolume` comes from the
+endpoint's `Activate`, not from an audio client, so **none of the three opens a stream.**
+
+**The fourth is the oracle and it is opt-in.** It mutes the default output device, checks the query,
+then restores whatever state it found — in a `finally`, so a failed assertion still puts the machine
+back. A mute query cannot be verified without a known mute state, and Windows offers no virtual
+endpoint to use instead. The oracle uses its own COM path (`WindowsEndpointVolume.cs`) rather than the
+shim, so a bug cannot hide in both halves — the Scottie failure shape.
+
+#### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
 
 `scanline_audio.c:171` and `:226` convert between WASAPI's `wchar_t[64]` device id and this project's
 own UTF-8 ABI (`WideCharToMultiByte`/`MultiByteToWideChar`). Every other backend passes strings
 through. This is real conversion logic with buffer-size arithmetic and no test has ever run it.
 A non-ASCII device name is the obvious case to cover.
-
-#### W4. WASAPI mute query — Windows-only, never executed
-
-`scanline_wasapi_with_endpoint_volume` and `scanline_wasapi_get_mute_cb` (`:1144`, `:1186`) back
-`IsDeviceMutedAsync` on Windows through COM's `IAudioEndpointVolume`. The Linux equivalent has a real
-test against `pactl set-sink-mute` as an independent oracle. Windows has none. Unlike the Linux path,
-this one does **not** take `g_context_mutex` — see the TT1-15 note in "Verified done", because the
-reasoning there does not transfer to this branch.
 
 #### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
 
@@ -691,7 +722,18 @@ attributes (TT0-4), and mapper unit tests. **No test has ever instantiated the r
 Compounding it, `production_audit.md`'s Tier 2 notes OmniRig has zero logging anywhere — the one
 backend nobody can test locally is also the one that says least when it fails.
 
-#### W6. `JsonSettingsStore`'s Windows branch — an untested security assumption
+#### W6. DONE 2026-09-10 — the profile-ACL assumption is now asserted, not commented
+
+`WindowsSettingsFileProtectionTests.cs`, 2 tests, **no device of any kind**. Creates a uniquely named
+subdirectory beside where settings actually live, writes one file, and reads the real ACL: no Allow
+rule may grant Everyone, Authenticated Users or BUILTIN\Users, and the file must be owned by the
+current user. SYSTEM and Administrators are expected and not a finding.
+
+**Deliberately not a temp path.** `Path.GetTempPath()` on Windows is itself inside the profile and
+inherits comparable protection, so testing there would pass for the wrong reason and would miss a
+future move to a shared location. It never reads or writes the real `settings.json`.
+
+#### (superseded) W6 original filing
 
 `:167` takes plain `File.Create` on Windows instead of the Unix owner-only `UnixCreateMode`, and
 `TrySetOwnerOnlyPermissions` returns immediately (`:196`). That is deliberate and documented: Windows
@@ -699,7 +741,23 @@ per-user profile ACLs are already private. **But nobody has verified it.** `sett
 real QRZ.com password in plaintext, so "the directory is already private" deserves one test that
 actually reads the ACL on a real Windows box, not a comment.
 
-#### W7. Path and device-name behaviour that differs by platform
+#### W7. PARTLY DONE 2026-09-10 — path comparer and serial names covered, two items left
+
+`WindowsDirectoryPathComparerTests.cs` (1 test) asserts BOTH that `DirectoryPathComparer` treats case
+as equal AND that the volume underneath really is case-insensitive. Asserting the comparer alone would
+pass just as well on a case-sensitive NTFS directory, where the comparer would be WRONG — and
+per-directory case sensitivity is a real NTFS configuration, not a hypothetical.
+
+`WindowsSerialPortNameTests.cs` (3 tests) covers the `COM*` shape, stability across calls, and absence
+of duplicates. **Enumeration only — no port is ever opened**, because opening one takes it from
+whatever holds it, plausibly a radio's CAT link mid-QSO. That a port can be opened, round-trip bytes,
+or carry a CAT command is deliberately NOT tested here and belongs to the manual hardware checklist.
+
+**Still open:** `HamlibLibraryLocator:75`'s Windows DLL discovery branch, and checking whether
+`ConfigurationPresetStore:467-476`'s `CON`/`PRN`/`AUX`/`NUL` rejection is already covered — that logic
+is cross-platform, so it is testable on Linux and may need nothing.
+
+#### (superseded) W7 original filing
 
 - `DirectoryPathComparer:20` uses `OrdinalIgnoreCase` on Windows and macOS, `Ordinal` on Linux. The
   case-insensitive branch has never run against a genuinely case-insensitive filesystem.
