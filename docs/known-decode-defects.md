@@ -213,6 +213,60 @@ bandpass and demodulator are not optional.
 transport, far cleaner than its siblings. Either the mode is genuinely trivial to reconstruct at this
 source, or the probe mishandles it. Worth one look before relying on any mc180 number.
 
-**Next step is not another ideal-transport run.** It needs the real chain with the sync tone
-manipulated — for instance decoding an MN line whose following sync is replaced by silence or by
-MP's 1200 Hz, and watching whether the edge error follows.
+### SOLVED 2026-09-10 — mechanism confirmed, stated reason refuted, and it is legacy-faithful
+
+Harness: `tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeRealChainProbe.cs`, real encoder into
+real `AnalogFmSstvDecoder` at 44100, **no added noise**, gated behind `SCANLINE_SOURCE_BMP`.
+
+**The stripe does not need image content.** It is fully present on a FLAT grey source, which the
+original photo-at-20 dB measurement could not separate. Decoded last column, by row parity:
+
+| mode | last-col mean | exact black | even rows | odd rows |
+|---|---|---|---|---|
+| mn140 | 63.6 | 128 of 256 | 127.3 | **0.0** |
+| mn73 | 63.6 | 128 of 256 | 127.2 | **0.0** |
+| mp140 | 123.9 | 0 | 125.1 | 122.7 |
+| martin-m1 | 54.6 | 0 | 54.6 | 54.6 |
+
+Odd rows carry Y2, the LAST scan segment of a line — the one that abuts the next line's sync. Even
+rows carry Y1 and are correct. The black is manufactured at `YCbCr.cs:49`, which clamps all three
+channels to zero once luma reaches 16 or below.
+
+**The demodulated frequency at that pixel, measured directly:**
+
+| mode | grey should read | last pixel reads | pull | black threshold | margin |
+|---|---|---|---|---|---|
+| mn140 | 2172.0 Hz | **2029.5 Hz** | **-142.5 Hz** | 2060.0 Hz | crosses it |
+| mp140 | 1900.0 Hz | 1877.5 Hz | -22.5 Hz | 1550.0 Hz | 327 Hz clear |
+
+The pull is confined to the final pixel: mn140's second-to-last read is 2163.4, only 8.6 Hz low.
+
+**The mechanism above is CONFIRMED. Its stated reason is REFUTED.** This section attributed the
+family selectivity to a 256 Hz band being "3.1x more level-sensitive per Hz". That is arithmetically
+cancelled by MN's smaller step to its own sync — full contamination would swing mn140 by -272 and
+mp140 by -224, only 1.21x apart. **The real discriminator is the SIZE of the pull, 6.3x**, which
+follows from where each sync tone sits in its own RX bandpass: MN's 1900 Hz sits mid-passband in
+H3/HBPFN (1500-2400 Hz) at full amplitude, while MP's 1200 Hz sits at H1's lower cutoff and is
+attenuated before it reaches the discriminator. Both filters are linear-phase symmetric FIRs, so
+their response genuinely precedes the transition — that pre-reach is legacy-faithful, not the defect.
+
+**"The defect follows the narrow frequency plan and nothing else" is also wrong.** `martin-m1` is
+wide-band and its last column reads 54.6 against a source of 128, with no clamping and no parity
+split. That is a SECOND defect, consistent with the same pre-echo acting on its 1500 Hz separator.
+
+**It is legacy-faithful, so §0a governs what happens next.** Legacy stores its demodulated buffer as
+`short m_Buf[]` (`sstv.cpp:2289`), giving narrow modes a representable window of [1916, 2428] Hz. The
+measured 2029.5 Hz sits inside it, so legacy does not wrap there and computes the same near-black.
+**Caveat, stated because it is the one inference left:** 2029.5 Hz is the PORT's value at that index.
+Legacy's own demodulator was not run.
+
+**Do NOT reintroduce 16-bit truncation.** `yoniq-auditor` raised the `short`-versus-`double` width as
+a blocker and `yoniq-principal` overturned that rating. Out-of-range `double`-to-`short` is undefined
+behaviour in C++, so "legacy renders it white" is not a fact about legacy — it is compiler-dependent.
+Reproducing it would port an accident, and in neither case does the wrap yield a correct grey pixel.
+The width divergence is real and worth documenting; it is not the cause and not a fix.
+
+**Under the old rule this closed as parity. Under `CLAUDE.md` §0a it does not.** Nothing here is
+wire-observable — this is RX interpretation of our own received signal. A black stripe down the right
+edge of every narrow-mode picture is a legitimate improvement candidate, with the evidence bar in
+`docs/improving-on-legacy.md`.

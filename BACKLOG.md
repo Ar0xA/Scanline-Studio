@@ -51,7 +51,49 @@ zero-crossing +5.6), so a shared upstream stage is more likely than either.
 Review tier: **full** — this is DSP/codec math. Sizing note: this is no longer a cheap item, and it
 now competes with D2 rather than preceding it. D2 is the one a user can actually see.
 
-### D2. MN/MC right-edge stripe — first step run, defect relocated to the DSP chain
+### D2. MN/MC right-edge stripe — SOLVED 2026-09-10, now a decision, not an investigation
+
+**The mechanism is settled and measured.** On the real chain with a FLAT grey source, mn140 and mn73
+render their last pixel column exactly black on every odd row — the rows carrying Y2, the last scan
+segment before the next line's sync. The demodulated frequency there is **2029.5 Hz** against grey's
+2172.0, a **-142.5 Hz** pull, below the 2060.0 Hz point where `YCbCr.cs:49` clamps to black. mp140 is
+pulled only 22.5 Hz and stays 327 Hz clear of its own threshold.
+
+**The discriminator is the SIZE of the pull (6.3x), not band sensitivity.** MN's 1900 Hz sync sits
+mid-passband in the narrow RX bandpass at full amplitude; MP's 1200 Hz sits at the wide filter's
+lower cutoff and is attenuated. §4's "3.1x more level-sensitive per Hz" reasoning is refuted — the
+sensitivity is cancelled by MN's smaller step to its own sync.
+
+**Two things this overturned.** The stripe does NOT need image content, and it does NOT follow the
+narrow plan alone — `martin-m1` is wide-band and has its own last-column defect (54.6 against 128,
+no clamping, no parity split). That second defect is filed as **D4** below.
+
+**It is legacy-faithful**, so this is no longer a bug report. 2029.5 Hz sits inside legacy's
+representable [1916, 2428] Hz window, so legacy computes the same near-black. Under the old rule that
+closed the item. **Under `CLAUDE.md` §0a it does not** — nothing here is wire-observable, so a
+measured improvement wins. **This needs a user decision, not more investigation.**
+
+**Do NOT reintroduce legacy's 16-bit demod buffer.** `yoniq-auditor` rated the `short`-versus-`double`
+width a blocker; `yoniq-principal` overturned it. Out-of-range `double`-to-`short` is undefined
+behaviour, so "legacy renders it white" is compiler-dependent, not a fact about legacy. The
+divergence is documented, not actioned.
+
+Full evidence: `docs/known-decode-defects.md` §4. Harness:
+`tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeRealChainProbe.cs`.
+
+### D4. martin-m1's last column reads low — a second, separate edge defect
+
+Found while solving D2, 2026-09-10. On flat grey 128, `martin-m1`'s last column decodes to **54.6**
+uniformly, on both row parities, with no clamping. Mid-image error is 0.2, so the mode is otherwise
+near-perfect on that source. Back-computes to roughly a 230 Hz downward pull.
+
+Consistent with the same filter pre-echo as D2, acting on martin's 1500 Hz separator rather than a
+sync. Not confirmed. **This is wide-band**, so it refutes the standing claim that the edge defect is
+narrow-specific.
+
+Not yet measured across other wide modes. Review tier: **full** — same DSP chain as D2.
+
+### (superseded) D2's earlier framing — kept because its measurements still stand
 
 **Probe run 2026-09-10.** The stripe does **not** survive ideal transport: every mode sits at
 1.2-1.3x edge-to-mid, narrow and wide alike, against the real chain's 4.7x for mn73. Harness:
