@@ -271,6 +271,29 @@ a per-line sync residual, and it shifts the whole image rather than dirtying an 
 Pass criterion is unambiguous and already automated: our decode of `avt.mmv` must land where
 `avt_RX.bmp` lands. Review tier: **full** — decode-path state.
 
+### D6. The sync-anchor correction CLAMPS a negative delta instead of wrapping it
+
+Found 2026-09-10 by `yoniq-principal` while diagnosing a measurement instrument, then confirmed
+against source. **Latent in production, not just in tests.**
+
+`AnalogFmSstvDecoder.cs:5274` computes `_consumedSamples = Math.Max(0, origin + delta)`. When the
+resolved anchor delta is negative, that **clamps to zero** rather than wrapping by one line duration.
+The picture then locks at an arbitrary phase within the line instead of at the line start.
+
+**Reachability:** it needs a lock within roughly `preSyncSegmentOffsetMs + OFP` of decoder
+construction. Worst case is the Scottie family at about 0.3 s, because their tracked sync sits around
+two thirds into the line, so the sum wraps most easily. A user who starts receiving immediately after
+opening the app, on a signal already in progress, is the real-world shape.
+
+**How it was found, which is also how to reproduce it:** `IdealAudioRegistrationProbe` called
+`ForceMode` before pushing any samples, so the decoder committed origin zero and every subsequent
+anchor delta was negative. 21 of 43 modes then returned lead-in-dependent garbage — `scottie-s1`
+read 31.70 px at one lead-in and 124.95 at another. The arithmetic predicts each failure exactly:
+Scottie DX at a 300 ms lead-in gives 300 + 694 = 994 ms, under its 1050 ms line, so no wrap and a
+correct answer; at 620 ms it gives 1314 mod 1050 = 264, a delta near -430 ms, clamped, garbage.
+
+**Fix:** wrap by `+TW` rather than clamping at zero. Review tier: **full** — decode-path state.
+
 ### D4. martin-m1's last column reads low — a second, separate edge defect
 
 Found while solving D2, 2026-09-10. On flat grey 128, `martin-m1`'s last column decodes to **54.6**

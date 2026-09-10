@@ -43,60 +43,95 @@ public sealed class IdealAudioRegistrationProbe
 {
     private const int SampleRate = 44100;
 
+    // Two silent lead-ins, differing only in length. The decoder's per-line registration cannot
+    // depend on how much silence preceded the signal, so any mode whose answer MOVES between these is
+    // reporting its initial sync lock, not its registration, and its number must not be used.
+    // scottie-s2 was caught exactly this way: it read +44.24 px at 100 ms and correct at 300 ms.
+    private static readonly int[] LeadInMs = [317, 631, 1103];
+
     [Fact]
     public void RegistrationAgainstIdealTiming_ForEveryMode()
     {
         var rows = new List<string>
         {
-            "| mode | pitch (samples) | offset (px) | offset (ms) | rows measured |",
-            "|---|---|---|---|---|",
+            "| mode | pitch | @317ms | @631ms | @1103ms | spread | stable? | offset (ms) |",
+            "|---|---|---|---|---|---|---|---|",
         };
+
+        var stable = 0;
+        var unstable = 0;
 
         foreach (var mode in SstvModeRegistry.All.OrderBy(m => m.Id, StringComparer.Ordinal))
         {
             var edgeColumn = mode.ImageWidth / 2;
             var source = CreateVerticalEdgeImage(mode.ImageWidth, mode.ImageHeight, edgeColumn);
-            var samples = SynthesiseIdealAudio(mode, source);
-
-            var decoded = DecodeWithFullChain(mode, samples);
-            if (decoded is null)
+            var measured = new List<double?>();
+            foreach (var leadIn in LeadInMs)
             {
-                rows.Add($"| {mode.Id} | | DECODE FAILED | | |");
-                continue;
+                var (preamble, lines) = SynthesiseIdealAudio(mode, source, leadIn);
+                measured.Add(MedianEdgeOffset(DecodeWithFullChain(mode, preamble, lines), mode, edgeColumn));
             }
 
-            var offsets = new List<double>();
-            var usableRows = Math.Min(mode.ImageHeight, decoded.Height);
-            for (var y = usableRows / 4; y < usableRows * 3 / 4; y++)
-            {
-                var found = FindEdgeColumn(decoded.GetScanline(y), mode.ImageWidth);
-                if (found is not null)
-                {
-                    offsets.Add(found.Value - edgeColumn);
-                }
-            }
-
-            if (offsets.Count < 8)
-            {
-                rows.Add($"| {mode.Id} | | only {offsets.Count} rows had a detectable edge | | |");
-                continue;
-            }
-
-            offsets.Sort();
-            var median = offsets[offsets.Count / 2];
             var lastScan = mode.LineSegments.OfType<ScanSegment>().Last();
             var pitchSamples = lastScan.DurationMs / mode.ImageWidth / 1000.0 * SampleRate;
 
+            if (measured.Any(m => m is null))
+            {
+                rows.Add($"| {mode.Id} | {pitchSamples:F1} | NO EDGE FOUND | | | | no | |");
+                unstable++;
+                continue;
+            }
+
+            var delta = measured.Max(m => m!.Value) - measured.Min(m => m!.Value);
+            var isStable = Math.Abs(delta) <= 0.25;
+            if (isStable)
+            {
+                stable++;
+            }
+            else
+            {
+                unstable++;
+            }
+
             rows.Add(
-                $"| {mode.Id} | {pitchSamples:F1} | {median:F2} | "
-                + $"{median * lastScan.DurationMs / mode.ImageWidth:F3} | {offsets.Count} |");
+                $"| {mode.Id} | {pitchSamples:F1} | {measured[0]!.Value:F2} | {measured[1]!.Value:F2} | "
+                + $"{measured[2]!.Value:F2} | {delta:F2} | {(isStable ? "yes" : "**NO**")} | "
+                + $"{(isStable ? FormattableString.Invariant($"{measured[0]!.Value * lastScan.DurationMs / mode.ImageWidth:F3}") : "unusable")} |");
         }
 
         Assert.Fail(
             "Registration against IDEAL timing, full production decoder, synthesised stimulus.\n"
             + "Negative means the decoded edge lands LEFT of where it was sent, i.e. reads are LATE.\n"
-            + "This includes legacy's own tuned registration bias by design -- see the class doc.\n\n"
+            + "This includes legacy's own tuned registration bias by design -- see the class doc.\n"
+            + $"STABLE across lead-in: {stable}. UNSTABLE (number unusable): {unstable}.\n\n"
             + string.Join("\n", rows));
+    }
+
+    private static double? MedianEdgeOffset(IImageSource? decoded, SstvModeDefinition mode, int edgeColumn)
+    {
+        if (decoded is null)
+        {
+            return null;
+        }
+
+        var offsets = new List<double>();
+        var usableRows = Math.Min(mode.ImageHeight, decoded.Height);
+        for (var y = usableRows / 4; y < usableRows * 3 / 4; y++)
+        {
+            var found = FindEdgeColumn(decoded.GetScanline(y), mode.ImageWidth);
+            if (found is not null)
+            {
+                offsets.Add(found.Value - edgeColumn);
+            }
+        }
+
+        if (offsets.Count < 8)
+        {
+            return null;
+        }
+
+        offsets.Sort();
+        return offsets[offsets.Count / 2];
     }
 
     /// <summary>
@@ -105,17 +140,45 @@ public sealed class IdealAudioRegistrationProbe
     /// no per-line rounding error accumulates down the picture — which is exactly the class of
     /// encoder bug this probe exists to exclude.
     /// </summary>
-    private static float[] SynthesiseIdealAudio(SstvModeDefinition mode, IImageSource source)
+    private static (float[] Preamble, float[] Lines) SynthesiseIdealAudio(
+        SstvModeDefinition mode,
+        IImageSource source,
+        int leadInMs)
     {
         var samples = new List<float>();
         var phase = 0.0;
         var elapsedMs = 0.0;
 
-        // A short lead-in of silence, so the first line's sync has somewhere to be found from.
-        for (var i = 0; i < SampleRate / 10; i++)
+        // Silence, then a real VIS header. Without one the decoder's first sync lock lands on a
+        // different candidate depending on how much silence preceded it -- measured, not assumed:
+        // scottie-s2 read +44.24 px at a 100 ms lead-in and correct at 300 ms, and 21 of 43 modes
+        // failed the lead-in stability gate. The header is what makes the lock repeatable.
+        for (var i = 0; i < SampleRate * leadInMs / 1000; i++)
         {
             samples.Add(0f);
         }
+
+        AppendTone(samples, ref phase, 1900.0, 300.0);
+        AppendTone(samples, ref phase, 1200.0, 10.0);
+        AppendTone(samples, ref phase, 1900.0, 300.0);
+        AppendTone(samples, ref phase, 1200.0, 30.0);
+
+        var vis = mode.VisCode;
+        var parity = 0;
+        for (var bit = 0; bit < 7; bit++)
+        {
+            var set = ((vis >> bit) & 1) == 1;
+            parity ^= set ? 1 : 0;
+            AppendTone(samples, ref phase, set ? 1100.0 : 1300.0, 30.0);
+        }
+
+        AppendTone(samples, ref phase, parity == 1 ? 1100.0 : 1300.0, 30.0);
+        AppendTone(samples, ref phase, 1200.0, 30.0);
+
+        // Everything above is preamble. The caller pushes it, THEN calls ForceMode, THEN pushes the
+        // lines -- so the decoder's committed origin is the first line's own first sample.
+        var preamble = samples.ToArray();
+        samples.Clear();
 
         var rowsPerLine = mode.LineSegments.OfType<ScanSegment>().Any(s => s.ChannelName == "Y2") ? 2 : 1;
 
@@ -139,7 +202,17 @@ public sealed class IdealAudioRegistrationProbe
             }
         }
 
-        return samples.ToArray();
+        return (preamble, samples.ToArray());
+    }
+
+    private static void AppendTone(List<float> samples, ref double phase, double frequencyHz, double durationMs)
+    {
+        var count = (int)Math.Round(durationMs / 1000.0 * SampleRate);
+        for (var i = 0; i < count; i++)
+        {
+            phase += 2.0 * Math.PI * frequencyHz / SampleRate;
+            samples.Add((float)(Math.Sin(phase) * 0.7));
+        }
     }
 
     private static double FrequencyFor(
@@ -178,13 +251,23 @@ public sealed class IdealAudioRegistrationProbe
         }
     }
 
-    private static IImageSource? DecodeWithFullChain(SstvModeDefinition mode, float[] samples)
+    /// <summary>
+    /// Order matters and is the whole point. `ForceMode` commits the decode origin at the samples
+    /// received SO FAR, so calling it before pushing anything commits origin zero — the start of the
+    /// silent lead-in rather than the signal. The anchor fold then runs from there and
+    /// `AnalogFmSstvDecoder`'s `Math.Max(0, origin + delta)` clamps a negative delta instead of
+    /// wrapping it by one line, which is what made 21 of 43 modes lead-in dependent.
+    /// </summary>
+    private static IImageSource? DecodeWithFullChain(SstvModeDefinition mode, float[] preamble, float[] lines)
     {
         var decoder = new AnalogFmSstvDecoder(SampleRate);
         IImageSource? decodedImage = null;
         decoder.LineDecoded += update => decodedImage = update.Image;
+
+        decoder.PushSamples(preamble);
         decoder.ForceMode(mode);
-        decoder.PushSamples(samples);
+        decoder.PushSamples(lines);
+
         return decodedImage;
     }
 
