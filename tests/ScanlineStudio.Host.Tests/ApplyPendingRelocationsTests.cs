@@ -153,6 +153,35 @@ public sealed class ApplyPendingRelocationsTests : IDisposable
     }
 
     [Fact]
+    public async Task WhenDatabaseIsInWalMode_MovesBothWalSidecarsAlongsideHistoryDb()
+    {
+        // The database runs in WAL mode (SqliteWriteAheadLogging), so -journal is not the sidecar
+        // that exists -- -wal and -shm are. -wal holds COMMITTED transactions until a checkpoint
+        // folds them back, so leaving it behind loses contacts and receive history that the
+        // operator has every reason to believe were saved. Same guarantee as the -journal case
+        // above, for the sidecars this application actually produces.
+        var currentDir = NewSubdirectory("current");
+        var pendingDir = NewSubdirectory("pending");
+        File.WriteAllText(Path.Combine(currentDir, "history.db"), "sqlite-bytes");
+        File.WriteAllText(Path.Combine(currentDir, "history.db-wal"), "committed-but-uncheckpointed-bytes");
+        File.WriteAllText(Path.Combine(currentDir, "history.db-shm"), "shared-memory-index-bytes");
+        await AppLocationOverrides.SaveAsync(
+            new AppLocationOverrides(DatabaseDirectory: currentDir, PendingDatabaseDirectory: pendingDir), _overridesFilePath);
+
+        Program.ApplyPendingRelocations(_overridesFilePath);
+
+        Assert.True(File.Exists(Path.Combine(pendingDir, "history.db")));
+        Assert.True(File.Exists(Path.Combine(pendingDir, "history.db-wal")));
+        Assert.True(File.Exists(Path.Combine(pendingDir, "history.db-shm")));
+        Assert.False(File.Exists(Path.Combine(currentDir, "history.db-wal")));
+        Assert.False(File.Exists(Path.Combine(currentDir, "history.db-shm")));
+
+        // The moved -wal must still carry its bytes. An empty file at the destination would pass
+        // every Exists check above while having thrown the committed transactions away.
+        Assert.Equal("committed-but-uncheckpointed-bytes", File.ReadAllText(Path.Combine(pendingDir, "history.db-wal")));
+    }
+
+    [Fact]
     public async Task WhenTheFirstAttemptFailsTransiently_SucceedsOnRetry()
     {
         // A file (not the expected destination-conflict shape) sitting where the DESTINATION

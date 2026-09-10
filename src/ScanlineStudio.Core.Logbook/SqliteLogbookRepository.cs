@@ -38,7 +38,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived, StartUtcTicks)
             VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived, $startUtcTicks)
@@ -64,7 +64,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = """
             UPDATE Qso SET
                 Callsign = $callsign,
@@ -106,7 +106,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived
             FROM Qso WHERE 1 = 1
@@ -151,7 +151,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived
             FROM Qso WHERE Id = $id
@@ -189,7 +189,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM Qso WHERE Id = $id";
         command.Parameters.AddWithValue("$id", id);
 
@@ -259,9 +259,13 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
+
+        // Must sit above BeginTransaction -- SQLite refuses to enter WAL from inside a transaction.
+        SqliteWriteAheadLogging.TryEnable(connection, _logger);
+
         using var transaction = connection.BeginTransaction(deferred: false);
 
-        var createCommand = connection.CreateCommand();
+        using var createCommand = connection.CreateCommand();
         createCommand.Transaction = transaction;
         createCommand.CommandText = """
             CREATE TABLE IF NOT EXISTS Qso (
@@ -287,7 +291,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         createCommand.ExecuteNonQuery();
 
         var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var probeCommand = connection.CreateCommand();
+        using var probeCommand = connection.CreateCommand();
         probeCommand.Transaction = transaction;
         probeCommand.CommandText = "PRAGMA table_info(Qso)";
         using (var reader = probeCommand.ExecuteReader())
@@ -362,7 +366,7 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
     private static int ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
     {
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = commandText;
         return command.ExecuteNonQuery();
