@@ -271,7 +271,36 @@ a per-line sync residual, and it shifts the whole image rather than dirtying an 
 Pass criterion is unambiguous and already automated: our decode of `avt.mmv` must land where
 `avt_RX.bmp` lands. Review tier: **full** — decode-path state.
 
-### D6. The sync-anchor correction CLAMPS a negative delta instead of wrapping it
+### D6. CLOSED 2026-09-10 by user decision — clamp kept, no behaviour change
+
+`AnalogFmSstvDecoder.cs`'s `Math.Max(0, origin + delta)` deviates from legacy. That much is settled:
+`yoniq-auditor` traced both sign conventions and returned NOT EQUIVALENT. Legacy's
+`if (n<0) continue` (`Main.cpp:4146`) fires on `m_rBase < 0`, which is a POSITIVE correction in this
+port and never reaches the guard. This branch matches legacy's `m_rBase > 0`, where legacy keeps every
+pixel in its correct column and row. **Clamping discards registration where legacy preserves it.**
+
+**Closed anyway, and the reason is the point.** The fix was written — wrap by `+(int)lineWidthSamples`,
+which is legacy's own AutoSync idiom (`Main.cpp:3919`) and already ported in `TriggerAutoSync`. It
+built, and five modes passed. Then the mutation gate failed: **restoring the clamp changed nothing any
+test could detect.** Not at mid-picture, not at the top rows, where auto-sync has not yet corrected.
+The branch demonstrably executes (2 of 5 modes in a provoking harness), and the predicted failure — a
+vertical seam up to ~65% of image width on Scottie — did not reproduce at any magnitude.
+
+A behaviour change to decode-path state that no test can distinguish from the status quo is not worth
+shipping. The user's call, and the right one.
+
+**Reachability, which is narrower than first assumed.** The original theory — a user tuning in
+mid-transmission — is **REFUTED**. VIS lock anchors at header end (≥1 s of samples), narrow FSK
+anchors past the window, and the sync-bypass anchor is peak-derived so its correction is ~0 by
+construction. The only production path is `ForceMode` pressed within ~0.28 s of a fresh decoder's
+first sample. The user reports many recordings with Scanline and has never seen it.
+
+**What DID land:** the comment above that line asserted the clamp was legacy-equivalent. It is not,
+and a false parity claim in decode-path code outlives whoever reads it next. The comment now records
+what the clamp actually does, that it deviates, why it was kept, and that the wrap is a ~3-line change
+if anyone revisits.
+
+### (superseded) D6 original filing
 
 Found 2026-09-10 by `yoniq-principal` while diagnosing a measurement instrument, then confirmed
 against source. **Latent in production, not just in tests.**

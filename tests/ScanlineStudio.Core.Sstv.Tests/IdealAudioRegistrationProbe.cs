@@ -140,7 +140,7 @@ public sealed class IdealAudioRegistrationProbe
     /// no per-line rounding error accumulates down the picture — which is exactly the class of
     /// encoder bug this probe exists to exclude.
     /// </summary>
-    private static (float[] Preamble, float[] Lines) SynthesiseIdealAudio(
+    internal static (float[] Preamble, float[] Lines) SynthesiseIdealAudio(
         SstvModeDefinition mode,
         IImageSource source,
         int leadInMs)
@@ -271,7 +271,7 @@ public sealed class IdealAudioRegistrationProbe
         return decodedImage;
     }
 
-    private static double? FindEdgeColumn(ReadOnlySpan<Rgb24> line, int width)
+    internal static double? FindEdgeColumn(ReadOnlySpan<Rgb24> line, int width)
     {
         for (var x = 1; x < width; x++)
         {
@@ -289,7 +289,7 @@ public sealed class IdealAudioRegistrationProbe
 
     private static double Luma(Rgb24 pixel) => (pixel.R + pixel.G + pixel.B) / 3.0;
 
-    private static ArrayImageSource CreateVerticalEdgeImage(int width, int height, int edgeColumn)
+    internal static ArrayImageSource CreateVerticalEdgeImage(int width, int height, int edgeColumn)
     {
         var pixels = new Rgb24[width * height];
         for (var y = 0; y < height; y++)
