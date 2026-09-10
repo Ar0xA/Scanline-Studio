@@ -709,13 +709,6 @@ shim, so a bug cannot hide in both halves — the Scottie failure shape.
 
 #### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
 
-`scanline_audio.c:171` and `:226` convert between WASAPI's `wchar_t[64]` device id and this project's
-own UTF-8 ABI (`WideCharToMultiByte`/`MultiByteToWideChar`). Every other backend passes strings
-through. This is real conversion logic with buffer-size arithmetic and no test has ever run it.
-A non-ASCII device name is the obvious case to cover.
-
-#### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
-
 `OmniRigComClient` is `[SupportedOSPlatform("windows")]` and `OmniRigProtocolFactory` refuses to
 construct elsewhere. Existing tests are a fake, a reflection check on the CLSID/IID/`[DispId]`
 attributes (TT0-4), and mapper unit tests. **No test has ever instantiated the real COM object.**
@@ -767,6 +760,27 @@ is cross-platform, so it is testable on Linux and may need nothing.
 - `ConfigurationPresetStore:467-476` rejects `CON`/`PRN`/`AUX`/`NUL`. That logic is deliberately
   cross-platform so files stay portable, so it is testable on Linux — **check whether it already is**
   before counting it as a gap.
+
+#### W9. Windows-only paths nobody had filed — found by the 2026-09-10 audit
+
+Four, in descending order of consequence:
+
+1. **`HamlibLibraryLocator.cs:75-77`** — the Windows candidate list and extra-directory probe. This
+   decides whether CAT works AT ALL on Windows and was absent from W1-W8 entirely.
+2. **`OptionsWindowViewModel.cs:1208`** — `IsOmniRigBackendAvailable`'s true branch, which makes the
+   OmniRig row visible and selectable, has never been exercised. Adjacent to W5 but distinct: W5 is
+   about instantiating the COM object, this is UI visibility.
+3. **`DirectoryPathComparer` normalization**, a second axis W7 misses. `Path.GetFullPath` behaves
+   differently on Windows for drive-relative (`C:foo`), UNC, `\\?\`-prefixed and trailing-dot or
+   trailing-space paths — all of which feed `AppLocationsService` and `SqliteReceiveHistoryStore`.
+   Case-insensitivity is now covered; normalization is not.
+4. Low priority: nothing asserts that the Windows-built shim exports everything `NativeAudio`
+   P/Invokes. A missing export surfaces as `EntryPointNotFoundException` at runtime.
+
+**Also recorded from the same audit:** `scanline_audio.c:226`'s UTF-8-to-wide conversion is NOT
+covered by W4 either — `scanline_audio_get_device_mute` does its own `MultiByteToWideChar` into a
+local buffer at `:1501-1502`. W3 now covers `:226` through a format-probe assertion; the mute path's
+own copy remains unasserted.
 
 #### W8. The four tests that skip *on* Windows have no Windows counterpart
 
