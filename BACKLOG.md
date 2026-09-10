@@ -322,6 +322,27 @@ per site whether a Windows equivalent is worth writing or whether the skip is th
 four rounds and is recorded in auto-memory (`project_windows_maximize_taskbar_bug`). Real-window
 geometry is not something a headless test settles — leave it to the manual checklist.
 
+### RX1. Robot 36's ambiguity fallback is implemented but never executed
+
+Legacy's Robot 36 RX branch decides chroma identity from the selector tone, and when that tone is
+too weak to call (`|d| < 64`) it **toggles** the previous selection instead
+(`Main.cpp:4293-4295`). The port implements the toggle (`RobotScanlineDecoder.cs`).
+
+`LegacyRxChannelMappingTests` drives both tones at full strength (`|d| = 128`), so no test reaches
+the fallback. It is the branch that runs on a weak or noisy signal, which is when a decode matters
+most. Feed a selector segment at a frequency between the two tones and assert the toggle.
+
+Cheap. Review tier: **light** — one test, no source change expected.
+
+### RX2. A second legacy RX per-pixel switch was never compared
+
+`DrawSSTVDiff` (`Main.cpp:4508+`, its own MRT check at `:4855`) carries a second per-pixel decode
+switch beside the audited one at `:4180-4504`. The 2026-09-10 RX audit compared only the first.
+Establish whether the second is a live path or a variant, before assuming the RX mapping guard
+covers all of legacy's RX behaviour.
+
+Sizing note: this is a read, not a build. Do it before the next milestone audit.
+
 ### PA-Two-more. After PA-5 or TT1-18 lands
 
 1. Scoped `MainWindow.axaml.cs` tests. Target T1-12's `DataContextChanged` re-entry guard plus the
