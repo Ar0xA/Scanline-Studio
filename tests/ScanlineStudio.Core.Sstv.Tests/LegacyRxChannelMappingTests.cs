@@ -14,11 +14,15 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// (`Main.cpp:4315-4325`). On TX, PD, MP and MN are three separate functions; on RX they are a single
 /// branch (`:4367-4380`).</para>
 ///
-/// <para><b>And Scottie's channel order is literally different in the two directions.</b> TX writes
-/// separator-G, separator-B, sync, separator-R (`LineSCT`, `:6620`). RX aligns its line origin on the
-/// sync, so the received order is R, G, B (`:4222-4258`, legacy's own `// R` / `// G` / `// B`
-/// markers). Reading one direction off the other is exactly how the Scottie incident happened, and
-/// this pair of files is what makes that impossible to repeat silently.</para>
+/// <para><b>Scottie is the mode the incident was about, and the two directions really do differ.</b>
+/// TX writes separator-G, separator-B, sync, separator-R (`LineSCT`, `:6620`). Legacy's RX branch
+/// reads R first, then G, then B (`:4222`/`:4242`/`:4258`, legacy's own `// R` / `// G` / `// B`
+/// markers), because it anchors the line origin on the sync.</para>
+///
+/// <para><b>The port does not anchor that way.</b> It walks the segment list from index 0, so it
+/// reads G, B, sync, R and reaches the same picture by mapping each segment to its own component.
+/// That difference is a decoder-anchoring choice and is NOT what this file tests. What it tests is
+/// that every segment reaches the component legacy would put it in.</para>
 ///
 /// <para><b>The encoder is deliberately not involved.</b> A round trip cannot test this: the port
 /// uses one segment list for both directions, so a swapped channel would be swapped symmetrically and
@@ -26,8 +30,12 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// straight from its <c>ChannelName</c>, and only the decoder runs. If the decoder maps a segment to
 /// the wrong output component, the value comes back in the wrong place.</para>
 ///
-/// <para>Grounding the trace on the segment list is not circular: `LegacyTxChannelOrderTests` pins
-/// that list against legacy source independently, including sync placement.</para>
+/// <para><b>What this file pins, and what it does not.</b> It pins the segment-to-component
+/// MAPPING: a segment named G must reach the green output. It does NOT independently pin segment
+/// ORDER — the port's decoders route by channel NAME, so a registry list in the wrong order still
+/// passes every row here. Order is pinned once, in `LegacyTxChannelOrderTests`, against legacy TX
+/// source. The registry's segment list is shared by both directions, so that one pin covers both.
+/// Do not read a green run here as independent confirmation of order.</para>
 /// </summary>
 public sealed class LegacyRxChannelMappingTests
 {
@@ -43,7 +51,7 @@ public sealed class LegacyRxChannelMappingTests
     {
         // Legacy RX branch `smSCT1/SCT2/SCTDX` (Main.cpp:4222) -- R, G, B, sync-aligned.
         "scottie-s1", "scottie-s2", "scottie-dx",
-        // Martin: same G,B,R on TX as Scottie but sync at the head, so RX sees a different order.
+        // Martin RX: `default:` branch, MRT special case (Main.cpp:4455-4490) -- scan 1 G, 2 B, 3 R.
         "martin-m1", "martin-m2",
         "sc2-180", "sc2-120", "sc2-60",
         "p3", "p5", "p7",
@@ -118,6 +126,11 @@ public sealed class LegacyRxChannelMappingTests
     /// every line and disagrees with any transmission that starts on the other phase, or any decode
     /// that joins mid-picture. This test drives the SAME line index with both tones, so parity is
     /// held constant and only the tone changes.</para>
+    ///
+    /// <para><b>Not covered here:</b> legacy also has an ambiguity fallback. When the selector tone
+    /// is too weak to call (|d| &lt; 64) it TOGGLES the previous selection (`Main.cpp:4293-4295`),
+    /// which is parity-like. The port implements it (`RobotScanlineDecoder.cs`). Both tones below
+    /// are decisive (|d| = 128), so this test never reaches that path.</para>
     /// </summary>
     [Theory]
     [InlineData(1500.0, true)]
@@ -168,11 +181,71 @@ public sealed class LegacyRxChannelMappingTests
         Assert.Equal(expected, actual);
     }
 
+    public static TheoryData<string> LinePairedLumaModes()
+    {
+        var data = new TheoryData<string>();
+        foreach (var mode in SstvModeRegistry.All
+            .Where(m => m.LineSegments.OfType<ScanSegment>().Any(s => s.ChannelName == "Y2"))
+            .OrderBy(m => m.Id, StringComparer.Ordinal))
+        {
+            data.Add(mode.Id);
+        }
+
+        return data;
+    }
+
+    [Fact]
+    public void LinePairedLumaModes_CoversLegacysFourteenPdMpMnModes()
+    {
+        // Legacy's own RX branch carries exactly fourteen case labels (Main.cpp:4367-4380): seven PD,
+        // four MP, three MN. A registry change that drops one must fail here, not silently shrink the
+        // theory below to a table that still passes.
+        Assert.Equal(14, LinePairedLumaModes().Count());
+    }
+
+    [Theory]
+    [MemberData(nameof(LinePairedLumaModes))]
+    public void LinePairedDecoder_SendsTheFirstLumaScanToTheFirstRow(string modeId)
+    {
+        var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+
+        // PD/MP/MN send one chroma pair and TWO luma scans per transmitted line, filling two image
+        // rows. Legacy writes the first luma to the upper row and the fourth segment to the lower one
+        // (Main.cpp:4409-4429, `gp` then `gp2`). Swapping those two destinations flips the picture
+        // vertically in pairs -- a visible defect that the mapping rows above cannot see, because
+        // they drive both luma scans with the same value and read only the upper row.
+        var pixels = DecodeOneLineToPixels(
+            mode,
+            new Dictionary<string, byte> { ["Y"] = MidValue, ["Y1"] = HighValue, ["Y2"] = LowValue, ["C"] = MidValue, ["RY"] = MidValue, ["BY"] = MidValue });
+
+        var upper = pixels[mode.ImageWidth / 2];
+        var lower = pixels[mode.ImageWidth + (mode.ImageWidth / 2)];
+
+        // Chroma is held neutral, so brightness alone separates the two rows. The gap is about 480
+        // summed across the components; 40 is a floor well clear of reconstruction rounding.
+        Assert.True(
+            Brightness(upper) > Brightness(lower) + 40,
+            $"[{modeId}] the bright first luma scan should land in the upper row and the dark second " +
+            $"scan in the lower one, got upper={Brightness(upper)} lower={Brightness(lower)}. " +
+            "The decoder looks like it sends Y1 and Y2 to the wrong rows.");
+    }
+
+    private static int Brightness(Rgb24 pixel) => pixel.R + pixel.G + pixel.B;
+
     /// <summary>
     /// Builds a frequency trace directly from the mode's own scan segments — each segment filled with
     /// the value its channel name maps to — then runs ONLY the decoder over it.
     /// </summary>
     private static Rgb24 DecodeOneLineWithPerChannelValues(
+        SstvModeDefinition mode,
+        IReadOnlyDictionary<string, byte> valuesByChannel,
+        double? toneSelectorOverrideHz = null)
+    {
+        // Mid-line, so neither edge transient nor the first-pixel settling affects the reading.
+        return DecodeOneLineToPixels(mode, valuesByChannel, toneSelectorOverrideHz)[mode.ImageWidth / 2];
+    }
+
+    private static Rgb24[] DecodeOneLineToPixels(
         SstvModeDefinition mode,
         IReadOnlyDictionary<string, byte> valuesByChannel,
         double? toneSelectorOverrideHz = null)
@@ -222,8 +295,7 @@ public sealed class LegacyRxChannelMappingTests
 
         decoder.DecodeLine(mode, SampleRate, 0, 0, reader, pixels);
 
-        // Mid-line, so neither edge transient nor the first-pixel settling affects the reading.
-        return pixels[mode.ImageWidth / 2];
+        return pixels;
     }
 
     private static double ValueToFrequency(byte value, SstvModeDefinition mode) =>
