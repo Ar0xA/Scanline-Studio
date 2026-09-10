@@ -57,6 +57,10 @@ matched deliberately. It shifts a level by about 2 parts in 255. No receiver key
 station can tell. Under this rule it becomes a legitimate candidate — a measurement showing rounding
 is closer to the source picture, with no regression, would now win.
 
+That makes Fault A legitimate. It does not make it scheduled. The decode-quality improvement
+workstream is closed by user decision (`BACKLOG.md` §8), and this rule does not reopen it. Nothing
+here is authority to start work — it is the bar that work must clear once someone decides to start.
+
 ## The bar
 
 All five, or it is not proven:
