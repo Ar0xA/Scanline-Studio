@@ -1,3 +1,13 @@
+// Every collection fed by a ConnectionEvents/StateChanges subscription in this file is a
+// ConcurrentQueue, never a List. The controller publishes from its own poll thread while the test
+// thread reads the same collection inside a WaitUntilAsync predicate, and List<T> enumeration throws
+// "Collection was modified" when an Add lands mid-enumeration. It is a test-infrastructure race, not
+// a production defect -- but it fails a test that is passing on its merits, which reads as a
+// regression in whatever change happens to be in flight. ConcurrentQueue.Enqueue and its enumerator
+// are safe against each other and FIFO order is preserved, so ordering assertions are unaffected.
+// One test was converted for exactly this reason before; the rest were left on List and one of them
+// went on flaking. Keep them uniform.
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
@@ -54,9 +64,9 @@ public class RadioControllerTests
         // Failed) for THIS specific case -- see the next test for that original regression's coverage,
         // now driven deterministically via a mid-connect cancellation instead.
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         using var cts = new CancellationTokenSource();
         await cts.CancelAsync();
@@ -80,12 +90,12 @@ public class RadioControllerTests
         // still live when ConnectAsync's internal lock-wait runs -- see the previous test for the
         // pre-cancelled case, which now short-circuits before Connecting is ever published.
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var cts = new CancellationTokenSource();
         using var sub = controller.ConnectionEvents.Subscribe(e =>
         {
-            events.Add(e.State);
+            events.Enqueue(e.State);
             if (e.State == RadioConnectionState.Connecting)
             {
                 cts.Cancel();
@@ -95,7 +105,7 @@ public class RadioControllerTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => controller.ConnectAsync(new TestConnectionSpec(), cts.Token));
 
-        Assert.Equal([RadioConnectionState.Connecting, RadioConnectionState.Failed], events);
+        Assert.Equal<RadioConnectionState>([RadioConnectionState.Connecting, RadioConnectionState.Failed], events);
     }
 
     [Fact]
@@ -189,14 +199,14 @@ public class RadioControllerTests
             await Task.Delay(Timeout.Infinite, ct);
             return FixedStateValue; // unreachable -- Task.Delay throws on cancellation before returning
         }));
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         await controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None);
         await controller.DisconnectAsync();
 
-        Assert.Equal(
+        Assert.Equal<RadioConnectionState>(
             [RadioConnectionState.Connecting, RadioConnectionState.Connected, RadioConnectionState.Disconnected],
             events);
     }
@@ -205,9 +215,9 @@ public class RadioControllerTests
     public async Task PollLoop_PublishesStateChanges_AndUpdatesLastKnownState()
     {
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
-        var received = new List<RadioState>();
+        var received = new ConcurrentQueue<RadioState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.StateChanges.Subscribe(received.Add);
+        using var sub = controller.StateChanges.Subscribe(received.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -243,9 +253,9 @@ public class RadioControllerTests
             });
         });
 
-        var events = new List<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -273,9 +283,9 @@ public class RadioControllerTests
                 onDispose: () => disposeCount++);
         });
 
-        var events = new List<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -291,9 +301,9 @@ public class RadioControllerTests
     public async Task IsGenuinelyConnected_FlipsTrue_AndPublishesASecondConnected_OnFirstSuccessfulPoll()
     {
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         Assert.False(controller.IsGenuinelyConnected);
 
@@ -303,7 +313,7 @@ public class RadioControllerTests
         await controller.DisconnectAsync();
 
         Assert.False(controller.IsGenuinelyConnected); // reset by the disconnect above
-        Assert.Equal(
+        Assert.Equal<RadioConnectionState>(
             [RadioConnectionState.Connecting, RadioConnectionState.Connected, RadioConnectionState.Connected, RadioConnectionState.Disconnected],
             events);
     }
@@ -317,9 +327,9 @@ public class RadioControllerTests
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
             _ => throw new RadioProtocolException("simulated: rig offline, session intact")));
 
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(10) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -346,9 +356,9 @@ public class RadioControllerTests
                     : Task.FromResult(FixedStateValue));
         });
 
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -357,7 +367,7 @@ public class RadioControllerTests
 
         // Connecting, Connected (optimistic, from ConnectAsync), Reconnecting (the simulated
         // failure), Connected (genuine, once the recovered poll actually succeeded), Disconnected.
-        Assert.Equal(
+        Assert.Equal<RadioConnectionState>(
             [
                 RadioConnectionState.Connecting,
                 RadioConnectionState.Connected,
@@ -399,9 +409,9 @@ public class RadioControllerTests
             return FixedStateValue;
         }));
 
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         try
         {
@@ -416,7 +426,7 @@ public class RadioControllerTests
             Assert.False(controller.IsGenuinelyConnected);
             // The straggler's own Connected (if it got far enough to publish at all) must never be
             // the last thing observed -- Disconnected must win.
-            Assert.Equal(RadioConnectionState.Disconnected, events[^1]);
+            Assert.Equal(RadioConnectionState.Disconnected, events.Last());
         }
         finally
         {
@@ -501,9 +511,9 @@ public class RadioControllerTests
             return new FakeProtocol(FixedState);
         });
 
-        var events = new List<RadioConnectionState>();
+        var events = new ConcurrentQueue<RadioConnectionState>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(e => events.Add(e.State));
+        using var sub = controller.ConnectionEvents.Subscribe(e => events.Enqueue(e.State));
 
         try
         {
@@ -563,12 +573,7 @@ public class RadioControllerTests
         var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(
             _ => throw new IOException("simulated: dead backend")));
 
-        // ConcurrentQueue, not List: this test's own PollInterval (5ms) drives events.Add and
-        // WaitUntilAsync's condition() check from two different threads fast enough to occasionally
-        // enumerate mid-Add and throw "Collection was modified" -- a pre-existing test-infra race,
-        // unrelated to production code. ConcurrentQueue.Enqueue/GetEnumerator are safe against each
-        // other; order is preserved (FIFO), so ordering assertions below are unaffected.
-        var events = new System.Collections.Concurrent.ConcurrentQueue<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
@@ -608,7 +613,7 @@ public class RadioControllerTests
             _ => throw new IOException("simulated: dead backend")));
 
         // ConcurrentQueue, not List -- see the sibling give-up test's own comment on this exact race.
-        var events = new System.Collections.Concurrent.ConcurrentQueue<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
         using var connectionSub = controller.ConnectionEvents.Subscribe(events.Enqueue);
         using var throwingStateSub = controller.StateChanges.Subscribe(_ => throw new InvalidOperationException("boom"));
@@ -646,9 +651,9 @@ public class RadioControllerTests
             throw new RadioProtocolException("simulated command failure");
         }));
 
-        var events = new List<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(5) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -672,9 +677,9 @@ public class RadioControllerTests
                     : Task.FromResult(FixedStateValue));
         });
 
-        var events = new List<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
         await controller.ConnectAsync(spec, CancellationToken.None);
@@ -711,9 +716,9 @@ public class RadioControllerTests
                 }
             }));
 
-        var events = new List<RadioConnectionEvent>();
+        var events = new ConcurrentQueue<RadioConnectionEvent>();
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        using var sub = controller.ConnectionEvents.Subscribe(events.Add);
+        using var sub = controller.ConnectionEvents.Subscribe(events.Enqueue);
 
         try
         {
