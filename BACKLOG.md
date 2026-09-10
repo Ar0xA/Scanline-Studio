@@ -81,7 +81,27 @@ divergence is documented, not actioned.
 Full evidence: `docs/known-decode-defects.md` §4. Harness:
 `tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeRealChainProbe.cs`.
 
-### D2-FIX. Repair the contaminated edge columns — plan-review round 1 done, NOT ready to build
+### D2-FIX. PARKED 2026-09-10 by user decision — legacy-faithful and not worth the cost
+
+**User's call, after seeing 8x crops of the real artefact:** "noticable but not horrible, considering
+legacy does the same... not super noticable when a full picture is send unless you zoom in on it."
+
+The stripe is 1 to 4 pixels — 1.25% of width on a 320-wide mode, 0.63% on a 640-wide one — and it
+matches legacy on every mode measured against real legacy audio. So no user receives a worse picture
+than the reference implementation gives them. **Do not restart this unprompted.**
+
+**What would change the decision:** real legacy captures for the other 35 modes, which would make a
+correct per-mode correction derivable. That is a human task on Windows, not something to re-derive
+here. Until then the only non-circular basis covers 8 of 43 modes.
+
+**Still open as genuine PORT DEFECTS**, because they diverge from legacy rather than match it — see
+D5 below. Those are separate from this parked item and need no §0a argument.
+
+Everything below is the investigation record. It stopped four wrong fixes, each of which would have
+shipped a regression: a coloured fringe on Martin, a cosmetic patch over a registration error, a
+replay double-correction across ~20 modes, and a correction table built on a circular measurement.
+
+### (record) D2-FIX investigation — plan-review round 1
 
 **User approved fixing this 2026-09-10** under `CLAUDE.md` §0a: it is RX interpretation only, nothing
 wire-observable, so a measured improvement outranks legacy's behaviour.
@@ -213,6 +233,30 @@ only half its lines can contaminate at all.
 Harness: `tests/ScanlineStudio.Core.Sstv.Tests/EdgeContaminationSizingProbe.cs`.
 Ships **default off** behind a visible toggle. Default-on needs clear gain and zero degradation across
 all 43 modes. Review tier: **full**. **The user wants to verify the result visually before it lands.**
+
+### D5. Three modes' RX registration DIVERGES from legacy — real port defects
+
+Found 2026-09-10 while investigating D2. Distinct from that parked item: these three do **not** match
+legacy, so they need no §0a argument. They are bugs.
+
+Measured by `LegacyAudioRegistrationProbe.cs` against real legacy `.mmv` captures, comparing our
+decode of legacy's own audio with legacy's own decode of the same audio. Five of eight captured modes
+match within 0.10 px, which is what makes these three stand out:
+
+| mode | ours - legacy | worth fixing |
+|---|---|---|
+| **avt** | **6.40 px** | yes — the whole picture sits in the wrong place |
+| rm8 | 0.90 px | marginal |
+| mn110 | 0.30 px | no, unless it shares a cause with one of the others |
+
+**`avt` is the one that matters and it has a contained cause to look at.** AVT has no sync segment at
+all — legacy's `SyncSSTV` early-returns for it (`Main.cpp:3754-3758`) with `m_OFP = 0`, and
+`AdjustSyncPos` leaves it in `default:`. Its registration comes entirely from the header timer chain
+(`sstv.cpp:2140`, then `:2155-2209`). So a 6.40 px error is a picture-start error in that chain, not
+a per-line sync residual, and it shifts the whole image rather than dirtying an edge.
+
+Pass criterion is unambiguous and already automated: our decode of `avt.mmv` must land where
+`avt_RX.bmp` lands. Review tier: **full** — decode-path state.
 
 ### D4. martin-m1's last column reads low — a second, separate edge defect
 
