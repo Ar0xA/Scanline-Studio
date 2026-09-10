@@ -458,6 +458,18 @@ Detail: `docs/known-decode-defects.md` §4. Review tier: **full** — this is de
 
 ### D3. Range-limit the output-cutoff control per demodulator
 
+**Corrected 2026-09-10 — the permissive range is INHERITED, and legacy is more permissive than we
+are.** An earlier note in this session called D3 "ours rather than inherited". That was wrong.
+Legacy's `pllOutFC` is a free text field whose only validation is `if (d > 0.0)`
+(`Option.cpp:523-525`) — **no upper bound at all**. Default 900.0 (`sstv.cpp:254`), same as ours.
+Our `NumericUpDown` already caps at 3900 and `PllFmDemodulator` clamps at `sampleRate * 0.45`, so the
+port is ALREADY stricter than legacy. The only thing that is ours is the 3900 ceiling.
+
+**So this is a usability item, not a parity one.** It stays open because a user can still reach a
+value that visibly breaks the picture, and it is entirely off-air, so §0a permits tightening it. But
+"legacy allows worse" is not an argument for leaving it, and "we deviate from legacy" is not an
+argument for closing it — legacy's advanced PLL fields are deliberately unvalidated.
+
 `OptionsWindowView.axaml:986` is a `NumericUpDown` bound to `PllOutputCutoffHz` with
 `Minimum="1" Maximum="3900"`, and `OptionsWindowViewModel.cs:3413` applies the value live through
 `RequestPllTuning`. `PllFmDemodulator`'s own clamp is `Math.Clamp(cutoffHz, 1.0, _sampleRate * 0.45)`,
