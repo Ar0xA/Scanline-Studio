@@ -1480,4 +1480,342 @@ public sealed class RadioStatusViewModelTests
 
         Assert.True(vm.IsKeyed);
     }
+
+    private static FakeRadioSessionService BandwidthCapableSession(params FrequencyPreset[] presets)
+        => new()
+        {
+            Presets = presets,
+            Capabilities = RadioCapabilities.SetBandwidth,
+        };
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_SendsBandwidthAfterMode()
+    {
+        // Order is the whole point: setting the mode is what makes the rig fall back to its own
+        // default passband, so a bandwidth sent before the mode would simply be overwritten. Call
+        // counts alone cannot catch that, which is why FakeRadioSessionService records CallOrder.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb, 2400));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["frequency", "mode", "bandwidth"], radioSession.CallOrder);
+        Assert.Equal(2400, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_NoStoredBandwidthOnSsbMode_Sends2400()
+    {
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2400, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_NoStoredBandwidthOnFmMode_Sends15000()
+    {
+        // A single app-wide 2400 default would be the 500Hz bug mirrored: FM SSTV needs roughly
+        // 12-15kHz, so 2400 would clip it exactly the way 500 clips SSB SSTV.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("10m FM", 29_600_000, RadioMode.Fm));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(15_000, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_BackendCannotSetBandwidth_SendsFrequencyAndModeOnly()
+    {
+        // flrig and OmniRig THROW from SetBandwidthAsync rather than no-op'ing, so an ungated call
+        // would fail the click AFTER the frequency and mode had already changed.
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb, 2400)],
+            Capabilities = RadioCapabilities.None,
+            ThrowOnSetBandwidth = true,
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["frequency", "mode"], radioSession.CallOrder);
+        Assert.Empty(radioSession.SetBandwidthCalls);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_StoredBandwidthIsZero_SubstitutesFamilyFallbackAndNeverSendsZero()
+    {
+        // 0 IS Hamlib's RIG_PASSBAND_NORMAL, so sending it would silently reinstate the very
+        // rig-picks-its-own-width behaviour this feature exists to replace.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("Hand edited", 14_230_000, RadioMode.Usb, 0));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2400, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_WideBandwidthTypedOnSsbMode_SendsItUnchanged()
+    {
+        // The mode family drives the editor's snap-on-mode-change only. It must never gate the apply
+        // path, or a width the operator typed, saved and can still see would be silently corrected.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("Wide", 14_230_000, RadioMode.Usb, 12_000));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(12_000, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_UnknownMode_SendsNothingAtAllAndReportsTheModeError()
+    {
+        // Without the up-front mode guard, SetFrequencyAsync retunes the rig first and SetModeAsync
+        // then throws ArgumentOutOfRangeException, which the catch maps to "no radio connected" --
+        // a wrong message after a real, already-applied frequency change.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("Bad", 14_230_000, RadioMode.Unknown, 2400));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Empty(radioSession.CallOrder);
+        Assert.Equal("RadioStatus.Error.InvalidPresetMode", vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_NoFamilyMode_SendsFrequencyAndModeButNoBandwidth()
+    {
+        // AM is mappable, so it reaches the rig -- but this app has no opinion on an AM filter width,
+        // and inventing one would be worse than leaving the rig's own.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("AM", 3_885_000, RadioMode.Am));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["frequency", "mode"], radioSession.CallOrder);
+        Assert.Empty(radioSession.SetBandwidthCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task SavePresets_BandwidthOutOfRange_AbortsAndLeavesEditorRowsUntouched()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("Good", 14_230_000, RadioMode.Usb, 2400)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var row = Assert.Single(vm.EditorRows);
+        row.BandwidthHz = 0;
+
+        await vm.SavePresetsCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(vm.EditorRows);
+        Assert.Equal(2400, Assert.Single(radioSession.Presets).BandwidthHz); // never reached the store
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void EditorRow_ModeChangedAcrossFamilies_MovesQuickPicksAndSnapsTheValue()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb, 2400)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var row = Assert.Single(vm.EditorRows);
+
+        row.SelectedMode = RadioMode.Fm;
+        Assert.Equal([9000d, 12_000d, 15_000d], row.AvailableBandwidthPresetsHz);
+        Assert.Equal(15_000, row.BandwidthHz);
+
+        row.SelectedMode = RadioMode.Usb;
+        Assert.Equal([1800d, 2400d, 2800d], row.AvailableBandwidthPresetsHz);
+        Assert.Equal(2400, row.BandwidthHz);
+    }
+
+    [AvaloniaFact]
+    public void EditorRow_ModeChangedWithinFamily_KeepsATypedWidth()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb, 2800)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var row = Assert.Single(vm.EditorRows);
+
+        row.SelectedMode = RadioMode.Data;
+
+        Assert.Equal(2800, row.BandwidthHz);
+    }
+
+    [AvaloniaFact]
+    public void EditorRow_NoFamilyModeWithNoStoredBandwidth_SeedsASaveableValue()
+    {
+        // Without the no-family seed this row would hold 0, SavePresets rejects 0, and one
+        // hand-edited row would make the whole editor unsaveable for every other row too.
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("Hand edited", 3_885_000, RadioMode.Am)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        var row = Assert.Single(vm.EditorRows);
+        Assert.Equal(2400, row.BandwidthHz);
+    }
+
+    [AvaloniaFact]
+    public void PresetModeChoices_HoldsExactlyTheSixSstvModes()
+    {
+        var vm = CreateViewModel();
+
+        Assert.Equal(
+            [RadioMode.Usb, RadioMode.Lsb, RadioMode.Fm, RadioMode.Data, RadioMode.DataR, RadioMode.Pkt],
+            vm.PresetModeChoices.Select(choice => choice.Mode));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(RadioMode.Cw)]
+    [InlineData(RadioMode.Am)]
+    [InlineData(RadioMode.Unknown)]
+    public void CanStoreCurrentPreset_RigOnAModeTheEditorCannotShow_IsFalse(RadioMode mode)
+    {
+        // "Store current" copies whatever the rig reports, so without this gate it can create a
+        // Favourite the six-mode picker cannot display.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(14_230_000, mode, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.StoreCurrentPresetCommand.CanExecute(null));
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.StoreCurrentPresetCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task StoreCurrentPreset_RigBandwidthOutOfRange_CapturesTheFallbackInsteadOfFailingTheSave()
+    {
+        // A live rig reading must never reach the validator raw: the save would abort, the row would
+        // be removed, and the frequency/mode capture would be lost too -- over a value the operator
+        // never typed.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, BandwidthHz: 45_000));
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2400, Assert.Single(radioSession.Presets).BandwidthHz);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task StoreCurrentPreset_RigBandwidthInRange_CapturesTheLiveReading()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow, BandwidthHz: 2800));
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.StoreCurrentPresetCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2800, Assert.Single(radioSession.Presets).BandwidthHz);
+    }
+
+    [AvaloniaFact]
+    public async Task ApplyPreset_NoFamilyModeWithAStoredBandwidth_StillSendsNoBandwidthCommand()
+    {
+        // Code-review finding: the stored value used to win before the family was ever consulted, so
+        // a hand-edited AM Favourite (whose editor row seeds a saveable 2400, which any Save then
+        // persists) would narrow the rig to an SSB width on an AM channel.
+        var radioSession = BandwidthCapableSession(new FrequencyPreset("AM", 3_885_000, RadioMode.Am, 2400));
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        await vm.ApplyPresetCommand.ExecuteAsync(radioSession.Presets[0]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(["frequency", "mode"], radioSession.CallOrder);
+        Assert.Empty(radioSession.SetBandwidthCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task EditorRow_StoredBandwidthOutOfRange_SeedsASaveableValueInsteadOfBlockingTheSave()
+    {
+        // Code-review finding: the seed used to pass a stored value through verbatim, so one
+        // hand-edited row with "BandwidthHz": 0 made the whole editor unsaveable -- discarding every
+        // OTHER row's unsaved edits along with it.
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets =
+            [
+                new FrequencyPreset("Hand edited", 14_230_000, RadioMode.Usb, 0),
+                new FrequencyPreset("Fine", 7_171_000, RadioMode.Lsb, 2400),
+            ],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(2400, vm.EditorRows[0].BandwidthHz);
+        vm.EditorRows[1].Label = "Edited";
+
+        await vm.SavePresetsCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Null(vm.ErrorMessage);
+        Assert.Equal("Edited", radioSession.Presets[1].Label);
+    }
+
+    [AvaloniaFact]
+    public void EditorRow_ModeChangedWithinFamily_KeepsTheSameQuickPickListInstance()
+    {
+        // Code-review finding: a freshly allocated array per mode change swaps the bound ComboBox's
+        // ItemsSource IDENTITY even when the contents are identical, which resets the control's own
+        // selection for no reason.
+        var radioSession = new FakeRadioSessionService
+        {
+            Presets = [new FrequencyPreset("SSTV", 14_230_000, RadioMode.Usb, 2400)],
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var row = Assert.Single(vm.EditorRows);
+        var before = row.AvailableBandwidthPresetsHz;
+
+        row.SelectedMode = RadioMode.Lsb;
+
+        Assert.Same(before, row.AvailableBandwidthPresetsHz);
+    }
 }
