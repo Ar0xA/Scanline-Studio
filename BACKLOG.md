@@ -97,15 +97,31 @@ attribution of registration to the receive path, and the only such basis today i
 which covers 8 of 43 modes. A round trip through our own encoder cancels shared errors — `pd90` reads
 0.91 px that way against 13.95 px on real audio.
 
-**Two live routes out, in preference order:**
+**THE MEASUREMENT BLOCKER IS GONE.** `IdealAudioRegistrationProbe.cs` now reports all 43 modes with
+**0.00 px spread** across three lead-ins. It synthesises the stimulus from each mode's own segment
+table (so our encoder contributes nothing), pushes it through the FULL production decoder, and uses a
+hard-edged source so the estimator is not degenerate. Six instruments were needed; the first five each
+failed for a different structural reason, all recorded in this file.
 
-1. **Drive the decoder from the mode's own segment table rather than from our encoder**
-   (`IdealTransport.cs` already builds such a stimulus). That excludes encoder arithmetic — phase
-   accumulation, per-line rounding, sample truncation — while the segment timings themselves are
-   wire-observable and independently pinned against legacy source. If sound, this yields a 43-mode
-   basis with no new captures. **Under review by `yoniq-principal` as of 2026-09-10.**
-2. Real legacy captures for the remaining 35 modes. A human task on Windows, tracked with the other
-   capture work.
+Ten modes sit beyond one pixel: `mc110` -5.23, `avt` +4.91, `mc140` -4.50, `rm8` -3.72, `mc180` -3.45,
+`mn73` -3.25, `rm12` -3.19, `mn110` -2.33, `pd180` and `pd290` -2.07.
+
+**So the fix is now buildable, and the remaining question is only whether it is worth building.** The
+artefact is 1-4 px, matches legacy, and is not visible on a full picture without zooming in. See
+[[feedback_legacy_is_good_enough_ship_the_app]] before reopening this.
+
+**If it is ever built, the shape is settled** by three plan-review rounds and two principal rounds:
+1. Separate the ANCHOR error (varies per lock) from the READ-SCHEDULE offset (fixed per mode). Only
+   the second is correctable by a constant.
+2. Shift the read grid by that deterministic part, in ONE shared helper across the five decoders,
+   indexed per (mode, scan segment) — never per output channel.
+3. Verify WITHOUT measuring registration: uniform white, count deviating leading and trailing columns
+   per mode. That is the artefact itself, and it diagnoses cause for free — trailing-only means late
+   reads, leading-only means early, both means a filter transient.
+4. Per-mode opt-out at zero, because correcting the grid must expose the leading edge and that trade
+   has to be measured mode by mode.
+5. Re-measure at **11025 Hz**, the production and legacy default. Everything so far is at 44100, and
+   column contamination scales with pixel pitch in samples.
 
 **Still open as genuine PORT DEFECTS**, because they diverge from legacy rather than match it — see
 D5 below. Those are separate from this parked item and need no §0a argument.
@@ -247,7 +263,25 @@ Harness: `tests/ScanlineStudio.Core.Sstv.Tests/EdgeContaminationSizingProbe.cs`.
 Ships **default off** behind a visible toggle. Default-on needs clear gain and zero degradation across
 all 43 modes. Review tier: **full**. **The user wants to verify the result visually before it lands.**
 
-### D5. Three modes' RX registration DIVERGES from legacy — real port defects
+### D5. RETRACTED 2026-09-10 — the divergence figures came from a broken instrument
+
+**Do not act on this item. Its numbers are wrong.** It claimed `avt` (6.40 px), `rm8` (0.90) and
+`mn110` (0.30) diverge from legacy's own decode of the same audio. `yoniq-principal` then found two
+defects in the instrument that produced them: the shift search radius clamped `pd90`'s fit at the last
+admitted candidate, making its "matches legacy" verdict vacuous, and squared-error fitting on the
+gradient fixtures confuses a luma GAIN difference for a displacement — a 4% gain error reads as about
+6 px on a 320-px ramp, which is `avt`'s entire reported divergence.
+
+Replacing the fit with normalised correlation did not rescue it: correlation on a near-linear ramp is
+nearly flat across shifts, so the peak is noise. All 8 fixtures are smooth gradients, so **no shift
+estimator works on them.** Measuring our RX against legacy's RX needs a fixture with sharp features,
+which would mean new legacy captures.
+
+**What survives from that probe** is its edge-stripe measurement, which involves no fitting: legacy's
+own decode carries the stripe on all 8 captured modes, ratios 1.3x to 12.1x. That result stands and is
+what proved the artefact is legacy-faithful.
+
+### (retracted) D5 original filing
 
 Found 2026-09-10 while investigating D2. Distinct from that parked item: these three do **not** match
 legacy, so they need no §0a argument. They are bugs.
