@@ -28,7 +28,37 @@ merged (`master`, 2026-09-09).
 
 ## 1. Decode path — do the probe first
 
-### D1. Green-cast Fault B — probe run, now a DSP-chain investigation
+### D1. CLOSED 2026-09-10 — Fault B is LEGACY BEHAVIOUR, not a port defect
+
+**Measured against real legacy audio**, `LegacyGreenBiasProbe.cs`. Legacy's own decode and ours both
+run over the same legacy-captured `.mmv`, scored against the image legacy actually transmitted, using
+§1's own metric `G_err - (R_err + B_err)/2`:
+
+| mode | legacy | ours | ours - legacy |
+|---|---|---|---|
+| robot-36 | +12.8 | +13.0 | **+0.2** |
+| robot-72 | +13.3 | +13.3 | **+0.0** |
+| pd90 | +4.8 | +4.9 | **+0.1** |
+| mn110 | +3.8 | +3.8 | **+0.0** |
+| martin-m1 (RGB control) | +0.1 | -0.1 | -0.2 |
+| scottie-s1 (RGB control) | -0.6 | -0.5 | +0.1 |
+
+**Legacy carries the green cast in equal measure. Our deviation is 0.0 to 0.2 — noise.** The two
+RGB-sequential controls read near zero, matching §1's documented +0.1, which validates the metric
+rather than the result.
+
+So the DSP-chain investigation this item called for would have been chasing legacy's own behaviour.
+**It is a §0a improvement candidate, not a defect**, and it needs the full evidence bar in
+`docs/improving-on-legacy.md` if anyone ever wants it. Note the bias is larger than §1's +4.7 on these
+gradient fixtures (robot-36 reads +12.8), so it is content-dependent — any improvement work must state
+its source image.
+
+**How this closed in twenty minutes what was filed as a full-review-tier investigation:** by asking
+"does legacy do this too?" FIRST. The D2 edge-stripe arc spent a whole session and four rejected fix
+designs before asking the same question, and got the same answer. See
+[[feedback_legacy_is_good_enough_ship_the_app]].
+
+### (superseded) D1 original filing
 
 **The probe ran 2026-09-10 and the answer was the expensive branch.** Ideal transport reads **+2.4**
 where the real chain reads +4.7, so Fault B is **not** protocol-side or TX-side and does **not** close
