@@ -66,14 +66,37 @@ AMPLITUDE error — colours return less saturated than sent — and Fault A's ma
 Ruled out: the output smoother (flat against cutoff), the demodulator (Hilbert +4.7 against
 zero-crossing +5.6), and any single mode or encoding.
 
-**Cheapest decisive probe (auditor, 2026-09-07), do this before anything expensive.** The Fault-A
-model was run per RGB triple, so it never exercised the spatial layer — chroma subsampling, line
-pairing, the encoder's own row averaging, and `ToRgb`'s clamp. Extend that same model to a whole
-image: run a photographic source through the real encoder's channel layout, transport the channel
-bytes ideally (no modulation, no filters, no demodulation), reassemble through the matching scanline
-decoder, and measure green bias. Reading about +4.7 means Fault B is protocol or TX-side and closes
-as a parity decision exactly like Fault A. Reading about +2.3 means the loss is in the DSP chain and
-earns the full review cadence. No shipping code is touched either way.
+**PROBE RUN 2026-09-10. Result: about +2.4, so Fault B is in the DSP chain, NOT protocol or TX-side.**
+The probe is `tests/ScanlineStudio.Core.Sstv.Tests/IdealTransportGreenBiasProbe.cs`, gated behind
+`SCANLINE_SOURCE_BMP`. It runs the real encoder's per-line frequency sequence straight into the
+matching decoder — the decoder's "demodulated Hz at sample i" is exactly the Hz the encoder asked for
+— so modulation, filtering and demodulation are all removed while the colour maths, the channel
+layout, chroma subsampling, line pairing and `ToRgb`'s clamp are all still exercised. Source:
+`photo-city`, the same photographic source §1's table used.
+
+| mode | colour encoding | green bias, ideal transport | this table's real-chain figure |
+|---|---|---|---|
+| robot-36 | `YCbCrRobot` | **+2.4** | +4.7 |
+| r24 | `YCbCrSequential` | **+2.5** | +4.8 |
+| robot-72 | `YCbCrSequential` | **+2.4** | +4.4 |
+| pd90 | `YCbCrLinePaired` | **+2.4** | +4.4 |
+| mn110 | `YCbCrLinePaired` | **+1.4** | +3.8 |
+| martin-m1 | `RgbSequential` | **+0.0** | +0.1 |
+| scottie-s1 | `RgbSequential` | **+0.1** | +0.1 |
+
+**The two RGB-sequential rows are the harness's own falsifier and they land on this table's own
+measured +0.1.** That is what makes the YCbCr rows trustworthy rather than an artefact of the probe.
+
+Reading: ideal transport reproduces Fault A and nothing more (+2.4 against the per-triple model's
++1.91 — the gap is photographic source against random triples, plus real per-pixel sampling). The
+remaining ~+2.3 that the real chain shows appears only once modulation, filtering and demodulation
+are in the path. **So this does not close as a parity decision.** It is a real DSP-chain defect and
+earns the full review cadence.
+
+What the probe does NOT rule out, stated so the next step is not over-scoped: it uses no windowed
+averaging and an exact frequency at each sample, so anything the demodulator's own settling,
+group delay or amplitude response does to chroma is still unexamined — and the chroma segments are
+where the shortest dwell times live. That is the first place to look, not the last.
 
 **The impairment bench cannot attribute this**, because it encodes and decodes with our own code.
 Settling it needs either a decoder instrumented to report raw Y / R-Y / B-Y against what the encoder

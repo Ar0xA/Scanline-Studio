@@ -28,19 +28,28 @@ merged (`master`, 2026-09-09).
 
 ## 1. Decode path — do the probe first
 
-### D1. Green-cast Fault B — run the whole-image ideal-transport probe
+### D1. Green-cast Fault B — probe run, now a DSP-chain investigation
 
-Extend the existing per-RGB-triple Fault-A model to a whole image. Take a photographic source through
-the real encoder's channel layout, transport the channel bytes ideally (no modulation, no filters, no
-demodulation), reassemble through the matching scanline decoder, then measure green bias.
+**The probe ran 2026-09-10 and the answer was the expensive branch.** Ideal transport reads **+2.4**
+where the real chain reads +4.7, so Fault B is **not** protocol-side or TX-side and does **not** close
+as a parity decision. The two RGB-sequential controls came out at +0.0 and +0.1 against a documented
++0.1, which is what validates the measurement.
 
-- About **+4.7** means Fault B is protocol-side or TX-side. It then closes as a parity decision, the
-  same way Fault A did.
-- About **+2.3** means the loss is in the DSP chain, and it earns the full review cadence.
+Harness: `tests/ScanlineStudio.Core.Sstv.Tests/IdealTransportGreenBiasProbe.cs`, gated behind
+`SCANLINE_SOURCE_BMP`. Full table and reasoning: `docs/known-decode-defects.md` §1, Fault B.
 
-Touches no shipping code. Largest audience of anything on this list — every YCbCr mode, which is most
-real colour traffic. **Do this before D2.** It may close the biggest item for free.
-Detail: `docs/known-decode-defects.md` §1. Review tier: none for the probe itself.
+**What is left is a real defect in the DSP chain**, worth about +2.3 of green bias on every YCbCr
+mode — most real colour traffic. The probe removed modulation, filtering and demodulation and the
+fault vanished, so it lives in one of those three.
+
+**First place to look, not the last:** the probe samples an exact frequency at each point with no
+windowed averaging, so the demodulator's own settling, group delay and amplitude response are still
+unexamined — and the chroma segments carry the shortest dwell times in the mode. §1 already rules out
+the output smoother (flat against cutoff) and any single demodulator (Hilbert +4.7 against
+zero-crossing +5.6), so a shared upstream stage is more likely than either.
+
+Review tier: **full** — this is DSP/codec math. Sizing note: this is no longer a cheap item, and it
+now competes with D2 rather than preceding it. D2 is the one a user can actually see.
 
 ### D2. MN/MC right-edge stripe — the one confirmed visible defect
 
@@ -281,11 +290,21 @@ a `LICENSES.md` row, and write a test asserting each capture's own decoded text,
 its real speed, and — for capture 1 only — CW-ID starting after FSK-ID within the expected sample
 range.
 
-### H2. Windows and macOS audio have never been run against hardware
+### H2. Audio hardware validation — Windows covered by the user, macOS dropped
 
-`ScanlineStudio.Core.Audio.MiniAudio` is real-hardware-tested on Linux only. Windows (WASAPI) and
-macOS (CoreAudio) have never been run against real or virtual hardware, because this dev sandbox is
-Linux-only. **Do not assume the PulseAudio-specific findings transfer.** Needs a human on each OS.
+**Updated 2026-09-10 by user report.** The user has built and tested on Windows. macOS is explicitly
+**out of scope by user decision** — "too bad, no worries" — not deferred, not a gap to close.
+
+What remains, and it is narrow: the user's report was "tested Windows, done builds on Windows", which
+does not by itself say whether the `spec/13-testing.md` **audio-device round-trip** was among what
+was exercised. Confirm that one item before treating the Windows audio path as validated. Everything
+else on this entry is closed.
+
+**Do not assume the PulseAudio-specific findings transfer to WASAPI** regardless — that caution was
+about the findings, not about who runs the test.
+
+No `docs/removed-features.md` entry is owed for the macOS decision. That rule covers dropping a
+**legacy** capability, and legacy MMSSTV is Windows-only, so macOS was never a ported feature.
 
 ### H3. Clublog `cty.dat` licence
 
@@ -300,17 +319,23 @@ search.
 
 ### H5. Pooled-SQLite behaviour on Windows
 
-No Windows machine in this dev environment.
+**Unblocked 2026-09-10** — the user has a Windows machine and builds there. This is now a real task
+rather than an impossible one. Worth doing soon: the 2026-09-10 WAL change (`88cbc67`) is exactly the
+kind of thing whose file-locking behaviour differs between platforms, and Windows holds file locks
+more strictly than Linux does.
 
-### H6. Release-gate decision — can 0.9 beta ship Linux-validated-only?
+### H6. Release-gate decision — largely answered 2026-09-10
 
-The actual blocker for any tagged release is the full `spec/13-testing.md` manual hardware checklist
-(real rig CAT session, real audio device round-trip, real third-party `rigctld` interop) passing on
-at least one Windows, one Linux and one macOS machine. **Only Linux has ever been run.**
+The blocker for any tagged release is the full `spec/13-testing.md` manual hardware checklist (real
+rig CAT session, real audio device round-trip, real third-party `rigctld` interop).
 
-**Open decision, not yet made:** can 0.9 beta ship Linux-validated-only and clearly labelled, with
-the full three-platform pass required before 1.0 instead? Or does even the beta need all three?
-Needs a user call.
+**The user has settled the platform question:** Windows is built and tested, macOS is out of scope.
+So the old "Linux-validated-only, clearly labelled?" decision is moot — the answer is Linux plus
+Windows, and macOS is not a gate.
+
+**What is left is bookkeeping, not a decision:** confirm which `spec/13-testing.md` line items the
+Windows pass actually covered (see H2), then record the two-platform scope in `spec/13-testing.md`
+itself, which still describes a three-platform gate.
 
 ---
 
