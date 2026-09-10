@@ -679,6 +679,7 @@
             </tbody>
           </table>
         </div>
+        <div class="warning"><strong>High cutoff values degrade the picture.</strong> The two cutoff fields accept values far above anything useful. The PLL demodulator breaks into a visible herringbone pattern well below the 3900&nbsp;Hz maximum, where the Hilbert and zero-crossing demodulators merely get grainy at the same setting. The safe range is not the same for all three, so the field cannot enforce one. Leave both at their defaults unless you are deliberately running a measured experiment.</div>
 
         <h3>Zero-crossing demodulator tuning</h3>
         <p>The zero-crossing discriminator recovers brightness a different way — by timing how often the tone waveform crosses zero — and is used whenever "Zero crossing" is the selected demodulator on the Decode tab.</p>

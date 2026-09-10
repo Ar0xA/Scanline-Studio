@@ -915,6 +915,7 @@
   "Options.Advanced.Pll.LoopCutoff": "Loop filter cutoff (Hz)",
   "Options.Advanced.Pll.OutOrder": "Output filter order",
   "Options.Advanced.Pll.OutCutoff": "Output filter cutoff (Hz)",
+  "Options.Advanced.Pll.CutoffWarning": "High cutoff values degrade the picture. The PLL demodulator breaks into a herringbone pattern well below the maximum, where the other two only get grainy. Leave these at their defaults unless you are deliberately experimenting.",
   "Options.Advanced.CrossingHeader": "Zero-crossing demodulator tuning",
   "Options.Advanced.CrossingHeader.Help": "Internal filter parameters for the zero-crossing discriminator -- used whenever \"Zero crossing\" is the selected picture demodulator (Decode tab).",
   "Options.Advanced.Crossing.ModeIir": "IIR",
