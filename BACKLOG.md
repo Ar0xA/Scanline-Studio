@@ -81,6 +81,61 @@ divergence is documented, not actioned.
 Full evidence: `docs/known-decode-defects.md` §4. Harness:
 `tests/ScanlineStudio.Core.Sstv.Tests/NarrowModeEdgeRealChainProbe.cs`.
 
+### D2-FIX. Repair the contaminated edge columns — plan-review round 1 done, NOT ready to build
+
+**User approved fixing this 2026-09-10** under `CLAUDE.md` §0a: it is RX interpretation only, nothing
+wire-observable, so a measured improvement outranks legacy's behaviour.
+
+**Scope is far larger than D2 described. 37 of 43 modes are affected** on a flat grey source at
+44100, losing 1 to 4 trailing columns. Only `avt`, `mp140`, `mp175`, `p7`, `pd90` and `scottie-s1`
+read clean, and flat grey is the WEAKEST case, so some of those six are probably not clean either.
+All 43 modes decoded; no decode failures. Worst rows: `martin-m2` 4 columns at 104.2, `robot-36` 2 at
+78.1, `r24` 3 at 72.6, `martin-m1` 1 at 73.4, `p3` 2 at 69.5.
+
+**`yoniq-auditor` plan-review round 1: NOT READY. Two design blockers.**
+
+1. **Repair width must be per (mode, SCAN SEGMENT), not per mode.** The sweep's metric is a
+   3-channel mean, so one fully-clamped channel caps at 42.7. `martin-m2`'s 104.2 and `martin-m1`'s
+   73.4 are arithmetically impossible from one channel — Martin and Pasokon put a separator after
+   EVERY channel, so all three tails are pulled. Repairing only the final segment would leave G and B
+   about 90 levels dark and turn a grey bar into a **saturated coloured fringe**.
+2. **The width depends on `RxBpfPreset`, a live user setting**, whose group delays are 1.09 / 2.90 /
+   4.35 ms — a 4x span. A table fitted to the default under-reaches at VeryNarrow, and an
+   under-reaching replication is **worse than no fix**: it copies a still-contaminated pixel across
+   the whole tail.
+
+**Mechanism adopted instead of a static table:** compute the width at decode time from the live
+filter chain's reach divided by the pixel pitch, minus the trim headroom already in
+`GetPixelPitchTrimFactor`. That self-tracks preset, demodulator, sample rate and new modes. The
+measured table demotes to a test fixture pinning the formula's output.
+
+**Refuted along the way.** Width is essentially rate-invariant at standard rates (both FIRs scale tap
+with rate), so it must NOT be keyed on sample rate. And `scottie-s1` is not structurally clean — its
+R tail IS followed by a separator, it only looks clean on grey.
+
+**Round 1's required measurements are DONE (flat WHITE, per channel, both edges, all 43 modes).**
+Both blockers confirmed, one auditor prediction refuted:
+
+- **38 of 43 modes affected. 23 have MORE THAN ONE channel corrupted at the tail.** Blocker 1 is
+  measured, not argued: `martin-m1` reads tail R=1, G=1, B=1 and `martin-m2` reads 3, 4, 4.
+- **9 modes have LEADING-edge corruption too** — `robot-36`, `robot-72`, `rm8`, `mr73`, `mr90`,
+  `ml180`, `pd120`, `pd50`, `mp140`. The symmetric-reach prediction holds. A trailing-only repair
+  would leave the picture asymmetric.
+- **White is far worse than grey, as predicted.** MC modes lose their B channel completely (error
+  255.0 against 42.7 on grey). `martin-m2` reads 253.8.
+- **The corrupted channel set names the corrupted SEGMENT.** MC and MR/ML show B only (0,0,4) — one
+  segment, the one abutting the sync. Martin and Pasokon show all three, because they put a separator
+  after every channel. For YCbCr modes one bad segment spreads across all three output channels, so
+  the repair must be indexed by scan segment, never by output channel.
+- **`avt` is genuinely clean** (0 everywhere), consistent with having no sync or porch at all.
+- **REFUTED: the auditor predicted `scottie-s1` would stop being clean on a white edge. It did not** —
+  0 on every channel, both edges. Its separator apparently shields it. `mp175`, `p7` and `pd90` are
+  also clean on white.
+
+Harness: `tests/ScanlineStudio.Core.Sstv.Tests/EdgeContaminationSizingProbe.cs`.
+Ships **default off** behind a visible toggle. Default-on needs clear gain and zero degradation across
+all 43 modes. Review tier: **full**. **The user wants to verify the result visually before it lands.**
+
 ### D4. martin-m1's last column reads low — a second, separate edge defect
 
 Found while solving D2, 2026-09-10. On flat grey 128, `martin-m1`'s last column decodes to **54.6**
