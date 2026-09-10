@@ -36,6 +36,14 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 /// passes every row here. Order is pinned once, in `LegacyTxChannelOrderTests`, against legacy TX
 /// source. The registry's segment list is shared by both directions, so that one pin covers both.
 /// Do not read a green run here as independent confirmation of order.</para>
+///
+/// <para><b>It also pins ONE of legacy's two RX mappings.</b> Legacy has a second per-pixel decode
+/// switch, `DrawSSTVDiff` (`Main.cpp:4508+`), which `DrawSSTV` (`:4113-4120`) selects whenever the
+/// user's differentiator option is on. The two mappings agree everywhere EXCEPT `smPD160`, which
+/// `DrawSSTVDiff` omits from its case list, so PD160 falls to the RGB `default:` handler and maps Y,
+/// R-Y and B-Y to R, G and B. This file pins the `DrawSSTVNormal` switch only. That is sufficient for
+/// what ships, because the differentiator is a deliberately removed feature
+/// (`docs/removed-features.md`), and it stops being sufficient the moment anyone ports it.</para>
 /// </summary>
 public sealed class LegacyRxChannelMappingTests
 {
@@ -233,6 +241,58 @@ public sealed class LegacyRxChannelMappingTests
     private static int Brightness(Rgb24 pixel) => pixel.R + pixel.G + pixel.B;
 
     /// <summary>
+    /// Legacy does NOT always read Robot 36's chroma identity from the selector tone. When the tone is
+    /// too weak to call it TOGGLES the previous line's selection instead (`Main.cpp:4289-4296`):
+    /// <code>
+    /// if( (d >= 64) || (d &lt; -64) ) m_DSEL = (d >= 0) ? 1 : 0;   // decisive
+    /// else                          m_DSEL = m_DSEL ? 0 : 1;     // ambiguous -> toggle
+    /// </code>
+    /// That is the branch a weak or noisy signal takes, which is when a decode matters most, and no
+    /// test reached it before: <see cref="Robot36Decoder_TakesChromaIdentityFromTheToneSelector_NotLineParity"/>
+    /// drives both tones at full strength (|d| = 128).
+    ///
+    /// <para><b>The two rails are not symmetric, and that is the subtle part.</b> `d` truncates toward
+    /// zero, so a deviation of +200.0 Hz gives d = 64 exactly and IS decisive, while -200.0 Hz gives
+    /// d = -64, which fails `d &lt; -64` and is NOT. The negative rail only bites at -203.125 Hz. Rows
+    /// one and three below are the pair that pins that asymmetry — a symmetric implementation returns
+    /// the other answer for exactly one of them.</para>
+    ///
+    /// <para>Each row decodes two lines through ONE decoder. The first line sets a known selection with
+    /// a full-strength tone and writes a LOW value into whichever chroma channel it picked. The second
+    /// line carries the tone under test and writes a HIGH value. So the colour of the result names the
+    /// channel the second line chose.</para>
+    /// </summary>
+    [Theory]
+    [InlineData(2300.0, 2100.0, false, "+200.0 Hz gives d = 64 exactly, which IS decisive, so B-Y holds")]
+    [InlineData(2300.0, 2099.0, true, "+199.0 Hz truncates to d = 63, so it is ambiguous and toggles B-Y to R-Y")]
+    [InlineData(1500.0, 1700.0, false, "-200.0 Hz gives d = -64, which is NOT past `d < -64`, so it toggles")]
+    [InlineData(1500.0, 1696.875, true, "-203.125 Hz gives d = -65, the first decisive value on the low rail")]
+    [InlineData(1500.0, 1900.0, false, "dead centre between the two tones, maximally ambiguous, so it toggles")]
+    public void Robot36Decoder_TogglesTheChromaSelection_WhenTheSelectorToneIsTooWeakToCall(
+        double priorToneHz,
+        double testToneHz,
+        bool expectRedward,
+        string because)
+    {
+        var pixel = DecodeRobot36LineAfterLine(priorToneHz, LowValue, testToneHz, HighValue);
+
+        if (expectRedward)
+        {
+            Assert.True(
+                pixel.R > pixel.B,
+                $"at {testToneHz} Hz after {priorToneHz} Hz the second line should decode as R-Y, " +
+                $"got R={pixel.R} B={pixel.B}. {because}.");
+        }
+        else
+        {
+            Assert.True(
+                pixel.B > pixel.R,
+                $"at {testToneHz} Hz after {priorToneHz} Hz the second line should decode as B-Y, " +
+                $"got R={pixel.R} B={pixel.B}. {because}.");
+        }
+    }
+
+    /// <summary>
     /// Builds a frequency trace directly from the mode's own scan segments — each segment filled with
     /// the value its channel name maps to — then runs ONLY the decoder over it.
     /// </summary>
@@ -251,6 +311,19 @@ public sealed class LegacyRxChannelMappingTests
         double? toneSelectorOverrideHz = null)
     {
         var decoder = ScanlineCodecFactory.CreateDecoder(mode.ColorEncoding);
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
+        var reader = BuildLineReader(mode, valuesByChannel, toneSelectorOverrideHz);
+
+        decoder.DecodeLine(mode, SampleRate, 0, 0, reader, pixels);
+
+        return pixels;
+    }
+
+    private static PixelSampleReader BuildLineReader(
+        SstvModeDefinition mode,
+        IReadOnlyDictionary<string, byte> valuesByChannel,
+        double? toneSelectorOverrideHz)
+    {
         var samplesPerLine = mode.LineDurationMs * SampleRate / 1000.0;
 
         // Cumulative segment boundaries, so a sample index resolves to the segment covering it.
@@ -285,17 +358,40 @@ public sealed class LegacyRxChannelMappingTests
             return boundaries[^1].FrequencyHz;
         }
 
-        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
-        var reader = new PixelSampleReader(
+        return new PixelSampleReader(
             FrequencyAt,
             SstvModeRegistry.GetKsbSamples(mode, SampleRate),
             (int)Math.Round(samplesPerLine),
             mode.LuminanceMinHz,
             SstvModeRegistry.NeverPeakPicks(mode));
+    }
 
-        decoder.DecodeLine(mode, SampleRate, 0, 0, reader, pixels);
+    /// <summary>
+    /// Runs ONE decoder instance over two consecutive Robot 36 lines, so the second line inherits the
+    /// first line's chroma selection. Both lines decode into row 0, so the returned pixel carries the
+    /// second line's result over the first line's leftover chroma buffer.
+    /// </summary>
+    private static Rgb24 DecodeRobot36LineAfterLine(
+        double priorToneHz,
+        byte priorChroma,
+        double testToneHz,
+        byte testChroma)
+    {
+        var mode = SstvModeRegistry.All.Single(m => m.Id == "robot-36");
+        var decoder = ScanlineCodecFactory.CreateDecoder(mode.ColorEncoding);
+        var pixels = new Rgb24[mode.ImageWidth * mode.ImageHeight];
 
-        return pixels;
+        foreach (var (toneHz, chroma) in new[] { (priorToneHz, priorChroma), (testToneHz, testChroma) })
+        {
+            var reader = BuildLineReader(
+                mode,
+                new Dictionary<string, byte> { ["Y"] = MidValue, ["C"] = chroma },
+                toneHz);
+
+            decoder.DecodeLine(mode, SampleRate, 0, 0, reader, pixels);
+        }
+
+        return pixels[mode.ImageWidth / 2];
     }
 
     private static double ValueToFrequency(byte value, SstvModeDefinition mode) =>
