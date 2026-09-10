@@ -36,12 +36,10 @@ public sealed class NarrowModeEdgeRealChainProbe
 
     // Sizing sweep for the D2 fix: how many TRAILING pixel columns does the next line's sync pre-echo
     // actually corrupt, per mode? Narrow and wide, several line durations and pixel pitches.
-    private static readonly string[] SizingModeIds =
-    [
-        "mn73", "mn110", "mn140", "mc110", "mc140", "mc180",
-        "mp73", "mp115", "mp140", "martin-m1", "martin-m2", "scottie-s1", "sc2-180",
-        "robot-72", "pd120", "pd180", "p3",
-    ];
+    // Every registered mode. A partial sweep cannot support a per-mode table, and the evidence bar in
+    // docs/improving-on-legacy.md requires the full affected scope rather than a chosen sample.
+    private static string[] SizingModeIds =>
+        SstvModeRegistry.All.Select(m => m.Id).OrderBy(id => id, StringComparer.Ordinal).ToArray();
 
     private const byte FlatLevel = 128;
 
