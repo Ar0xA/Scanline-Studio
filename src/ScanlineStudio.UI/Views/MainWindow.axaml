@@ -1678,20 +1678,7 @@
                                          own doc comment). -->
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.ModeLabel}" />
-                                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}" SelectedValueBinding="{Binding Value}" SelectedValue="{Binding FormMode, Mode=TwoWay}" HorizontalAlignment="Stretch">
-                                            <ComboBox.ItemTemplate>
-                                                <DataTemplate x:DataType="vm:RadioModeOption">
-                                                    <TextBlock>
-                                                        <TextBlock.Text>
-                                                            <MultiBinding Converter="{x:Static conv:RadioModeDisplayConverter.Instance}">
-                                                                <Binding />
-                                                                <loc:Translate Key="Panes.Logbook.Form.NoModeOption" />
-                                                            </MultiBinding>
-                                                        </TextBlock.Text>
-                                                    </TextBlock>
-                                                </DataTemplate>
-                                            </ComboBox.ItemTemplate>
-                                        </ComboBox>
+                                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}" SelectedValueBinding="{Binding Value}" SelectedValue="{Binding FormMode, Mode=TwoWay}" DisplayMemberBinding="{Binding Display}" HorizontalAlignment="Stretch" />
                                     </Grid>
                                     <!-- Same SelectedValueBinding/SelectedValue reasoning as Mode above:
                                          AvailableSstvModes' element type is SstvModeDefinition, FormSstvModeId

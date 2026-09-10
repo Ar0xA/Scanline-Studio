@@ -246,8 +246,10 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // maps Unknown to the same null-on-export behavior as an actual null Mode
         // (AdifRadioModeMapping.ToAdif), so offering both would be identical-behavior UI noise, not
         // a real distinction.
-        AvailableModes = new[] { RadioModeOption.None }
-            .Concat(Enum.GetValues<RadioMode>().Where(m => m != RadioMode.Unknown).Select(m => new RadioModeOption(m)))
+        AvailableModes = new[] { new RadioModeOption(null, localization.GetString("Panes.Logbook.Form.NoModeOption")) }
+            .Concat(Enum.GetValues<RadioMode>()
+                .Where(m => m != RadioMode.Unknown)
+                .Select(m => new RadioModeOption(m, localization.GetString($"RadioMode.{m}"))))
             .ToArray();
         AvailableSstvModes = sstvSession.AvailableModes;
 
@@ -1039,7 +1041,9 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 /// <c>SelectedItem</c> -- <see cref="LogbookPaneViewModel.FormMode"/> is <see cref="RadioMode"/>?,
 /// a different type than this wrapper, so <c>SelectedItem</c> binding would never match an item and
 /// would silently null out <c>FormMode</c> on every selection.</summary>
-public sealed record RadioModeOption(RadioMode? Value)
-{
-    public static readonly RadioModeOption None = new((RadioMode?)null);
-}
+/// <para><see cref="Display"/> is resolved once at construction by the view-model, which holds the
+/// localization service. It replaces a former stateless converter that rendered
+/// <c>Value.ToString()</c>: a stateless <c>IValueConverter</c> cannot reach
+/// <c>ILocalizationService</c>, so raw enum names leaked into the UI and spelled the data modes
+/// "Data"/"DataR"/"Pkt" while the Favourites editor spells the same three DATA-U/DATA-L/DATA-FM.</para>
+public sealed record RadioModeOption(RadioMode? Value, string Display);

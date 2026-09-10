@@ -195,7 +195,7 @@
         <h3>Header and transceiver controls</h3>
         <ul>
           <li><strong>Frequency and mode</strong> show the connected radio's current state. You can request a frequency or supported radio mode when CAT is linked.</li>
-          <li><strong>Favourites</strong> recall stored frequencies. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them.</li>
+          <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
           <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
           <li><strong>Pwr</strong> is the application's TX playback gain—not the operating system's device volume and not the radio's RF power setting.</li>
           <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards.</li>
@@ -528,7 +528,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="radio-cat" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="radio cat backend none rigctld hamlib linked flrig host port serial model baud ptt vox cat rts dtr connect test connection bandwidth filter passband preset 1800 2400 2800">
+      <article id="radio-cat" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="radio cat backend none rigctld hamlib linked flrig host port serial model baud ptt vox cat rts dtr connect test connection bandwidth filter passband preset 1800 2400 2800 favourite favourites per-favourite 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm store current">
         <p class="topic-category">Radio and audio</p>
         <h2>Radio and CAT setup</h2>
         <p>Open <strong>Options → Radio / CAT</strong>, choose one backend, enter its connection details, test it, save it, and then connect the real radio session. <strong>Test connection</strong>, <strong>Connect</strong>, and <strong>Disconnect</strong> are all on this same tab, below the backend settings — not in the main window's transceiver header.</p>
@@ -562,6 +562,16 @@
         <h3>Filter bandwidth (Transceiver header)</h3>
         <p>When the connected backend supports it, a small bandwidth control appears on the Transceiver header card at the top of the main window — separate from the Options dialog above. It offers three common quick picks, 1800, 2400, and 2800 Hz, but you can type any other value and select <strong>Set</strong> to request it. Not every backend supports this — flrig doesn't, since its own bandwidth readback can't be reliably converted to a plain Hz value across different radios.</p>
         <div class="warning"><strong>Too narrow can break the picture.</strong> An overly narrow filter can break SSTV decode or clip transmitted audio. The radio may also silently snap your request to its nearest real filter rather than matching it exactly.</div>
+
+        <h3>Filter bandwidth stored per Favourite</h3>
+        <p>Each Favourite stores its own filter bandwidth alongside its frequency and mode, and applies all three when you select it. This exists because setting the mode makes the radio fall back to its own default filter for that mode, which on some radios is far too narrow for SSTV. The bandwidth is always sent after the mode, for that reason.</p>
+        <p>The quick picks in the <strong>Edit list…</strong> dialog follow the mode you choose for that Favourite. SSB and data modes offer 1800, 2400 and 2800 Hz. FM modes offer 9000, 12000 and 15000 Hz. Changing a Favourite's mode between those two groups moves its bandwidth with it. The field stays freely editable, so you can type any value between 50 and 20000 Hz, and a value you type is sent exactly as typed.</p>
+        <p>A Favourite stored before this feature existed has no bandwidth of its own. It uses 2400 Hz on SSB and data modes, and 15000 Hz on FM modes.</p>
+        <div class="warning"><strong>Selecting a Favourite overwrites a filter you set by hand.</strong> Backends that cannot set bandwidth, such as flrig and OmniRig, skip that step and leave the radio's filter alone.</div>
+
+        <h3>Which modes a Favourite can use</h3>
+        <p>The <strong>Edit list…</strong> dialog offers six modes: USB, LSB, FM, DATA-U, DATA-L and DATA-FM. The DATA modes use the radio's data connector rather than its microphone path, which is normally what you want for soundcard SSTV. Not every radio has DATA-FM.</p>
+        <p>Modes not used for SSTV — AM, CW and RTTY — are not offered. <strong>Store current</strong> is unavailable while the radio sits on a mode outside those six, so it cannot create a Favourite the dialog could not then display.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
