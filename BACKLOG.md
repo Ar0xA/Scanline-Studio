@@ -127,10 +127,88 @@ Both blockers confirmed, one auditor prediction refuted:
   segment, the one abutting the sync. Martin and Pasokon show all three, because they put a separator
   after every channel. For YCbCr modes one bad segment spreads across all three output channels, so
   the repair must be indexed by scan segment, never by output channel.
-- **`avt` is genuinely clean** (0 everywhere), consistent with having no sync or porch at all.
+- **`avt`'s 0 is VACUOUS, not clean.** AVT has no sync, porch or separator — three back-to-back scan
+  segments — so on a flat source the whole line is one constant tone and the probe is structurally
+  incapable of measuring it. On a real image AVT's R tail abuts the same line's G head, so its right
+  edge carries G's left-edge content. Open, not safe to skip.
 - **REFUTED: the auditor predicted `scottie-s1` would stop being clean on a white edge. It did not** —
   0 on every channel, both edges. Its separator apparently shields it. `mp175`, `p7` and `pd90` are
   also clean on white.
+
+**Round 2 + `yoniq-principal`: STILL NOT READY, and the fix direction is now in question.** Two
+blockers, both arithmetic, both with premises the principal verified independently:
+
+1. **The reach-divided-by-pitch formula is refuted by the data it would be fitted to.** MC110/140/180
+   share a decoder, a filter, a band and trim group C, so a fixed sample depth must fit all three.
+   The required intervals are [77.2, 96.5), [99.2, 124.0) and [127.9, 159.8) samples — **disjoint**.
+   As a fraction of scan duration all three agree at 1.25-1.56%. A fixed-tap filter's reach cannot
+   scale with duration. (The principal narrowed this: three column-quantised points rule out a fixed
+   count but do NOT prove proportionality.)
+2. **The clean leading edge is physically impossible under smear.** Pixel 0 reads at the segment
+   boundary with ZERO guard, against a chain window of about ±72 samples, so half of pixel 0's window
+   is foreign tone in every mode — yet 34 of 43 read exactly 0. The principal confirmed the metric is
+   not hiding it: on white every preceding tone is lower, so lead smear would darken and register.
+
+**The explaining hypothesis: the read indices are systematically LATE by roughly the chain's group
+delay**, which would clean every lead and dirty every tail — exactly the measured asymmetry.
+
+**Critically, that is legacy-identical, not a port bug.** The principal verified the port's anchor
+(`SyncAnchorCorrector.cs:131` plus `AnalogFmSstvDecoder.cs:5262-5265`) reproduces legacy's
+`argmax - OFP + htap/4` (`Main.cpp:3777-3795`) exactly, sign included. Sync and picture DO run
+through different group delays — sync through a 100 Hz resonator and 50 Hz Butterworth, picture
+through the Hilbert and an 1800 Hz smoother — and legacy absorbs the differential with an EMPIRICAL
+per-mode offset, not a computed one. Any residual is that tuning's leftover. **So correcting it is a
+§0a improvement decision needing the full proof bar, not a bug fix.**
+
+**Do NOT ship the replication patch first** — it would bake the bias into its width table and hide
+the registration error underneath.
+
+### MEASURED 2026-09-10 — it is REGISTRATION, not smear. Every mode reads LATE.
+
+`HorizontalRegistrationProbe.cs`, half-black/half-white source, sub-pixel edge detection, all 43
+modes. Three results:
+
+1. **Drift is RULED OUT.** Max first-8-rows against last-8-rows difference is 0.35 px (`rm8`); every
+   other mode is within 0.06 px. The offset is constant down the picture.
+2. **Every mode reads LATE**, from 0.03 ms (`robot-72`, essentially perfect) to 3.67 ms (`avt`). In
+   pixels that is 0.05 to 9.39. `robot-36` and `robot-72` are the only modes registered correctly.
+3. **The offset predicts the contamination.** `ceil(|offset in pixels|)` matches the measured
+   contaminated tail count within ±1 for **34 of 43 modes**.
+
+**This explains both round-2 blockers at once.** The offset is roughly constant in MILLISECONDS
+within a family, and pixel pitch differs between family members, so the contaminated PIXEL count
+varies while the sample depth does not — which is exactly why no fixed sample count fitted MC110/140/
+180 ([77.2, 96.5) against [127.9, 159.8)). Their offsets are -2.248, -2.521 and -2.534 ms: the same
+time, three different pixel counts. And reads being LATE is precisely why the leading edge is clean
+in 34 of 43 modes despite having zero guard.
+
+**So the reads run past the end of each scan segment into the following tone.** That is the stripe.
+It is not the filter smearing backwards; it is the sampling grid sitting in the wrong place.
+
+**Nine modes are not explained by registration alone**, and they matter:
+`ml180`/`ml240`/`ml280`, `r24`, `mr73` predict 1 and measure 3-4 — all YCbCr-sequential modes whose
+final segment is CHROMA, which has its own pitch. `robot-36` predicts 0 and measures 2, and its
+offset is essentially zero, so it is the one genuine smear case. `martin-m1` and `mc110` are
+over-predicted. `avt`'s row is vacuous (flat source).
+
+**What this changes about the fix.** Replicating pixels would paper over a sampling-grid error that
+also shifts EVERY decoded picture horizontally by 0.3 to 5 pixels. Correcting the registration fixes
+the stripe and the alignment together. The principal called this before the measurement existed.
+
+**It stays a §0a decision, not a bug fix** — the anchor is verified legacy-identical, so this is
+improving on legacy's empirical tuning and needs the full proof bar.
+
+**Superseded plan:** `HorizontalRegistrationProbe.cs`, a half-black/half-white
+vertical edge per mode, reporting the decoded edge offset in samples with sub-pixel interpolation,
+split first 8 rows against last 8. Constant across rows and modes means an anchor residual and one
+decode-side constant fixes it. Growing with row means drift, and neither the patch nor an anchor
+shift helps. Similar in milliseconds but not samples means a per-mode offset residual.
+
+**The probe's metric is also under suspicion** and must not be the acceptance gate: it counts only a
+contiguous run inward from the edge, its threshold scales with the mode's own baseline, and it
+averages over all rows, which dilutes any per-line-alternating contamination about 2:1. `robot-36`'s
+tail is therefore an UNDERESTIMATE — on white, its 2300 Hz selector is identical to the picture, so
+only half its lines can contaminate at all.
 
 Harness: `tests/ScanlineStudio.Core.Sstv.Tests/EdgeContaminationSizingProbe.cs`.
 Ships **default off** behind a visible toggle. Default-on needs clear gain and zero degradation across
