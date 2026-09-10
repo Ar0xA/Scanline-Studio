@@ -99,6 +99,82 @@ public sealed class HorizontalRegistrationProbe
     }
 
     /// <summary>
+    /// Which stage owns the late read? The RX bandpass is the obvious suspect, because its group
+    /// delay is preset-dependent (about 1.09 ms Wide against 2.90 ms Narrow) and the worst-registered
+    /// families are the narrow ones. But that filter sits in front of BOTH the sync detector and the
+    /// picture demodulator, so on paper its delay should cancel.
+    ///
+    /// <para><c>RxBpfPreset.Off</c> is a TRUE bypass, so sweeping the preset answers it directly. If
+    /// the offset tracks the preset, the filter does not cancel and the correction belongs there. If
+    /// the offset is flat across all four, the filter is innocent and what remains is legacy's own
+    /// empirical per-mode sync offset — which would make the correction per mode, not per chain.</para>
+    /// </summary>
+    [Fact]
+    public async Task RegistrationOffset_AcrossBandpassPresets_NamesTheStageThatOwnsTheDelay()
+    {
+        RxBpfPreset[] presets = [RxBpfPreset.Off, RxBpfPreset.Wide, RxBpfPreset.Narrow, RxBpfPreset.VeryNarrow];
+        string[] probeModes = ["mc140", "mn140", "martin-m1", "robot-36"];
+
+        var rows = new List<string>
+        {
+            "| mode | Off | Wide | Narrow | VeryNarrow | spread |",
+            "|---|---|---|---|---|---|",
+        };
+
+        foreach (var modeId in probeModes)
+        {
+            var mode = SstvModeRegistry.All.Single(m => m.Id == modeId);
+            var edgeColumn = mode.ImageWidth / 2;
+            var source = CreateVerticalEdgeImage(mode.ImageWidth, mode.ImageHeight, edgeColumn);
+            var lastScan = mode.LineSegments.OfType<ScanSegment>().Last();
+            var pitchMs = lastScan.DurationMs / mode.ImageWidth;
+
+            var cells = new List<string>();
+            var values = new List<double>();
+
+            foreach (var preset in presets)
+            {
+                var decoded = await DecodeThroughTheRealChainAsync(mode, source, preset);
+                var offset = decoded is null ? null : MeanEdgeOffset(decoded, mode, edgeColumn);
+                if (offset is null)
+                {
+                    cells.Add("n/a");
+                    continue;
+                }
+
+                var ms = offset.Value * pitchMs;
+                values.Add(ms);
+                cells.Add($"{ms:F3}");
+            }
+
+            var spread = values.Count > 1 ? values.Max() - values.Min() : double.NaN;
+            rows.Add($"| {modeId} | {string.Join(" | ", cells)} | **{spread:F3}** |");
+        }
+
+        Assert.Fail(
+            "Registration offset in MILLISECONDS against RX bandpass preset.\n"
+            + "A large spread means the filter owns the delay and the correction belongs in the chain.\n"
+            + "A small spread means the filter cancels and the residual is legacy's per-mode tuning.\n\n"
+            + string.Join("\n", rows));
+    }
+
+    private static double? MeanEdgeOffset(IImageSource decoded, SstvModeDefinition mode, int edgeColumn)
+    {
+        var usableRows = Math.Min(mode.ImageHeight, decoded.Height);
+        var offsets = new List<double>();
+        for (var y = 0; y < usableRows; y++)
+        {
+            var found = FindEdgeColumn(decoded.GetScanline(y), mode.ImageWidth);
+            if (found is not null)
+            {
+                offsets.Add(found.Value - edgeColumn);
+            }
+        }
+
+        return offsets.Count < EdgeRows * 2 ? null : offsets.Average();
+    }
+
+    /// <summary>
     /// First column whose luma crosses the midpoint. Sub-pixel interpolation between the two
     /// straddling columns, because a whole-pixel answer cannot distinguish a 0.4-pixel bias from none.
     /// </summary>
@@ -122,7 +198,8 @@ public sealed class HorizontalRegistrationProbe
 
     private static async Task<IImageSource?> DecodeThroughTheRealChainAsync(
         SstvModeDefinition mode,
-        IImageSource source)
+        IImageSource source,
+        RxBpfPreset rxBpfPreset = RxBpfPreset.Wide)
     {
         var encoder = new AnalogFmSstvEncoder(SampleRate);
         var samples = new List<float>();
@@ -131,7 +208,7 @@ public sealed class HorizontalRegistrationProbe
             samples.Add(sample);
         }
 
-        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate);
+        var decoder = new AnalogFmSstvDecoder(encoder.SampleRate, rxBpfPreset: rxBpfPreset);
         SstvModeDefinition? detected = null;
         IImageSource? decodedImage = null;
         decoder.ModeDetected += m => detected = m;
