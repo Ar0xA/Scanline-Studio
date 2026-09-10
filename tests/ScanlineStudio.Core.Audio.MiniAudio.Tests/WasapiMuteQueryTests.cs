@@ -79,9 +79,7 @@ public sealed class WasapiMuteQueryTests
         // The failure path, reachable without touching a real endpoint: an id that no endpoint owns
         // must produce null rather than a fabricated false, which would read as "not muted" and
         // silently disable the transmit-time mute warning.
-        var (enumerator, query) = Create();
-        using (enumerator)
-        using (query)
+        using var query = new MiniAudioDeviceMuteQuery();
         {
             var absent = new AudioDeviceInfo(
                 Id: "{00000000-0000-0000-0000-000000000000}.{00000000-0000-0000-0000-000000000000}",
@@ -107,6 +105,12 @@ public sealed class WasapiMuteQueryTests
     /// equivalent has the same shape — it drives <c>pactl set-sink-mute</c> — it is simply cheaper
     /// there because a null sink can be created for the purpose.</para>
     ///
+    /// <para><b>Two further disclosures, since this tier promises explicitness.</b> Muting an
+    /// endpoint fires a system-wide notification, so the volume OSD appears and any application
+    /// holding an <c>IAudioEndpointVolumeCallback</c> sees the change. And if the test process is
+    /// killed between the mute and the <c>finally</c>, the machine stays muted with nothing left to
+    /// restore it.</para>
+    ///
     /// <para>Opt in with <c>SCANLINE_WINDOWS_AUDIO_EXCLUSIVE=1</c>.</para>
     /// </summary>
     [WindowsAudioExclusiveFact]
@@ -123,6 +127,13 @@ public sealed class WasapiMuteQueryTests
 
             var original = await query.IsDeviceMutedAsync(device, isCapture: false);
             Assert.True(original.HasValue, "could not read the starting mute state, so nothing can be restored safely.");
+
+            // Containment before anything is written. The oracle's IAudioEndpointVolume vtable order
+            // could not be verified against a real endpointvolume.h, and a shifted slot would make
+            // SetMute reach some other method on a live endpoint. Reading through the SAME
+            // hand-declared vtable and cross-checking it against the production query -- which goes
+            // through the shim's SDK-header vtable -- fails loudly here if the slots are wrong.
+            Assert.Equal(original!.Value, WindowsEndpointVolume.GetMute(device.Id));
 
             try
             {
