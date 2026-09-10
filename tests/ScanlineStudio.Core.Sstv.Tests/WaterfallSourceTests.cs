@@ -250,9 +250,10 @@ public sealed class WaterfallSourceTests
         // T1-2 (production_audit.md): proves IWaterfallSource's own documented contract -- unlike
         // IRadioController.StateChanges, a Frames subscriber's exception is NOT caught/contained here;
         // it propagates straight out of PushSamples. Subject<T>.OnNext also skips notifying any
-        // subscriber registered after the one that threw, same as RadioController's own
-        // PollLoop_SurvivesAThrowingStateChangesSubscriber test relies on -- this is Subject<T>'s own
-        // documented behavior, not something WaterfallSource adds.
+        // subscriber registered after the one that threw -- this is Subject<T>'s own behavior, not
+        // something WaterfallSource adds. RadioController used to share it and no longer does: it
+        // wraps both its streams in a per-subscriber guard, so one thrower there no longer starves
+        // the others. This source deliberately still does, per its own documented contract.
         using var source = new WaterfallSource(sampleRate: 8000, windowSize: 64);
         var expected = new InvalidOperationException("Injected first subscriber failure.");
         var laterFrames = new List<WaterfallFrame>();

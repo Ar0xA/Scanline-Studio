@@ -156,11 +156,22 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
     /// <summary>Filters out the internal <c>BehaviorSubject&lt;RadioState?&gt;</c>'s null sentinel
     /// (used to represent "never polled yet"/"disconnected" for <see cref="LastKnownState"/>) --
-    /// subscribers here should only ever see real snapshots.</summary>
+    /// subscribers here should only ever see real snapshots.
+    ///
+    /// <para><see cref="GuardedObservable{T}"/> must stay OUTERMOST, wrapping the composed
+    /// <c>Where</c>/<c>Select</c> rather than sitting under it -- see that type's own doc comment for
+    /// why the two are not interchangeable.</para></summary>
     public IObservable<RadioState> StateChanges =>
-        _stateChanges.Where(s => s.HasValue).Select(s => s!.Value);
+        new GuardedObservable<RadioState>(
+            _stateChanges.Where(s => s.HasValue).Select(s => s!.Value),
+            ex => Log.StateChangesSubscriberThrew(_logger, ex),
+            (ex, count) => Log.StateChangesSubscriberThrewRepeatedly(_logger, count, ex));
 
-    public IObservable<RadioConnectionEvent> ConnectionEvents => _connectionEvents;
+    public IObservable<RadioConnectionEvent> ConnectionEvents =>
+        new GuardedObservable<RadioConnectionEvent>(
+            _connectionEvents,
+            ex => Log.ConnectionEventsSubscriberThrew(_logger, ex),
+            (ex, count) => Log.ConnectionEventsSubscriberThrewRepeatedly(_logger, count, ex));
 
     public async Task ConnectAsync(RadioConnectionSpec spec, CancellationToken ct)
     {
@@ -708,12 +719,12 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            // A StateChanges subscriber's OnNext threw. Subject<T> rethrows into the caller (this poll
-            // loop) and skips notifying any subscriber registered after the one that threw -- per
-            // IRadioController's own concurrency contract, an unhandled subscriber exception must never
-            // kill the loop, so it's swallowed here after having been attempted once. This is always a
-            // subscriber bug, never expected in normal operation -- logged at Error, not Warning.
-            Log.StateChangesSubscriberThrew(_logger, ex);
+            // A subscriber throw no longer reaches here -- GuardedObservable contains it per
+            // subscriber, so one thrower can neither detach itself nor starve the subscribers after
+            // it. What this still genuinely catches is an ObjectDisposedException from OnNext racing
+            // DisposeAsync's own subject disposal. Kept as the backstop for that, and because per
+            // IRadioController's concurrency contract nothing a subscriber does may kill the poll loop.
+            Log.StateChangesPublishFailed(_logger, ex);
         }
     }
 
@@ -726,9 +737,10 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            // Same reasoning as PublishState -- must never propagate into ConnectAsync/DisconnectAsync
-            // or the poll loop.
-            Log.ConnectionEventsSubscriberThrew(_logger, ex);
+            // Same reasoning as PublishState: subscriber throws are contained upstream by
+            // GuardedObservable, so this is the ObjectDisposedException backstop -- and must never
+            // propagate into ConnectAsync/DisconnectAsync or the poll loop.
+            Log.ConnectionEventsPublishFailed(_logger, ex);
         }
     }
 
@@ -825,6 +837,18 @@ public sealed partial class RadioController : IRadioController, IAsyncDisposable
 
         [LoggerMessage(Level = LogLevel.Error, Message = "A ConnectionEvents subscriber threw")]
         public static partial void ConnectionEventsSubscriberThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Publishing to StateChanges failed; the poll loop continues")]
+        public static partial void StateChangesPublishFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Publishing to ConnectionEvents failed")]
+        public static partial void ConnectionEventsPublishFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A StateChanges subscriber has now thrown {Count} times")]
+        public static partial void StateChangesSubscriberThrewRepeatedly(ILogger logger, int count, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A ConnectionEvents subscriber has now thrown {Count} times")]
+        public static partial void ConnectionEventsSubscriberThrewRepeatedly(ILogger logger, int count, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "RadioController disposed")]
         public static partial void Disposed(ILogger logger);

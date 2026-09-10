@@ -31,10 +31,44 @@ namespace ScanlineStudio.Abstractions.Radio;
 /// — see <c>ScanlineStudio.Abstractions.Audio.IAudioEngine</c> for the contrasting case that does need a
 /// drop policy) — subscribers doing real work must marshal to their own scheduler
 /// (<c>ObserveOn</c>), not block here.</item>
-/// <item>An exception thrown by a subscriber's <c>OnNext</c> handler is caught by the controller, never
-/// allowed to propagate out of the poll loop or a <see cref="ConnectAsync"/>/<see cref="DisconnectAsync"/>
-/// call — logged and surfaced as a <see cref="RadioConnectionEvent"/>, and polling continues. An
-/// unhandled subscriber exception must never silently kill the loop.</item>
+/// <item>An exception thrown by a subscriber's <c>OnNext</c>/<c>OnCompleted</c> handler is caught PER
+/// SUBSCRIBER, never allowed to propagate out of the poll loop or a
+/// <see cref="ConnectAsync"/>/<see cref="DisconnectAsync"/> call, and polling continues. One
+/// subscriber throwing affects no other subscriber, and does not unsubscribe the thrower either — a
+/// handler that throws keeps receiving. (Both halves are deliberate. Before they were guaranteed, a
+/// single throw from an early <see cref="ConnectionEvents"/> subscriber permanently starved every
+/// later-registered one, and a throwing <see cref="StateChanges"/> subscriber silently detached
+/// itself. Detaching would turn a transient throw — a UI-thread post during shutdown, say — into
+/// permanent blindness for the rest of the process.) It is logged, first occurrence in full and
+/// repeats summarised periodically, NOT surfaced as a <see cref="RadioConnectionEvent"/>. An unhandled
+/// subscriber exception must never silently kill the loop.
+/// <para>This contains THROWS only. It adds no serialization, does not rescue a subscriber that
+/// BLOCKS, and does not make the synchronous-reentrant-lifecycle-call rule below any less absolute.
+/// It also ends at the subscription boundary: compose ANY Rx operator downstream
+/// (<c>StateChanges.Where(...).Subscribe(h)</c>, <c>ObserveOn</c>, anything) and that operator's own
+/// auto-detach wrapper sits between the guarantee and your handler, so your handler is unsubscribed
+/// again on its first throw. Other subscribers stay protected regardless. Subscribe directly to keep
+/// the guarantee.</para></item>
+/// <item>Delivery is NOT serialized across threads. The poll loop publishes with no lock held while a
+/// caller thread can publish from its own disconnect path, so one subscriber's handler can run
+/// concurrently on two threads in the abandoned-poll-loop window. Rx's usual grammar guarantee does
+/// not hold here — a handler that touches mutable state needs its own synchronization.</item>
+/// <item><see cref="StateChanges"/>'s replayed first value is delivered INLINE ON THE SUBSCRIBING
+/// THREAD, before <c>Subscribe</c> returns. So a UI-thread subscriber receives that one value on the
+/// UI thread and every later one on a background thread — the "fires from the poll loop's background
+/// thread" rule above describes the steady state, not the first value.</item>
+/// <item>After a NORMAL disposal, <c>Subscribe</c> on either stream and reading
+/// <see cref="LastKnownState"/> both throw <see cref="ObjectDisposedException"/> rather than
+/// delivering a courtesy <c>OnCompleted</c> or returning <see langword="null"/>. On the lock-timeout
+/// teardown path below, neither does: the controller reports itself disposed while both streams are
+/// still live, so <c>Subscribe</c> succeeds and <see cref="LastKnownState"/> returns the last value.
+/// Do not use either as a disposal probe. Separately, disposing
+/// a subscription does not synchronize with an in-flight publish on another thread: a handler already
+/// entered runs to completion, so <c>Dispose()</c> returning is not a guarantee that no further
+/// callback will be observed.</item>
+/// <item>On the reference implementation's lock-timeout teardown path, <c>DisposeAsync</c> returns
+/// WITHOUT completing either stream. A subscriber waiting on <c>OnCompleted</c> to release resources
+/// must not rely on it alone. The implementation treats this as an accepted leak.</item>
 /// <item>See <see cref="RadioState"/>'s own doc comment for why <see cref="StateChanges"/> is never
 /// deduplicated by record equality.</item>
 /// </list>
@@ -91,11 +125,14 @@ public interface IRadioController
     /// <b>Hard rule this depends on:</b> no <see cref="ConnectionEvents"/>/<see cref="StateChanges"/>
     /// subscriber may call back into any of these 3 methods SYNCHRONOUSLY (blocking, not merely
     /// awaiting) from inside its own <c>OnNext</c>/<c>OnCompleted</c> handler. Both streams publish
-    /// inline on the calling thread; every <see cref="ConnectionEvents"/> publish and most
-    /// <see cref="StateChanges"/> publishes happen while the internal lock is already held, so a
-    /// synchronous reentrant call from one of THOSE deadlocks outright. The one exception —
-    /// <see cref="StateChanges"/>'s normal source, the background poll loop — holds no lock, so a
-    /// synchronous reentrant call from a poll-loop-driven publish instead stalls
+    /// inline on the calling thread. The <see cref="ConnectionEvents"/> publishes that
+    /// <see cref="ConnectAsync"/>/<see cref="DisconnectAsync"/> make themselves, and the single
+    /// <see cref="StateChanges"/> publish that <see cref="DisconnectAsync"/>'s own teardown makes,
+    /// happen while the internal lock is already held, so a
+    /// synchronous reentrant call from one of THOSE deadlocks outright. Publishes driven by the
+    /// background poll loop — <see cref="StateChanges"/>'s normal source, and also the
+    /// <see cref="ConnectionEvents"/> reconnect/give-up transitions — hold no lock, so a
+    /// synchronous reentrant call from one of those instead stalls
     /// <see cref="DisconnectAsync"/> for its own internal bounded wait (currently 10s) before the poll
     /// loop is abandoned and torn down anyway — not a deadlock, but still a multi-second stall and
     /// still never intentional. Treat the rule as absolute regardless of which publish triggered it.
