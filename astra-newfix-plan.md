@@ -1,7 +1,13 @@
 # Fix plan v3 — the five defects `astra-fix` introduced (00d–00h)
 
+> **BUILT AND MERGED — no open work here (marked 2026-09-10).** This build spec was implemented,
+> code-reviewed to GO FOR PRODUCTION over two rounds, and merged to `master` on 2026-09-09
+> (`07d1a54`). What actually shipped, including the two places implementation diverged from this
+> plan, is in `production_audit.md`, section "Fixing 00d-00h". Do not treat the steps below as a
+> to-do list.
+
 Findings and proof: `production_audit.md`, section "`astra-fix` branch verification — 2026-09-08".
-Branch: continue on `astra-fix`.
+Branch: `astra-fix`, now merged.
 
 Review history: plan-review round 1 → NOT READY (1 blocker, 4 majors). v2 → NOT READY (4 majors, all
 paper fixes, "a v3 with those four pinned is a go"). A principal review of the F3 design decision

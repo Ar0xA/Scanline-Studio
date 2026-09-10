@@ -680,7 +680,10 @@ internal static partial class Program
             currentDirectory: originalDatabaseDirectory,
             pendingDirectory: overrides.PendingDatabaseDirectory,
             fileName: "history.db",
-            extraSidecarFileNames: ["history.db-journal"]);
+            // -wal holds COMMITTED transactions until checkpoint, so moving history.db without it
+            // silently loses them. -journal stays listed: a database still in rollback-journal mode
+            // (WAL never applied, see SqliteWriteAheadLogging) produces that one instead.
+            extraSidecarFileNames: ["history.db-journal", "history.db-wal", "history.db-shm"]);
 
         if (configResult is null && databaseResult is null)
         {
@@ -719,7 +722,7 @@ internal static partial class Program
 
             if (databaseResult is { } databaseToRollBack)
             {
-                RollBackAppliedMove(databaseToRollBack.AppliedDirectory, originalDatabaseDirectory, "history.db", ["history.db-journal"]);
+                RollBackAppliedMove(databaseToRollBack.AppliedDirectory, originalDatabaseDirectory, "history.db", ["history.db-journal", "history.db-wal", "history.db-shm"]);
             }
         }
     }

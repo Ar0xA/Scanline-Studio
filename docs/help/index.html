@@ -656,7 +656,7 @@
         </div>
 
         <p>Use <strong>Currently using</strong> as the authority for active Config and Database locations. A restart prompt appears when a staged database move needs completion.</p>
-        <div class="warning"><strong>Back up before manual edits.</strong> Close Scanline Studio before manually copying or editing <code>settings.json</code> or <code>history.db</code>. Do not merge SQLite database files as text.</div>
+        <div class="warning"><strong>Back up before manual edits.</strong> Close Scanline Studio before manually copying or editing <code>settings.json</code> or <code>history.db</code>. Closing the application is what makes a copy of <code>history.db</code> complete on its own — see <a href="#files-backup-privacy">Files, backups, and privacy</a> for why. Do not merge SQLite database files as text.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
@@ -855,7 +855,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="files folders paths settings json history db sqlite images logs backup restore privacy telemetry password qrz windows linux macos appdata config">
+      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="files folders paths settings json history db sqlite wal shm write ahead logging journal images logs backup restore privacy telemetry password qrz windows linux macos appdata config">
         <p class="topic-category">Support</p>
         <h2>Files, backups, and privacy</h2>
         <p>Your active locations are shown under <strong>Options → General → Storage</strong>. Defaults follow the operating system's application-data convention.</p>
@@ -865,7 +865,7 @@
             <thead><tr><th>Data</th><th>Typical file</th><th>Back up?</th></tr></thead>
             <tbody>
               <tr><td>Application settings</td><td><code>settings.json</code></td><td>Yes, especially after completing station setup.</td></tr>
-              <tr><td>Receive history and QSO logbook</td><td><code>history.db</code></td><td>Yes. This is a SQLite database shared by both features.</td></tr>
+              <tr><td>Receive history and QSO logbook</td><td><code>history.db</code>, plus <code>history.db-wal</code> and <code>history.db-shm</code> when they are present</td><td>Yes. This is a SQLite database shared by both features. Copy the three files together, or close the application first.</td></tr>
               <tr><td>Received images</td><td>PNG files in the configured RX images folder</td><td>Yes, if the pictures matter independently of the database index.</td></tr>
               <tr><td>Diagnostics</td><td>Application log files</td><td>Usually only when investigating a fault.</td></tr>
             </tbody>
@@ -873,6 +873,7 @@
         </div>
 
         <p>Close Scanline Studio before making a consistent manual backup of the database and settings. Back up the database and RX images together if you want Gallery references to remain useful.</p>
+        <div class="warning"><strong>While the application runs, <code>history.db</code> is not the whole database.</strong> Scanline Studio uses SQLite write-ahead logging, so recent contacts and receive history can still be sitting in the <code>history.db-wal</code> file next to it. Copying <code>history.db</code> on its own at that moment loses them. Either close the application first, which folds those changes back into <code>history.db</code> and removes the two extra files, or copy <code>history.db</code>, <code>history.db-wal</code> and <code>history.db-shm</code> together as a set. This applies to backup tools and file-sync folders as much as to a manual copy.</div>
         <ul>
           <li>Scanline Studio does not require product telemetry or a cloud account for core use.</li>
           <li>QRZ.com and configured UDP forwarding send data only when you enable and use those integrations.</li>

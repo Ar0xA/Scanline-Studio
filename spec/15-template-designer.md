@@ -358,9 +358,11 @@ import.
   accurate (those files no longer claim a future `ITemplateItem` extension point tied to this
   document).
 
-**Real open items, as of 2026-08-29**: multi-select move only — legacy `.mtm` import (previously
-listed here as "still intentionally deferred") is now rejected outright, see the Rejected section
-above. Box-element corner-radius and multi-handle/
+**Real open items: none. Corrected 2026-09-10.** This paragraph used to read "multi-select move
+only", which contradicted the Known-gaps bullet above it — multi-select move shipped as
+"group-ops-lite" (`a3484fa`). Legacy `.mtm` import (previously listed here as "still intentionally
+deferred") is rejected outright, see the Rejected section above. Box-element corner-radius and
+multi-handle/
 aspect-locked element resize both shipped the same day (see Known gaps above), alongside a same-day
 batch of Bold/Italic text styling (real vendored font-file variants, not synthesized), DIST/BEAM
 insert-field chips, the legacy "3D" stacked-copy text effect, bitmap-pattern text fill, clipboard-paste
