@@ -5,8 +5,8 @@
         x:Class="ScanlineStudio.UI.Views.FavouritesEditorWindowView"
         x:DataType="vm:RadioStatusViewModel"
         Title="{loc:Translate FavouritesEditor.Title}"
-        Width="420" Height="480"
-        MinWidth="360" MinHeight="320"
+        Width="620" Height="480"
+        MinWidth="560" MinHeight="320"
         WindowStartupLocation="CenterOwner">
 
     <!-- Stub survey Tier 2 (2026-08-26). Modeled on QsoLinkWindowView.axaml (Industry atoms, Grid
@@ -23,18 +23,61 @@
             <ScrollViewer Grid.Row="0">
                 <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" Margin="{StaticResource IndustryPaddingGroup}">
 
+                    <!-- Column captions: four unlabelled input columns are not discoverable, and the
+                         BW column in particular reads as a second frequency without one.
+
+                         Column definitions MUST stay identical to the row template below, and both
+                         Auto columns must be filled here too. Avalonia has no shared-size scope, so
+                         an empty trailing Auto column collapses to zero width and widens this grid's
+                         own star column instead — every caption from "MHz" rightward would then sit
+                         a full column to the right of the input it names, which is worse than no
+                         caption at all. The BW caption carries the same DynamicResource width as its
+                         ComboBox, and the Remove column is held open by a zero-opacity clone of the
+                         real button, so the alignment survives a translation that changes that
+                         button's own width. -->
+                    <Grid ColumnDefinitions="*,90,100,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,0,0,3">
+                        <TextBlock Classes="IndustryTableHeader" Text="{loc:Translate FavouritesEditor.LabelColumn}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryTableHeader" Text="{loc:Translate FavouritesEditor.FrequencyColumn}" />
+                        <TextBlock Grid.Column="2" Classes="IndustryTableHeader" Text="{loc:Translate FavouritesEditor.ModeColumn}" />
+                        <TextBlock Grid.Column="3" Classes="IndustryTableHeader" Width="{DynamicResource IndustryBandwidthComboWidth}"
+                                   Text="{loc:Translate FavouritesEditor.BandwidthColumn}" />
+                        <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                Content="{loc:Translate FavouritesEditor.RemoveButton}"
+                                Opacity="0" IsHitTestVisible="False" IsTabStop="False" />
+                    </Grid>
+
                     <ItemsControl ItemsSource="{Binding EditorRows}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:FrequencyPresetEditorRowViewModel">
-                                <Grid ColumnDefinitions="*,90,80,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,0,0,3">
+                                <Grid ColumnDefinitions="*,90,100,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,0,0,3">
                                     <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate FavouritesEditor.LabelWatermark}" Text="{Binding Label}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FrequencyMhzText}" />
-                                    <ComboBox Grid.Column="2" Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}" SelectedItem="{Binding SelectedMode}" HorizontalAlignment="Stretch" />
+                                    <!-- Mode=TwoWay written out, not left to SelectedValue's default: the
+                                         precedent this copies (MainWindow.axaml's Logbook mode picker) states
+                                         it explicitly, and if the default is not TwoWay every mode edit here
+                                         is silently discarded on Save. -->
+                                    <ComboBox Grid.Column="2" Classes="Industry IndustryInput"
+                                              ItemsSource="{Binding ModeChoices}"
+                                              SelectedValueBinding="{Binding Mode}"
+                                              SelectedValue="{Binding SelectedMode, Mode=TwoWay}"
+                                              DisplayMemberBinding="{Binding Display}"
+                                              HorizontalAlignment="Stretch" />
+                                    <!-- Same editable-ComboBox shape AND the same width resource as the
+                                         Transceiver header's own BW control. That resource is the
+                                         project's known-good width for this exact control: it was
+                                         code-review-fixed once already for real caret-scroll clipping,
+                                         and it grows with the font-size preset, which a hard-coded
+                                         column width would not. A 5-digit FM value makes clipping
+                                         worse here than the header's 4-digit SSB case. -->
+                                    <ComboBox Grid.Column="3" Classes="Industry IndustryInput" IsEditable="True"
+                                              Width="{DynamicResource IndustryBandwidthComboWidth}"
+                                              ItemsSource="{Binding AvailableBandwidthPresetsHz}"
+                                              Text="{Binding BandwidthHz, Mode=TwoWay}" />
                                     <!-- CommandParameter="{Binding}" (plan-review-caught fix): RemoveCommand is
                                          IRelayCommand<FrequencyPresetEditorRowViewModel> — without this it
                                          receives null, EditorRows.Remove(null) returns false, and the button
                                          silently does nothing. -->
-                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                    <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                             Content="{loc:Translate FavouritesEditor.RemoveButton}"
                                             Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                 </Grid>

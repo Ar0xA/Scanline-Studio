@@ -129,7 +129,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [ObservableProperty]
     private string? _maintenanceMessage;
 
+    // NotifyCanExecuteChangedFor is load-bearing, not decorative: OnStateChanged calls the command's
+    // own NotifyCanExecuteChanged BEFORE it assigns this property, so without this attribute the poll
+    // that first reports an unsupported mode re-evaluates CanExecute against the PREVIOUS mode and
+    // leaves "Store current" live for one poll interval on exactly the transition it must block.
     [NotifyPropertyChangedFor(nameof(IsSidebandUsb), nameof(IsSidebandLsb), nameof(IsSidebandFm))]
+    [NotifyCanExecuteChangedFor(nameof(StoreCurrentPresetCommand))]
     [ObservableProperty]
     private RadioMode _selectedRadioMode = RadioMode.Usb;
 
@@ -477,6 +482,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// the last <see cref="RadioState.FrequencyHz"/> to build a <see cref="FrequencyPreset"/> from.</summary>
     private long _currentFrequencyHz;
 
+    /// <summary>Raw mirror of the last polled <see cref="RadioState.BandwidthHz"/>, same reason as
+    /// <see cref="_currentFrequencyHz"/> above -- <see cref="BandwidthDisplay"/> is formatted text.
+    /// <see langword="null"/> when the backend can't read a bandwidth, or when it reported Hamlib's
+    /// <c>RIG_PASSBAND_NORMAL</c> sentinel.</summary>
+    private int? _currentBandwidthHz;
+
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
@@ -493,6 +504,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _catLinked = radioSession.IsGenuinelyConnected;
         _canReadBandwidth = radioSession.Capabilities.HasFlag(RadioCapabilities.ReadBandwidth);
         _canSetBandwidth = radioSession.Capabilities.HasFlag(RadioCapabilities.SetBandwidth);
+        PresetModeChoices = RadioModeFamilies.PresetModes
+            .Select(mode => new RadioModeChoice(mode, localization.GetString($"RadioMode.{mode}")))
+            .ToList();
 
         radioSession.StateChanges.Subscribe(OnStateChanged);
         radioSession.ConnectionEvents.Subscribe(OnConnectionEvent);
@@ -610,7 +624,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [RelayCommand]
     private void OpenToneGenerator() => ToneGeneratorRequested?.Invoke();
 
-    public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
+    /// <summary>The Favourites editor's mode picker, built once here because this view-model already
+    /// holds the localization service and constructs every editor row itself. Six modes only -- AM,
+    /// CW and RTTY aren't used for SSTV, and <see cref="RadioMode.Unknown"/> is a readback sentinel
+    /// with no entry in any backend's mode map, so selecting it would throw out of
+    /// <c>SetModeAsync</c>.</summary>
+    public IReadOnlyList<RadioModeChoice> PresetModeChoices { get; }
 
     public ObservableCollection<FrequencyPresetButtonViewModel> Presets { get; } = [];
 
@@ -659,6 +678,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // row-mates (SPLIT/RIT) keep their own label prefix -- a bare "2400 Hz" here read as an
             // unlabeled value against those neighbors.
             // T1-13 (production_audit.md): both branches used to be hardcoded English literals.
+            // Raw mirror alongside _currentFrequencyHz: BandwidthDisplay is a formatted string, so
+            // StoreCurrentPresetAsync can't round-trip it back into a preset.
+            _currentBandwidthHz = state.BandwidthHz;
             BandwidthDisplay = state.BandwidthHz is { } bandwidthHz
                 ? _localization.GetString("RadioStatus.BandwidthDisplayFormat", bandwidthHz)
                 : _localization.GetString("RadioStatus.BandwidthUnavailable");
@@ -836,7 +858,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         foreach (var preset in presets)
         {
             Presets.Add(new FrequencyPresetButtonViewModel(preset, ApplyPresetCommand));
-            EditorRows.Add(new FrequencyPresetEditorRowViewModel(preset, RemovePresetRowCommand));
+            EditorRows.Add(new FrequencyPresetEditorRowViewModel(preset, RemovePresetRowCommand, PresetModeChoices));
         }
     }
 
@@ -968,18 +990,82 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
-        Log.ApplyPresetInvoked(_logger, preset.Label, preset.FrequencyHz, preset.Mode);
+        // Mode guard, BEFORE any CAT call. RadioMode.Unknown has no entry in any backend's mode map,
+        // so SetModeAsync throws ArgumentOutOfRangeException for it -- and the catch below maps every
+        // exception to "no radio connected", which the user would see AFTER SetFrequencyAsync had
+        // already retuned the rig. A preset can hold Unknown without anyone picking it: "Store
+        // current" copies whatever the rig reports, and an unmapped rig token resolves to Unknown.
+        if (preset.Mode == RadioMode.Unknown)
+        {
+            Log.ApplyPresetFailed(_logger, preset.Label, new InvalidOperationException("Preset mode is not settable."));
+            ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetMode", preset.Label);
+            return;
+        }
+
+        // Captured before the first await: this method uses ConfigureAwait(false), so everything past
+        // it resumes off the UI thread, and CanSetBandwidth is only ever written on the UI thread.
+        var canSetBandwidth = CanSetBandwidth;
+        var bandwidthHz = ResolvePresetBandwidth(preset);
+
+        Log.ApplyPresetInvoked(_logger, preset.Label, preset.FrequencyHz, preset.Mode, bandwidthHz);
         try
         {
             ErrorMessage = null;
             await _radioSession.SetFrequencyAsync(preset.FrequencyHz).ConfigureAwait(false);
             await _radioSession.SetModeAsync(preset.Mode).ConfigureAwait(false);
+            // After the mode, never before: setting the mode is what makes the rig fall back to its
+            // own default passband for that mode, which is the whole reason this feature exists.
+            // Gated on the capability because flrig and OmniRig THROW here rather than no-op'ing --
+            // an ungated call would fail the click after the frequency and mode had already changed.
+            if (canSetBandwidth && bandwidthHz is { } hz)
+            {
+                await _radioSession.SetBandwidthAsync(hz).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
             Log.ApplyPresetFailed(_logger, preset.Label, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
+    }
+
+    /// <summary>The width <see cref="ApplyPresetAsync"/> sends, or <see langword="null"/> to send no
+    /// bandwidth command at all.
+    ///
+    /// <para>Checked against the PERSISTENCE range, never against the mode family's own band. A width
+    /// the operator deliberately typed, saved, and can still see in the editor is applied as typed --
+    /// 12000 Hz on a USB Favourite stays 12000 Hz. The family band drives only the editor's
+    /// snap-on-mode-change, per <see cref="RadioModeFamilies"/>'s own doc comment.</para>
+    ///
+    /// <para>A stored value outside that range substitutes the family fallback instead of aborting
+    /// the click, deliberately unlike the mode and frequency guards above: a bad bandwidth has a
+    /// safe, correct substitute and a bad mode does not. The substitution is logged rather than
+    /// surfaced -- the apply itself succeeded, and an error banner on a successful action misleads.
+    /// A hand-edited <c>0</c> is the case that matters: <c>0</c> IS Hamlib's
+    /// <c>RIG_PASSBAND_NORMAL</c>, so sending it would silently reinstate the rig-picks-its-own-width
+    /// behaviour this feature replaces.</para></summary>
+    private int? ResolvePresetBandwidth(FrequencyPreset preset)
+    {
+        if (RadioModeFamilies.FallbackFor(preset.Mode) is not { } fallback)
+        {
+            // No family: send nothing, even if a bandwidth is stored. A row on such a mode gets a
+            // saveable seed so it can't block the editor, and that seed then persists -- without
+            // this branch, a hand-edited AM Favourite would end up narrowing the rig to an SSB width.
+            return null;
+        }
+
+        if (preset.BandwidthHz is not { } stored)
+        {
+            return fallback;
+        }
+
+        if (RadioModeFamilies.IsValidBandwidth(stored))
+        {
+            return stored;
+        }
+
+        Log.ApplyPresetBandwidthSubstituted(_logger, preset.Label, stored, fallback);
+        return fallback;
     }
 
     /// <summary>Backs the Favourites card's "Store current" button -- adds the currently-tuned
@@ -997,7 +1083,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private async Task StoreCurrentPresetAsync()
     {
         Log.StoreCurrentPresetInvoked(_logger, _currentFrequencyHz, SelectedRadioMode);
-        var row = new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, _currentFrequencyHz, SelectedRadioMode), RemovePresetRowCommand);
+        // Clamped here, never handed to SavePresets' validator raw: this is a live rig reading, and
+        // an operator sitting on a filter outside the accepted range would otherwise have the save
+        // aborted, the row removed, and the frequency/mode capture lost too -- over a value they
+        // never typed. CanStoreCurrentPreset guarantees the mode has a family, so the ?? is
+        // unreachable and present only to keep the expression total.
+        var capturedBandwidth = _currentBandwidthHz is { } live && RadioModeFamilies.IsValidBandwidth(live)
+            ? live
+            : RadioModeFamilies.FallbackFor(SelectedRadioMode) ?? RadioModeFamilies.SsbFallbackHz;
+        var row = new FrequencyPresetEditorRowViewModel(
+            new FrequencyPreset(string.Empty, _currentFrequencyHz, SelectedRadioMode, capturedBandwidth),
+            RemovePresetRowCommand,
+            PresetModeChoices);
         EditorRows.Add(row);
 
         // Tier B audit finding: this used to call the SavePresetsCommand's own method and ignore
@@ -1014,13 +1111,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    private bool CanStoreCurrentPreset() => _currentFrequencyHz > 0;
+    /// <summary>The mode check is the second half of the gate, not decoration: this command copies
+    /// whatever mode the rig reports, so parking the rig on CW, AM or RTTY -- or on a token no
+    /// backend maps, which resolves to <see cref="RadioMode.Unknown"/> -- would otherwise create a
+    /// Favourite the editor's own six-mode picker cannot display.</summary>
+    private bool CanStoreCurrentPreset() =>
+        _currentFrequencyHz > 0 && RadioModeFamilies.PresetModes.Contains(SelectedRadioMode);
 
     [RelayCommand]
     private void AddPresetRow()
     {
         Log.AddPresetRowInvoked(_logger);
-        EditorRows.Add(new FrequencyPresetEditorRowViewModel(new FrequencyPreset(string.Empty, 14_230_000, RadioMode.Usb), RemovePresetRowCommand));
+        EditorRows.Add(new FrequencyPresetEditorRowViewModel(
+            new FrequencyPreset(string.Empty, 14_230_000, RadioMode.Usb, RadioModeFamilies.SsbFallbackHz),
+            RemovePresetRowCommand,
+            PresetModeChoices));
     }
 
     [RelayCommand]
@@ -1069,10 +1174,23 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                 return false;
             }
 
+            // Deliberately the wide persistence range, not the row's own mode-family band: the field
+            // is freely editable by design, so a 12 kHz filter on a USB Favourite is the operator's
+            // call to make. This check only rejects values that are not a filter width at all -- and
+            // 0 in particular, which is Hamlib's RIG_PASSBAND_NORMAL sentinel. The Transceiver
+            // header's own BW control deliberately has no such check; the asymmetry is intended,
+            // since a persisted value outlives the one-shot command that pill sends.
+            if (!RadioModeFamilies.IsValidBandwidth(row.BandwidthHz))
+            {
+                Log.SavePresetsInvalidBandwidth(_logger, row.Label, row.BandwidthHz);
+                Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.InvalidPresetBandwidth", row.Label));
+                return false;
+            }
+
             // Math.Round, not a bare cast (auditor-caught, 2026-08-11): the "0.000000"-formatted
             // mhz * 1_000_000 product can land 1 ULP below the target integer for some real radio
             // frequencies, and a bare (long) cast truncates that down to N-1 Hz instead of N.
-            presets.Add(new FrequencyPreset(row.Label, (long)Math.Round(mhz * 1_000_000), row.SelectedMode));
+            presets.Add(new FrequencyPreset(row.Label, (long)Math.Round(mhz * 1_000_000), row.SelectedMode, (int)Math.Round(row.BandwidthHz)));
         }
 
         Log.SavePresetsInvoked(_logger, presets.Count);
@@ -1373,8 +1491,14 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetBandwidth failed: {Hz} Hz")]
         public static partial void SetBandwidthFailed(ILogger logger, int hz, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "ApplyPreset invoked: {Label} ({FrequencyHz}Hz, {Mode})")]
-        public static partial void ApplyPresetInvoked(ILogger logger, string label, long frequencyHz, RadioMode mode);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ApplyPreset invoked: {Label} ({FrequencyHz}Hz, {Mode}, {BandwidthHz}Hz BW)")]
+        public static partial void ApplyPresetInvoked(ILogger logger, string label, long frequencyHz, RadioMode mode, int? bandwidthHz);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ApplyPreset bandwidth out of range: {Label} stored {StoredHz}Hz, using {SubstitutedHz}Hz")]
+        public static partial void ApplyPresetBandwidthSubstituted(ILogger logger, string label, int storedHz, int substitutedHz);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "SavePresets rejected bandwidth: {Label} ({BandwidthHz}Hz)")]
+        public static partial void SavePresetsInvalidBandwidth(ILogger logger, string label, double bandwidthHz);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ApplyPreset failed: {Label}")]
         public static partial void ApplyPresetFailed(ILogger logger, string label, Exception ex);
@@ -1466,17 +1590,36 @@ public sealed record FrequencyPresetButtonViewModel(FrequencyPreset Preset, Syst
 /// text/combo inputs, not fixed-at-construction display data.</summary>
 public sealed partial class FrequencyPresetEditorRowViewModel : ObservableObject
 {
-    public FrequencyPresetEditorRowViewModel(FrequencyPreset preset, System.Windows.Input.ICommand removeCommand)
+    public FrequencyPresetEditorRowViewModel(
+        FrequencyPreset preset,
+        System.Windows.Input.ICommand removeCommand,
+        IReadOnlyList<RadioModeChoice> modeChoices)
     {
         _label = preset.Label;
         _frequencyMhzText = (preset.FrequencyHz / 1_000_000.0).ToString("0.000000", CultureInfo.InvariantCulture);
         _selectedMode = preset.Mode;
+        // A row must NEVER hold a value SavePresets rejects: one such row aborts the whole save and
+        // takes every other row's unsaved edits with it. Two untrusted inputs both get a saveable
+        // seed here -- a mode this editor doesn't list (hand-edited settings file, no family, so no
+        // fallback of its own), and a stored width that is out of range (a hand-edited 0, which is
+        // Hamlib's RIG_PASSBAND_NORMAL, or an absurd value).
+        var seedFallback = RadioModeFamilies.FallbackFor(preset.Mode) ?? RadioModeFamilies.SsbFallbackHz;
+        _bandwidthHz = preset.BandwidthHz is { } stored && RadioModeFamilies.IsValidBandwidth(stored)
+            ? stored
+            : seedFallback;
+        // Seeded here, not via OnSelectedModeChanged: the constructor assigns _selectedMode as a bare
+        // field write, which does not invoke the generated setter's hook.
+        _availableBandwidthPresetsHz = PresetsForMode(preset.Mode);
         RemoveCommand = removeCommand;
+        ModeChoices = modeChoices;
     }
 
     public System.Windows.Input.ICommand RemoveCommand { get; }
 
-    public IReadOnlyList<RadioMode> AvailableModes { get; } = Enum.GetValues<RadioMode>();
+    /// <summary>The six modes this editor offers, already paired with their localized display text
+    /// by <see cref="RadioStatusViewModel"/> -- one shared list, built once, never mutated per row.
+    /// Mutating a live <c>ItemsSource</c> under an active selection is its own Avalonia hazard.</summary>
+    public IReadOnlyList<RadioModeChoice> ModeChoices { get; }
 
     [ObservableProperty]
     private string _label;
@@ -1486,4 +1629,55 @@ public sealed partial class FrequencyPresetEditorRowViewModel : ObservableObject
 
     [ObservableProperty]
     private RadioMode _selectedMode;
+
+    /// <summary>This row's requested filter width. <see cref="double"/> rather than a parsed string,
+    /// matching the Transceiver header's own BW control, which this row's editable ComboBox reuses.
+    /// The consequence, so it doesn't read as an oversight: an unparseable typed value never reaches
+    /// this property at all -- the binding converter fails and the previous value stays -- so
+    /// <c>SavePresetsInternalAsync</c>'s bandwidth error covers the range check only, never a parse
+    /// failure. The sibling <see cref="FrequencyMhzText"/> is a string precisely because a
+    /// comma-decimal typo there once silently deleted rows.</summary>
+    [ObservableProperty]
+    private double _bandwidthHz;
+
+    /// <summary>Quick picks for the row's CURRENT mode -- observable, not get-only, or the ComboBox
+    /// never picks up a new family's list.</summary>
+    [ObservableProperty]
+    private IReadOnlyList<double> _availableBandwidthPresetsHz;
+
+    /// <summary>Follows the mode across families: USB to FM turns 2400 into 15000, FM to USB turns
+    /// 15000 back into 2400. A value already sensible for the new family survives untouched, so a
+    /// deliberately typed width isn't lost to an unrelated edit. The list is raised BEFORE the value:
+    /// the control is an editable ComboBox whose Text is bound to <see cref="BandwidthHz"/>, so the
+    /// two writes are not independent.</summary>
+    partial void OnSelectedModeChanged(RadioMode value)
+    {
+        AvailableBandwidthPresetsHz = PresetsForMode(value);
+        if (!RadioModeFamilies.IsInFamilyBand(value, BandwidthHz) && RadioModeFamilies.FallbackFor(value) is { } fallback)
+        {
+            BandwidthHz = fallback;
+        }
+    }
+
+    // Cached, never rebuilt per call: a fresh array on every mode change swaps the bound ComboBox's
+    // ItemsSource IDENTITY even for a within-family change like USB->LSB, which resets the control's
+    // own selection for no reason. Same instance in, no swap.
+    private static readonly double[] SsbPresetsHz = [1800, 2400, 2800];
+    private static readonly double[] FmPresetsHz = [9000, 12_000, 15_000];
+    private static readonly double[] NoPresetsHz = [];
+
+    private static double[] PresetsForMode(RadioMode mode) => RadioModeFamilies.FamilyOf(mode) switch
+    {
+        RadioModeFamily.Ssb => SsbPresetsHz,
+        RadioModeFamily.Fm => FmPresetsHz,
+        _ => NoPresetsHz,
+    };
 }
+
+/// <summary>One entry in the Favourites editor's mode picker: the real <see cref="RadioMode"/> that
+/// gets persisted, paired with the localized text shown for it. Built once by
+/// <see cref="RadioStatusViewModel"/>, which already holds the localization service, and handed to
+/// every row as data -- deliberately not a converter (a stateless <c>IValueConverter</c> can't reach
+/// <c>ILocalizationService</c>) and not a service injected into the row (that would be a dependency
+/// where a prebuilt list suffices).</summary>
+public sealed record RadioModeChoice(RadioMode Mode, string Display);

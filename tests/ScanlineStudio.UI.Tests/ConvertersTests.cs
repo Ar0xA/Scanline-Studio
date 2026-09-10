@@ -50,17 +50,6 @@ public sealed class ConvertersTests
         Assert.Null(exception);
     }
 
-    [Fact]
-    public void RadioModeDisplayConverter_UnsetValue_DoesNotThrow()
-    {
-        // Same finding as above -- IMultiValueConverter has a different signature, so it can't share
-        // the single-value theory test.
-        var exception = Record.Exception(() =>
-            RadioModeDisplayConverter.Instance.Convert([AvaloniaProperty.UnsetValue, "noneText"], typeof(string), null, CultureInfo.InvariantCulture));
-
-        Assert.Null(exception);
-    }
-
     [Theory]
     [InlineData(0, 0, 0)]
     [InlineData(255, 255, 255)]

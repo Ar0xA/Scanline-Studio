@@ -14,8 +14,10 @@ namespace ScanlineStudio.UI.Converters;
 /// <c>ScanlineStudio.UI</c> may never reference directly (spec/09-ui.md's Definition of done,
 /// enforced by <c>UiLayeringArchitectureTests</c>) -- so the second bound value must be the mode
 /// list already reached through the Application layer (<c>ISstvSessionService.AvailableModes</c>,
-/// already surfaced as <c>LogbookPaneViewModel.AvailableSstvModes</c>) instead, same pattern
-/// <see cref="RadioModeDisplayConverter"/> already established for an analogous problem.
+/// already surfaced as <c>LogbookPaneViewModel.AvailableSstvModes</c>) instead. The radio-mode picker
+/// solved the analogous problem differently: it now resolves each item's display text in the
+/// view-model at construction (<c>RadioModeOption.Display</c>) and binds it directly, which a
+/// stateless converter cannot do because it has no route to <c>ILocalizationService</c>.
 ///
 /// values[0]: the raw id (<see langword="string"/>). values[1]: the available-modes list
 /// (<see cref="IReadOnlyList{T}"/> of <see cref="SstvModeDefinition"/>). An id with no match in

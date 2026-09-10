@@ -1157,7 +1157,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
         }
 
         SetFrequencyCalls.Add(hz);
+        CallOrder.Add("frequency");
     }
+
+    /// <summary>Ordered log across the three setters, since their own per-call lists cannot express
+    /// relative order. Applying a Favourite must send bandwidth AFTER mode: the mode set is what
+    /// makes the rig fall back to its own default passband, so the reverse order would be
+    /// overwritten by the rig and the test would still pass on call counts alone.</summary>
+    public List<string> CallOrder { get; } = [];
 
     public Task SetModeAsync(RadioMode mode, CancellationToken ct = default)
     {
@@ -1167,6 +1174,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
         }
 
         SetModeCalls.Add(mode);
+        CallOrder.Add("mode");
         return Task.CompletedTask;
     }
 
@@ -1188,6 +1196,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
         }
 
         SetBandwidthCalls.Add(bandwidthHz);
+        CallOrder.Add("bandwidth");
         return Task.CompletedTask;
     }
 
