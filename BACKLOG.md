@@ -119,7 +119,48 @@ it passes today. Add a per-row max beside the frame average, measure the current
 fixture, then pin at about 1.5x to 2x. **Needs its own measurement pass first** — do not bundle it
 into another change.
 
-### PA-2 / TT1-5. Map all 43 modes to their legacy `Main.cpp` `Line*` function
+### PA-2 / TT1-5. Mapping DONE 2026-09-10 — recapture gap is 4 functions, not 30
+
+**The mapping question is answered.** 43 modes dispatch to **14 distinct `Line*` functions**
+(`Main.cpp`'s TX switch, around `:7060`). The channel order for all 14 is transcribed into
+`tests/ScanlineStudio.Core.Sstv.Tests/LegacyTxChannelOrderTests.cs`, which asserts the port's
+registry against it — 44 tests, mutation-gated by renaming a scan segment.
+
+**The port agrees with legacy on all 43.** The only two disagreements were my transcription, not the
+port: `LineRM`'s two `// Y` loops are one transmitted scan, because the first loop only reads row N
+and the second averages it with row N+1 before writing. Counting loop comments instead of `Write`
+calls gives the wrong answer, and the table now records that.
+
+**The recapture gap:** the 11 stale fixtures cover 10 of the 14 functions. **Four functions have
+never been covered by any fixture** — `LineSC2180`, `LineP`, `LineMP`, `LineMC`. So the answer to
+"5 fixtures or 30" is **4 new, plus revalidating 11 stale**, not 32.
+
+**One fixture per function is enough for ORDER**, because the parameters those functions take
+(`tw`, `S`, `P`, `C`, `ts`) are durations and porch widths — none selects or reorders a channel.
+Timing still needs per-mode coverage; that is a different guarantee.
+
+**Both halves of the Scottie incident are covered.** The original bug was wrong in channel order AND
+sync placement, and comparing scan names alone catches only the first half. Each row also carries how
+many scans precede the line's primary sync — 2 for `LineSCT`, 0 elsewhere, null for the syncless
+`LineAVT`. Mutation-gated by actually moving Scottie's sync to the head of the line.
+
+**A per-function golden capture would not retire this file.** A capture pins one function's internal
+order; this table pins the mode→function **dispatch**. `LineMRT` and `LineSCT` have identical channel
+order and different sync placement, which is exactly where inferring one family from another fails.
+
+**What the table does NOT replace.** It compares the port against legacy *source*, not against
+legacy's emitted *audio*. A shared misreading of the source would pass. The golden captures remain
+the only thing that closes that, so this makes their absence survivable rather than acceptable. It
+also pins no durations, only order and sync position.
+
+**Audited.** `yoniq-auditor` verified all 43 rows against the legacy bodies independently, confirmed
+the 14-function dispatch against `Main.cpp:7059-7189` and `sstv.h:450-495`, and confirmed that no
+parameter of any of the 14 functions is read in a conditional — so "one fixture per function pins
+order" holds. Verdict: go. The sync-placement gap was its one substantive finding and is now closed.
+
+Original entry follows.
+
+
 
 Then capture one TX golden fixture per uncovered function.
 
@@ -172,19 +213,42 @@ and the rest have no Windows-specific test at all.
 
 **Do W1's classification step first.** It is cheap and it tells you how much of W2 closes for free.
 
-#### W1. Classify the 43 `[RequiresPipeWireFact]` tests — do this first
+#### W1. Classify the 43 `[RequiresPipeWireFact]` tests — DONE 2026-09-10
 
 `RequiresPipeWireFactAttribute` returns false unconditionally on non-Linux, so **all 43 skip on
 Windows, permanently, by design.** They are written against `pactl`/`paplay`/`ffmpeg`.
 
-But most of them do not need a virtual cable — they need *a* device. Dispose races, hot-unplug, the
-spike gate, enumerator refresh, session lifetimes. Only the ones asserting on captured **content**
-need a loopback. Split the gate into "needs any real device" and "needs loopback", and a decent share
-of the 43 should run on Windows against the default device with no new native code.
+**Result: roughly 16 of the 43 genuinely need a cable or loopback. The other ~27 need only a
+device.** So most of the Windows audio gap does not wait on W2's native work.
 
-Counts today: `MiniAudioEngineTests` 16, `MiniAudioCaptureSessionTests` 8, `MiniAudioPlaybackSessionTests`
-6, `MiniAudioDeviceEnumeratorTests` 4, `HotplugDisposeTests` 2, `MiniAudioSpikeGateTests` 2,
-`MiniAudioDeviceMuteQueryTests` 2, `MiniAudioEngineSstvRoundTripTests` 1.
+| Needs | Count | Examples |
+|---|---|---|
+| **Cable or loopback** — asserts on captured content | ~16 | `Write_PlaysRealAudibleTone_CapturedBackViaMonitor` (x2), `EncodeThenDecode_ThroughRealMiniAudioEngine_...`, `Constructor_ChannelSourceLeftVsRight_CapturesDistinctChannelContent`, `Write_WithStereoTxEnabled_...`, `SamplesAvailable_FiresWithRealNonSilentAudio_...` |
+| **Any real device** — lifecycle, concurrency, disposal | ~27 | every `DisposeAsync_*` and `ConcurrentUseAndDispose_*`, `StartCaptureAsync_ConcurrentCalls_OnlyOneSucceeds`, `TwoEnumeratorInstances_CanBeUsedConcurrently` |
+
+**Three cases do not fit either bucket and need their own decision:**
+
+1. `RefreshAsync_FindsRealVirtualCable_AsDistinctPlaybackAndCaptureDevices` wants one device
+   presenting as **both** a sink and a source. **Loopback cannot do this** — it is the one test that
+   genuinely argues for VB-CABLE.
+2. Both `HotplugDisposeTests` cases need a device that can **disappear mid-session**. On Linux that
+   is `pactl unload-module`. Windows has no equivalent one-liner, so this needs a real answer before
+   it can port.
+3. `IsDeviceMutedAsync_PlaybackSink_ReflectsTheRealPulseAudioMuteState` needs mute **control**, not
+   loopback. That is W4's job, not W2's.
+
+**One over-gated test, free to fix now:**
+`Constructor_GivenOutOfRangeDrainThreadPriority_ThrowsBeforeTouchingAnyDevice` is gated behind a
+running audio server while its own name says it throws before touching a device. If that holds, it
+should run everywhere — including CI, today, on all three runners. Confirm and ungate.
+
+**Honesty about this classification:** it was made from test names, doc comments and which files
+shell out to `pactl`, not by reading all 43 bodies. The buckets are sound enough to plan with and
+should be confirmed per test as each is ported.
+
+Counts by file: `MiniAudioEngineTests` 16, `MiniAudioCaptureSessionTests` 8,
+`MiniAudioPlaybackSessionTests` 6, `MiniAudioDeviceEnumeratorTests` 4, `HotplugDisposeTests` 2,
+`MiniAudioSpikeGateTests` 2, `MiniAudioDeviceMuteQueryTests` 2, `MiniAudioEngineSstvRoundTripTests` 1.
 
 #### W2. A Windows audio round-trip — use WASAPI loopback, not VB-CABLE
 
