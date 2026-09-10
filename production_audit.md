@@ -41,8 +41,14 @@ test coverage).
 > - **Tier 3 — open.** Four items were re-verified as still open, listed in that section.
 > - **Test-suite Tier 0 — all 7 done.** TT0-1 and TT0-2 were both re-verified closed on 2026-09-07;
 >   an earlier draft of this line still called TT0-2 open, which contradicted its own entry below.
-> - **Test-suite Tier 1 — 5 done, 1 deferred, the rest open.** Five were re-verified as open and are
->   marked in the table. **TT1-19** looks closed but is not fully confirmed.
+> - **Test-suite Tier 1 — 5 done, 1 deferred, 1 dropped, the rest open.** Five were re-verified as
+>   open and are marked in the table. **TT1-19 is `DROP`**, not unconfirmed — its own row states the
+>   reasoning. An earlier draft of this line called it "looks closed but is not fully confirmed",
+>   which contradicted that row. Corrected 2026-09-10.
+> - **TT1-16 is done**, in both source and test, despite its row still reading OPEN. Verified
+>   2026-09-10: `EnsureSuccessStatusCode` at `QrzCallsignLookup.cs:173`/`:188` and
+>   `QrzLogbookUploader.cs:53`, and a `HttpStatusCode.ServiceUnavailable` fixture at
+>   `QrzCallsignLookupTests.cs:17`.
 > - **Test-suite Tier 2/3 — untouched.**
 >
 > - **Triage, 2026-09-07:** an `auditor` pass over every remaining open item in THIS document returned
@@ -52,27 +58,34 @@ test coverage).
 >   including two transmitter-safety defects. **Two items filed P2 were raised to P1.** See "External
 >   audit folded in" below, and items 00a to 00c at the top of the pick-up list.
 >
-> - **Fix branch verified, 2026-09-08:** the local branch `astra-fix` implements all 39 active
+> - **Fix branch verified, 2026-09-08:** the local branch `astra-fix` implemented all 39 active
 >   `astra-audit.md` findings. Independent verification reproduced its build and every test count,
->   and confirmed 00a/00b/00c are genuinely addressed — **but the branch introduces five new
+>   and confirmed 00a/00b/00c were genuinely addressed — **but the branch introduced five new
 >   defects**, two of them proven by execution rather than argued. See "`astra-fix` branch
->   verification" below, and items 00d to 00h at the top of the pick-up list.
+>   verification" below.
 >
 > - **The five new defects are fixed, 2026-09-08.** Two plan-review rounds plus a principal review
 >   of the one real design decision, then implementation with a mutation gate per fix. Code review
->   pending. See "Fixing 00d-00h" below.
+>   returned GO FOR PRODUCTION over two rounds. See "Fixing 00d-00h" below.
 >
-> **Shipping status: pending code review of the 00d-00h fixes.** The three original blockers
-> (00a/00b/00c) are fixed on `astra-fix`. The five defects that fix introduced (00d-00h) now have
-> fixes with per-defect regression tests, each demonstrated to fail against the pre-fix code. No
-> known defect currently gates a release; the gate is the outstanding code-review round.
+> - **All of it merged to `master`, 2026-09-09** (fast-forward), and `master` is pushed. Items 00a
+>   to 00h and 0c are **closed** — they moved out of the pick-up list into "Closed — kept for the
+>   reasoning, not for the backlog" at the end of that section.
 >
-> **This file is now the ONLY backlog in the repo.** Every other document records measurements,
-> decisions and history. If it is not in "What to pick up next" below, nobody is meant to be working
-> on it. Decode-path items were folded in on 2026-09-07 — see "Decode-path items folded in from other
-> documents".
+> **Shipping status, re-verified 2026-09-10: no known defect gates a release.** The three original
+> blockers (00a/00b/00c) and the five defects their fix introduced (00d-00h) are all fixed, each
+> with a regression test demonstrated to fail against the pre-fix code. What is left below is
+> quality and coverage work, not a release gate.
 >
-> **Start here:** "What to pick up next — the short list", immediately below this banner.
+> **The backlog moved to [BACKLOG.md](BACKLOG.md), 2026-09-10.** That file is now the only work list in the
+> repo, and it spans every source — this document, `astra-audit.md`, `docs/known-decode-defects.md`,
+> `docs/functional-audit-playbook.md`, the `spec/` roadmaps, and `~/.claude/plans/`. Every item in it
+> was re-verified against current source, and several entries here turned out to be stale.
+> **If you want to know what to build, open `BACKLOG.md`.**
+>
+> This document keeps the audit findings, the evidence, and the reasoning behind each verdict. Read
+> it for why, not for what next. "What to pick up next" below is retained as the 2026-09-07 state of
+> this file's own items, and `BACKLOG.md` supersedes it wherever they disagree.
 >
 > **How each verdict was reached.** Tier 0 and Tier 1 rest on commit evidence: every item has a
 > commit that names it. The other tiers rest on reading current source. Items with no marker below
@@ -80,99 +93,19 @@ test coverage).
 
 ## What to pick up next — the short list
 
-Everything not on this list is either done or deliberately dropped. Do not re-derive the backlog
-from the tiers below, and do not re-derive it from any other document — this is the only one that
-carries work. Reasons and dropped-item rationale are in "Triage of the remaining open items"
-further down.
+> **Superseded by `BACKLOG.md`, 2026-09-10.** Kept because each entry carries its own evidence and
+> file:line citations, which `BACKLOG.md` summarises rather than repeats. Where the two disagree,
+> `BACKLOG.md` is right — it was re-verified against current source and this list was not.
+> Known corrections already folded in below: items 4, 6 and 7.
 
-**Transmitter safety and wrong-data defects — these outrank everything else on this list.**
-Items 00a to 00c came from the external `astra-audit.md` pass, and **all three are now fixed on the
-local branch `astra-fix`**, verified 2026-09-08. Their entries are kept below with the original
-reasoning intact, because that reasoning is what the fix has to keep satisfying. Items 00d to 00h
-are new — they are defects the fix branch itself introduced, and they replace 00a to 00c as the
-release gate. Full provenance and proof in "`astra-fix` branch verification" below.
+Everything not on this list is either done or deliberately dropped. Reasons and dropped-item
+rationale are in "Triage of the remaining open items" further down.
 
-00a. `FIXED on astra-fix, verified 2026-09-08`. **A pending direct-fire can key the transmitter
-   after Cancel** (`ASTRA-020`, filed P1, agreed).
-   `TxImageEditorPaneViewModel.Dispose()` sets `_disposed` and nothing else. It does not bump the
-   template-load generation, and it deliberately does not detach `DirectFireRequested`, so the guard
-   at the end of `LoadTemplateAsync` passes and the invoke at `:890` fires.
-   `TxControlsPaneViewModel.OnEditorDirectFire` never compares the editor it was handed to
-   `_currentEditor`, so it transmits and then reopens the editor the operator just closed.
-   **Why it is worse than the item claims:** with no unsaved edits, Cancel is a single click and is
-   not busy-gated — the code's own comment says "Cancel/Apply have no busy gate". The `cf72594`
-   direct-fire guard does not cover this path.
-
-00b. `FIXED on astra-fix, verified 2026-09-08 — but the fix introduced 00d and 00e`.
-   **Application exit does not wait for PTT-test cleanup** (`ASTRA-040`, filed P2 — **raise to P1**).
-   The test protocol is created locally in `RadioSessionService`, keyed, then unkeyed with bounded
-   retries. `RadioSessionService` implements neither `IDisposable` nor `IAsyncDisposable`, so the
-   host's bounded `DisposeAsync` owns nothing here. Closing Options only cancels the token.
-   **Why I raise it:** the outcome is a transmitter left keyed on air. An auditor searched `docs/`
-   and found **no recorded acceptance** anywhere, and this is a different failure class from the two
-   shutdown-drain items that ARE accepted (`ASTRA-036`, `ASTRA-037`) — those lose data, this
-   transmits. "Accepted in kind" does not transfer across that line.
-
-00c. `FIXED on astra-fix, verified 2026-09-08`. **rigctld response-stream desync reports a false
-   transmit state, permanently** (`ASTRA-003`, filed P2 — **raise to P1**). `SetBandwidthAsync` throws on an empty mode line
-   before reading the following passband line, leaving one unread line in an open socket.
-   **Why I raise it, and why the item understates itself:** the exception is classified
-   command-level, so `RadioController` keeps the connection and never rebuilds it. The auditor traced
-   the next poll on a leftover `2400`: frequency reads 2400, mode reads the real frequency line as a
-   mode token and yields `Unknown`, and the transmit query parses 2400 successfully — so
-   **`IsTransmitting` latches true forever**, and no exception is ever raised to trigger the only
-   recovery path. Silent wrong data the operator cannot diagnose.
-
-**New defects introduced by the `astra-fix` branch — these are the current release gate.**
-Each is argued in full, with its proof, in "`astra-fix` branch verification" below. None is caught
-by any test on the branch. Confidence is stated per item, and the two marked *proven* were settled
-by running code, not by reading it.
-
-00d. `FIXED 2026-09-08`. **Shutdown can leave the rig connection open** (*proven*; introduced by the `ASTRA-040` fix).
-   `RadioSessionService.DisposeAsync` (`:172-185`) caches a `TaskCompletionSource` that
-   `DrainPttTestAsync` can complete **faulted** (`:202`). The service is disposed twice: explicitly
-   at `Program.cs:470`, then again by the DI container inside `host.DisposeAsync()` at
-   `Program.cs:506`, because it is a container-owned singleton (`Program.cs:1118`). The second
-   dispose returns the cached faulted task and rethrows. **Proven:** the .NET DI container skips
-   every remaining disposal once one `IAsyncDisposable` faults. `RadioController` is a constructor
-   dependency of `RadioSessionService`, so it is created earlier and disposed later, which puts it
-   in the skipped set — the serial port or native Hamlib handle stays open, and the restart path at
-   `Program.cs:538-549` then races it.
-
-00e. `FIXED 2026-09-08`. **Exit can hang with no timeout** (*proven mechanism, narrow trigger*; same fix).
-   `DrainPttTestAsync` completes its `TaskCompletionSource` only inside the `try`, and
-   `Log.TestPttShutdownStarted` sits outside it at `:190`. **Proven:** `ILogger.Log` rethrows
-   provider exceptions as `AggregateException`. If that call throws, the fire-and-forget task at
-   `:184` swallows it, the completion source is never set, and `Program.cs:470` blocks the UI
-   thread on `GetAwaiter().GetResult()` with **no bound of its own** — unlike the host dispose at
-   `:507`, which does have one. The same hole exists in the catch arm at `:201-202`.
-
-00f. `FIXED 2026-09-08`. **One bad logbook row can block startup permanently** (*proven*; introduced by the `ASTRA-001`
-   fix). The ticks backfill calls `DateTimeOffset.Parse` inside a SQLite user function
-   (`SqliteLogbookRepository.cs:314-322`). **Proven** against the real class: one unparseable
-   `StartUtc` value makes the migration transaction fail, so `StartUtcTicks` is never added, so the
-   constructor (`:21`) throws identically on every subsequent launch. `MainViewModel` →
-   `LogbookPaneViewModel` → `ILogbookSessionService` → `ILogbookRepository` (`Program.cs:1033`)
-   resolves at startup, so the app does not start. On `master` the app started and only logbook
-   queries failed.
-
-00g. `FIXED 2026-09-08`. **A restored Gallery image can never be re-imported** (high confidence; introduced by the
-   `ASTRA-041` fix). `DeleteAsync` writes a deletion tombstone on **every** delete, not only a
-   failed one (`SqliteReceiveHistoryStore.cs:340`), and nothing anywhere deletes from that table.
-   Both `ReconcileWithDiskAsync` (`:540`) and `RecordAsync` (`:158`) then refuse that canonical path
-   forever. Restoring a deleted PNG from backup or the OS trash — the exact recovery reconcile
-   exists for — silently does nothing. Scope limit worth stating: new captures are unaffected,
-   because filenames carry a GUID token (`ReceiveHistoryRecorder.cs:610`).
-
-00h. `FIXED 2026-09-08`. **A note edit can be dropped silently, permanently, per entry** (high confidence; introduced by
-   the `ASTRA-006` fix). `PersistNoteAfterAsync` leaves `await previous` and both
-   `Dispatcher.UIThread.Post` calls outside its try/catch (`RxHistoryPaneViewModel.cs:1437-1441`,
-   `:1471`). A faulted task therefore stays in `_noteWrites[entryId]`, because the cleanup at
-   `:1434` only runs after `await write` succeeds, and every later edit for that entry rethrows at
-   its own `await previous`. The caller is fire-and-forget, so nothing observes it. **The argument
-   is the codebase's own:** the sibling `PersistFlaggedAsync` (`:1491-1523`) wraps its entire body
-   for exactly this reason, and its comment records an earlier review round finding and fixing this
-   same hazard.
+**Nothing on this list is a release gate.** The transmitter-safety and wrong-data items that used to
+head it (00a to 00c from `astra-audit.md`, and 00d to 00h that their own fix introduced) are all
+fixed and merged to `master`. Their reasoning is preserved — 00a to 00c under "Closed — kept for the
+reasoning, not for the backlog" at the end of this section, and 00d to 00h in full under "The five
+new defects" and "Fixing 00d-00h" further down. **Do not work on any 00-series item.**
 
 **Decode-path work — do the probe first, it may close the biggest item for free:**
 
@@ -194,18 +127,7 @@ by running code, not by reading it.
    end-of-line off-by-one. Full review cadence — this is decode-path state. Detail:
    `docs/known-decode-defects.md` §4.
 
-0c. `DONE on astra-fix (ASTRA-030), verified 2026-09-08 — audited clean, no new bug`.
-   **Freeze the `m_sint1` sync-bypass tracker during VIS-bit decode.** `AnalogFmSstvDecoder.cs:4563`
-   and the sibling threshold block at `:4679-4694` are gated only on `_syncBypass1PrimaryHeld`, which
-   drops on the routine d12 dips that the 1100/1300 Hz VIS data-bit tones cause. Legacy freezes it:
-   `m_sint1.SyncStart()` is case-0-only (`sstv.cpp:1900`), `SyncMax` is case-1-only (`:1960`), and
-   cases 2/9/3 hold no `m_sint1` code at all. `m_sint2` and `m_sint3` were already fixed by S12
-   (`:4611`, `:4642`), so this is the same two-gate shape, already shipped once and reviewed. If it
-   fires, the result is a bypass mode-commit during VIS decode — a garbage picture. Probability is
-   unmeasured; a noise sweep that finds nothing would not prove safety and costs about as much as the
-   gate, so fix rather than probe. **One real design question for plan-review:** must
-   `_syncBypass1PrimaryHeld` reset on re-entering Search, matching legacy's `m_SyncMode = 0` fallback
-   at `sstv.cpp:1971`/`:1983`?
+There is no 0c. It is closed — see the end of this section.
 
 **Then the production-readiness work, in this order:**
 
@@ -221,19 +143,27 @@ by running code, not by reading it.
    channel-order coverage as zero, not as 11.
 3. **WAL mode on `history.db`.** About 2 lines at connection open, in both
    `SqliteLogbookRepository` and `SqliteReceiveHistoryStore`. Latency, not crashes.
-4. **Hoist the command out of the loop** at `src/ScanlineStudio.Core.Logbook/SqliteReceiveHistoryStore.cs:490`
-   and `:851`. Only those two sites. The other 19 `CreateCommand()` calls are fine.
+4. **Hoist the command out of the loop** in `src/ScanlineStudio.Core.Logbook/SqliteReceiveHistoryStore.cs`
+   — `var insert = connection.CreateCommand()` inside `ReconcileWithDiskAsync`'s insert loop (`:458`)
+   and `var updateCommand = connection.CreateCommand()` inside the `ReceivedAtUtc` backfill loop
+   (`:897`). Only those two sites. The other 11 `CreateCommand()` calls are fine. **Line numbers
+   re-verified 2026-09-10** — the old `:490`/`:851` references were stale.
 5. **Assert every `{loc:Translate X}` key resolves.** Extend
-   `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`. A typo'd key ships as a broken
+   `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`, which today holds one test and
+   only checks the reverse direction (no hardcoded literals). A typo'd key ships as a broken
    label today.
 6. **Dispose-race test for `MiniAudioDeviceMuteQuery`.** Copy the shape of its sibling
-   `MiniAudioDeviceEnumerator`'s existing test.
-7. **Convert 5 silent-pass tests to `[SkipOnWindowsFact]`:** `ApplyPendingRelocationsTests.cs:219`,
-   `AppLocationOverridesTests.cs:47`, `AppLocationsServiceTests.cs:99` and `:192`,
-   `JsonSettingsStoreTests.cs:185`. Host.Tests needs its own copy of the attribute.
-8. `DONE on astra-fix (ASTRA-034), verified 2026-09-08`. **QRZ HTTP status check plus one non-OK
-   fixture.** Status is now classified before any XML or form parsing, and responses are disposed.
-   Items 3 (WAL) and 7 (`SkipOnWindowsFact`) were checked on the branch and are **not** done.
+   `MiniAudioDeviceEnumeratorTests.DisposeAsync_RacingConcurrentRefreshAsync_...`.
+   `MiniAudioDeviceMuteQueryTests.cs` exists but holds one `[RequiresPipeWireFact]` mute-state test
+   and no dispose case.
+7. **Convert the 4 remaining silent-pass tests to `[SkipOnWindowsFact]`.** **Re-verified 2026-09-10 —
+   partly done, and the old file paths were wrong.** `JsonSettingsStoreTests.cs` is converted (two
+   sites, `:230` and `:281`), and `ScanlineStudio.Settings.Tests` already carries its own copy of the
+   attribute. Still bare `if (OperatingSystem.IsWindows()) return;`:
+   `Settings.Tests/AppLocationOverridesTests.cs:47`,
+   `Settings.Tests/AppLocationsServiceTests.cs:148` and `:241`, and
+   `Host.Tests/ApplyPendingRelocationsTests.cs:219`. Only **Host.Tests** still needs its own copy of
+   the attribute.
 
 **Decide before writing any code:**
 
@@ -248,11 +178,64 @@ by running code, not by reading it.
 `DataContextChanged` re-entry guard first), then fold the 35 `logger is not null` guards into a
 null-object logger in that same file.
 
+### Closed — kept for the reasoning, not for the backlog
+
+Everything here is fixed and merged to `master`. **Nobody is meant to work on these.** The reasoning
+survives because it is what each fix has to keep satisfying, not because the item is open.
+
+**Old item 8 — QRZ HTTP status check** (`ASTRA-034`, verified 2026-09-08). Status is classified
+before any XML or form parsing, and responses are disposed.
+
+**Old item 0c — freeze the `m_sint1` sync-bypass tracker during VIS-bit decode** (`ASTRA-030`,
+commit `b30c760`, audited clean, no new bug). Legacy freezes it: `m_sint1.SyncStart()` is case-0-only
+(`sstv.cpp:1900`), `SyncMax` is case-1-only (`:1960`), and cases 2/9/3 hold no `m_sint1` code at all.
+The port now gates on `_visLockStateMachine` state the same way `m_sint2`/`m_sint3` already did after
+S12. The `_syncBypass1PrimaryHeld` field the old entry named **no longer exists** — that same commit
+deleted it. One stale comment still refers to it, logged under "Residual gaps in the fixes" below.
+
+**Old item 00a — a pending direct-fire can key the transmitter after Cancel** (`ASTRA-020`, filed P1,
+agreed). `TxImageEditorPaneViewModel.Dispose()` set `_disposed` and nothing else. It did not bump the
+template-load generation, and it deliberately does not detach `DirectFireRequested`, so the guard at
+the end of `LoadTemplateAsync` passed and the invoke at `:890` fired.
+`TxControlsPaneViewModel.OnEditorDirectFire` never compared the editor it was handed to
+`_currentEditor`, so it transmitted and then reopened the editor the operator just closed.
+**Why it was worse than the item claimed:** with no unsaved edits, Cancel is a single click and is
+not busy-gated — the code's own comment says "Cancel/Apply have no busy gate". The `cf72594`
+direct-fire guard did not cover this path.
+
+**Old item 00b — application exit did not wait for PTT-test cleanup** (`ASTRA-040`, filed P2, raised
+to P1). The test protocol was created locally in `RadioSessionService`, keyed, then unkeyed with
+bounded retries. `RadioSessionService` implemented neither `IDisposable` nor `IAsyncDisposable`, so
+the host's bounded `DisposeAsync` owned nothing there. Closing Options only cancelled the token.
+**Why it was raised:** the outcome is a transmitter left keyed on air. An auditor searched `docs/`
+and found **no recorded acceptance** anywhere, and this is a different failure class from the two
+shutdown-drain items that ARE accepted (`ASTRA-036`, `ASTRA-037`) — those lose data, this transmits.
+"Accepted in kind" does not transfer across that line. **This fix is what introduced 00d and 00e.**
+
+**Old item 00c — rigctld response-stream desync reported a false transmit state, permanently**
+(`ASTRA-003`, filed P2, raised to P1). `SetBandwidthAsync` threw on an empty mode line before reading
+the following passband line, leaving one unread line in an open socket.
+**Why it was raised, and why the item understated itself:** the exception is classified
+command-level, so `RadioController` kept the connection and never rebuilt it. The auditor traced the
+next poll on a leftover `2400`: frequency read 2400, mode read the real frequency line as a mode
+token and yielded `Unknown`, and the transmit query parsed 2400 successfully — so **`IsTransmitting`
+latched true forever**, and no exception was ever raised to trigger the only recovery path. Silent
+wrong data the operator could not diagnose.
+
+**Old items 00d to 00h** — the five defects the `astra-fix` branch introduced. Full text, proof and
+fix detail in "`astra-fix` branch verification" and "Fixing 00d-00h" below.
+
 ---
 
-Per-subsystem go/no-go, from each audit's own closing verdict:
+Per-subsystem go/no-go, from each audit's own closing verdict **on 2026-08-30**.
 
-| Subsystem | Verdict |
+**Historical — do not read this table as current state.** Every blocker it names is now done: all 13
+Tier 0 items, the QRZ plaintext password (T0-8), the missing SQLite indexes (T0-9), the RX-path LOH
+churn (T0-10), the undisposed bitmaps (T0-11), the UI-thread-blocking recompute (T0-12), the settings
+race (T0-2), and the radio PTT-safety gap (T0-1, sharpened later by `ASTRA-040`). The table is kept
+so the original per-subsystem reasoning is not lost.
+
+| Subsystem | Verdict (2026-08-30) |
 |---|---|
 | Infra/cross-cutting (`Host`, `Settings`, `Abstractions`, `Localization`, `Plugins`) | **No** — H1/H2/H4 below |
 | `Application` | **No** — settings race (Theme 1) |
@@ -275,8 +258,10 @@ in this report:**
 
 ## `astra-fix` branch verification — 2026-09-08
 
-Independent verification of the local branch `astra-fix`, which implements fixes for all 39 active
-findings in `astra-audit.md`. Branch shape: 7 commits, 83 files, +4,243 / -443 lines, never pushed.
+Independent verification of the branch `astra-fix`, which implements fixes for all 39 active
+findings in `astra-audit.md`. Branch shape: 7 commits, 83 files, +4,243 / -443 lines.
+**Historical record.** The branch merged to `master` fast-forward on 2026-09-09, after the five
+defects found below were fixed. Read this section for the reasoning, not for open work.
 
 **Method.** Full solution build. Every test project run to completion. Four read-only
 `yoniq-auditor` code reviews over the branch diff, split by subsystem (DSP, radio/session/native,
@@ -286,9 +271,9 @@ that source reading alone cannot settle. The probes matter: three of the reviews
 claims rested on assumed runtime behaviour, and this project has a recorded history of
 self-consistent-but-wrong conclusions, so an assumption was not accepted as proof.
 
-**Verdict. The fixes are real and the audit's evidence reproduces exactly — but the branch
-introduces five new defects, none of which its own tests catch.** Shipping status stays *not a go*,
-for different reasons than before.
+**Verdict, as reached on 2026-09-08. The fixes are real and the audit's evidence reproduces exactly
+— but the branch introduces five new defects, none of which its own tests catch.** Shipping status
+stayed *not a go* at that point. All five were then fixed — see "Fixing 00d-00h" below.
 
 ### What reproduced
 
@@ -314,9 +299,10 @@ factory nor `RegisterSstvServices`. `Assert.IsType` demands an exact type match,
 were failing before this branch existed. The correction is honest, not a cover for a behaviour
 change on the branch.
 
-### The five new defects
+### The five new defects — all fixed 2026-09-08, all merged
 
-Ordered by cost of being wrong. Each states what it is, the proof, and why it is not a nit.
+Ordered by cost of being wrong. Each states what it is, the proof, and why it is not a nit. **None of
+these is open.** The fixes and their mutation gates are in "Fixing 00d-00h" below.
 
 #### 00d. Shutdown can leave the rig connection open — *proven*
 
@@ -1182,12 +1168,24 @@ green.
 
 ## Tier 2 — medium priority, batch with adjacent work
 
-> **Re-verified open 2026-09-07** (the rest of this tier was not individually re-checked):
-> `SqliteCommand` is still never disposed — 21 `var command = connection.CreateCommand()` sites in
-> `Core.Logbook`, zero `using`. `history.db` still has no WAL mode and no busy timeout.
-> `TxControlsPaneViewModel.Dispose()` cancels its CTS but never disposes it, and unsubscribes no
-> editor handler. `IHost` is still built and never started — no `IHostedService`, and no
-> `Run`/`StartAsync` in `Program.cs`.
+> **Re-verified open 2026-09-07, counts corrected 2026-09-10** (the rest of this tier was not
+> individually re-checked): `SqliteCommand` is still mostly undisposed — now **28**
+> `connection.CreateCommand()` sites across the three `Core.Logbook` SQLite files, of which only
+> **5** use `using`. `history.db` still has no WAL mode and no busy timeout.
+> `TxControlsPaneViewModel.Dispose()` (`:2175-2182`) still cancels its CTS without disposing it, and
+> unsubscribes no editor handler. `IHost` is still built and never started — no `IHostedService`, and
+> no `Run`/`StartAsync` in `Program.cs`.
+>
+> **Two bullets below are now DONE — verified 2026-09-10, do not work on them:**
+> the QRZ HTTP status check (`EnsureSuccessStatusCode` at `QrzCallsignLookup.cs:173`/`:188` and
+> `QrzLogbookUploader.cs:53`, closed by `ASTRA-034`), and `TemplateStore.SaveAsync`'s non-atomic
+> write (`TemplateStore.cs:109-114` and `:248-274` now use a GUID temp file plus `File.Move`).
+> The `ExportAdifFileAsync` half of that same bullet was not re-checked.
+>
+> **One contradiction, unresolved:** this banner lists `TxControlsPaneViewModel.Dispose()` as open,
+> while "Triage of the remaining open items" below drops it as a false positive on the grounds that
+> `_transmitCts` is disposed elsewhere. The source above shows only `Cancel()`. Settle it before
+> acting on either entry.
 
 - **Core.Sstv:** per-line array/delegate allocations in scanline decoders (`YCbCrSequentialScanlineDecoder.cs:16-18`, `YCbCrLinePairedScanlineDecoder.cs:18-21`); `PixelSampleReader` delegate indirection on the hottest read path; `WaterfallSource.BuildFrame` allocates 2 scratch arrays/frame; event fan-out allocates twice per raise (`AnalogFmSstvDecoder.cs:2211`, `RestartableSstvDecoder.cs:763,1730`); `SstvModeRegistry` uses 43-branch if-chains instead of tables (`:958-1004`); 4 near-identical scanline decoders share copy-pasted index-walk math (extract *only* the walker, not the channel logic); channel dispatch by magic string instead of enum; `AnalogFmSstvDecoder.cs` is 7,945 lines at ~62% review-history comments — extract the narrative to `docs/`, keep only the invariant statements inline (safe, additive, do this one); `WaterfallSource` has an unsynchronized `_accumulatedCount` cross-thread read/write and no `_disposed` guard on the audio thread.
 - **Application:** `ConfigurationPresetService` has 5 near-identical try/catch push blocks (collapses via Tier-0 `UpdateAsync` work); `OptionsSettingsService._loadedSettings` is now dead state; `OptionsSnapshot` mapping triplicated across `Defaults`/`LoadAsync`/`SaveAsync`; `TemplateStore.SaveAsync`/`ExportAdifFileAsync` write non-atomically (temp-file+rename fix, cheap); `ImportAdifFileAsync` does N individual transactions with no partial-failure reporting; fire-and-forget `Task.Run` work (audio auto-save encode, RxAudioAutoSaver completion) isn't tracked or drained on `DisposeAsync`.
@@ -1348,9 +1346,11 @@ and triaged. Three survived and are in the pick-up list at the top as items 0a, 
   and cannot carry a channel-dependent tilt. Comparing a grey decode against a colour source produces
   exactly the shape that was recorded, invariant across demodulators. Retraction written into
   `docs/known-decode-defects.md` §2 with its falsifier.
-- **PLL collapse at wide output cutoffs.** Unreachable in shipped configuration. The one thing that
-  had to survive is a constraint, not a task: a future output-cutoff control must range-limit per
-  demodulator. That is recorded in `docs/known-decode-defects.md` §3.
+- ~~**PLL collapse at wide output cutoffs.**~~ **DROP WITHDRAWN — see item 1 of the RP-1 corrections
+  below, and `BACKLOG.md` item D3.** This entry's "unreachable in shipped configuration" premise is
+  false: `OptionsWindowView.axaml:986` exposes `PllOutputCutoffHz` up to 3900, and
+  `OptionsWindowViewModel.cs:3413` applies it live. The surviving constraint — an output-cutoff
+  control must range-limit per demodulator — is therefore a task, not just a note.
 - **VIS header fixed origin, 0-185 ms band** (`decoder_quality_improvement.md` §15 item 4). Reachable,
   but the surviving residue after the anchor fold is an integer vertical shift of 1 to 3 lines out of
   128 to 256. No operator notices that. The only visually real part is the unfolded AVT sub-line case,

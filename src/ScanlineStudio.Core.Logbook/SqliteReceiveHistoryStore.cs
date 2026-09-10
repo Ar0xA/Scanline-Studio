@@ -51,7 +51,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId FROM ReceiveHistory WHERE 1 = 1";
 
         if (filter.ModeId is not null)
@@ -151,7 +151,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = """
             INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId)
             SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId
@@ -289,7 +289,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "UPDATE ReceiveHistory SET DecodedCallsign = $decodedCallsign, DecodedCallsignSource = $decodedCallsignSource, DecodedNrRst = $decodedNrRst, DecodedCwId = $decodedCwId WHERE Id = $id";
         command.Parameters.AddWithValue("$decodedCallsign", (object?)callsign ?? DBNull.Value);
         command.Parameters.AddWithValue("$decodedCallsignSource", (object?)callsignSource ?? DBNull.Value);
@@ -319,7 +319,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = "UPDATE ReceiveHistory SET LinkedQsoId = NULL WHERE LinkedQsoId = $qsoId";
         command.Parameters.AddWithValue("$qsoId", qsoId);
 
@@ -355,7 +355,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using (var connection = new SqliteConnection(_connectionString))
         {
             await connection.OpenAsync(ct).ConfigureAwait(false);
-            var query = connection.CreateCommand();
+            using var query = connection.CreateCommand();
             query.CommandText = "SELECT FilePath FROM ReceiveHistory UNION SELECT FilePath FROM ReceiveHistoryDeletion";
             await using var reader = await query.ExecuteReaderAsync(ct).ConfigureAwait(false);
             while (await reader.ReadAsync(ct).ConfigureAwait(false))
@@ -442,10 +442,47 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         {
             await connection.OpenAsync(ct).ConfigureAwait(false);
             await using var transaction = connection.BeginTransaction();
+
+            // One command and one parameter set for the whole loop; only the VALUES change per
+            // iteration. SQLite reuses the prepared statement, so this is also fewer prepares.
+            using var insert = connection.CreateCommand();
+            insert.Transaction = transaction;
+            // Auditor-caught TOCTOU: a frame ReceiveHistoryRecorder is actively saving writes its
+            // PNG (SaveSnapshotAsync) BEFORE its own RecordAsync call inserts the real row -- if
+            // the Gallery tab is selected inside that window, the SELECT above can see the file
+            // with no row yet, and a plain INSERT here would then race RecordAsync's own insert
+            // into a genuine duplicate row for the same FilePath (no UNIQUE constraint on that
+            // column to reject it). WHERE NOT EXISTS makes this insert a no-op instead, checked
+            // against the live table at INSERT time, not just the SELECT snapshot taken above.
+            // Untested defense-in-depth, honestly: no seam exists in this class to inject a real
+            // row landing between the SELECT above and this INSERT (would need a mid-transaction
+            // hook), so no test exercises this WHERE clause specifically -- the earlier, simpler
+            // "row already existed before reconcile ever ran" case (SqliteReceiveHistoryStoreTests'
+            // own ReconcileWithDiskAsync_FileAlreadyInDatabase_IsNotDuplicated) is covered by the
+            // SELECT-snapshot dedup above this loop instead, and is NOT the same code path as this
+            // guard. An earlier version of this test suite had a test CLAIMING to cover this race
+            // that didn't (auditor-caught) -- removed rather than left as false confidence.
+            insert.CommandText = """
+                INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, ReceivedAtUtc)
+                SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $receivedAtUtc
+                WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistory WHERE FilePath = $filePath)
+                  AND NOT EXISTS (SELECT 1 FROM ReceiveHistoryDeletion WHERE FilePath = $filePath)
+                """;
+            var idParameter = insert.Parameters.Add("$id", SqliteType.Text);
+            var receivedAtParameter = insert.Parameters.Add("$receivedAt", SqliteType.Text);
+            var modeIdParameter = insert.Parameters.Add("$modeId", SqliteType.Text);
+            var filePathParameter = insert.Parameters.Add("$filePath", SqliteType.Text);
+            insert.Parameters.AddWithValue("$linkedQsoId", DBNull.Value);
+            var decodeStateParameter = insert.Parameters.Add("$decodeState", SqliteType.Text);
+            insert.Parameters.AddWithValue("$note", DBNull.Value);
+            insert.Parameters.AddWithValue("$isFlagged", 0);
+            // T1-16 (production_audit.md): see ReceivedAtUtc's own doc comment above EnsureSchema.
+            var receivedAtUtcParameter = insert.Parameters.Add("$receivedAtUtc", SqliteType.Text);
+
             foreach (var entry in toImport)
             {
                 // Re-checked here, not just during the scan above: a successful delete no longer
-                // leaves a tombstone, so the guard in the INSERT below is not enough on its own to
+                // leaves a tombstone, so the guard in the INSERT above is not enough on its own to
                 // stop a candidate the operator removed while this pass was validating PNGs (a full
                 // decode per file). This narrows the window rather than closing it -- a delete
                 // landing between this check and the insert still leaves one thumbnail-less row,
@@ -455,39 +492,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                     continue;
                 }
 
-                var insert = connection.CreateCommand();
-                insert.Transaction = transaction;
-                // Auditor-caught TOCTOU: a frame ReceiveHistoryRecorder is actively saving writes its
-                // PNG (SaveSnapshotAsync) BEFORE its own RecordAsync call inserts the real row -- if
-                // the Gallery tab is selected inside that window, the SELECT above can see the file
-                // with no row yet, and a plain INSERT here would then race RecordAsync's own insert
-                // into a genuine duplicate row for the same FilePath (no UNIQUE constraint on that
-                // column to reject it). WHERE NOT EXISTS makes this insert a no-op instead, checked
-                // against the live table at INSERT time, not just the SELECT snapshot taken above.
-                // Untested defense-in-depth, honestly: no seam exists in this class to inject a real
-                // row landing between the SELECT above and this INSERT (would need a mid-transaction
-                // hook), so no test exercises this WHERE clause specifically -- the earlier, simpler
-                // "row already existed before reconcile ever ran" case (SqliteReceiveHistoryStoreTests'
-                // own ReconcileWithDiskAsync_FileAlreadyInDatabase_IsNotDuplicated) is covered by the
-                // SELECT-snapshot dedup above this loop instead, and is NOT the same code path as this
-                // guard. An earlier version of this test suite had a test CLAIMING to cover this race
-                // that didn't (auditor-caught) -- removed rather than left as false confidence.
-                insert.CommandText = """
-                    INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, ReceivedAtUtc)
-                    SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $receivedAtUtc
-                    WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistory WHERE FilePath = $filePath)
-                      AND NOT EXISTS (SELECT 1 FROM ReceiveHistoryDeletion WHERE FilePath = $filePath)
-                    """;
-                insert.Parameters.AddWithValue("$id", entry.Id);
-                insert.Parameters.AddWithValue("$receivedAt", entry.ReceivedAt.ToString("O"));
-                insert.Parameters.AddWithValue("$modeId", entry.ModeId);
-                insert.Parameters.AddWithValue("$filePath", entry.FilePath);
-                insert.Parameters.AddWithValue("$linkedQsoId", DBNull.Value);
-                insert.Parameters.AddWithValue("$decodeState", entry.DecodeState.ToString());
-                insert.Parameters.AddWithValue("$note", DBNull.Value);
-                insert.Parameters.AddWithValue("$isFlagged", 0);
-                // T1-16 (production_audit.md): see ReceivedAtUtc's own doc comment above EnsureSchema.
-                insert.Parameters.AddWithValue("$receivedAtUtc", entry.ReceivedAt.UtcDateTime.ToString("O"));
+                idParameter.Value = entry.Id;
+                receivedAtParameter.Value = entry.ReceivedAt.ToString("O");
+                modeIdParameter.Value = entry.ModeId;
+                filePathParameter.Value = entry.FilePath;
+                decodeStateParameter.Value = entry.DecodeState.ToString();
+                receivedAtUtcParameter.Value = entry.ReceivedAt.UtcDateTime.ToString("O");
                 importedCount += await insert.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
             }
 
@@ -535,7 +545,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.CommandText = commandText;
         command.Parameters.AddWithValue(valueParameterName, valueParameter);
         command.Parameters.AddWithValue("$id", entryId);
@@ -655,9 +665,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     {
         using var connection = new SqliteConnection(_connectionString);
         connection.Open();
+
+        // Must sit above BeginTransaction -- SQLite refuses to enter WAL from inside a transaction.
+        SqliteWriteAheadLogging.TryEnable(connection, _logger);
+
         using var transaction = connection.BeginTransaction(deferred: false);
 
-        var createCommand = connection.CreateCommand();
+        using var createCommand = connection.CreateCommand();
         createCommand.Transaction = transaction;
         createCommand.CommandText = """
             CREATE TABLE IF NOT EXISTS ReceiveHistory (
@@ -682,7 +696,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         createCommand.ExecuteNonQuery();
 
         var existingColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var probeCommand = connection.CreateCommand();
+        using var probeCommand = connection.CreateCommand();
         probeCommand.Transaction = transaction;
         probeCommand.CommandText = "PRAGMA table_info(ReceiveHistory)";
         using (var reader = probeCommand.ExecuteReader())
@@ -868,7 +882,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     private void BackfillReceivedAtUtc(SqliteConnection connection, SqliteTransaction transaction)
     {
         var rows = new List<(string Id, string ReceivedAt)>();
-        var selectCommand = connection.CreateCommand();
+        using var selectCommand = connection.CreateCommand();
         selectCommand.Transaction = transaction;
         selectCommand.CommandText = "SELECT Id, ReceivedAt FROM ReceiveHistory WHERE ReceivedAtUtc IS NULL";
         using (var reader = selectCommand.ExecuteReader())
@@ -880,6 +894,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 rows.Add((reader.GetString(0), reader.GetString(1)));
             }
         }
+
+        // One command and one parameter set for the whole loop; only the VALUES change per row.
+        using var updateCommand = connection.CreateCommand();
+        updateCommand.Transaction = transaction;
+        updateCommand.CommandText = "UPDATE ReceiveHistory SET ReceivedAtUtc = $utc WHERE Id = $id";
+        var utcParameter = updateCommand.Parameters.Add("$utc", SqliteType.Text);
+        var idParameter = updateCommand.Parameters.Add("$id", SqliteType.Text);
 
         foreach (var (id, receivedAt) in rows)
         {
@@ -894,18 +915,15 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 continue;
             }
 
-            var updateCommand = connection.CreateCommand();
-            updateCommand.Transaction = transaction;
-            updateCommand.CommandText = "UPDATE ReceiveHistory SET ReceivedAtUtc = $utc WHERE Id = $id";
-            updateCommand.Parameters.AddWithValue("$utc", utcText);
-            updateCommand.Parameters.AddWithValue("$id", id);
+            utcParameter.Value = utcText;
+            idParameter.Value = id;
             updateCommand.ExecuteNonQuery();
         }
     }
 
     private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string commandText)
     {
-        var command = connection.CreateCommand();
+        using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = commandText;
         command.ExecuteNonQuery();
