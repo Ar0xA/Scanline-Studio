@@ -142,6 +142,101 @@ bare `Task.Delay(20)` calls. That is assumed ordering, not enforced ordering. Th
 regression gate for a physically-keyed-transmitter-on-disposed-handle bug, and it is a real CI flake
 risk. Apply this project's own "deterministic gates, not shared race" rule.
 
+### W1-W8. Windows-only test coverage — nothing here has ever been executed by a test
+
+**Filed 2026-09-10**, after the user confirmed Windows is a supported platform and macOS is not.
+Everything below is a code path that exists only on Windows, so the Linux suite cannot reach it and
+`dotnet test` passing on a Windows machine does not reach it either — the audio tests skip by design
+and the rest have no Windows-specific test at all.
+
+**Do W1's classification step first.** It is cheap and it tells you how much of W2 closes for free.
+
+#### W1. Classify the 43 `[RequiresPipeWireFact]` tests — do this first
+
+`RequiresPipeWireFactAttribute` returns false unconditionally on non-Linux, so **all 43 skip on
+Windows, permanently, by design.** They are written against `pactl`/`paplay`/`ffmpeg`.
+
+But most of them do not need a virtual cable — they need *a* device. Dispose races, hot-unplug, the
+spike gate, enumerator refresh, session lifetimes. Only the ones asserting on captured **content**
+need a loopback. Split the gate into "needs any real device" and "needs loopback", and a decent share
+of the 43 should run on Windows against the default device with no new native code.
+
+Counts today: `MiniAudioEngineTests` 16, `MiniAudioCaptureSessionTests` 8, `MiniAudioPlaybackSessionTests`
+6, `MiniAudioDeviceEnumeratorTests` 4, `HotplugDisposeTests` 2, `MiniAudioSpikeGateTests` 2,
+`MiniAudioDeviceMuteQueryTests` 2, `MiniAudioEngineSstvRoundTripTests` 1.
+
+#### W2. A Windows audio round-trip — use WASAPI loopback, not VB-CABLE
+
+The Linux round trip is not a physical cable either: it captures a null-sink's `.monitor`. **WASAPI
+loopback is the direct analogue**, so it gives equivalent coverage rather than a weaker substitute.
+
+miniaudio already supports it — `ma_device_type_loopback`, documented "WASAPI only", with
+`ma_context_is_loopback_supported()` to probe. It is in the vendored `miniaudio.h` at the pinned tag.
+**The shim does not expose it**: `scanline_audio.c` only ever builds `ma_device_type_capture` and
+`ma_device_type_playback`.
+
+Work: a loopback device type through the shim's own ABI, a managed entry point to request it, and a
+`RequiresWasapiLoopbackFact` gate. **Native interop on the audio path, so full review cadence.**
+
+VB-CABLE was considered and is the fallback, not the plan. Its one real advantage is presenting a
+genuine capture endpoint rather than a special mode. Against that: it needs a manual driver install
+on every machine, it cannot be created and torn down per test the way `pactl load-module` is, and its
+licence terms need checking before the project relies on it. Loopback needs none of that.
+
+#### W3. WASAPI device-id conversion — Windows-only code, never executed
+
+`scanline_audio.c:171` and `:226` convert between WASAPI's `wchar_t[64]` device id and this project's
+own UTF-8 ABI (`WideCharToMultiByte`/`MultiByteToWideChar`). Every other backend passes strings
+through. This is real conversion logic with buffer-size arithmetic and no test has ever run it.
+A non-ASCII device name is the obvious case to cover.
+
+#### W4. WASAPI mute query — Windows-only, never executed
+
+`scanline_wasapi_with_endpoint_volume` and `scanline_wasapi_get_mute_cb` (`:1144`, `:1186`) back
+`IsDeviceMutedAsync` on Windows through COM's `IAudioEndpointVolume`. The Linux equivalent has a real
+test against `pactl set-sink-mute` as an independent oracle. Windows has none. Unlike the Linux path,
+this one does **not** take `g_context_mutex` — see the TT1-15 note in "Verified done", because the
+reasoning there does not transfer to this branch.
+
+#### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
+
+`OmniRigComClient` is `[SupportedOSPlatform("windows")]` and `OmniRigProtocolFactory` refuses to
+construct elsewhere. Existing tests are a fake, a reflection check on the CLSID/IID/`[DispId]`
+attributes (TT0-4), and mapper unit tests. **No test has ever instantiated the real COM object.**
+Compounding it, `production_audit.md`'s Tier 2 notes OmniRig has zero logging anywhere — the one
+backend nobody can test locally is also the one that says least when it fails.
+
+#### W6. `JsonSettingsStore`'s Windows branch — an untested security assumption
+
+`:167` takes plain `File.Create` on Windows instead of the Unix owner-only `UnixCreateMode`, and
+`TrySetOwnerOnlyPermissions` returns immediately (`:196`). That is deliberate and documented: Windows
+per-user profile ACLs are already private. **But nobody has verified it.** `settings.json` can hold a
+real QRZ.com password in plaintext, so "the directory is already private" deserves one test that
+actually reads the ACL on a real Windows box, not a comment.
+
+#### W7. Path and device-name behaviour that differs by platform
+
+- `DirectoryPathComparer:20` uses `OrdinalIgnoreCase` on Windows and macOS, `Ordinal` on Linux. The
+  case-insensitive branch has never run against a genuinely case-insensitive filesystem.
+- `SerialPortEnumerator` passes through `SerialPort.GetPortNames()`, which yields `COM*` on Windows
+  and `/dev/tty*` on Linux — different shapes, one code path.
+- `HamlibLibraryLocator:75` has a Windows-only DLL discovery branch.
+- `ConfigurationPresetStore:467-476` rejects `CON`/`PRN`/`AUX`/`NUL`. That logic is deliberately
+  cross-platform so files stay portable, so it is testable on Linux — **check whether it already is**
+  before counting it as a gap.
+
+#### W8. The four tests that skip *on* Windows have no Windows counterpart
+
+TT1-18's four sites assert Unix permission behaviour and return early on Windows. Converting them to
+`[SkipOnWindowsFact]` makes the skip honest but still leaves the Windows behaviour unasserted. Decide
+per site whether a Windows equivalent is worth writing or whether the skip is the whole answer.
+
+#### Not on this list
+
+`MainWindow.axaml.cs:417`'s Windows-only geometry branch. It was confirmed on real hardware across
+four rounds and is recorded in auto-memory (`project_windows_maximize_taskbar_bug`). Real-window
+geometry is not something a headless test settles — leave it to the manual checklist.
+
 ### PA-Two-more. After PA-5 or TT1-18 lands
 
 1. Scoped `MainWindow.axaml.cs` tests. Target T1-12's `DataContextChanged` re-entry guard plus the
@@ -299,6 +394,12 @@ What remains, and it is narrow: the user's report was "tested Windows, done buil
 does not by itself say whether the `spec/13-testing.md` **audio-device round-trip** was among what
 was exercised. Confirm that one item before treating the Windows audio path as validated. Everything
 else on this entry is closed.
+
+**Running the suite on Windows does not close this.** `RequiresPipeWireFactAttribute` skips
+unconditionally on non-Linux, so all 43 real-audio tests report a skip there. A green `dotnet test`
+on Windows is genuine evidence for the other ~2,600 tests and no evidence at all about WASAPI.
+Closing H2 needs a manual transmit-and-receive through a real Windows audio device, or the automated
+coverage filed as **W1-W8** in section 2.
 
 **Do not assume the PulseAudio-specific findings transfer to WASAPI** regardless — that caution was
 about the findings, not about who runs the test.
