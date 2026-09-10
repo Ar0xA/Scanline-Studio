@@ -534,6 +534,10 @@ measured negative, not by neglect.
   2026-09-07 by user decision**. Decode **defects** stay open — that is D1 to D3 above. This closure
   also covers `~/.claude/plans/audio-domain-click-detection.md` (draft v2, awaiting a review that the
   closure cancelled) and `~/.claude/plans/auto-notch.md` (design only, nothing built).
+  **The 2026-09-10 rule change does not reopen this.** `CLAUDE.md` §0a now allows a proven
+  improvement to beat legacy, and that makes candidates like the green cast's Fault A *legitimate*.
+  It does not make them *scheduled*. The rule says what is allowed. This bullet says what is next,
+  and it is still a user decision to change it.
 - **Real-HF-noise sweep.** Stopped unfinished by the same closure. The harness is committed and green
   (33 tests) and was never run to a measured result. Plan: `~/.claude/plans/real-hf-noise-sweep.md`.
 - **`decoder_quality_improvement.md` §15 and §16.** Historical record, not a backlog.
