@@ -8,6 +8,7 @@
 // One test was converted for exactly this reason before; the rest were left on List and one of them
 // went on flaking. Keep them uniform.
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Radio;
@@ -550,9 +551,9 @@ public class RadioControllerTests
         }));
 
         var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
-        // Subscribed first -- Subject<T>.OnNext propagates a subscriber's exception synchronously and
-        // skips notifying subscribers registered after the one that threw, so this deliberately proves
-        // the POLL LOOP survives, not that every subscriber gets notified every time.
+        // Scoped to the poll loop surviving. Whether the OTHER subscribers still get notified is
+        // GuardedObservable's job and has its own tests below -- this one predates the guard and is
+        // kept as the narrower regression check.
         using var badSub = controller.StateChanges.Subscribe(_ => throw new InvalidOperationException("boom"));
 
         var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
@@ -804,4 +805,219 @@ public class RadioControllerTests
             return ValueTask.CompletedTask;
         }
     }
+
+    // --- Subscriber isolation (GuardedObservable) -------------------------------------------------
+    //
+    // Before the guard, one throwing subscriber damaged the others, differently per stream and in both
+    // cases silently. ConnectionEvents (raw Subject) rethrew out of its fan-out loop at the first
+    // thrower, so every subscriber registered after it received NOTHING, permanently. StateChanges
+    // (composed Where/Select) let Rx's AutoDetachObserver dispose the thrower's own subscription on
+    // its first throw, and the subscribers after it missed that one event.
+    //
+    // Tests 1-3 fail against that behaviour. They are also the guard against building the fix with
+    // Observable.Create, which reads as equivalent and leaves the detach in place.
+
+    [Fact]
+    public async Task ConnectionEvents_SubscriberAfterAThrowingOne_StillReceivesEveryEvent()
+    {
+        // Needs no timing: one ConnectAsync publishes Connecting then Connected synchronously on the
+        // calling thread.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        var thrower = new ConcurrentQueue<RadioConnectionState>();
+        var after = new ConcurrentQueue<RadioConnectionState>();
+        using var badSub = controller.ConnectionEvents.Subscribe(e =>
+        {
+            thrower.Enqueue(e.State);
+            throw new InvalidOperationException("boom");
+        });
+        using var goodSub = controller.ConnectionEvents.Subscribe(e => after.Enqueue(e.State));
+
+        await controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None);
+        await controller.DisconnectAsync();
+
+        Assert.Equal(thrower.Count, after.Count);
+        Assert.Contains(RadioConnectionState.Connecting, after);
+        Assert.Contains(RadioConnectionState.Disconnected, after);
+    }
+
+    [Fact]
+    public async Task StateChanges_ThrowingSubscriber_StaysSubscribedInsteadOfBeingSilentlyDetached()
+    {
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        var throwerCalls = 0;
+        using var badSub = controller.StateChanges.Subscribe(_ =>
+        {
+            Interlocked.Increment(ref throwerCalls);
+            throw new InvalidOperationException("boom");
+        });
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => Volatile.Read(ref throwerCalls) >= 3, TimeSpan.FromSeconds(2));
+        await controller.DisconnectAsync();
+
+        // Auto-detach would cap this at exactly 1.
+        Assert.True(Volatile.Read(ref throwerCalls) >= 3);
+    }
+
+    [Fact]
+    public async Task StateChanges_SubscriberAfterAThrowingOne_NeverMissesAnEvent()
+    {
+        // Asserts subscriber 2's count against the thrower's invocation count rather than naming "the
+        // first publish". Note this relies on Subject<T> notifying in subscription order, which Rx
+        // does in practice but does not contract -- if that ever changes this goes vacuous rather
+        // than red.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        var throwerCalls = 0;
+        var after = new ConcurrentQueue<RadioState>();
+        using var badSub = controller.StateChanges.Subscribe(_ =>
+        {
+            Interlocked.Increment(ref throwerCalls);
+            throw new InvalidOperationException("boom");
+        });
+        using var goodSub = controller.StateChanges.Subscribe(after.Enqueue);
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => after.Count >= 3, TimeSpan.FromSeconds(2));
+        await controller.DisconnectAsync();
+
+        Assert.Equal(Volatile.Read(ref throwerCalls), after.Count);
+    }
+
+    [Fact]
+    public async Task ThrowingSubscriber_LogsTheFirstThrowInFull_ThenStopsLoggingEveryOne()
+    {
+        // The middle assertion is the one that matters: without it this only proves "something was
+        // logged". Logging every throw is forbidden on this path -- docs/logging-guidelines.md names
+        // the radio poll loop, because FileLogger writes to disk synchronously per call, so an
+        // unthrottled log would itself become the publisher stall the guard exists to avoid.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var logger = new CapturingLogger<RadioController>();
+        var controller = new RadioController([factory], logger);
+
+        var throwerCalls = 0;
+        using var badSub = controller.StateChanges.Subscribe(_ =>
+        {
+            Interlocked.Increment(ref throwerCalls);
+            throw new InvalidOperationException("boom");
+        });
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(1) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => Volatile.Read(ref throwerCalls) >= 20, TimeSpan.FromSeconds(5));
+        await controller.DisconnectAsync();
+
+        var subscriberThrewEntries = logger.Entries
+            .Where(e => e.Message.Contains("StateChanges subscriber threw", StringComparison.Ordinal))
+            .ToList();
+
+        var first = Assert.Single(subscriberThrewEntries);
+        Assert.Equal(LogLevel.Error, first.Level);
+        Assert.IsType<InvalidOperationException>(first.Exception);
+        Assert.True(Volatile.Read(ref throwerCalls) > subscriberThrewEntries.Count);
+        // One-sided otherwise: without this, a regression that summarised on EVERY throw still passes.
+        // 20 throws is well under the 100 cadence, so the summary must not have fired at all.
+        Assert.Empty(logger.Entries.Where(e => e.Message.Contains("has now thrown", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task DisposeAsync_SubscriberThrowsFromOnCompleted_StillCompletesAndDisposesBothStreams()
+    {
+        // DisposeAsync calls OnCompleted on both subjects with no try/catch of its own, so before the
+        // guard a throw from the first stream's OnCompleted aborted teardown before the second stream
+        // was completed and disposed at all.
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        using var badSub = controller.StateChanges.Subscribe(
+            _ => { },
+            () => throw new InvalidOperationException("boom from OnCompleted"));
+        var connectionCompleted = false;
+        using var goodSub = controller.ConnectionEvents.Subscribe(_ => { }, () => connectionCompleted = true);
+
+        await controller.ConnectAsync(new TestConnectionSpec(), CancellationToken.None);
+        await controller.DisposeAsync();
+
+        Assert.True(connectionCompleted, "the second stream never completed -- teardown aborted early");
+        Assert.Throws<ObjectDisposedException>(() => controller.ConnectionEvents.Subscribe(_ => { }));
+    }
+
+    [Fact]
+    public async Task LateSubscriber_GetsTheLastStateButNotAPastConnectionEvent()
+    {
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => controller.LastKnownState is not null, TimeSpan.FromSeconds(2));
+
+        var lateState = new ConcurrentQueue<RadioState>();
+        var lateEvents = new ConcurrentQueue<RadioConnectionState>();
+        using var stateSub = controller.StateChanges.Subscribe(lateState.Enqueue);
+        using var eventSub = controller.ConnectionEvents.Subscribe(e => lateEvents.Enqueue(e.State));
+
+        Assert.NotEmpty(lateState);   // BehaviorSubject replays the last state
+        Assert.Empty(lateEvents);     // plain Subject replays nothing
+
+        await controller.DisconnectAsync();
+    }
+
+    [Fact]
+    public async Task StateChanges_BeforeAnyPollAndAfterDisconnect_DeliversNoNullSentinel()
+    {
+        var factory = new FakeProtocolFactory(_ => true, _ => new FakeProtocol(FixedState));
+        var controller = new RadioController([factory], NullLogger<RadioController>.Instance);
+
+        var received = new ConcurrentQueue<RadioState>();
+        using var sub = controller.StateChanges.Subscribe(received.Enqueue);
+        Assert.Empty(received); // nothing polled yet -- the seeded null must never reach a subscriber
+
+        var spec = new TestConnectionSpec { PollInterval = TimeSpan.FromMilliseconds(20) };
+        await controller.ConnectAsync(spec, CancellationToken.None);
+        await WaitUntilAsync(() => !received.IsEmpty, TimeSpan.FromSeconds(2));
+
+        await controller.DisconnectAsync();
+
+        // Asserts what this test actually means, rather than a count that a legitimate extra publish
+        // racing DisconnectAsync would break: disconnect publishes the null sentinel to reset
+        // LastKnownState, and no subscriber may ever see it as a default-valued RadioState.
+        Assert.DoesNotContain(default, received);
+        Assert.Null(controller.LastKnownState);
+    }
+
+    /// <summary>Captures level, EventId and exception, not just formatted text -- the throttling
+    /// assertion needs to tell the first-occurrence message from the periodic summary, and those are
+    /// separate <c>[LoggerMessage]</c> methods. Locks, because the log calls arrive on the poll-loop
+    /// thread while the test thread reads: a bare <see cref="List{T}"/> here would reproduce the exact
+    /// race this test project was just fixed for.</summary>
+    private sealed class CapturingLogger<T> : ILogger<T>
+    {
+        private readonly List<LogEntry> _entries = [];
+
+        public IReadOnlyList<LogEntry> Entries
+        {
+            get { lock (_entries) { return [.. _entries]; } }
+        }
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        // Must be unconditionally true, or the generated LoggerMessage code short-circuits and
+        // captures nothing.
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            lock (_entries) { _entries.Add(new LogEntry(logLevel, eventId, exception, formatter(state, exception))); }
+        }
+    }
+
+    private sealed record LogEntry(LogLevel Level, EventId EventId, Exception? Exception, string Message);
 }

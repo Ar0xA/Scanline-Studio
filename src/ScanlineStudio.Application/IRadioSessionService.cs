@@ -26,8 +26,19 @@ public interface IRadioSessionService
     /// member's own doc comment for how it differs from <see cref="RigId"/>.</summary>
     bool IsGenuinelyConnected { get; }
 
+    /// <summary>Pass-through of <see cref="IRadioController.StateChanges"/> — see
+    /// <see cref="IRadioController"/>'s own type-level concurrency contract, which applies unchanged
+    /// through this seam. In particular: handlers run inline on a background thread, a slow handler
+    /// stalls the radio poll loop, delivery is not serialized, and the replayed first value arrives on
+    /// the subscribing thread. A subscriber needing the UI thread marshals itself.</summary>
     IObservable<RadioState> StateChanges { get; }
 
+    /// <summary>Pass-through of <see cref="IRadioController.ConnectionEvents"/> — same contract as
+    /// <see cref="StateChanges"/> above, with two differences worth knowing at this seam. This stream
+    /// replays nothing, so a late subscriber learns nothing about the current connection until the
+    /// next transition — read <see cref="IsGenuinelyConnected"/>/<see cref="RigId"/> for the state as
+    /// it stands now. And its thread varies: connect/disconnect transitions fire inline on the
+    /// CALLER's thread, while reconnect and give-up transitions fire on the background poll thread.</summary>
     IObservable<RadioConnectionEvent> ConnectionEvents { get; }
 
     /// <summary>Reads the persisted <c>ScanlineStudio.Core.Radio.RadioConnectionSettings</c> section, maps it
