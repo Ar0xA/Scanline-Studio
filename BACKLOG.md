@@ -456,7 +456,24 @@ noise-free decode. Look at narrow-band and sync-tone handling, not a generic end
 
 Detail: `docs/known-decode-defects.md` §4. Review tier: **full** — this is decode-path state.
 
-### D3. Range-limit the output-cutoff control per demodulator
+### D3. CLOSED 2026-09-10 — warned rather than range-limited, by user decision
+
+The safe range genuinely differs per demodulator — at 3600 Hz the PLL breaks into a herringbone
+pattern while Hilbert and zero-crossing only get grainy — so no single numeric range is correct for
+the field. **User's call: keep the existing range and warn instead.**
+
+Added a localized warning beside the PLL tuning fields
+(`Options.Advanced.Pll.CutoffWarning`), styled with `IndustryDanger` like the SWR capability hint,
+plus a matching warning block in `docs/help/index.html`'s advanced-tuning topic. `check-help.mjs`
+passes: 31 topics, 68 document IDs.
+
+**The range itself is INHERITED and we are already stricter than legacy.** Legacy's `pllOutFC` is a
+free text field validated only by `if (d > 0.0)` (`Option.cpp:523-525`) with no upper bound at all,
+same 900 default (`sstv.cpp:254`). Our `NumericUpDown` caps at 3900 and `PllFmDemodulator` clamps at
+`sampleRate * 0.45`. An earlier note in this session called the permissiveness ours; that was wrong
+and is corrected here.
+
+### (superseded) D3 original filing
 
 **Corrected 2026-09-10 — the permissive range is INHERITED, and legacy is more permissive than we
 are.** An earlier note in this session called D3 "ours rather than inherited". That was wrong.
