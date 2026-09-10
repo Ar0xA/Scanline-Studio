@@ -34,6 +34,15 @@ public sealed class NarrowModeEdgeRealChainProbe
     // The controlled pair from §4, plus mn73 to tie back to the recorded 4.7x and a wide-band control.
     private static readonly string[] ProbeModeIds = ["mn140", "mp140", "mn73", "martin-m1"];
 
+    // Sizing sweep for the D2 fix: how many TRAILING pixel columns does the next line's sync pre-echo
+    // actually corrupt, per mode? Narrow and wide, several line durations and pixel pitches.
+    private static readonly string[] SizingModeIds =
+    [
+        "mn73", "mn110", "mn140", "mc110", "mc140", "mc180",
+        "mp73", "mp115", "mp140", "martin-m1", "martin-m2", "scottie-s1", "sc2-180",
+        "robot-72", "pd120", "pd180", "p3",
+    ];
+
     private const byte FlatLevel = 128;
 
     [RequiresPhotographicSourceFact]
@@ -111,8 +120,56 @@ public sealed class NarrowModeEdgeRealChainProbe
             }
         }
 
+        var sizing = new List<string>
+        {
+            "| mode | narrow | px pitch (samples) | corrupted trailing columns | worst error |",
+            "|---|---|---|---|---|",
+        };
+
+        foreach (var modeId in SizingModeIds)
+        {
+            var mode = SstvModeRegistry.All.SingleOrDefault(m => m.Id == modeId);
+            if (mode is null)
+            {
+                sizing.Add($"| {modeId} | | (not in registry) | | |");
+                continue;
+            }
+
+            var flat = CreateFlatImage(mode.ImageWidth, mode.ImageHeight);
+            var decoded = await DecodeThroughTheRealChainAsync(mode, flat);
+            if (decoded is null)
+            {
+                sizing.Add($"| {modeId} | | DECODE FAILED | | |");
+                continue;
+            }
+
+            var columns = MeasurePerColumnDelta(flat, decoded, mode.ImageWidth, mode.ImageHeight);
+            var baseline = columns[(mode.ImageWidth / 4)..(mode.ImageWidth * 3 / 4)].Average();
+
+            // A column counts as corrupted once it exceeds the mid-image baseline by a clear margin.
+            // Walking back from the end stops at the first clean column, so an isolated mid-image
+            // outlier cannot inflate the count.
+            var threshold = Math.Max(baseline * 3.0, baseline + 10.0);
+            var corrupted = 0;
+            var worst = 0.0;
+            for (var x = mode.ImageWidth - 1; x >= 0 && columns[x] > threshold; x--)
+            {
+                corrupted++;
+                worst = Math.Max(worst, columns[x]);
+            }
+
+            var lastScan = mode.LineSegments.OfType<ScanSegment>().Last();
+            var pitch = lastScan.DurationMs / mode.ImageWidth / 1000.0 * 44100;
+
+            sizing.Add(
+                $"| {modeId} | {(mode.NarrowModeCode is not null ? "yes" : "no")} | {pitch:F1} | "
+                + $"**{corrupted}** | {worst:F1} |");
+        }
+
         Assert.Fail(
-            "D2 real-chain probe, not a failure. Per-column mean absolute per-channel delta:\n"
+            "D2 fix sizing -- corrupted trailing columns on FLAT grey, real chain:\n"
+            + string.Join("\n", sizing)
+            + "\n\nD2 real-chain probe, not a failure. Per-column mean absolute per-channel delta:\n"
             + string.Join("\n", columnLines)
             + "\n\nRight-edge error (last two columns) split by row:\n"
             + string.Join("\n", rowLines)
