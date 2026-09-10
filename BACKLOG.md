@@ -120,14 +120,6 @@ skipped, so they are vacuous rather than honest. They rely on `File.SetUnixFileM
 root ignores — **check what user the Linux CI leg runs as first**, because if it runs as root these
 are vacuous everywhere, not only on Windows.
 
-### TT1-15 / PA-6. Dispose-race test for `MiniAudioDeviceMuteQuery`
-
-`tests/ScanlineStudio.Core.Audio.MiniAudio.Tests/MiniAudioDeviceMuteQueryTests.cs` exists but holds
-one `[RequiresPipeWireFact]` mute-state test and no dispose case. Copy the shape of its sibling
-`MiniAudioDeviceEnumeratorTests.DisposeAsync_RacingConcurrentRefreshAsync_NeverThrowsUnexpectedlyOrCorruptsState`.
-The failure class it closes is a native-context use-after-release — an access violation at shutdown,
-not a wrong value.
-
 ### PA-5. Assert every `{loc:Translate X}` key resolves
 
 Extend `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`. It holds one test today, and
@@ -373,6 +365,7 @@ Each of these was listed as open somewhere and is not.
 | **TT1-19** — `ConfigurationPresetStore` concurrent-writer test | **Not open at all.** `production_audit.md:1983` marks it `DROP` (2026-09-07): `JsonSettingsStore` is covered, and `ConfigurationPresetStore` needs no equivalent because every method runs under its own `SemaphoreSlim` and one preset is one whole file, so concurrent saves are correctly last-writer-wins. Only the stale Status banner called it unconfirmed. |
 | **PA-3** — WAL mode on `history.db` | **Done 2026-09-10.** New shared helper `SqliteWriteAheadLogging.TryEnable`, called from both stores' `EnsureSchema`. **Busy timeout deliberately not added**: `Microsoft.Data.Sqlite` 8.0.10's own XML docs give `SqliteCommand.CommandTimeout` a 30-second default, fed by `DefaultTimeout`, so the retry budget already exists. |
 | **PA-4** — hoist the command out of the loop | **Done 2026-09-10.** Both loops in `SqliteReceiveHistoryStore` now build one command with one typed parameter set above the loop and reassign only the values per iteration. |
+| **TT1-15 / PA-6** — `MiniAudioDeviceMuteQuery` dispose race | **Done 2026-09-10, and the fear behind it was wrong.** This file previously predicted "likely a real defect, not just a test", because `IsDeviceMutedAsync` checks `_disposed` under `_gate` and then runs the native call OUTSIDE that lock while `Dispose` releases the context outside it too. That managed-only reading is incomplete. **The native shim closes it:** `scanline_audio_get_device_mute` holds `g_context_mutex` across its entire body and re-checks `g_context_initialized`, and `scanline_audio_context_uninit` takes that same mutex — so an orphan call either completes before teardown or returns -1, which surfaces as a null. The Windows (`scanline_wasapi_with_endpoint_volume`) and macOS (`scanline_coreaudio_get_device_mute`) paths never touch the shared context at all. Verified by reading `native/scanline_audio.c`, not inferred. The new test passes against unmodified code and is mutation-gated on the double-dispose guard. **No source change was needed or made.** |
 | **PA-Dispose** — dispose `SqliteCommand` | **Done 2026-09-10.** All 20 bare sites now use `using`. (The earlier "5 already using" count in this file was wrong — it was 8, because `SqliteReceiveHistoryStore.Deletion.cs` was already fully correct and served as the pattern.) |
 
 **Two plan files in `~/.claude/plans/` belong to other projects, not this one:**
