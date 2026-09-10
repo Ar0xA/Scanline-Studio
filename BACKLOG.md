@@ -28,7 +28,30 @@ merged (`master`, 2026-09-09).
 
 ## 1. Decode path — do the probe first
 
-### D1. CLOSED 2026-09-10 — Fault B is LEGACY BEHAVIOUR, not a port defect
+### D1. CLOSED 2026-09-10 — legacy behaviour, and the correctable part is imperceptible
+
+Closed twice over. First as parity: legacy's own decode of its own audio carries the green cast in
+equal measure (our deviation 0.0 to 0.2 across four YCbCr modes, with two RGB controls near zero
+validating the metric). Then, after the user asked to pursue it anyway under §0a, as **not worth
+shipping** — the correction was built, measured, reviewed and reverted.
+
+**The correction worked.** A per-band chroma dequantisation offset, derived from legacy's two TX
+truncations rather than fitted, beat legacy on every anchored mode: 9-20% lower mean absolute error
+across all three affected decoder families, no mode worse across 43, RGB families bit-identical, and a
+falsifiable prediction (0.64 levels puts robot-36 at +11.1) that landed.
+
+**It was reverted because the effect is bounded below perception.** 0.64 levels of chroma through the
+YCbCr matrix cannot exceed about 3 levels in 255. Measured on 31 real off-air recordings: mean change
+0.47 levels, 22 byte-identical, largest single pixel anywhere 3. On HF the noise floor is several times
+larger than the whole correction. **No image and no signal quality makes it visible.**
+
+**Do not rebuild it without a reason that is not "it is measurably better".** It is measurably better
+and that was not sufficient. See [[feedback_legacy_is_good_enough_ship_the_app]].
+
+Full derivation, the numbers, and the shape the fix would take if anyone reopens it:
+`docs/known-decode-defects.md` §1. Harness kept: `LegacyGreenBiasProbe.cs`.
+
+### (superseded) D1 — the parity finding on its own
 
 **Measured against real legacy audio**, `LegacyGreenBiasProbe.cs`. Legacy's own decode and ours both
 run over the same legacy-captured `.mmv`, scored against the image legacy actually transmitted, using

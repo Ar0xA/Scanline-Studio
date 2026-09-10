@@ -34,6 +34,72 @@ move together there, a brightness shift with no hue change.
 **Flat against the output smoother cutoff**: 600 Hz +4.0, 1200 +4.4, 1800 +4.7, 2400 +4.8, 3600 +5.0.
 So it is neither a noise artifact nor chroma smearing.
 
+### CLOSED 2026-09-10 — the whole section is legacy behaviour, and the correctable part is invisible
+
+**Measured against real legacy audio**, `LegacyGreenBiasProbe.cs`: legacy's own decode of its own
+`.mmv` capture, and ours of the same audio, both scored against the image legacy transmitted.
+
+| mode | legacy | ours | ours - legacy |
+|---|---|---|---|
+| robot-36 | +12.8 | +13.0 | +0.2 |
+| robot-72 | +13.3 | +13.3 | +0.0 |
+| pd90 | +4.8 | +4.9 | +0.1 |
+| mn110 | +3.8 | +3.8 | +0.0 |
+| martin-m1 (RGB control) | +0.1 | -0.1 | -0.2 |
+| scottie-s1 (RGB control) | -0.6 | -0.5 | +0.1 |
+
+**Legacy carries the cast in equal measure. Our deviation is noise.** The two RGB controls read near
+zero, which validates the metric rather than the result. So this was never a port defect, and the
+DSP-chain investigation the section below called for would have been chasing legacy's own behaviour.
+
+#### Where part of it comes from, derived rather than guessed
+
+Legacy's TX truncates chroma **twice**, both toward zero on non-negative operands, so both are floors.
+`GetRY` assigns a `double` into an `int&` (`ComLib.cpp:3664-3666`), losing a mean half level. Then
+`ColorToFreq` does an INTEGER divide, `d * span / 256` (`ComLib.cpp:3491-3495`), losing
+`frac(d * span / 256)` Hz.
+
+The second term is **band-dependent**, which is the interesting part:
+
+| band | one level | mean loss | second term | total |
+|---|---|---|---|---|
+| 1500-2300 (usual) | 3.125 Hz | 0.4375 Hz | 0.14 levels | **0.64** |
+| 2044-2300 (MN narrow) | 1.0 Hz | 0 | 0 exactly | **0.50** |
+
+MN's span is exactly 256 Hz, so `d * 256 / 256` is lossless and only `GetRY`'s truncation survives.
+**MC is not affected at all** — `LineMC` (`Main.cpp:6837-6843`) sends raw bytes with no `GetRY`.
+
+Chroma biased low pushes GREEN up, because `YCtoRGB` reconstructs green with negative chroma
+coefficients (-0.813, -0.392) where red and blue take positive ones (+1.596, +2.017). The §1 metric
+amplifies a uniform chroma offset by exactly 3.0116 — note that is arithmetic from the matrix and
+therefore **not** evidence of any particular cause. What did corroborate the derivation was a
+prediction made in advance: 0.64 levels should put robot-36's composite bias at +11.1, and measurement
+gave +11.1.
+
+#### Why it was NOT corrected
+
+Built, measured, reverted. Correcting it beats legacy on every anchored mode — 9 to 20% lower mean
+absolute error, all three affected decoder families, no mode worse across 43, RGB families bit-identical.
+And it is still not worth shipping:
+
+- **The effect has a hard ceiling of about 3 levels in 255.** 0.64 levels of chroma through the matrix
+  cannot produce more. No image and no signal quality makes it visible.
+- On 31 real off-air recordings the mean per-pixel change was **0.47 levels**, and 22 were byte-identical
+  because Martin, Scottie, Pasokon, AVT and RM carry no chroma pair.
+- On HF the decode error from noise is several times larger than the entire correction.
+- It is **sender-dependent**, not protocol-dependent: an encoder that rounds would be over-corrected by
+  the same amount. Every fixture here came from one legacy install, so nothing establishes what other
+  software does.
+
+The remaining ~85% of the Robot cast is unexplained and is NOT truncation — truncation is
+mode-independent while the measured bias runs from +12.8 to +3.8. Chroma subsampling on a
+high-frequency source is the untested suspect.
+
+**If anyone reopens this:** the correction is a per-band offset added to both chroma channels before
+`YCbCr.ToRgb`, with this port's own chroma truncation suppressed on the same path so the correction is
+not applied on top of a second quantiser. That shape survived an auditor round and a principal round.
+It is about thirty lines. The reason not to build it is not difficulty.
+
 ### Fault A — fixed offset, about +2.3, TX-side colour maths, LEGACY-FAITHFUL
 
 Present even on a fully desaturated source, which has no chroma content at all. Reproduced with no
