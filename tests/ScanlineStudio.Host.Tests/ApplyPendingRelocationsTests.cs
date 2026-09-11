@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Host.Tests;
@@ -235,7 +236,8 @@ public sealed class ApplyPendingRelocationsTests : IDisposable
         Assert.Equal(unusablePendingPath, updated.PendingConfigDirectory);
     }
 
-    [Fact]
+    [SkipOnWindowsFact]
+    [UnsupportedOSPlatform("windows")]
     public async Task WhenPersistingTheOverrideFails_RollsBackTheAlreadyMovedFile()
     {
         // Code-review round-1 finding: a move can succeed and then the override-record save can
@@ -245,11 +247,6 @@ public sealed class ApplyPendingRelocationsTests : IDisposable
         // place. Unix-only: makes the overrides file's own directory temporarily unwritable so
         // AppLocationOverrides.SaveAsync's atomic temp-file+rename fails after the real move above
         // already succeeded.
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var currentDir = NewSubdirectory("current");
         var pendingDir = NewSubdirectory("pending");
         File.WriteAllText(Path.Combine(currentDir, "settings.json"), "{}");

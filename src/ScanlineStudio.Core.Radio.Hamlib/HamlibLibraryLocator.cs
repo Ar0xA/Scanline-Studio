@@ -73,6 +73,12 @@ internal sealed class HamlibLibraryLocator
     /// production locator was working correctly on Windows the entire time.</summary>
     internal static string PrimaryCandidateForCurrentPlatform => BuildTier2And3Candidates().First();
 
+    /// <summary>Every name and path this locator will try on the CURRENT platform, in order. Exposed
+    /// for the same reason as <see cref="PrimaryCandidateForCurrentPlatform"/>: a test that asserts
+    /// on the real sequence stays true when the sequence changes, where one that restates it in a
+    /// literal silently stops testing anything.</summary>
+    internal static IReadOnlyList<string> CandidatesForCurrentPlatform => [.. BuildTier2And3Candidates()];
+
     private static IEnumerable<string> BuildTier2And3Candidates()
     {
         string[] platformCandidates;
