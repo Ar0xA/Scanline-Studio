@@ -293,8 +293,24 @@ public sealed class FileLoggerProvider : ILoggerProvider, ILogFileRelocator
         }
     }
 
+    // FileShare.Delete is the load-bearing flag, not a widening for its own sake. Windows refuses
+    // MoveFile and DeleteFile on a file any process holds without it, where POSIX unlink() succeeds
+    // regardless -- so this stream's mere existence could block a rename or delete of app.log that
+    // Linux permits. The relocation path already closes the writer before moving, so this is not
+    // about our own moves: it is about everything else that can legitimately move or delete a log
+    // file underneath a running application, including the user, a cleanup task, or a rollback.
+    //
+    // Semantics after a delete match Linux: the handle stays valid and writes go to a file with no
+    // directory entry, until TryReopenWriter recreates it. That is the behaviour the surrounding
+    // logic was designed against.
+    //
+    // Note this does NOT fix the converse -- a foreign process holding app.log without
+    // FILE_SHARE_DELETE still blocks OUR rotation, because that is governed by the other process's
+    // share mode, not ours. The type-level comment's editor-holds-app.log.1 case is that converse,
+    // and remains a best-effort swallow.
     private static StreamWriter OpenWriter(string filePath) =>
-        new(new FileStream(filePath, FileMode.Append, FileAccess.Write, FileShare.Read)) { AutoFlush = true };
+        new(new FileStream(filePath, FileMode.Append, FileAccess.Write,
+            FileShare.ReadWrite | FileShare.Delete)) { AutoFlush = true };
 
     private void CloseWriterSafely()
     {
