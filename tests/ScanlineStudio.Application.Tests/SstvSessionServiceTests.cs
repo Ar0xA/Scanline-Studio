@@ -875,13 +875,24 @@ public sealed class SstvSessionServiceTests
         // work by cancelling the token, same as TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture
         // below) must still end with `false` raised, not leave the Receiving indicator stuck dimmed
         // just because the transmission itself failed rather than completing normally.
-        var (service, _, _, _, _, _, _) = CreateService();
+        var (service, audioEngine, _, _, _, _, _) = CreateService();
         await service.StartReceivingAsync();
         List<bool> raised = [];
         service.CapturePausedForTransmitChanged += paused => raised.Add(paused);
 
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        // Deterministic gate rather than a wall clock, for the same reason as
+        // TuneAsync_TokenCancelledMidTone_StillUnkeysPttAndRestartsCapture below -- see the longer
+        // explanation there. The 10ms CancelAfter this replaces was outright flaky on fast hardware:
+        // across three consecutive runs on a Snapdragon X Plus it failed, passed, then failed again,
+        // because the tone's 240,000-sample generation sometimes beat the timer and TuneAsync
+        // returned normally with nothing to cancel.
+        audioEngine.OnPlaybackChunkEnqueued = () =>
+        {
+            cts.Cancel();
+            return Task.CompletedTask;
+        };
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
@@ -931,7 +942,17 @@ public sealed class SstvSessionServiceTests
         Assert.Equal([true], raised);
 
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        // Deterministic gate, not a wall clock -- same reasoning as the two
+        // TuneAsync_TokenCancelledMidTone_* tests above. Registered HERE, after #1's TransmitAsync has
+        // already completed, so it is #2's own first tone chunk that trips the cancellation and not a
+        // leftover chunk from #1.
+        audioEngine.OnPlaybackChunkEnqueued = () =>
+        {
+            cts.Cancel();
+            return Task.CompletedTask;
+        };
+
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token)); // #2: cancelled while still locked
 
@@ -1032,7 +1053,16 @@ public sealed class SstvSessionServiceTests
         radioSession.PttCalls.Clear(); // isolate this test's own assertions from the lock-engage call above
 
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
+
+        // Deterministic gate, not a wall clock -- same reasoning as the TuneAsync_TokenCancelledMidTone_*
+        // tests. This one matters most of the four: it guards the severest finding in this area (a lock
+        // must never defeat an SWR cutoff), so it is the last test that should be allowed to quietly
+        // stop reaching its own scenario on fast hardware.
+        audioEngine.OnPlaybackChunkEnqueued = () =>
+        {
+            cts.Cancel();
+            return Task.CompletedTask;
+        };
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
@@ -1117,13 +1147,35 @@ public sealed class SstvSessionServiceTests
         await service.StartReceivingAsync();
 
         using var cts = new CancellationTokenSource();
-        cts.CancelAfter(TimeSpan.FromMilliseconds(10));
 
-        // 5 seconds of generated tone at 48kHz (TuneAsync's fixed sample rate) gives the CPU-bound
-        // sample loop -- with its periodic `await Task.Yield()` every 4096 samples -- ample real
-        // wall-clock time to still be mid-generation when the 10ms cancellation fires; TransmitAsync's
-        // own tiny 3-sample fixture completes too fast for this to land reliably, which is why this
-        // regression uses TuneAsync instead.
+        // Cancel on the FIRST playback chunk, not on a wall clock. OnPlaybackChunkEnqueued is this
+        // project's own deterministic gate (see its doc comment on FakeAudioEngine): it runs
+        // synchronously inside EnqueuePlaybackSamples, which can only happen after PTT-on and before
+        // the tone finishes -- exactly the mid-tone window this regression needs, on any machine.
+        //
+        // This previously used `cts.CancelAfter(TimeSpan.FromMilliseconds(10))` against a 5-second
+        // tone, on the reasoning that 5s of generated audio gives the CPU-bound sample loop ample
+        // wall-clock time to still be running at 10ms. That is a race, and it loses on fast hardware:
+        // FakeAudioEngine accepts playback synchronously (no real-time pacing), so "5 seconds of
+        // tone" is really just 240,000 Math.Sin calls plus 58 Task.Yields. On a Snapdragon X Plus the
+        // whole test finished in ~16ms, so TuneAsync returned BEFORE the timer fired and no
+        // OperationCanceledException was ever thrown -- the assertion failed, and worse, the
+        // cancellation path this test exists to guard was never executed at all. A regression guard
+        // that silently stops reaching its own scenario on faster machines is the same failure mode
+        // as a silent-pass test.
+        //
+        // The tone duration must stay LONGER than one ToneBatchSize chunk (4096 samples at 48kHz,
+        // ~85ms): the OperationCanceledException is raised by GenerateTone's own per-sample
+        // ThrowIfCancellationRequested on the iteration after the first chunk is enqueued, so a tone
+        // short enough to fit in a single trailing partial chunk would leave nothing left to cancel
+        // and TuneAsync would complete normally. 5 seconds is far past that, and shortening it below
+        // ~85ms would fail loudly here rather than silently stop testing anything.
+        audioEngine.OnPlaybackChunkEnqueued = () =>
+        {
+            cts.Cancel();
+            return Task.CompletedTask;
+        };
+
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
 
