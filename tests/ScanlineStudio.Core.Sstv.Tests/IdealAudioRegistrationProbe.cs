@@ -49,7 +49,7 @@ public sealed class IdealAudioRegistrationProbe
     // scottie-s2 was caught exactly this way: it read +44.24 px at 100 ms and correct at 300 ms.
     private static readonly int[] LeadInMs = [317, 631, 1103];
 
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public void RegistrationAgainstIdealTiming_ForEveryMode()
     {
         var rows = new List<string>

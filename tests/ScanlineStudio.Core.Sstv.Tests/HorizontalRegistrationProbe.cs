@@ -41,7 +41,7 @@ public sealed class HorizontalRegistrationProbe
     private const int SampleRate = 44100;
     private const int EdgeRows = 8;
 
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public async Task DecodedVerticalEdgePosition_SeparatesAnchorBiasFromSmearAndDrift()
     {
         var rows = new List<string>
@@ -109,7 +109,7 @@ public sealed class HorizontalRegistrationProbe
     /// the offset is flat across all four, the filter is innocent and what remains is legacy's own
     /// empirical per-mode sync offset — which would make the correction per mode, not per chain.</para>
     /// </summary>
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public async Task RegistrationOffset_AcrossBandpassPresets_NamesTheStageThatOwnsTheDelay()
     {
         RxBpfPreset[] presets = [RxBpfPreset.Off, RxBpfPreset.Wide, RxBpfPreset.Narrow, RxBpfPreset.VeryNarrow];
