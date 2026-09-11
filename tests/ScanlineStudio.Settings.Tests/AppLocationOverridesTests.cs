@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.Settings.Tests;
@@ -35,7 +36,8 @@ public sealed class AppLocationOverridesTests : IDisposable
         Assert.Equal(AppLocationOverrides.Empty, loaded);
     }
 
-    [Fact]
+    [SkipOnWindowsFact]
+    [UnsupportedOSPlatform("windows")]
     public void LoadForBootstrap_WhenFileIsUnreadable_ReturnsEmptyRatherThanThrowing()
     {
         // Tier C audit lesson (JsonSettingsStore.cs's own history): UnauthorizedAccessException
@@ -44,11 +46,6 @@ public sealed class AppLocationOverridesTests : IDisposable
         // PlatformNotSupportedException on Windows, where ACL-based denial isn't this simple to
         // set up in a test) -- the broad `catch (Exception)` this asserts on is platform-agnostic,
         // this is just the cheapest real repro available on this dev/CI platform.
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         Directory.CreateDirectory(Path.GetDirectoryName(_overridesFilePath)!);
         File.WriteAllText(_overridesFilePath, "{}");
         File.SetUnixFileMode(_overridesFilePath, UnixFileMode.None);

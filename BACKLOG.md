@@ -573,7 +573,18 @@ Do the mapping first. It is mechanical, about 43 entries, zero design risk, and 
 that tells you whether the real gap is 5 fixtures or 30. `CLAUDE.md` §3 forbids assuming a sibling
 mode shares a covered mode's channel order. Biggest single structural gap in the test suite.
 
-### TT1-18 / PA-7. Convert the 4 remaining silent-pass tests to `[SkipOnWindowsFact]`
+### TT1-18 / PA-7. DONE 2026-09-11 — all four silent-pass tests now skip honestly
+
+The remaining four bare `if (OperatingSystem.IsWindows()) return;` guards are converted. They
+reported **passed** on Windows while asserting nothing, so the suite claimed coverage it did not have
+and nothing in the output said so. `ScanlineStudio.Host.Tests` gained its own copy of the attribute.
+
+**One thing the conversion exposed:** the bare guard was also serving as the analyser's proof that the
+Unix-only `File.SetUnixFileMode` calls below were unreachable on Windows. Removing it made CA1416 fire
+on all four. They now carry `[UnsupportedOSPlatform("windows")]`, which states the same constraint to
+the compiler AND to the reader, instead of relying on a control-flow side effect.
+
+### (superseded) TT1-18 original filing
 
 **Partly done — re-verified 2026-09-10, and the paths in the old entry were wrong.**
 `JsonSettingsStoreTests.cs` is converted (`:230` and `:281`), and `ScanlineStudio.Settings.Tests`
@@ -769,9 +780,12 @@ of duplicates. **Enumeration only — no port is ever opened**, because opening 
 whatever holds it, plausibly a radio's CAT link mid-QSO. That a port can be opened, round-trip bytes,
 or carry a CAT command is deliberately NOT tested here and belongs to the manual hardware checklist.
 
-**Still open:** `HamlibLibraryLocator:75`'s Windows DLL discovery branch, and checking whether
-`ConfigurationPresetStore:467-476`'s `CON`/`PRN`/`AUX`/`NUL` rejection is already covered — that logic
-is cross-platform, so it is testable on Linux and may need nothing.
+**Both leftovers CLOSED 2026-09-11.** The reserved-name rejection was already covered
+(`ConfigurationPresetStoreTests.cs:273` enumerates CON/PRN/AUX/NUL) and needed nothing. The Hamlib
+Windows discovery branch now has `HamlibWindowsDiscoveryTests.cs` — 3 tests asserting both shipped DLL
+spellings are present, that no Unix soname leaks into the Windows list, and that every bare name is
+also probed beside the running application, which is the user-reported gap that branch exists to
+close. The locator exposes its real candidate sequence rather than the tests restating it.
 
 #### (superseded) W7 original filing
 
