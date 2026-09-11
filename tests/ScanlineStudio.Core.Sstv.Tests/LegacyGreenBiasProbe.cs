@@ -60,7 +60,7 @@ public sealed class LegacyGreenBiasProbe
         ["scottie-s1"] = "+0.1",
     };
 
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public void GreenBias_OnLegacyAudio_ShowsWhetherFaultBIsOursOrLegacys()
     {
         var directory = FindFixtureDirectory();

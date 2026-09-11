@@ -54,7 +54,7 @@ public sealed class LegacyAudioRegistrationProbe
     private const double SearchRadiusPixels = 48.0;
     private const double SearchStep = 0.05;
 
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public void RegistrationAgainstLegacyAudio_SeparatesPortDefectFromLegacyBehaviour()
     {
         var directory = FindFixtureDirectory();
