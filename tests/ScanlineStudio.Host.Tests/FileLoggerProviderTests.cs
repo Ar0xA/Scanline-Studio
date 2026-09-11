@@ -22,8 +22,10 @@ public sealed class FileLoggerProviderTests : IDisposable
         // be holding app.log for a short moment afterwards. POSIX unlink() has no such restriction,
         // which is why this passed on Linux and failed on Windows for every test in the class.
         //
-        // Retry briefly, then give up quietly: this is a temp directory, and a leftover one is not a
-        // reason to fail a test whose assertions have already passed.
+        // Retry, then give up quietly: this is a temp directory, and a leftover one is not a reason
+        // to fail a test whose assertions have already passed. The budget is 1 s rather than the 250 ms
+        // it started at -- that proved too short on an ARM64 Windows host, where the same six tests
+        // failed again on the second full run.
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -33,7 +35,7 @@ public sealed class FileLoggerProviderTests : IDisposable
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                if (attempt >= 10)
+                if (attempt >= 40)
                 {
                     return;
                 }

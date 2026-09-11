@@ -5771,7 +5771,13 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_OpenStorageFolderCommand_OpensTheResolvedImagesDirectory()
     {
-        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = "/tmp/scanlinestudio-history" };
+        // One value, used as both the input and the expectation. The command passes the store's
+        // directory through untouched, so rebuilding the expectation from Path.GetTempPath() -- as an
+        // earlier fix here did -- asserts against a DIFFERENT path on Windows and fails for a reason
+        // that has nothing to do with the code under test.
+        const string imagesDirectory = "/tmp/scanlinestudio-history";
+
+        var historyStore = new FakeReceiveHistoryStore { ImagesDirectory = imagesDirectory };
         var urlLauncher = new FakeUrlLauncher();
         var vm = CreateRxHistoryPaneViewModel(historyStore, urlLauncher: urlLauncher);
         await vm.LoadImagesDirectoryAsync();
@@ -5780,9 +5786,7 @@ public sealed class PaneViewModelTests
 
         vm.OpenStorageFolderCommand.Execute(null);
 
-        Assert.Contains(
-            Path.Combine(Path.GetTempPath(), "scanlinestudio-history").TrimEnd(Path.DirectorySeparatorChar),
-            urlLauncher.OpenedUrls);
+        Assert.Contains(imagesDirectory, urlLauncher.OpenedUrls);
     }
 
     /// <summary>Code-review finding: the resolved default images directory is only ever CREATED on
