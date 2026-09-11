@@ -10,7 +10,10 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// process-wide gate.</summary>
 public class HamlibDiscoveryServiceTests
 {
-    private const string LinuxSoname = "libhamlib.so.4";
+    // The locator's OWN first candidate on this platform, not a hardcoded soname. Pinning
+    // "libhamlib.so.4" made every one of these tests fail on Windows, where the locator yields
+    // hamlib-4.dll -- so nothing the fake registered was ever attempted.
+    private static string PrimarySoname => HamlibLibraryLocator.PrimaryCandidateForCurrentPlatform;
 
     private sealed class StaticHamlibNativeFactory(IHamlibNative native) : IHamlibNativeFactory
     {
@@ -34,7 +37,7 @@ public class HamlibDiscoveryServiceTests
     public async Task ProbeAsync_LibraryAvailable_ListsRigModels_SortedByManufacturerThenModel()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var native = new FakeHamlibNative { Version = "Hamlib 4.5.5 2024-01-01T00:00:00Z 64-bit" };
         native.ModelIds.AddRange([2, 1]);
         native.CapsMfgNames[1] = "Yaesu";
@@ -55,7 +58,7 @@ public class HamlibDiscoveryServiceTests
     public async Task ProbeAsync_ModelMissingCapsName_IsSkippedNotThrown()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var native = new FakeHamlibNative { Version = "Hamlib 4.5.5 2024-01-01T00:00:00Z 64-bit" };
         native.ModelIds.Add(1); // no CapsMfgNames/CapsModelNames entry for model 1 -> both null
         var sut = new HamlibDiscoveryService(loader, new StaticHamlibNativeFactory(native));
@@ -114,7 +117,7 @@ public class HamlibDiscoveryServiceTests
         // gated section is the thing under test.
         var tracker = new OverlapTracker();
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var factory = new PerCallHamlibNativeFactory(tracker);
         var sut = new HamlibDiscoveryService(loader, factory);
 

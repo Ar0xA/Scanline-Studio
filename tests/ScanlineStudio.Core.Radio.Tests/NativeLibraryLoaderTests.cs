@@ -16,16 +16,31 @@ public class NativeLibraryLoaderTests
     public void TryLoad_PathExistsButIsNotALoadableLibrary_ReturnsFalseWithARealErrorDetail()
     {
         var sut = new NativeLibraryLoader();
-        // This test's own assembly DLL exists on disk but is not a native shared library the OS
-        // loader can load -- guarantees a real, non-scripted failure from the actual OS loader.
-        var notALibrary = typeof(NativeLibraryLoaderTests).Assembly.Location;
 
-        var loaded = sut.TryLoad(notALibrary, out _, out var errorDetail);
+        // Plain text with a .dll extension: a file that exists but is not a loadable image on ANY
+        // platform. This used to point at the test assembly itself, which is not an ELF and so fails
+        // dlopen on Linux -- but IS a valid PE image, which LoadLibrary maps happily, so TryLoad
+        // correctly returned true on Windows and the test failed for the right reason.
+        var notALibrary = Path.Combine(Path.GetTempPath(), $"scanline-not-a-library-{Guid.NewGuid():N}.dll");
+        File.WriteAllText(notALibrary, "this is not a shared library");
 
-        Assert.False(loaded);
-        Assert.False(string.IsNullOrWhiteSpace(errorDetail));
-        Assert.DoesNotContain("operation completed successfully", errorDetail, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("success", errorDetail, StringComparison.OrdinalIgnoreCase);
+        try
+        {
+            var loaded = sut.TryLoad(notALibrary, out _, out var errorDetail);
+
+            Assert.False(loaded);
+
+            // The real intent of the test, which survives the fixture change: a failure must carry a
+            // usable reason. Windows' loader can otherwise report "operation completed successfully"
+            // for a failed load, which would reach the user as a support message saying nothing.
+            Assert.False(string.IsNullOrWhiteSpace(errorDetail));
+            Assert.DoesNotContain("operation completed successfully", errorDetail, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("success", errorDetail, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(notALibrary);
+        }
     }
 
     [Fact]

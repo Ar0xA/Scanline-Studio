@@ -67,6 +67,12 @@ internal sealed class HamlibLibraryLocator
         throw new HamlibUnavailableException(attempts);
     }
 
+    /// <summary>The first name this locator will try on the CURRENT platform. Exposed so tests can
+    /// register what the locator really attempts instead of hardcoding one platform's soname — the
+    /// whole Hamlib suite pinned `libhamlib.so.4` and therefore failed everywhere else, while the
+    /// production locator was working correctly on Windows the entire time.</summary>
+    internal static string PrimaryCandidateForCurrentPlatform => BuildTier2And3Candidates().First();
+
     private static IEnumerable<string> BuildTier2And3Candidates()
     {
         string[] platformCandidates;
