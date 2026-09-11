@@ -703,7 +703,11 @@ scanline_audio_capture_session *scanline_audio_capture_session_open(const char *
         return NULL;
     }
 
-    ma_device_config config = ma_device_config_init(ma_device_type_capture);
+    /* Loopback captures what an OUTPUT device is playing, so device_id is a playback id here. The
+     * id still goes in capture.pDeviceID: miniaudio uses that field for capture, duplex AND loopback
+     * alike. WASAPI only; other backends fail the init below and this returns NULL. */
+    ma_device_config config = ma_device_config_init(
+        options->loopback ? ma_device_type_loopback : ma_device_type_capture);
     config.capture.pDeviceID = &id;
     config.capture.format = ma_format_f32;
     config.capture.channels = (ma_uint32)session->channels;

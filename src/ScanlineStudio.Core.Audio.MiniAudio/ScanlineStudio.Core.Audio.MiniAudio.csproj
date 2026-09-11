@@ -77,20 +77,51 @@
     <Exec Command="gcc -shared -o &quot;$(NativeLibPath)&quot; &quot;$(NativeObjPath)&quot; -ldl -lpthread -lm" />
   </Target>
 
+  <!-- Architecture-aware, deliberately. The previous version compiled straight into $(OutDir) and was
+       incremental on that path, which contains no RID. Building x64 and then arm64 saw an up-to-date
+       output and silently reused the FIRST architecture's DLL, with no build error. The mismatch only
+       surfaced at load time, as a test host that could not load the shim. Reported from the first
+       real Windows run (windows_tests.md, "Native shim is not RID-aware").
+
+       The fix is two targets. This one compiles into an architecture-specific intermediate directory,
+       so each architecture has its own output and its own incrementality. The copy below then moves
+       it into $(OutDir) with SkipUnchangedFiles, which compares timestamp AND size, so switching
+       architecture copies, while an unchanged rebuild does not.
+
+       VSCMD_ARG_TGT_ARCH is set by vcvarsall.bat and is the only reliable statement of what cl.exe
+       will actually emit. $(Platform) is "Any CPU" for this project and says nothing about the native
+       target. If it is absent the build falls back to "unknown", which still isolates that output
+       from a properly initialised one rather than colliding with it. -->
+  <PropertyGroup>
+    <NativeShimArch Condition="'$(VSCMD_ARG_TGT_ARCH)' != ''">$(VSCMD_ARG_TGT_ARCH)</NativeShimArch>
+    <NativeShimArch Condition="'$(NativeShimArch)' == ''">unknown</NativeShimArch>
+    <NativeShimStageDir>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)native\$(NativeShimArch)\</NativeShimStageDir>
+  </PropertyGroup>
+
   <Target Name="BuildNativeShimWindows" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('Windows'))"
            Inputs="native\scanline_audio.c;native\scanline_audio.h;native\miniaudio.h;ScanlineStudio.Core.Audio.MiniAudio.csproj"
-           Outputs="$(OutDir)scanlineaudio.dll">
+           Outputs="$(NativeShimStageDir)scanlineaudio.dll">
+    <MakeDir Directories="$(NativeShimStageDir)" />
     <PropertyGroup>
       <NativeDir>$(MSBuildProjectDirectory)\native\</NativeDir>
-      <NativeObjPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)scanline_audio.obj</NativeObjPath>
-      <NativeLibPath>$(MSBuildProjectDirectory)\$(OutDir)scanlineaudio.dll</NativeLibPath>
-      <NativeImpLibPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)scanlineaudio.lib</NativeImpLibPath>
-      <NativeExpPath>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)scanlineaudio.exp</NativeExpPath>
+      <NativeObjPath>$(NativeShimStageDir)scanline_audio.obj</NativeObjPath>
+      <NativeLibPath>$(NativeShimStageDir)scanlineaudio.dll</NativeLibPath>
+      <NativeImpLibPath>$(NativeShimStageDir)scanlineaudio.lib</NativeImpLibPath>
+      <NativeExpPath>$(NativeShimStageDir)scanlineaudio.exp</NativeExpPath>
     </PropertyGroup>
     <!-- Opus-review fix: /Fo:/Fe: (colon form) is not the traditional MSVC syntax and couldn't be
          verified from anything in this repo; /Fo"path" and /Fe"path" (no colon) are the
          long-established forms, used here instead. -->
     <Exec Command="cl.exe /nologo /O2 /MD /LD /Fo&quot;$(NativeObjPath)&quot; /Fe&quot;$(NativeLibPath)&quot; &quot;$(NativeDir)scanline_audio.c&quot; /link /IMPLIB:&quot;$(NativeImpLibPath)&quot; Ole32.lib" />
+  </Target>
+
+  <!-- Deliberately NOT incremental on its own Inputs and Outputs: it must still run when the
+       compile target above was skipped, which is exactly the architecture switch case.
+       SkipUnchangedFiles makes it a no-op when the staged DLL already matches. -->
+  <Target Name="CopyNativeShimWindows" AfterTargets="BuildNativeShimWindows" Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <Copy SourceFiles="$(NativeShimStageDir)scanlineaudio.dll"
+          DestinationFolder="$(MSBuildProjectDirectory)\$(OutDir)"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="BuildNativeShimMacOS" BeforeTargets="Build" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
