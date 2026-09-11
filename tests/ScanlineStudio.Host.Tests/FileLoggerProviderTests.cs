@@ -15,7 +15,33 @@ public sealed class FileLoggerProviderTests : IDisposable
         _logPath = Path.Combine(_directory, "app.log");
     }
 
-    public void Dispose() => Directory.Delete(_directory, recursive: true);
+    public void Dispose()
+    {
+        // Windows refuses to delete a directory while any handle inside it is open, and it releases
+        // handles lazily -- a provider disposed by `using var` at the end of a test method can still
+        // be holding app.log for a short moment afterwards. POSIX unlink() has no such restriction,
+        // which is why this passed on Linux and failed on Windows for every test in the class.
+        //
+        // Retry briefly, then give up quietly: this is a temp directory, and a leftover one is not a
+        // reason to fail a test whose assertions have already passed.
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt >= 10)
+                {
+                    return;
+                }
+
+                Thread.Sleep(25);
+            }
+        }
+    }
 
     private static void WriteLines(FileLoggerProvider provider, string categoryName, int count, string message = "line")
     {

@@ -4,24 +4,27 @@ namespace ScanlineStudio.Core.Radio.Tests;
 
 /// <summary>Discovery-order tests -- see spec/03-cat-layer.md's "Discovery order". This test suite
 /// runs on Linux (this project's dev sandbox), so the auto-detection tier only ever exercises the
-/// single Linux candidate (<c>libhamlib.so.4</c>) -- <see cref="HamlibLibraryLocator"/>'s Windows/macOS
+/// the locator's own first candidate for the running platform -- <see cref="HamlibLibraryLocator"/>'s Windows/macOS
 /// candidate lists (and macOS's extra-directory tier) are unverified from here, same caveat as this
 /// project's other Windows/macOS-only code paths.</summary>
 public class HamlibLibraryLocatorTests
 {
-    private const string LinuxSoname = "libhamlib.so.4";
+    // The locator's OWN first candidate on this platform. Hardcoding "libhamlib.so.4" pinned these
+    // tests to Linux: on Windows the locator yields hamlib-4.dll, so nothing the fake registered was
+    // ever attempted and every auto-detect case threw HamlibUnavailableException.
+    private static string PrimarySoname => HamlibLibraryLocator.PrimaryCandidateForCurrentPlatform;
 
     [Fact]
     public void Locate_NoOverride_BareSonameLoads_ReturnsHandleAndCandidate()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 42);
+        loader.Succeed(PrimarySoname, 42);
         var sut = new HamlibLibraryLocator(loader, overridePath: null);
 
         var (handle, resolvedPath) = sut.Locate();
 
         Assert.Equal(42, handle);
-        Assert.Equal(LinuxSoname, resolvedPath);
+        Assert.Equal(PrimarySoname, resolvedPath);
     }
 
     [Fact]
@@ -32,14 +35,14 @@ public class HamlibLibraryLocatorTests
 
         var ex = Assert.Throws<HamlibUnavailableException>(() => sut.Locate());
 
-        Assert.Contains(ex.Attempts, a => a.Contains(LinuxSoname, StringComparison.Ordinal));
+        Assert.Contains(ex.Attempts, a => a.Contains(PrimarySoname, StringComparison.Ordinal));
     }
 
     [Fact]
     public void Locate_OverrideSet_TriedExclusively_IgnoresAnAutoDetectableCandidate()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);        // would succeed via auto-detection...
+        loader.Succeed(PrimarySoname, 1);        // would succeed via auto-detection...
         loader.Succeed("/opt/my-hamlib.so", 2); // ...but the override must win instead
         var sut = new HamlibLibraryLocator(loader, overridePath: "/opt/my-hamlib.so");
 
@@ -60,13 +63,13 @@ public class HamlibLibraryLocatorTests
         // instead of falling back to auto-detection. Unreachable today (no caller passes one yet),
         // but a real footgun the moment a future Settings wiring pass introduces one.
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 42);
+        loader.Succeed(PrimarySoname, 42);
         var sut = new HamlibLibraryLocator(loader, overridePath: emptyOverride);
 
         var (handle, resolvedPath) = sut.Locate();
 
         Assert.Equal(42, handle);
-        Assert.Equal(LinuxSoname, resolvedPath);
+        Assert.Equal(PrimarySoname, resolvedPath);
     }
 
     // User-reported gap: dropping the library next to the running app (including the standalone-
@@ -77,8 +80,8 @@ public class HamlibLibraryLocatorTests
     public void Locate_BareSonameFailsButBaseDirectoryCandidateSucceeds_ReturnsThatHandle()
     {
         var loader = new FakeNativeLibraryLoader();
-        var baseDirCandidate = Path.Combine(AppContext.BaseDirectory, LinuxSoname);
-        loader.Succeed(baseDirCandidate, 7); // bare LinuxSoname is deliberately NOT registered
+        var baseDirCandidate = Path.Combine(AppContext.BaseDirectory, PrimarySoname);
+        loader.Succeed(baseDirCandidate, 7); // bare PrimarySoname is deliberately NOT registered
         var sut = new HamlibLibraryLocator(loader, overridePath: null);
 
         var (handle, resolvedPath) = sut.Locate();
@@ -111,7 +114,7 @@ public class HamlibLibraryLocatorTests
     public void Locate_OverrideSetButFails_ThrowsWithoutFallingBackToAutoDetection()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1); // auto-detection would succeed, but must never be tried
+        loader.Succeed(PrimarySoname, 1); // auto-detection would succeed, but must never be tried
         var sut = new HamlibLibraryLocator(loader, overridePath: "/opt/missing-hamlib.so");
 
         var ex = Assert.Throws<HamlibUnavailableException>(() => sut.Locate());

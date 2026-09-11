@@ -242,7 +242,11 @@ public sealed class ImageViewerWindowViewModelTests
 
         vm.OpenFileLocationCommand.Execute(null);
 
-        Assert.Equal("/tmp/history", Assert.Single(urlLauncher.OpenedUrls));
+        // The command opens the file's CONTAINING DIRECTORY, which Path.GetDirectoryName builds
+        // with platform separators -- on Windows that is \tmp\history, not /tmp/history.
+        Assert.Equal(
+            Path.GetDirectoryName("/tmp/history/frame.png"),
+            Assert.Single(urlLauncher.OpenedUrls));
     }
 
     [AvaloniaFact]

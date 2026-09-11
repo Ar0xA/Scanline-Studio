@@ -549,9 +549,21 @@ public sealed class SqliteLogbookRepositoryTests
 
     private static void DeleteDb(string path)
     {
-        if (File.Exists(path))
+        // Windows refuses DeleteFile while any handle is open, and Microsoft.Data.Sqlite POOLS
+        // connections -- so disposing the store does not necessarily close the underlying handle.
+        // POSIX unlink() succeeds regardless, which is why identical code passes on Linux and fails
+        // here. Narrowest fix available: it touches no production path.
+        SqliteConnection.ClearAllPools();
+
+        // The sidecars exist because these stores now run in WAL mode, and -wal can hold COMMITTED
+        // transactions. Leaving them behind would let the next test in the same directory inherit
+        // state from this one.
+        foreach (var candidate in new[] { path, path + "-wal", path + "-shm", path + "-journal" })
         {
-            File.Delete(path);
+            if (File.Exists(candidate))
+            {
+                File.Delete(candidate);
+            }
         }
     }
 }

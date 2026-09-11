@@ -9,13 +9,16 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// lazy).</summary>
 public class HamlibRuntimeTests
 {
-    private const string LinuxSoname = "libhamlib.so.4";
+    // The locator's OWN first candidate on this platform, not a hardcoded soname. Pinning
+    // "libhamlib.so.4" made every one of these tests fail on Windows, where the locator yields
+    // hamlib-4.dll -- so nothing the fake registered was ever attempted.
+    private static string PrimarySoname => HamlibLibraryLocator.PrimaryCandidateForCurrentPlatform;
 
     [Fact]
     public void Constructor_SupportedVersion_RunsDiscoveryAndVersionGateExactlyOnce()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var native = new FakeHamlibNative { Version = "Hamlib 4.5.5 date arch" };
         var factory = new CountingHamlibNativeFactory(native);
 
@@ -35,7 +38,7 @@ public class HamlibRuntimeTests
     public void Constructor_UnsupportedVersion_IsAvailableFalse_NativeThrows()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var native = new FakeHamlibNative { Version = "Hamlib 5.0.0 date arch" };
         var factory = new CountingHamlibNativeFactory(native);
 
@@ -69,7 +72,7 @@ public class HamlibRuntimeTests
         // factory to reproduce that path -- the library loads fine, but the native shim it produces
         // is unusable.
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var factory = new CountingHamlibNativeFactory(
             new FakeHamlibNative(),
             throwOnCreate: new HamlibUnavailableException(["rig_get_level: export not found in loaded library"]));
