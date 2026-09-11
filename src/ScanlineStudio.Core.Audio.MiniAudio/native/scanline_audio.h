@@ -144,7 +144,21 @@ typedef struct scanline_audio_open_options
     int periods;
     int channels;       /* 1 or 2 */
     int channel_select; /* 0=unused, 1=Left, 2=Right -- capture-only, see doc comment above */
+    int loopback;       /* capture-only: 0 = a real input device, 1 = WASAPI loopback of an OUTPUT */
 } scanline_audio_open_options;
+
+/* loopback (BACKLOG.md W2): opens ma_device_type_loopback instead of ma_device_type_capture, which
+ * captures what an OUTPUT device is playing. WASAPI only -- every other backend returns
+ * MA_DEVICE_TYPE_NOT_SUPPORTED from ma_device_init, so the open simply fails and returns NULL there,
+ * which is the same failure shape as any other unusable device.
+ *
+ * device_id is then a PLAYBACK device's id, not a capture one. The id string converts the same way
+ * either way (string_to_device_id is a namespace-independent copy), and miniaudio takes it in
+ * config.capture.pDeviceID for loopback exactly as it does for capture -- see its own documentation:
+ * "config.capture.pDeviceID ... Only if requesting a capture, duplex or loopback device."
+ *
+ * Added last in the struct deliberately: a zero-initialised options value keeps every existing
+ * caller on ma_device_type_capture, which is what they all got before this field existed. */
 
 /* Opens and starts capturing from the named device. options->ring_capacity_frames sizes the
  * internal buffer between the real-time callback and the managed drain side -- if the drain side

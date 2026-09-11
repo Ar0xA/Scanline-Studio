@@ -650,7 +650,30 @@ Counts by file: `MiniAudioEngineTests` 16, `MiniAudioCaptureSessionTests` 8,
 `MiniAudioPlaybackSessionTests` 6, `MiniAudioDeviceEnumeratorTests` 4, `HotplugDisposeTests` 2,
 `MiniAudioSpikeGateTests` 2, `MiniAudioDeviceMuteQueryTests` 2, `MiniAudioEngineSstvRoundTripTests` 1.
 
-#### W2. A Windows audio round-trip — use WASAPI loopback, not VB-CABLE
+#### W2. PARTLY DONE 2026-09-11 — loopback plumbed end to end, UNVERIFIED on Windows
+
+The shim only ever built `ma_device_type_capture`. It now builds `ma_device_type_loopback` when a new
+`loopback` field is set, threaded through `scanline_audio_open_options` -> `NativeAudio.OpenOptions`
+-> `MiniAudioCaptureSession`'s constructor. Added LAST in the struct, so a zero-initialised value
+keeps every existing caller on a normal capture.
+
+**One detail was verified against miniaudio's own documentation rather than assumed:** the device id
+goes in `capture.pDeviceID` for loopback exactly as for capture ("Only if requesting a capture, duplex
+or loopback device"). My first reading had it in `playback.pDeviceID` and was wrong. The id itself is
+a PLAYBACK device's, since loopback captures what an output is playing.
+
+Two tests in `WasapiLoopbackCaptureTests.cs`, both in the **exclusive** tier — a loopback open is a
+real device open, even though it takes nothing from another application.
+
+**UNVERIFIED.** Written on Linux, where loopback cannot run: every backend except WASAPI returns
+`MA_DEVICE_TYPE_NOT_SUPPORTED`. The C compiles and the shim builds; nothing beyond that is known.
+
+**Still open:** the 39 `[RequiresPipeWireFact]` skips. That gate conflates "needs a real audio server"
+with "needs PulseAudio", and splitting it is what actually unblocks playback, capture, hotplug and the
+encode-to-device-to-decode round trip on Windows. This change supplies the mechanism that split would
+use; it does not perform the split.
+
+#### (superseded) W2 original filing
 
 The Linux round trip is not a physical cable either: it captures a null-sink's `.monitor`. **WASAPI
 loopback is the direct analogue**, so it gives equivalent coverage rather than a weaker substitute.
