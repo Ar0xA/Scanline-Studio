@@ -64,6 +64,12 @@ internal static class NativeAudio
         public int Periods;
         public int Channels;
         public int ChannelSelect;
+
+        /// <summary>Capture only. Non-zero opens a WASAPI loopback of an OUTPUT device instead of a
+        /// real input, so <c>deviceId</c> is then a PLAYBACK device's id. WASAPI only: every other
+        /// backend fails the device init and the open returns null. Last field deliberately, so a
+        /// zero-initialised value keeps existing callers on a normal capture.</summary>
+        public int Loopback;
     }
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

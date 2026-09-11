@@ -72,7 +72,8 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
     public MiniAudioCaptureSession(
         string deviceId, int sampleRate, ILogger logger, int ringCapacityFrames = 16384,
         ThreadPriority? drainThreadPriority = null, int periodSizeInFrames = 0, int periods = 0,
-        AudioChannelSource channelSource = AudioChannelSource.Mono)
+        AudioChannelSource channelSource = AudioChannelSource.Mono,
+        bool loopback = false)
     {
         // Functional-audit fix (Tier A Batch 1 re-audit round 2): validated BEFORE the native
         // device even opens, not just to avoid the leak below -- AudioDeviceSettings.CaptureThreadPriority
@@ -123,11 +124,19 @@ internal sealed unsafe partial class MiniAudioCaptureSession : IDisposable
                 Periods = periods,
                 Channels = channelSource == AudioChannelSource.Mono ? 1 : 2,
                 ChannelSelect = (int)channelSource,
+
+                // BACKLOG.md W2. Captures what an OUTPUT device is playing, so deviceId is then a
+                // PLAYBACK device's id. WASAPI only: on any other backend the native init fails and
+                // the open below throws, which is the same shape as any unusable device.
+                Loopback = loopback ? 1 : 0,
             };
             _handle = NativeAudio.scanline_audio_capture_session_open(deviceIdBytes, ref options);
             if (_handle == IntPtr.Zero)
             {
-                throw new InvalidOperationException($"Failed to open capture device '{deviceId}' at {sampleRate}Hz.");
+                throw new InvalidOperationException(loopback
+                    ? $"Failed to open loopback capture of output device '{deviceId}' at {sampleRate}Hz. "
+                      + "Loopback is supported on WASAPI only."
+                    : $"Failed to open capture device '{deviceId}' at {sampleRate}Hz.");
             }
         }
         catch
