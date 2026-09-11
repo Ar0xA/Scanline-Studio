@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Settings;
 
@@ -138,18 +139,14 @@ public sealed class AppLocationsServiceTests : IDisposable
         Assert.Null(overrides.PendingConfigDirectory);
     }
 
-    [Fact]
+    [SkipOnWindowsFact]
+    [UnsupportedOSPlatform("windows")]
     public async Task SetConfigDirectoryAsync_WhenPersistingTheOverrideFails_RollsBackToThePreviousDirectory()
     {
         // Same reasoning as SetLogDirectoryAsync's own rollback test below, but Config's failure mode
         // is user-data-visible (the running process keeps reading/writing settings.json at the new
         // directory while the next launch would look for it at the old one), unlike Log's cosmetic
         // one -- see AppLocationsService.SetConfigDirectoryAsync's own doc comment.
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var relocator = new FakeSettingsFileRelocator { CurrentDirectory = "/fake/original" };
         var service = CreateService(relocator);
         var target = NewSubdirectory("config-target-rollback");
@@ -229,7 +226,8 @@ public sealed class AppLocationsServiceTests : IDisposable
         Assert.Null(relocator.LastRequestedDirectory);
     }
 
-    [Fact]
+    [SkipOnWindowsFact]
+    [UnsupportedOSPlatform("windows")]
     public async Task SetLogDirectoryAsync_WhenPersistingTheOverrideFails_RollsBackTheAlreadyRelocatedFiles()
     {
         // Code-review round-1 finding: the relocate can succeed and the override-record save can
@@ -238,11 +236,6 @@ public sealed class AppLocationsServiceTests : IDisposable
         // makes the overrides file's own directory temporarily unwritable so
         // AppLocationOverrides.SaveAsync's atomic temp-file+rename fails after the relocate above
         // already succeeded.
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         var relocator = new FakeLogFileRelocator { NextResult = true };
         var service = CreateService(logRelocator: relocator);
         var currentDirectory = await service.GetLogDirectoryAsync();
