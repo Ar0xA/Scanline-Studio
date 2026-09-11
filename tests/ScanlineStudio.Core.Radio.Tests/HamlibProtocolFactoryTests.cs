@@ -15,7 +15,10 @@ namespace ScanlineStudio.Core.Radio.Tests;
 /// </summary>
 public sealed class HamlibProtocolFactoryTests
 {
-    private const string LinuxSoname = "libhamlib.so.4";
+    // The locator's OWN first candidate on this platform, not a hardcoded soname. Pinning
+    // "libhamlib.so.4" made every one of these tests fail on Windows, where the locator yields
+    // hamlib-4.dll -- so nothing the fake registered was ever attempted.
+    private static string PrimarySoname => HamlibLibraryLocator.PrimaryCandidateForCurrentPlatform;
     private const string AlternatePath = "/opt/homebrew/lib/libhamlib.4.dylib";
 
     private static HamlibProtocolFactory CreateFactory(FakeNativeLibraryLoader loader, IHamlibNative initialNative)
@@ -29,7 +32,7 @@ public sealed class HamlibProtocolFactoryTests
     public async Task ReloadLibraryAsync_CandidateAvailable_SwapsRuntime()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var initialNative = new FakeHamlibNative { Version = "Hamlib 4.5.5 date arch" };
         var nativeFactory = new ScriptedHamlibNativeFactory(initialNative);
         var runtime = new HamlibRuntime(loader, overridePath: null, nativeFactory);
@@ -58,7 +61,7 @@ public sealed class HamlibProtocolFactoryTests
     public async Task ReloadLibraryAsync_CandidateUnavailable_DoesNotSwap_OldRuntimeStillUsed()
     {
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var initialNative = new FakeHamlibNative { Version = "Hamlib 4.5.5 date arch" };
         var factory = CreateFactory(loader, initialNative);
 
@@ -82,7 +85,7 @@ public sealed class HamlibProtocolFactoryTests
         // rounds): an already-constructed HamlibRadioProtocol is provably unaffected by a LATER
         // runtime swap.
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var initialNative = new FakeHamlibNative { Version = "Hamlib 4.5.5 date arch" };
         var nativeFactory = new ScriptedHamlibNativeFactory(initialNative);
         var runtime = new HamlibRuntime(loader, overridePath: null, nativeFactory);
@@ -149,7 +152,7 @@ public sealed class HamlibProtocolFactoryTests
         Assert.True(ThreadPool.SetMinThreads(Math.Max(minWorker, 4), minIoCompletion));
 
         var loader = new FakeNativeLibraryLoader();
-        loader.Succeed(LinuxSoname, 1);
+        loader.Succeed(PrimarySoname, 1);
         var initialNative = new FakeHamlibNative { Version = "Hamlib 4.5.5 date arch" };
         var nativeFactory = new ConcurrencyTrackingHamlibNativeFactory(initialNative) { CallDelay = TimeSpan.FromMilliseconds(50) };
         var runtime = new HamlibRuntime(loader, overridePath: null, nativeFactory);

@@ -5780,7 +5780,9 @@ public sealed class PaneViewModelTests
 
         vm.OpenStorageFolderCommand.Execute(null);
 
-        Assert.Contains("/tmp/scanlinestudio-history", urlLauncher.OpenedUrls);
+        Assert.Contains(
+            Path.Combine(Path.GetTempPath(), "scanlinestudio-history").TrimEnd(Path.DirectorySeparatorChar),
+            urlLauncher.OpenedUrls);
     }
 
     /// <summary>Code-review finding: the resolved default images directory is only ever CREATED on
@@ -5868,7 +5870,12 @@ public sealed class PaneViewModelTests
         // Round-trips through to the SAME url launcher this VM was constructed with -- confirms
         // the viewer VM was actually wired to this pane's own dependencies, not fresh no-op ones.
         requested.OpenFileLocationCommand.Execute(null);
-        Assert.Equal("/tmp", Assert.Single(urlLauncher.OpenedUrls));
+        // Derived, not a literal: the command opens the CONTAINING DIRECTORY of the entry's file,
+        // and Path.GetDirectoryName produces platform separators. A "/tmp" literal only matches on
+        // POSIX.
+        Assert.Equal(
+            Path.GetDirectoryName(requested.Current!.Entry.FilePath),
+            Assert.Single(urlLauncher.OpenedUrls));
     }
 
     [AvaloniaFact]
