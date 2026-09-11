@@ -741,7 +741,31 @@ back. A mute query cannot be verified without a known mute state, and Windows of
 endpoint to use instead. The oracle uses its own COM path (`WindowsEndpointVolume.cs`) rather than the
 shim, so a bug cannot hide in both halves — the Scottie failure shape.
 
-#### W5. OmniRig COM — the one backend that cannot be tested off Windows at all
+#### W5. DONE 2026-09-11 — the real COM object is now driven, read-only
+
+`OmniRigRealComObjectTests.cs`, 4 tests. They drive the **production** `OmniRigComClient`, not a copy
+of its declarations — the existing fake, attribute-reflection and mapper tests all pass equally well
+if every GUID is wrong, because they compare our transcription against itself.
+
+Each read exercises a distinct transcription fact against OmniRig itself: a wrong CLSID fails to
+activate, a wrong IID fails the cast inside `ConnectAsync`, and a wrong DISPID fails that one member.
+All five read-only members are touched, deliberately — a test that read a single property would leave
+the other dispatch ids unverified.
+
+**Everything here is a READ.** Nothing sets a frequency, a mode or PTT. Those change a transmitter's
+state and a test suite must never issue them, so the write-side declarations stay unverified by
+design. That belongs on the manual hardware checklist, not here.
+
+**Three gates, because each absence means something different:** not Windows, not opted in
+(`SCANLINE_OMNIRIG_COM=1` — connecting starts OmniRig's server, which may open the rig's serial port
+and begin polling), and OmniRig not registered, which is third-party software this project does not
+ship and therefore not a defect here.
+
+**Rig-dependent values report rather than assert.** With a rig online it checks frequency is in a
+sane RF range and the mode word is a defined value; without one it writes NOT COVERED to test output,
+so a green run on a machine with no radio is not mistaken for coverage.
+
+#### (superseded) W5 original filing
 
 `OmniRigComClient` is `[SupportedOSPlatform("windows")]` and `OmniRigProtocolFactory` refuses to
 construct elsewhere. Existing tests are a fake, a reflection check on the CLSID/IID/`[DispId]`
