@@ -1,3 +1,6 @@
+using System.Security.Principal;
+using System.Security.AccessControl;
+using System.Runtime.Versioning;
 using System.Reactive.Subjects;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -187,25 +190,79 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
     // is the belt: File.Move's rename on the same filesystem preserves the creation mode SaveCoreAsync
     // already sets above, but its documented cross-filesystem copy-fallback (RelocateAsync's own
     // call site can hit this; SaveCoreAsync's own .tmp is always same-directory, so never can)
-    // doesn't guarantee that -- cheap either way. Windows' own per-user profile directory ACLs are
-    // already private by default, a separate existing protection this doesn't need to duplicate.
+    // doesn't guarantee that -- cheap either way.
+    //
+    // Windows used to return early here, on the grounds that the per-user profile directory's own
+    // ACLs are already private. MEASURED FALSE on a real machine (windows_tests.md section 7): a
+    // settings.json under %APPDATA% carried an inherited app-capability ACE (S-1-15-3-...) granting
+    // FullControl, present on %APPDATA% itself. Relocation makes it worse -- an operator who moves
+    // settings to another drive or a share inherits whatever THAT location grants, commonly
+    // BUILTIN\Users. This file can hold a QRZ.com password in plaintext, so it now sets an explicit
+    // DACL rather than inheriting whatever the parent happens to carry.
+    //
     // Swallowed, not propagated: this throws on vfat/exfat/some network mounts, and a permission-
     // hardening failure must not turn an otherwise-successful save/relocate into a thrown exception.
     private void TrySetOwnerOnlyPermissions(string path)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            return;
-        }
-
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                SetWindowsOwnerOnlyAcl(path);
+                return;
+            }
+
             File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+            or PlatformNotSupportedException or InvalidOperationException)
         {
             Log.PermissionRestrictionFailed(_logger, path, ex);
         }
+    }
+
+    /// <summary>
+    /// Replaces the file's inherited ACL with an explicit one: the current user, SYSTEM and
+    /// Administrators, and nobody else. <c>SetAccessRuleProtection(true, false)</c> is the part that
+    /// matters — it disconnects inheritance AND discards the copied parent rules, so an ACE the
+    /// profile or a relocation target happens to carry does not survive.
+    ///
+    /// <para>SYSTEM and Administrators are kept deliberately. An administrator can take ownership of
+    /// any file regardless, so excluding them would buy nothing and would break backup and repair
+    /// tooling.</para>
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static void SetWindowsOwnerOnlyAcl(string path)
+    {
+        var file = new FileInfo(path);
+        var security = file.GetAccessControl();
+
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+
+        foreach (FileSystemAccessRule existing in security.GetAccessRules(
+            includeExplicit: true, includeInherited: false, typeof(SecurityIdentifier)))
+        {
+            security.RemoveAccessRuleAll(existing);
+        }
+
+        using var identity = WindowsIdentity.GetCurrent();
+        foreach (var sid in new[]
+        {
+            identity.User,
+            new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+            new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null),
+        })
+        {
+            if (sid is null)
+            {
+                continue;
+            }
+
+            security.AddAccessRule(new FileSystemAccessRule(
+                sid, FileSystemRights.FullControl, AccessControlType.Allow));
+        }
+
+        file.SetAccessControl(security);
     }
 
     /// <summary>See <see cref="ISettingsFileRelocator.RelocateAsync"/> for the caller-facing

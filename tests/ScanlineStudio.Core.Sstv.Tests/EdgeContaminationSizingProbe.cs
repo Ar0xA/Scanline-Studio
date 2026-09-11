@@ -37,7 +37,7 @@ public sealed class EdgeContaminationSizingProbe
     private const double AbsoluteMargin = 8.0;
     private const double RelativeMargin = 3.0;
 
-    [Fact]
+    [RequiresDecodeMeasurementFact]
     public async Task EdgeContamination_PerChannel_OnAWorstCaseSource()
     {
         var rows = new List<string>

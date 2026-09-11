@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -140,8 +141,12 @@ public sealed class WindowsSettingsFileProtectionTests
         var directory = Path.Combine(root, $"ScanlineStudio-acl-probe-{Guid.NewGuid():N}");
         Directory.CreateDirectory(directory);
 
+        // Through the PRODUCTION store, not a bare File.WriteAllText. The claim under test is no
+        // longer "the directory is private" -- it is "JsonSettingsStore makes the file private" --
+        // and only the real save path applies the DACL.
         var filePath = Path.Combine(directory, "settings.json");
-        File.WriteAllText(filePath, "{}");
+        var store = new JsonSettingsStore(NullLogger<JsonSettingsStore>.Instance, filePath);
+        store.SaveAsync(new AppSettings()).GetAwaiter().GetResult();
 
         return (directory, filePath);
     }

@@ -662,6 +662,23 @@ public sealed class SstvSessionServicePttSafetyTests
         // never exercised for THIS pair of call sites anymore -- a stronger guarantee than surviving
         // the overwrite. (The mechanism itself remains relevant for SetPttLockAsync, which is not
         // covered by the single-flight guard -- see the round-8/round-12 SetPttLockAsync tests.)
+        // Windows-run finding (windows_tests.md section 5): this failed on ARM64 Windows with
+        // TimeoutException instead of InvalidOperationException, after 4 s. NOT reproduced on Linux --
+        // five consecutive runs pass in under a millisecond each.
+        //
+        // Suspected cause is thread-pool starvation induced by this test itself, not a production
+        // race: BeforeSetPtt is a SYNCHRONOUS hook, and the body below blocks on two async operations
+        // inside it with GetAwaiter().GetResult() while the outer call is still on the pool. If the
+        // pool has not yet grown, those continuations cannot get a thread, the 300 ms cleanup waits
+        // expire, and the outer call surfaces a timeout rather than the guard's rejection. Production
+        // never blocks a PTT callback this way -- BeforeSetPtt exists only on the fake radio.
+        //
+        // Guaranteeing spare threads removes that failure mode without weakening any assertion. If
+        // Windows still fails after this, the cause is NOT starvation and the race is real -- which is
+        // why it is fixed this way rather than by widening the timeout.
+        ThreadPool.GetMinThreads(out var minWorker, out var minIo);
+        ThreadPool.SetMinThreads(Math.Max(minWorker, 16), minIo);
+
         var stage = 0;
         var (service, _, radio, _) = CreateService(wrapEngine: inner => new ThrowOnStartPlaybackAudioEngine(inner));
         radio.BeforeSetPtt = tx =>
