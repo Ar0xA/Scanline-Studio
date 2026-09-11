@@ -64,6 +64,68 @@ dotnet test ScanlineStudio.sln
 To run a single test project or filter to one test, see the exact invocations in `CLAUDE.md` §6 (if
 present in your checkout — it's gitignored, project-local).
 
+### Opt-in tests, and what each one costs the machine
+
+Some Windows tests are gated behind an environment variable, because running them takes something
+real: an audio device, a serial port, or the machine's own mute state. A plain `dotnet test` skips
+every one of them, so an ordinary run never disturbs anything.
+
+The tier is visible in each test's attribute, so you can tell what it costs without reading the body:
+
+| attribute | cost |
+|---|---|
+| `[WindowsFact]` | nothing — no audio, no serial, no hardware |
+| `[WindowsAudioReadOnlyFact]` | enumerates devices or reads their state; **opens no stream**, inaudible |
+| `[WindowsAudioExclusiveFact]` | **opens a device or changes system state** — opt-in |
+| `[OmniRigInstalledFact]` | **may open the rig's serial port** — opt-in |
+| `[RequiresDecodeMeasurementFact]` | no hardware, but slow — these are measurement harnesses |
+
+#### Audio: `SCANLINE_WINDOWS_AUDIO_EXCLUSIVE=1`
+
+```powershell
+$env:SCANLINE_WINDOWS_AUDIO_EXCLUSIVE = "1"
+dotnet test tests\ScanlineStudio.Core.Audio.MiniAudio.Tests
+```
+
+Runs the mute oracle and the WASAPI loopback tests.
+
+The mute oracle **mutes your default output device**, reads the query, then restores whatever state
+it found — in a `finally`, so a failed assertion still puts the machine back. A mute query cannot be
+verified without a known mute state, and Windows offers no virtual endpoint to use instead. Two
+things worth knowing: muting fires a system-wide notification, so the volume OSD appears; and if the
+test process is killed between the mute and the restore, the machine stays muted.
+
+Loopback opens a capture stream against an output endpoint. It does not silence that output or take
+it from another application — loopback is explicitly a non-exclusive observer — but it is a real
+device open rather than an enumeration.
+
+#### OmniRig: `SCANLINE_OMNIRIG_COM=1`
+
+```powershell
+$env:SCANLINE_OMNIRIG_COM = "1"
+dotnet test tests\ScanlineStudio.Core.Radio.Tests --filter FullyQualifiedName~OmniRigRealComObject
+```
+
+**Do not run this while operating.** Connecting starts OmniRig's COM server, and if OmniRig is
+configured with a real rig that server may open the serial port and begin polling, exactly as if you
+had launched OmniRig yourself. The test cannot prevent that — it is what instantiating OmniRig means.
+
+Every operation is a READ. Nothing sets a frequency, a mode or PTT. It skips rather than fails when
+OmniRig is not registered, since that is third-party software this project does not ship.
+
+Two results are written to test output rather than asserted, because they depend on your machine
+rather than on the code. Look for them:
+
+- `NOT COVERED: no rig online` — the frequency and mode checks did not run.
+- `NOT COVERED on this machine: all N device names are ASCII` — the multi-byte branch of the WASAPI
+  device-id conversion did not run. Renaming an audio endpoint in Sound settings exercises it.
+
+#### Decode measurements: `SCANLINE_RUN_DECODE_MEASUREMENTS=1`
+
+These report their findings through the failure message, so they always "fail" when run — that is how
+the numbers surface. They also account for roughly 28 of the suite's 35 minutes, which is why a plain
+run skips them.
+
 ## Standalone build (no .NET runtime required on the target machine)
 
 For a build you can hand to someone (or run on a machine) without installing the .NET 8 runtime
