@@ -21,6 +21,13 @@ internal sealed class FakeHamlibNative : IHamlibNative
     public bool Reentered { get; private set; }
     public TimeSpan CallDelay { get; set; } = TimeSpan.Zero;
 
+    /// <summary>Fires at the top of every native call, before <see cref="CallDelay"/>'s sleep and
+    /// before the call's own body runs. Every native call in <see cref="HamlibRadioProtocol"/> runs
+    /// only while its own lock is held, so this firing is direct proof of that -- a test can use it as
+    /// a deterministic gate instead of a wall-clock delay. Not one-shot on its own; a test that only
+    /// wants to gate the FIRST call should clear this field from inside the handler itself.</summary>
+    public Action? OnCallStarting { get; set; }
+
     public nint RigInitHandle { get; set; } = 1;
     public int RigOpenCode { get; set; }
     public int RigCloseCode { get; set; }
@@ -213,6 +220,8 @@ internal sealed class FakeHamlibNative : IHamlibNative
 
         try
         {
+            OnCallStarting?.Invoke();
+
             if (CallDelay > TimeSpan.Zero)
             {
                 Thread.Sleep(CallDelay);

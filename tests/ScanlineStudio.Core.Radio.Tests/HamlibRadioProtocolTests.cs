@@ -400,25 +400,73 @@ public class HamlibRadioProtocolTests
         // that meant a physically keyed transmitter on a handle nothing would ever close again, while
         // the caller saw only an ObjectDisposedException out of its own Release() and concluded the
         // key had failed.
+        // TT1-13 (BACKLOG.md): this used to sequence the race below with two Task.Delay(20) calls,
+        // assuming rather than enforcing that the slow poll had the lock before PTT queued, and that
+        // PTT had queued before Dispose ran. yoniq-auditor plan-review found the assumption itself was
+        // sound (the synchronous prefix of an async call, including an uncontended SemaphoreSlim
+        // acquire, really does run on the calling thread before the method returns its Task) but that
+        // removing the delays without replacing them would trade a VISIBLE flake for an INVISIBLE one:
+        // AcquireAsync has two different disposed checks (pre-wait at :591, post-wait at :600-604), and
+        // if PTT ever raced past Dispose instead of queuing behind it, it would hit the pre-wait check
+        // instead -- still throwing ObjectDisposedException, still leaving rig_init at 1, still not
+        // reaching rig_set_ptt, so every assertion this test had would still pass while testing the
+        // WRONG code path. Fixed with two changes: a real gate instead of a sleep, and a second
+        // assertion that discriminates which of the two checks actually fired.
         var native = new FakeHamlibNative();
         var sut = new HamlibRadioProtocol(native, model: 1);
         await sut.PollAsync(CancellationToken.None); // establishes the connection
 
-        native.CallDelay = TimeSpan.FromMilliseconds(150); // long enough to hold _lock while the two
-                                                            // calls below queue up behind it
+        // OnCallStarting fires only once native calls only ever run while _lock is held (see
+        // FakeHamlibNative.OnCallStarting's own doc comment), so this firing is direct proof _lock is
+        // held -- not an inference from timing. It then blocks the native call on releaseGate, holding
+        // _lock for exactly as long as this test needs rather than for a fixed wall-clock guess.
+        var callStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseGate = new ManualResetEventSlim(initialState: false);
+        native.OnCallStarting = () =>
+        {
+            native.OnCallStarting = null; // one-shot: only the slow poll's FIRST native call blocks --
+                                           // the other RigGetMode/RigGetPtt calls this same PollAsync
+                                           // makes, and DisposeAsync's own teardown calls, must run
+                                           // freely once this gate opens.
+            callStarted.TrySetResult();
+            releaseGate.Wait();
+        };
 
-        var slowPollTask = sut.PollAsync(CancellationToken.None); // acquires _lock, then sits in delay
-        await Task.Delay(TimeSpan.FromMilliseconds(20)); // let it actually acquire _lock first
+        Task<RadioState>? slowPollTask = null;
+        Task? pttTask = null;
+        var disposeTask = default(ValueTask);
+        try
+        {
+            slowPollTask = sut.PollAsync(CancellationToken.None); // acquires _lock, blocks on the gate
+            await callStarted.Task.WaitAsync(TimeSpan.FromSeconds(5)); // _lock is now provably held
 
-        // Queued BEFORE DisposeAsync is ever called -- passes its own initial disposed check while
-        // _disposed is still false, then blocks on _lock.WaitAsync() behind the slow poll above.
-        var pttTask = sut.SetPttAsync(true, CancellationToken.None);
-        await Task.Delay(TimeSpan.FromMilliseconds(20)); // let it actually enter the wait queue
+            // Queued BEFORE DisposeAsync is ever called -- passes its own initial disposed check while
+            // _disposed is still false, then blocks on _lock.WaitAsync() behind the slow poll above.
+            // IsCompleted false here is the enforcement, not an assumption: _lock is still held (the
+            // gate above has not been released), so a completed task here would mean this call did NOT
+            // queue behind the slow poll -- which the rest of this test must not silently pass through.
+            pttTask = sut.SetPttAsync(true, CancellationToken.None);
+            Assert.False(pttTask.IsCompleted);
 
-        var disposeTask = sut.DisposeAsync();
+            disposeTask = sut.DisposeAsync();
+        }
+        finally
+        {
+            // Always -- including if an assertion above threw -- so the native call blocked inside
+            // OnCallStarting is never leaked, whatever the outcome of this test.
+            releaseGate.Set();
+        }
 
         await slowPollTask;
-        await Assert.ThrowsAsync<ObjectDisposedException>(() => pttTask);
+        var pttException = await Assert.ThrowsAsync<ObjectDisposedException>(() => pttTask);
+
+        // Discriminates AcquireAsync's PRE-wait disposed check (ObjectDisposedException.ThrowIf's
+        // ObjectName is the namespace-qualified type name) from its POST-wait one (ObjectName is the
+        // short "HamlibRadioProtocol" from `nameof`, verified empirically against this exact call --
+        // see AcquireAsync's own doc comment). Only the post-wait throw proves PTT actually queued
+        // behind Dispose and got the disposed re-check after waking, which is this test's whole point.
+        Assert.Equal(nameof(HamlibRadioProtocol), pttException.ObjectName);
+
         await disposeTask;
 
         Assert.Equal(1, native.CallLog.Count(c => c == "rig_init")); // never resurrected
