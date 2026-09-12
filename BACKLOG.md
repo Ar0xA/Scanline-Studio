@@ -608,12 +608,40 @@ Extend `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`. It holds
 that test only checks the reverse direction (no hardcoded literals). A typo'd key ships as a broken
 label with nothing to catch it.
 
-### TT1-13. Replace the 3-way dispose/PTT/poll race with deterministic gates
+### TT1-13. CLOSED 2026-09-12 — replaced with a real gate, `yoniq-auditor` go on both plan and code
 
-`HamlibRadioProtocolTests.cs:393-427` sequences a dispose/PTT/poll race using `CallDelay` plus two
-bare `Task.Delay(20)` calls. That is assumed ordering, not enforced ordering. This test is the
-regression gate for a physically-keyed-transmitter-on-disposed-handle bug, and it is a real CI flake
-risk. Apply this project's own "deterministic gates, not shared race" rule.
+`HamlibRadioProtocolTests.cs:393-427` (now longer) sequenced a dispose/PTT/poll race with `CallDelay`
+plus two bare `Task.Delay(20)` calls — assumed ordering, not enforced. Regression gate for a
+physically-keyed-transmitter-on-disposed-handle bug, so a real CI flake risk on safety-relevant test
+infrastructure.
+
+**Plan-review caught something the fix would otherwise have missed.** The delays looked removable on
+reasoning alone (an async method's synchronous prefix, including an uncontended `SemaphoreSlim`
+acquire, really does run before the method returns its `Task`) — but `AcquireAsync` has two different
+disposed checks, pre-wait and post-wait, and a version that removed the delays without adding an
+ordering assertion would have traded a VISIBLE flake for an INVISIBLE one: if PTT ever raced past
+Dispose, it would hit the pre-wait check instead of the post-wait one, still throw
+`ObjectDisposedException`, still pass every existing assertion — while silently testing the wrong code
+path and no longer gating the regression at all.
+
+**Fix, both required by plan-review:** `FakeHamlibNative` gained one hook, `OnCallStarting`, firing
+before a native call's body runs — proof `_lock` is held, since every native call in
+`HamlibRadioProtocol` only ever runs inside one. The test uses it as a one-shot two-way handshake (a
+`TaskCompletionSource` signals out, a `ManualResetEventSlim` blocks the native call until the test
+releases it), replacing the first delay with an actual gate instead of a wall-clock guess. The second
+delay is replaced by `Assert.False(pttTask.IsCompleted)` right after queuing it (enforces the queue
+instead of assuming it) plus `Assert.Equal(nameof(HamlibRadioProtocol), ex.ObjectName)`, which
+discriminates the pre-wait check's namespace-qualified `ObjectName` from the post-wait check's short
+one — verified empirically, not from documentation, that `ObjectDisposedException.ThrowIf` and
+`new ObjectDisposedException(nameof(...))` really do produce different `ObjectName` values.
+
+**Verified, not just reviewed:** 30/30 repeat runs with no flake, and a mutation check — temporarily
+deleting the post-wait disposed re-check restored the original bug, and this test caught it
+("No exception was thrown"), then the production file was restored clean. The test now runs in under
+1 ms, against roughly 190 ms of sleeps before.
+
+**Also corrected in this pass:** `BACKLOG.md`'s companion item, PA-Backfill-Throw, was found to rest
+on a claim that does not hold on .NET 8 — see that entry, now closed rather than fixed.
 
 ### W1-W8. Windows-only test coverage — nothing here has ever been executed by a test
 
@@ -907,18 +935,25 @@ the `x == 0` pixel in two families.
 
 ## 3. Small source items, verified open
 
-### PA-Backfill-Throw. Widen the backfill's catch past `FormatException`
+### PA-Backfill-Throw. CLOSED 2026-09-12 — the claimed second exception is not reachable
 
-`SqliteReceiveHistoryStore.cs:910` catches only `FormatException`, but `DateTimeOffset.Parse` also
-throws `ArgumentOutOfRangeException` on an out-of-range offset. That escapes `EnsureSchema`, which
-runs from the constructor, which resolves inside DI — **the same shape as the 00f incident**, where a
-constructor-time throw made the app fail to start on every launch until the row was repaired by hand.
+**Checked directly, not assumed.** `SqliteReceiveHistoryStore.cs:910` catches only `FormatException`.
+The filed claim was that `DateTimeOffset.Parse` also throws `ArgumentOutOfRangeException` on an
+out-of-range offset, escaping `EnsureSchema` and crashing every launch from inside DI, the same shape
+as the 00f incident.
 
-Pre-existing, not introduced by the 2026-09-10 quick-wins batch. Found by `yoniq-auditor` during that
-batch's review and filed here rather than widening that commit. The fix mirrors the existing
-skip-and-log arm: catch the second exception type alongside the first and leave that one row NULL,
-which the unconditional backfill self-heals on a later start. Small, but it touches a startup path,
-so it warrants its own change and its own regression test.
+**On .NET 8 (verified empirically against this runtime, not from documentation), it does not.** Every
+out-of-range case tried — offset beyond ±14 hours, UTC-range overflow at both the year-1 and year-9999
+ends, invalid calendar fields (hour 24, month 13, day 32, minute 60) — throws `FormatException`.
+`DateTimeOffset.Parse` wraps `ArgumentOutOfRangeException` into `FormatException` internally before it
+reaches the caller. No input was found that reaches the caller as anything else.
+
+**No change made.** Adding a catch arm for an exception the method never throws on this runtime would
+be dead code, and it would fail this project's own mutation gate — removing it would change nothing
+any test could detect. `CLAUDE.md` §3: don't add error handling for a scenario that can't happen.
+
+If this is revisited, re-verify against the target runtime first — this was not checked against .NET
+Framework or Mono, only against the project's actual .NET 8 target.
 
 ### PA-Factory. Extract one factory-match resolver
 
