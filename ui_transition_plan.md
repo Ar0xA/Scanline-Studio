@@ -1,16 +1,18 @@
 # UI transition plan — from ui_findings.md (second pass), source-audited 2026-08-28
 
 > **CLOSED 2026-09-07.** Every step is resolved. Steps 1 to 13, 15, and 16 shipped and are pushed.
-> Step 14 is rejected outright by user decision, not deferred. This document is a historical design
-> record. It is kept for step 14's rejected design, the Tier 3 scope-decision log, and the
-> DSP/concurrency call-outs that set review-cadence precedent.
+> Step 14 was rejected outright by user decision, not deferred — **that decision was reversed
+> 2026-09-12, and step 14 now ships too** (see its own section below for the current state; the
+> "rejected" framing throughout this document describes history, not the present). This document is
+> a historical design record. It is kept for step 14's original rejected design (now reversed), the
+> Tier 3 scope-decision log, and the DSP/concurrency call-outs that set review-cadence precedent.
 
 Working plan. Findings references (T1-n/T2-n) map to `ui_findings.md`'s original tiers.
 
 ## Status (2026-08-30)
 
-Steps 1-13, 15, 16 are **done**, committed, and pushed to `master`. Step 14 is **rejected outright**
-(final user decision, not deferred). Detailed how-it-was-built notes for the done steps have been
+Steps 1-13, 15, 16 are **done**, committed, and pushed to `master`. Step 14 was **rejected outright**
+2026-08-29, then **reversed and shipped 2026-09-12** — see its own section below. Detailed how-it-was-built notes for the done steps have been
 pruned from this file — the code itself now carries the load-bearing comments (e.g.
 `MainWindow.axaml:48` for step 1, `TemplateStore.cs`/`ITemplateStore.cs` for step 13); `git log`
 has the commit-by-commit history. This file keeps only what is still actionable or still a live
@@ -46,8 +48,8 @@ DSP/concurrency call-outs that set review cadence precedent for similar future w
     original assumption's failure mode is a real trap for similar future correlation work).
 13. Scanline template bundle export/import (T1-7, half A) — **done**. `.sstemplate` = zipped
     `TemplateStore` folder; `ITemplateStore.ExportAsync`/`ImportAsync`.
-14. Legacy `.mtm` template import (T1-7, half B) — **rejected 2026-08-29**, see below and
-    `docs/removed-features.md`.
+14. Legacy `.mtm` template import (T1-7, half B) — **rejected 2026-08-29, reversed and shipped
+    2026-09-12**, see below and `docs/removed-features.md`.
 15. QSO delete + duplicate detection + QSL flags (Tier 3, accepted 2026-08-29) — **done
     2026-08-29**.
 16. Copy / open-externally for received images (Tier 3, accepted 2026-08-29) — **done 2026-08-29**.
@@ -56,31 +58,47 @@ OmniRig client backend (Tier 3, accepted 2026-08-29, **done 2026-08-29**) was ne
 here — it was CAT-layer/backend work outside this doc's UI-findings-driven scope. Tracked at
 `spec/03-cat-layer.md`'s "Definition of done" and `spec/14-roadmap.md`.
 
-## Step 14 — Legacy `.mtm` template import (rejected)
+## Step 14 — Legacy `.mtm` template import (rejected 2026-08-29, REVERSED and shipped 2026-09-12)
+
+**Current state: shipped.** `ITemplateStore.ImportLegacyMtmAsync` —
+`src/ScanlineStudio.Application/LegacyMtmReader.cs`/`LegacyMtmImportAdapter.cs`/`TemplateStore.cs`,
+an "IMPORT LEGACY" action in the Ready Rack panel. The real, current field-layout spec is
+`docs/mtm-binary-format.md` (reverse-engineered from `Draw.cpp` directly and validated against every
+real local sample, superseding the line-citation summary below). Also imports the paired stock
+picture (`TxStock{N}.bmp`/`.jpg`, `Current.bmp`) as the template's background for a numbered
+stock-slot template or `Current.mtm`. `BACKLOG.md`'s own entry has the review history (3
+plan-review rounds, 1 `yoniq-principal` verification, 3 code-review rounds).
+
+`.mtm` import remains import-only, per the original design below — there is still no `.mtm` export.
+
+**Original rejected-then-reversed design record, kept for history:**
 
 `.mtm` is import-only in this design; there is no `.mtm` export (Scanline's element model has no
 group/OLE/line equivalent and excludes perspective/vertical/gradient text — a writer would be lossy
 where fidelity matters most). "Both directions" was meant to be satisfied by `.mtm` import plus the
 already-shipped `.sstemplate` export/import (step 13).
 
-**Rejected outright, 2026-08-29** — explicit, final user decision, not a technical blocker. Before
-rejection, the format was confirmed fully specified (not an "unreverse-engineered" gate, contrary to
-an earlier, now-corrected claim in `spec/15-template-designer.md`):
-`yoniq-old/YONIQ-main/Draw.cpp`'s `CDrawGroup::SaveToStream`/`LoadFromStream` (lines 5344-5385
-file-is-one-group, 4963-5004 container loop with `int32` command dispatch against `CM_*` in
-Draw.h:80-88, 408-454 base record including a `0x55aa0000`-tagged optional `m_BoxStyle` block,
-501-524 length-prefixed CP932 strings, 456-486 an embedded VCL `TBitmap` stream). `.mti` (single
-template item) rides the identical parser, differing only in the file-dialog filter string
-(`Main.cpp:10090/10134`) — its rejection is moot alongside `.mtm`'s.
+**Rejected outright, 2026-08-29** (then reversed 2026-09-12) — explicit user decision, not a technical
+blocker either way. Before the original rejection, the format was confirmed fully specified (not an
+"unreverse-engineered" gate, contrary to an earlier, now-corrected claim in
+`spec/15-template-designer.md`): `yoniq-old/YONIQ-main/Draw.cpp`'s
+`CDrawGroup::SaveToStream`/`LoadFromStream` (lines 5344-5385 file-is-one-group, 4963-5004 container
+loop with `int32` command dispatch against `CM_*` in Draw.h:80-88, 408-454 base record including a
+`0x55aa0000`-tagged optional `m_BoxStyle` block, 501-524 length-prefixed CP932 strings, 456-486 an
+embedded VCL `TBitmap` stream). `.mti` (single template item) rides the identical parser, differing
+only in the file-dialog filter string (`Main.cpp:10090/10134`).
 
-Two other things ruled out committing legacy sample files (`def1-5.mtm`, `Stock/*.mtm`,
-`Current.mtm`) as test fixtures even if the feature had been accepted: YONIQ's own `License.TXT`
-calls the *program* freeware under the author's copyright (distinct from the LGPL source license),
-and the files embed author-created bitmap artwork.
+**The licensing concern below is still respected** — no real legacy sample file was ever committed
+as a test fixture; the shipped test suite uses only hand-authored synthetic byte arrays, plus an
+opt-in test that reads real local `.mtm` files directly from the user's own gitignored `yoniq-old/`
+clone (never copied into the repo). Two other things ruled out committing legacy sample files
+(`def1-5.mtm`, `Stock/*.mtm`, `Current.mtm`) as test fixtures: YONIQ's own `License.TXT` calls the
+*program* freeware under the author's copyright (distinct from the LGPL source license), and the
+files embed author-created bitmap artwork.
 
 `docs/removed-features.md`'s "Legacy `.mtm`/`.mti` template import" entry and
-`spec/15-template-designer.md`'s Decisions/Deferred sections carry the corresponding correction —
-this section is kept here as the design record in case the decision is ever revisited.
+`spec/15-template-designer.md`'s "Reversed 2026-09-12" section (originally "Decisions"/"Rejected")
+carry the corresponding correction.
 
 ## Tier 3 — scope decisions for the user (accept / defer / reject, one line each)
 
@@ -90,9 +108,10 @@ this section is kept here as the design record in case the decision is ever revi
 - Print for received images: **rejected 2026-08-29** — user can print from whatever app opens the
   externally-opened image (see above). Not a legacy capability, so no `docs/removed-features.md`
   entry.
-- Legacy `.mti` import alongside `.mtm`: **moot, rejected with step 14** — see
-  `docs/removed-features.md`.
-- Legacy `.mtm` **export** (write, not read): moot — the whole import effort is rejected.
+- Legacy `.mti` import alongside `.mtm`: **shipped 2026-09-12 alongside `.mtm`** (confirmed identical
+  format) — reverses the original "moot, rejected with step 14."
+- Legacy `.mtm` **export** (write, not read): still not built — only step 14's REVERSAL applies to
+  import; nothing changed the write-side "no `.mtm` export" design decision stated above.
 - Richer Gallery filters/sort/bulk actions: **deferred 2026-08-29** ("maybe later," not scheduled).
 - External logger / live current-QSO integration beyond ADIF UDP: **no action needed** —
   `ScanlineStudio.Core.Logbook` already ships batch ADIF file export/import AND a generic

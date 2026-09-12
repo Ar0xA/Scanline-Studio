@@ -261,7 +261,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
                 return RenderWarpedBoxPreview(box, corners, targetWidthPx, targetHeightPx,
                     styleImageHeightPx is > 0 && double.IsFinite(styleImageHeightPx.Value) ? styleImageHeightPx.Value : targetHeightPx);
             case TemplateBoxElement box:
-                return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
+                return box.FillEnabled
+                    ? BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx)
+                    : BgraPixelBuffer.FromTransparent(targetWidthPx, targetHeightPx);
             default:
                 return BgraPixelBuffer.FromSolidColor(new Abstractions.Imaging.Rgb24(0, 0, 0), targetWidthPx, targetHeightPx);
         }
@@ -290,7 +292,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     {
         if (!TryComputeLocalWarpGeometry(corners, targetWidthPx, targetHeightPx, out var localCorners))
         {
-            return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
+            return box.FillEnabled
+                ? BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx)
+                : BgraPixelBuffer.FromTransparent(targetWidthPx, targetHeightPx);
         }
 
         using var contentBitmap = new Image<Rgba32>(targetWidthPx, targetHeightPx);
@@ -301,7 +305,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var matrix = SolveHomography(localCorners, targetWidthPx, targetHeightPx);
         if (!IsWellConditioned(matrix, targetWidthPx, targetHeightPx))
         {
-            return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
+            return box.FillEnabled
+                ? BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx)
+                : BgraPixelBuffer.FromTransparent(targetWidthPx, targetHeightPx);
         }
 
         using var warped = contentBitmap.Clone(ctx => ctx.Transform(
@@ -1025,15 +1031,22 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var rect = BuildBoxPath(bounds.X, bounds.Y, bounds.Width, bounds.Height, cornerRadiusPx);
         var opacity = Math.Clamp((float)element.Opacity, 0f, 1f);
         var options = new DrawingOptions { GraphicsOptions = new GraphicsOptions { BlendPercentage = opacity } };
-        var fillColor = new Rgba32(element.FillColor.R, element.FillColor.G, element.FillColor.B, 255);
-        // Box gradient fill (TX editor gap-items plan, 2026-09-01) -- SAME BuildGradientBrush call
-        // DrawTemplateText already uses; that method's own bounds/fallback-color params carry no
-        // text-specific assumption, confirmed before reuse.
-        Brush fillBrush = element.Gradient is { } gradient
-            ? BuildGradientBrush(gradient, bounds, element.FillColor)
-            : Brushes.Solid(fillColor);
 
-        ctx.Fill(options, fillBrush, rect);
+        // Legacy `.mtm` import -- FillEnabled false is legacy's own outline-only CM_BOX (NULL_BRUSH,
+        // nothing painted underneath the border). Skips the fill entirely rather than drawing at
+        // alpha 0: cheaper, and matches the border-drawing block below, which does not depend on this.
+        if (element.FillEnabled)
+        {
+            var fillColor = new Rgba32(element.FillColor.R, element.FillColor.G, element.FillColor.B, 255);
+            // Box gradient fill (TX editor gap-items plan, 2026-09-01) -- SAME BuildGradientBrush call
+            // DrawTemplateText already uses; that method's own bounds/fallback-color params carry no
+            // text-specific assumption, confirmed before reuse.
+            Brush fillBrush = element.Gradient is { } gradient
+                ? BuildGradientBrush(gradient, bounds, element.FillColor)
+                : Brushes.Solid(fillColor);
+
+            ctx.Fill(options, fillBrush, rect);
+        }
 
         if (element.BorderColor is { } borderColor && element.BorderThickness > 0)
         {

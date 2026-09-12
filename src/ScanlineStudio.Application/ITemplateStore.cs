@@ -59,4 +59,27 @@ public interface ITemplateStore
     /// extraction — never leaves a partially-written template folder behind (a cleanup-on-failure
     /// step removes it, scoped ONLY to the id THIS call itself just minted).</summary>
     Task<string> ImportAsync(string sourceZipPath, CancellationToken ct = default);
+
+    /// <summary>Imports a legacy YONIQ/MMSSTV `.mtm`/`.mti` template file, converting it onto this
+    /// store's own persisted element model via <c>LegacyMtmImportAdapter</c> (byte-accurate parsing
+    /// is <c>LegacyMtmReader</c>'s separate, no-decision job). Always mints a FRESH template id from
+    /// the source file's own base name, same "never trust foreign content's own identity" convention
+    /// <see cref="ImportAsync"/> already established for `.sstemplate` bundles. Throws
+    /// <see cref="LegacyMtmFormatException"/> (or its <see cref="LegacyMtmOleNotImportableException"/>
+    /// subtype) if <paramref name="mtmPath"/> is not a valid, importable `.mtm`/`.mti` file -- the
+    /// message is safe to surface to the user directly. A failure partway through writing assets or
+    /// the manifest never leaves a partially-imported template folder behind, same cleanup-on-failure
+    /// guarantee as <see cref="ImportAsync"/>.
+    /// <para>Most legacy elements import faithfully; some (an outline-only box's exact transparency,
+    /// a multi-stop gradient, an embedded sound-visualizer pattern, most legacy macro tokens) can only
+    /// be approximated or must be dropped, since the modern element model has no equivalent -- see
+    /// <see cref="LegacyMtmImportResult.Notes"/> for a plain-English report of every such case in
+    /// THIS import, always non-empty when at least one occurred, never silent.</para></summary>
+    Task<LegacyMtmImportResult> ImportLegacyMtmAsync(string mtmPath, CancellationToken ct = default);
 }
+
+/// <summary><paramref name="TemplateId"/> is the freshly minted id the caller can immediately
+/// <see cref="ITemplateStore.LoadAsync"/> or navigate to. <paramref name="Notes"/> is empty when
+/// every element imported with no approximation or drop -- never null, so a caller can always safely
+/// check <c>Notes.Count</c> without a null guard.</summary>
+public sealed record LegacyMtmImportResult(string TemplateId, IReadOnlyList<string> Notes);

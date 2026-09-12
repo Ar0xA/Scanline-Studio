@@ -57,6 +57,38 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_FillEnabledFalse_LeavesBackgroundShowingButStillDrawsTheBorder()
+    {
+        // Legacy `.mtm` import -- FillEnabled=false is the modern equivalent of legacy's plain CM_BOX
+        // (GetStockObject(NULL_BRUSH), an outline with nothing painted inside it). The center of the
+        // box must show the underlying background untouched, while the border -- an independent draw
+        // call in DrawBoxContent -- must still render, proving this is "skip the fill call" and not
+        // "skip the whole element."
+        var path = await WriteFixturePngAsync(20, 20, (_, _) => new ImageSharpRgb24(10, 20, 30));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 20, 20);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(
+                    new NormalizedRect(0.2, 0.2, 0.6, 0.6), Z: 0, FillColor: new Rgb24(255, 0, 0),
+                    BorderColor: new Rgb24(0, 200, 0), BorderThickness: 0.1, FillEnabled: false),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Center of the box: fill would land here if it were drawn -- must still be background.
+            AssertPixel(result, 10, 10, 10, 20, 30);
+            // Top edge of the box, inset to land inside the border stroke's own ink -- must be green.
+            AssertPixel(result, 10, 5, 0, 200, 0);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task ApplyTemplate_HigherZDrawsOnTopOfLowerZ()
     {
         // Blue (Z=1, higher) is listed FIRST and red (Z=0, lower) SECOND -- deliberately the

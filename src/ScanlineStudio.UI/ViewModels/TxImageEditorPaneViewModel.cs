@@ -93,7 +93,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
         bool PerspectiveEnabled = false,
         double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
-        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
+        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
+        // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
+        bool FillEnabled = true)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Line element (TX editor gap-items plan, 2026-09-01) -- base <paramref name="X"/>/
@@ -1382,7 +1384,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.CornerRadius,
             box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
             box.PerspectiveEnabled,
-            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
+            box.FillEnabled),
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight,
@@ -2786,7 +2789,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // same additive convention every other Phase-N addition to this factory already uses.
         bool perspectiveEnabled = false,
         double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
-        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0)
+        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0,
+        // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
+        bool fillEnabled = true)
     {
         var element = new BoxElementViewModel
         {
@@ -2795,6 +2800,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Width = width,
             Height = height,
             FillColor = fillColor,
+            FillEnabled = fillEnabled,
             BorderColor = borderColor,
             BorderThickness = borderThickness,
             Opacity = opacity,
@@ -2884,7 +2890,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 box.GradientEnabled
                     ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
                     : null,
-                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y)),
+                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+                box.FillEnabled),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
         var scaleY = ComputeTargetToCanvasScaleY();
@@ -3024,7 +3031,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.CornerRadius,
             box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
             box.PerspectiveEnabled,
-            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
+            box.FillEnabled),
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight,
@@ -3173,7 +3181,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                     box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
                     box.PerspectiveEnabled,
-                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y);
+                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
+                    box.FillEnabled);
             case RawImageElementSnapshot image:
                 // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
                 // own doc comment): safe against any reordering/filtering between here and the manifest
@@ -3324,7 +3333,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                     box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
                     box.PerspectiveEnabled,
-                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y);
+                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
+                    box.FillEnabled);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -4778,6 +4788,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     break;
                 case (RawBoxElementSnapshot style, BoxElementViewModel box):
                     box.FillColor = style.FillColor;
+                    // Legacy `.mtm` import -- same "add every current field to THIS switch case or it
+                    // silently drops" bug class this case's own Gradient comment already documents.
+                    box.FillEnabled = style.FillEnabled;
                     box.BorderColor = style.BorderColor;
                     box.BorderThickness = style.BorderThickness;
                     box.Opacity = style.Opacity;
@@ -6482,7 +6495,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
             : null;
         return new TemplateBoxElement(
-            corners?.ToBoundingBox() ?? naturalBounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius, gradient, corners);
+            corners?.ToBoundingBox() ?? naturalBounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius, gradient, corners,
+            box.FillEnabled);
     }
 
     private TemplateImageElement BuildImageTemplateElement(ImageElementViewModel image, NormalizedRect naturalBounds)

@@ -102,9 +102,17 @@ public interface IFilePickerService
     Task<string?> PickSaveTemplateBundleAsync(string suggestedFileName);
 
     /// <summary>ui_transition_plan.md step 13 -- Templates panel's Import action. Typed to
-    /// <c>.sstemplate</c> only (step 14's legacy <c>.mtm</c> importer, not yet built, will extend
-    /// this or add its own picker once that format's scope is decided -- deliberately not
-    /// anticipated here). Returns the picked file's local path, or <c>null</c> if the user
+    /// <c>.sstemplate</c> only. Returns the picked file's local path, or <c>null</c> if the user
     /// cancelled.</summary>
     Task<string?> PickOpenTemplateBundleAsync();
+
+    /// <summary>Templates panel's "Import legacy YONIQ template" action -- step 14's legacy `.mtm`
+    /// importer (`ITemplateStore.ImportLegacyMtmAsync`), reversed 2026-09-12 from its 2026-08-29
+    /// rejection. A SEPARATE picker from <see cref="PickOpenTemplateBundleAsync"/>, deliberately: the
+    /// two formats are unrelated (one is this app's own native bundle, the other legacy YONIQ/MMSSTV's
+    /// binary format) and must never be offered through the same file-type filter. Typed to both
+    /// `.mtm` and `.mti` (confirmed the identical format, extension-only distinction --
+    /// `docs/mtm-binary-format.md`). Returns the picked file's local path, or <c>null</c> if the user
+    /// cancelled.</summary>
+    Task<string?> PickOpenLegacyMtmTemplateAsync();
 }

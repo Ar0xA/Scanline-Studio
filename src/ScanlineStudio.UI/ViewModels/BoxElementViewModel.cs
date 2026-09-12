@@ -73,6 +73,12 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     [ObservableProperty]
     private Rgb24 _fillColor = new(64, 64, 64);
 
+    /// <summary>Legacy `.mtm` import -- legacy's plain CM_BOX draws an outline with NO fill
+    /// (GetStockObject(NULL_BRUSH)), which this model had no way to express before this field
+    /// existed. True (today's only behavior) for every box that isn't an import of one of those.</summary>
+    [ObservableProperty]
+    private bool _fillEnabled = true;
+
     [ObservableProperty]
     private Rgb24? _borderColor;
 
@@ -426,9 +432,11 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// function of its own arguments with no VM state, so it can't regress that path by
     /// construction). The real pipeline side (<c>TransmitImagePreparer.BuildGradientBrush</c>) is
     /// ALREADY shared between text and box -- this brings the canvas-preview side in line too.</summary>
-    public IBrush FillBrush => GradientEnabled
-        ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor, CanvasWidthPixels, CanvasHeightPixels, PreviewMetrics)
-        : new SolidColorBrush(ToAvaloniaColor(FillColor));
+    public IBrush FillBrush => !FillEnabled
+        ? Brushes.Transparent
+        : GradientEnabled
+            ? GradientBrushFactory.Build(GradientKind, GradientStartColor, GradientEndColor, CanvasWidthPixels, CanvasHeightPixels, PreviewMetrics)
+            : new SolidColorBrush(ToAvaloniaColor(FillColor));
 
     /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- while perspective is on,
     /// the Border's own local Fill/Border/Opacity bindings must yield to the warped-preview `Image`
@@ -635,6 +643,18 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     partial void OnFillColorChanging(Rgb24 value) => PushUndoSnapshotForStyleChange?.Invoke();
 
     partial void OnFillColorChanged(Rgb24 value)
+    {
+        OnPropertyChanged(nameof(FillBrush));
+        OnPropertyChanged(nameof(EffectiveBackground));
+        if (PerspectiveEnabled)
+        {
+            ScheduleWarpedPreviewRebuild();
+        }
+    }
+
+    partial void OnFillEnabledChanging(bool value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnFillEnabledChanged(bool value)
     {
         OnPropertyChanged(nameof(FillBrush));
         OnPropertyChanged(nameof(EffectiveBackground));

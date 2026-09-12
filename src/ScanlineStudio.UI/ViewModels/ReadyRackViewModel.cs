@@ -487,6 +487,56 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         await RefreshAsync();
     }
 
+    /// <summary>Legacy `.mtm`/`.mti` template import, reversed 2026-09-12 from its 2026-08-29
+    /// rejection (`BACKLOG.md`). Mirrors <see cref="ImportAsync"/>'s own shape exactly, with one
+    /// addition: <see cref="ITemplateStore.ImportLegacyMtmAsync"/> can succeed with NOTES (elements
+    /// approximated or dropped because the modern model has no legacy equivalent) -- those are
+    /// ALWAYS surfaced in <see cref="StatusMessage"/> when present, never silently swallowed, and the
+    /// full list is logged at Information so a user who wants the exact detail can find it, without
+    /// this panel growing a dedicated multi-line results dialog for what is expected to be a rare,
+    /// one-off action.
+    /// <para><see cref="LegacyMtmFormatException"/> (thrown for a corrupt, truncated, or
+    /// OLE-embedded file) carries a message already written to be shown to a user directly -- surfaced
+    /// as-is rather than the generic failure string every other exception here falls back to.</para></summary>
+    [RelayCommand]
+    private async Task ImportLegacyMtmAsync()
+    {
+        LegacyMtmImportResult result;
+        try
+        {
+            var sourcePath = await _filePickerService.PickOpenLegacyMtmTemplateAsync();
+            if (sourcePath is null)
+            {
+                return;
+            }
+
+            result = await _templateStore.ImportLegacyMtmAsync(sourcePath);
+        }
+        catch (LegacyMtmFormatException ex)
+        {
+            Log.ImportLegacyMtmFailed(_logger, ex);
+            StatusMessage = ex.Message;
+            return;
+        }
+        catch (Exception ex)
+        {
+            Log.ImportLegacyMtmFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ImportLegacyMtmTemplateFailed");
+            return;
+        }
+
+        // RefreshAsync's own success path unconditionally clears StatusMessage (a deliberate
+        // convention -- see its own doc comment) -- so the partial-import notice must be set AFTER
+        // it runs, not before, or RefreshAsync would immediately wipe it out.
+        await RefreshAsync();
+
+        if (result.Notes.Count > 0)
+        {
+            Log.ImportLegacyMtmNotes(_logger, result.TemplateId, string.Join(" | ", result.Notes));
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.ImportLegacyMtmTemplatePartial", result.Notes.Count);
+        }
+    }
+
     /// <summary>T0-2: atomic read-modify-write for the pinned-template-ids section. Both callers
     /// (<see cref="RefreshAsync"/>'s prune, <see cref="TogglePinAsync"/>) used to be a separate
     /// LoadAsync then a conditional SaveAsync -- a check-then-act with the lock released in between,
@@ -538,5 +588,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack import failed")]
         public static partial void ImportFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack legacy .mtm/.mti import failed")]
+        public static partial void ImportLegacyMtmFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Legacy .mtm/.mti import of template '{TemplateId}' succeeded with notes: {Notes}")]
+        public static partial void ImportLegacyMtmNotes(ILogger logger, string templateId, string notes);
     }
 }

@@ -473,4 +473,87 @@ public sealed class ReadyRackViewModelTests
         // Confirms RefreshAsync (which would populate AllTemplates from the store) was never reached.
         Assert.Empty(readyRack.AllTemplates);
     }
+
+    [Fact]
+    public async Task ImportLegacyMtmCommand_UserCancelsThePicker_NeverCallsTheStoreOrRefreshes()
+    {
+        var templateStore = new FakeTemplateStore();
+        var filePickerService = new FakeFilePickerService { OpenLegacyMtmTemplatePathToReturn = null };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportLegacyMtmCommand.ExecuteAsync(null);
+
+        Assert.Empty(readyRack.AllTemplates);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmCommand_HappyPathWithNoNotes_RefreshesAndClearsStatusMessage()
+    {
+        var templateStore = new FakeTemplateStore
+        {
+            ImportLegacyMtmResult = ("Imported def1", new PersistedTemplateDocument([]), []),
+        };
+        var filePickerService = new FakeFilePickerService { OpenLegacyMtmTemplatePathToReturn = "/tmp/def1.mtm" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportLegacyMtmCommand.ExecuteAsync(null);
+
+        Assert.Contains(readyRack.AllTemplates, t => t.Name == "Imported def1");
+        Assert.Null(readyRack.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmCommand_SucceedsWithNotes_StillRefreshesButSurfacesAStatusMessage()
+    {
+        // The import is not a failure when some elements needed approximating -- the template DOES
+        // land in the rack, but the user must be told something changed, not left to notice by eye.
+        var templateStore = new FakeTemplateStore
+        {
+            ImportLegacyMtmResult = ("Imported t1", new PersistedTemplateDocument([]), ["A box's dash style was approximated as solid."]),
+        };
+        var filePickerService = new FakeFilePickerService { OpenLegacyMtmTemplatePathToReturn = "/tmp/t1.mtm" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportLegacyMtmCommand.ExecuteAsync(null);
+
+        Assert.Contains(readyRack.AllTemplates, t => t.Name == "Imported t1");
+        Assert.NotNull(readyRack.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmCommand_RejectedFile_SurfacesTheExceptionMessageDirectlyAndDoesNotRefresh()
+    {
+        // LegacyMtmFormatException's own message is written to be user-safe -- shown as-is, not
+        // replaced by the generic failure string every other exception here falls back to.
+        var templateStore = new FakeTemplateStore
+        {
+            ImportLegacyMtmExceptionToThrow = new LegacyMtmOleNotImportableException(),
+        };
+        await SaveTemplateAsync(templateStore, "Pre-existing");
+        var filePickerService = new FakeFilePickerService { OpenLegacyMtmTemplatePathToReturn = "/tmp/ole.mtm" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportLegacyMtmCommand.ExecuteAsync(null);
+
+        Assert.Contains("OLE", readyRack.StatusMessage);
+        Assert.Empty(readyRack.AllTemplates);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmCommand_StoreThrowsAGenericException_SetsTheGenericStatusMessageAndDoesNotRefresh()
+    {
+        var templateStore = new FakeTemplateStore
+        {
+            ImportLegacyMtmExceptionToThrow = new InvalidOperationException("simulated I/O failure"),
+        };
+        await SaveTemplateAsync(templateStore, "Pre-existing");
+        var filePickerService = new FakeFilePickerService { OpenLegacyMtmTemplatePathToReturn = "/tmp/bad.mtm" };
+        var readyRack = CreateReadyRack(templateStore, filePickerService: filePickerService);
+
+        await readyRack.ImportLegacyMtmCommand.ExecuteAsync(null);
+
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.DoesNotContain("simulated I/O failure", readyRack.StatusMessage);
+        Assert.Empty(readyRack.AllTemplates);
+    }
 }
