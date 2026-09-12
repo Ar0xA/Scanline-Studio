@@ -454,6 +454,213 @@ public sealed partial class TemplateStore : ITemplateStore
         return templateId;
     }
 
+    // Code-review finding: the reader's own length-field hardening only bounds allocations DRIVEN BY
+    // fields inside the file -- it can't guard the initial whole-file read itself. Generous relative
+    // to any real .mtm (KB-scale text/boxes plus at most a handful of embedded photos), tight enough
+    // to reject a multi-gigabyte file (mistaken or hostile) before it ever touches memory.
+    private const long MaxLegacyMtmFileSizeBytes = 50L * 1024 * 1024;
+
+    /// <inheritdoc/>
+    public async Task<LegacyMtmImportResult> ImportLegacyMtmAsync(string mtmPath, CancellationToken ct = default)
+    {
+        var fileLength = new FileInfo(mtmPath).Length;
+        if (fileLength > MaxLegacyMtmFileSizeBytes)
+        {
+            throw new LegacyMtmFormatException(
+                $"'{Path.GetFileName(mtmPath)}' is {fileLength:N0} bytes, larger than any real .mtm/.mti file should be "
+                + $"(max {MaxLegacyMtmFileSizeBytes:N0}) -- not imported.");
+        }
+
+        var fileBytes = await File.ReadAllBytesAsync(mtmPath, ct).ConfigureAwait(false);
+
+        // Throws LegacyMtmFormatException/LegacyMtmOleNotImportableException on anything not a valid,
+        // importable file -- deliberately BEFORE minting a template id or creating any directory, so
+        // a rejected file never leaves an empty template folder behind.
+        var root = LegacyMtmReader.ReadTemplate(fileBytes);
+
+        var name = Path.GetFileNameWithoutExtension(mtmPath);
+        var templateId = CreateTemplateId(name);
+        var directory = GetTemplateDirectory(templateId);
+        Directory.CreateDirectory(directory);
+
+        try
+        {
+            var conversion = await LegacyMtmImportAdapter.ConvertAsync(
+                root, (bitmap, token) => WriteLegacyBitmapAssetAsync(templateId, bitmap, token), ct).ConfigureAwait(false);
+
+            var elements = conversion.Elements;
+            var notes = conversion.Notes;
+            var companionImagePath = FindLegacyCompanionImagePath(mtmPath);
+            if (companionImagePath is not null)
+            {
+                // Code-review finding: the companion image is a BONUS, same design premise as
+                // FindLegacyCompanionImagePath's own null-is-normal contract -- an unreadable/corrupt
+                // companion must degrade the same way an ABSENT one does (skip it, note it), not fail
+                // an otherwise-valid .mtm import that would have succeeded before this lookup existed.
+                try
+                {
+                    var backgroundElement = await ImportLegacyCompanionImageAsBackgroundAsync(templateId, companionImagePath, ct)
+                        .ConfigureAwait(false);
+                    // Prepended, not appended -- Z=-1 (below every element the adapter itself numbers
+                    // starting at 0) guarantees this renders first regardless of list position,
+                    // matching "background" render order without needing to renumber anything else.
+                    elements = [backgroundElement, .. elements];
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    Log.CompanionImageImportFailed(_logger, companionImagePath, ex);
+                    notes = [.. notes, $"Found the paired legacy picture '{Path.GetFileName(companionImagePath)}' but couldn't read it -- imported without a background."];
+                }
+            }
+
+            await SaveAsync(templateId, name, new PersistedTemplateDocument(elements), ct).ConfigureAwait(false);
+            return new LegacyMtmImportResult(templateId, notes);
+        }
+        catch
+        {
+            // Same freshly-minted-id-only cleanup convention as ImportAsync's own catch block above.
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch (Exception cleanupEx)
+            {
+                Log.ImportCleanupFailed(_logger, templateId, cleanupEx);
+            }
+
+            throw;
+        }
+    }
+
+    // t{N}.mtm (any digit count, no zero-padding -- Main.cpp's own sprintf("%st%d.mtm", StockDir,
+    // n+1)) -- .mtm ONLY. Code-review finding: legacy's sprintf never produces "t{N}.mti" (.mti is a
+    // DIFFERENT legacy feature, "Template items", ComLib.cpp:1395/:1399) -- an earlier version of
+    // this pattern accepted .mti too, which could false-positive a user's own unrelated t1.mti file
+    // into looking like a numbered stock slot.
+    private static readonly System.Text.RegularExpressions.Regex StockSlotFileNamePattern =
+        new(@"^t(\d+)\.mtm$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>Legacy pairs a numbered stock-slot template with a same-numbered picture file, saved
+    /// and loaded as two INDEPENDENT files sharing one index -- never embedded in the `.mtm` itself
+    /// (confirmed directly: `TMmsstv::LoadStockTemp`/`LoadBitmapS`/`Main.cpp`'s `PBoxTXDragDrop`
+    /// handler load `t{n+1}.mtm` and `TxStock{n+1}.bmp`/`.jpg` side by side, gated on two SEPARATE
+    /// checkboxes -- a user can recall either alone). `Current.mtm`/`Current.bmp` is the same
+    /// base-name pairing, used for the app's own "restore last session" state instead of a named
+    /// slot. Returns <see langword="null"/> when the picked file doesn't match either naming pattern,
+    /// or no sibling image exists next to it -- both are normal, not errors: most `.mtm` files are
+    /// not numbered stock slots at all, and even a real stock-slot template may have been saved with
+    /// no picture recalled alongside it.</summary>
+    private static string? FindLegacyCompanionImagePath(string mtmPath)
+    {
+        var directory = Path.GetDirectoryName(mtmPath);
+        if (directory is null || !Directory.Exists(directory))
+        {
+            return null;
+        }
+
+        var fileName = Path.GetFileName(mtmPath);
+        string baseName;
+        if (string.Equals(fileName, "Current.mtm", StringComparison.OrdinalIgnoreCase))
+        {
+            baseName = "Current";
+        }
+        else
+        {
+            var match = StockSlotFileNamePattern.Match(fileName);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            baseName = $"TxStock{match.Groups[1].Value}";
+        }
+
+        // Code-review finding: the .mtm match above is case-insensitive (legacy's own authoring
+        // filesystem, Windows, is too), but File.Exists is NOT case-insensitive on Linux/macOS -- an
+        // all-uppercase legacy folder ("T1.MTM" + "TXSTOCK1.BMP") would match the template name and
+        // then silently find no companion. Enumerate the directory once and compare names
+        // case-insensitively instead of probing exact-case candidate paths. Built by hand, not
+        // ToDictionary, since a case-SENSITIVE filesystem can legally hold two entries that only
+        // differ by case (e.g. "TxStock1.bmp" and "txstock1.bmp" both present) -- first one wins
+        // rather than throwing on a duplicate key.
+        var entries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            entries.TryAdd(Path.GetFileName(path), path);
+        }
+
+        // .bmp checked first -- legacy's own LoadBitmapSN prefers whichever format sys.m_UseJPEG
+        // selects, defaulting to .bmp; this import has no access to that live setting, so it checks
+        // both and prefers the format legacy defaults to.
+        foreach (var extension in new[] { ".bmp", ".jpg" })
+        {
+            if (entries.TryGetValue(baseName + extension, out var candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Imports an already-real companion image file (found by
+    /// <see cref="FindLegacyCompanionImagePath"/>) as a full-canvas background element -- unlike
+    /// <see cref="WriteLegacyBitmapAssetAsync"/>, no temp-file bridge is needed, since this path is
+    /// already a real file on disk, not bytes extracted from inside a `.mtm` stream.</summary>
+    private async Task<PersistedImageElement> ImportLegacyCompanionImageAsBackgroundAsync(
+        string templateId, string imagePath, CancellationToken ct)
+    {
+        var source = await _imageFileLoader.LoadOriginalAsync(imagePath, ct).ConfigureAwait(false);
+        var assetFileName = $"{Guid.NewGuid():N}.png";
+        Directory.CreateDirectory(Path.Combine(GetTemplateDirectory(templateId), "assets"));
+        await _imageSourceWriter.WritePngAsync(source, GetAssetPath(templateId, assetFileName), ct).ConfigureAwait(false);
+
+        // Code-review finding: legacy's own two draw paths for this picture (Main.cpp:9394-9400) are
+        // KSIS-checked -> StretchCopyBitmapHW (aspect-distorting full-canvas stretch) or unchecked ->
+        // a plain 1:1 Draw(0,0) -- BOTH preserve every source pixel. Stretch is the only ImageFitMode
+        // that matches either branch; Cover is the one mode that would crop content neither branch
+        // ever does. Also matches this same importer's own embedded-bitmap path
+        // (LegacyMtmImportAdapter.cs), which already uses Stretch for the identical reason.
+        return new PersistedImageElement(
+            X: 0.5, Y: 0.5, Width: 1.0, Height: 1.0, Z: -1, Locked: true,
+            assetFileName, ImageFitMode.Stretch, PersistedImageSourceKind.File, OriginPayload: null,
+            IsBackground: true);
+    }
+
+    /// <summary>Bridges a raw embedded legacy bitmap into this store's own asset convention.
+    /// <see cref="IImageFileLoader"/> is path-only (no in-memory byte-array overload), so the bytes
+    /// touch a scratch temp file once before <see cref="IImageSourceWriter"/> can re-encode them as
+    /// this template's own PNG asset -- the temp file is always deleted afterward, success or
+    /// failure, since it is scratch, not part of the template.</summary>
+    private async Task<string> WriteLegacyBitmapAssetAsync(string templateId, MtmBitmap bitmap, CancellationToken ct)
+    {
+        var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.bmp");
+        try
+        {
+            await File.WriteAllBytesAsync(tempPath, bitmap.Bytes, ct).ConfigureAwait(false);
+            var source = await _imageFileLoader.LoadOriginalAsync(tempPath, ct).ConfigureAwait(false);
+
+            var assetFileName = $"{Guid.NewGuid():N}.png";
+            Directory.CreateDirectory(Path.Combine(GetTemplateDirectory(templateId), "assets"));
+            await _imageSourceWriter.WritePngAsync(source, GetAssetPath(templateId, assetFileName), ct).ConfigureAwait(false);
+            return assetFileName;
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempPath);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                // Best-effort: a scratch temp file, not template content -- never worth failing or
+                // even logging the import over. Code-review finding: catching only IOException let a
+                // delete-permission failure (UnauthorizedAccessException) escape this finally and
+                // mask whatever real exception was already propagating from the try above.
+            }
+        }
+    }
+
     /// <summary>Rejects an absolute path, a Windows-style separator (zip entry names are
     /// forward-slash per the ODA/.NET convention, but a maliciously hand-built archive can still
     /// embed one), and any <c>..</c> segment — the same path-traversal shape
@@ -582,7 +789,7 @@ public sealed partial class TemplateStore : ITemplateStore
                     box.GradientEnabled
                         ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor ?? box.FillColor), new GradientColorStop(1f, box.GradientEndColor ?? box.FillColor)])
                         : null,
-                    boxPerspective);
+                    boxPerspective, box.FillEnabled);
             case PersistedImageElement image:
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);
@@ -707,6 +914,9 @@ public sealed partial class TemplateStore : ITemplateStore
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Cleanup of partially-imported template '{TemplateId}' failed")]
         public static partial void ImportCleanupFailed(ILogger logger, string templateId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Legacy .mtm companion image '{ImagePath}' could not be read; imported the template without a background")]
+        public static partial void CompanionImageImportFailed(ILogger logger, string imagePath, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Template '{TemplateId}' text picture-fill asset '{AssetFileName}' could not be loaded; rendering that element without its picture fill")]
         public static partial void BitmapFillAssetLoadFailed(ILogger logger, string templateId, string assetFileName, Exception ex);

@@ -771,7 +771,20 @@ and its resolution, verified directly against current source, not inferred from 
   first and import it as a normal file/clipboard image — no in-app camera capture exists or is
   planned.
 
-## Legacy `.mtm`/`.mti` template import
+## (superseded 2026-09-12) Legacy `.mtm`/`.mti` template import — reversed, now shipped
+
+**This entry no longer describes current behavior.** The 2026-08-29 rejection below was reversed by
+direct user request 2026-09-12, and the importer now ships: `ITemplateStore.ImportLegacyMtmAsync`
+(`src/ScanlineStudio.Application/LegacyMtmReader.cs`/`LegacyMtmImportAdapter.cs`/`TemplateStore.cs`),
+an "IMPORT LEGACY" action in the Ready Rack panel, `.mtm`/`.mti` both accepted (confirmed identical
+format). Full field-layout spec: `docs/mtm-binary-format.md`. Also imports the paired stock picture
+(`TxStock{N}.bmp`/`.jpg`, `Current.bmp`) as the template's background when the picked file is a
+numbered stock slot or `Current.mtm` and a sibling image exists next to it — see that doc's own
+"Companion pictures" section. Reviewed by `yoniq-auditor` across 3 plan-review rounds, 1
+`yoniq-principal` verification, and 3 code-review rounds; kept here, superseded rather than deleted,
+per this document's own record-keeping convention.
+
+**Original rejection record, preserved for history:**
 
 - **Legacy**: `Draw.cpp`'s `CDrawGroup::SaveToStream`/`LoadFromStream` (lines 4963-5385, per-element
   records dispatched via `CM_*` in `Draw.h:80-88`) — the binary format backing legacy's saved TX

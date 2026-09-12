@@ -53,13 +53,12 @@ capability checklist, never an implementation to replicate. This matches this pr
 rule that UI/image-editing work should be improved on, not replicated (port-first fidelity is scoped
 to DSP/codec math only, CLAUDE.md §2).
 
-Concretely: the scene-graph object model, `.mtm` reverse-engineering, `CDrawOle`/OLE embedding, and
-the `CItems`-successor plugin surface are **dropped as 1.1 goals entirely**, not just deferred
-further — see Non-goals. `.mtm` *import* was originally sequenced after 1.1's modern core rather than
-dropped, but is now **rejected outright (2026-08-29, user decision)** — see the Rejected section
-below, which preserves this document's original legacy research as a historical record only, not a
-live reference for future work. **Next step is plan-review** (UI/UX design decisions get an auditor
-plan-review pass before implementation, same as any other UI/UX design work) — done, and
+Concretely: the scene-graph object model, `CDrawOle`/OLE embedding, and the `CItems`-successor plugin
+surface are **dropped as 1.1 goals entirely**, not just deferred further — see Non-goals. `.mtm`
+*import* was rejected outright 2026-08-29, then **reversed and shipped 2026-09-12** — see the
+"Reversed 2026-09-12" section below (originally titled "Rejected"). **Next step is plan-review**
+(UI/UX design decisions get an auditor plan-review pass before implementation, same as any other UI/UX
+design work) — done, and
 implementation is complete as of 2026-08-18 (see Status above).
 
 ## Goal
@@ -227,7 +226,8 @@ embedding, and a CItems-equivalent `ITemplateItem` plugin surface** (this revers
 own earlier proposal; **user decision 2026-08-16: move it fully out of scope**, not just deferred —
 no CItems-successor extension point is planned at all), and "preview as received" (decision 3 above).
 Legacy `.mtm` *import* was carved out of this Non-goals list as a real future goal at the time this
-was written; **as of 2026-08-29 it is rejected too** — see the Rejected section below.
+was written, rejected 2026-08-29, then **reversed and shipped 2026-09-12** — see the "Reversed
+2026-09-12" section below. It is NOT a non-goal; it is a real, shipped capability.
 
 **Cross-references fixed 2026-08-16**: [[11-plugin-system]] and
 [docs/removed-features.md](../docs/removed-features.md) no longer claim a future `ITemplateItem`/
@@ -235,15 +235,40 @@ CItems-successor extension point tied to this document — both now state it as 
 acknowledged gap. [[07-image-pipeline]] and [[14-roadmap]] no longer carry this document's old
 "specified but deferred past v1" framing.
 
-## Rejected 2026-08-29: legacy `.mtm` import (was "deferred, not dropped")
+## Reversed 2026-09-12, shipped: legacy `.mtm` import (was "Rejected 2026-08-29")
 
-**User decision, explicit and final** — reverses every "not dropped" / "real future goal" statement
-elsewhere in this document. Scanline Studio's own native `.sstemplate` bundle format
-(`ui_transition_plan.md` step 13, shipped) already covers template sharing/portability going
-forward; legacy `.mtm`/`.mti` files from an existing MMSSTV/YONIQ install are simply not imported.
-See `docs/removed-features.md` for the formal removed-capability entry. This section preserves this
-document's original research below purely as a historical record — it is **not** a live reference
-for future work, and this sub-effort will not be picked back up.
+**The rejection below was reversed by direct user request 2026-09-12, and the importer now ships.**
+`ITemplateStore.ImportLegacyMtmAsync` — `LegacyMtmReader` (pure, byte-accurate parsing) and
+`LegacyMtmImportAdapter` (the mapping decisions) in `src/ScanlineStudio.Application/`. The binary
+format spec this section's own research below was superseded by:
+`docs/mtm-binary-format.md`, reverse-engineered from `Draw.cpp` directly and validated against every
+real local `.mtm` sample. Also imports the paired stock picture (`TxStock{N}.bmp`/`.jpg`,
+`Current.bmp`) as the template's background for a numbered stock-slot template or `Current.mtm`, when
+a sibling image exists next to the picked file. `docs/removed-features.md`'s entry is marked
+superseded, not deleted. This section's own original research below is kept as the historical record
+that preceded the real reverse-engineering pass — read `docs/mtm-binary-format.md` for the current,
+verified field layout, not this section.
+
+**Definition of done, closed out:**
+- [x] `.mtm` format reverse-engineered and documented — `docs/mtm-binary-format.md`, cross-checked
+      against `Draw.cpp`'s own `Load`/`Save` methods, validated against every real local sample
+      (byte-exact clean EOF).
+- [x] Legacy `.mtm` import path implemented and tested against real samples already in the legacy
+      tree (`def1-5.mtm`, `t1-5.mtm`, `Current.mtm`, `List.mtm`, both `TemplateDir` and `Stock/`
+      copies).
+- [x] `CDrawOle` elements explicitly reported as unsupported-on-import (the whole file is rejected,
+      not silently dropped or partially imported — its payload has no length prefix, so a partial
+      skip isn't possible; see `docs/mtm-binary-format.md`'s own `CDrawOle` section for why).
+- [x] Porting gotchas recorded as they surfaced during 3 `yoniq-auditor` plan-review rounds, 1
+      `yoniq-principal` verification, and 3 code-review rounds — see `docs/mtm-binary-format.md`
+      and `BACKLOG.md`'s own entry for the full list (the `m_LineStyle` signedness question, the
+      macro-token `"%%"` collapse bug caught against a real sample, the `CM_TITLE`/`CM_LINE`
+      visibility rules).
+
+Original 2026-08-29 rejection text, kept for history: Scanline Studio's own native `.sstemplate`
+bundle format (`ui_transition_plan.md` step 13, shipped) already covers template sharing/portability
+going forward; legacy `.mtm`/`.mti` files from an existing MMSSTV/YONIQ install were, at the time,
+simply not imported.
 
 ### What legacy's template designer actually is
 
@@ -328,7 +353,12 @@ subtype onto the closest existing `TemplateElement` subtype (`CDrawText`→`Temp
 `CDrawOle`/any unsupported element per the drop policy above, rather than blocking the whole
 import.
 
-### Definition of done (historical — this sub-effort is rejected, not picked up)
+### (superseded) Definition of done — original draft, kept for history only
+
+Written when this sub-effort was still rejected; superseded by the real "Definition of done, closed
+out" checklist at the top of this section (all 4 items done, including `PARALIST.BIN`, resolved —
+it IS a real `.mtm`-format file, used for a phrase-preset list, see `docs/mtm-binary-format.md`).
+Original text below, unchanged:
 
 - [ ] `.mtm` format reverse-engineered and documented (cross-checked against `Draw.cpp`'s `Load`/
       `Save` methods), including confirming or refuting the `PARALIST.BIN` relationship noted above.
@@ -358,11 +388,11 @@ import.
   accurate (those files no longer claim a future `ITemplateItem` extension point tied to this
   document).
 
-**Real open items: none. Corrected 2026-09-10.** This paragraph used to read "multi-select move
-only", which contradicted the Known-gaps bullet above it — multi-select move shipped as
-"group-ops-lite" (`a3484fa`). Legacy `.mtm` import (previously listed here as "still intentionally
-deferred") is rejected outright, see the Rejected section above. Box-element corner-radius and
-multi-handle/
+**Real open items: none. Corrected 2026-09-10, updated 2026-09-12.** This paragraph used to read
+"multi-select move only", which contradicted the Known-gaps bullet above it — multi-select move
+shipped as "group-ops-lite" (`a3484fa`). Legacy `.mtm` import (previously listed here as "still
+intentionally deferred", then "rejected outright") is reversed and shipped — see the "Reversed
+2026-09-12" section above. Box-element corner-radius and multi-handle/
 aspect-locked element resize both shipped the same day (see Known gaps above), alongside a same-day
 batch of Bold/Italic text styling (real vendored font-file variants, not synthesized), DIST/BEAM
 insert-field chips, the legacy "3D" stacked-copy text effect, bitmap-pattern text fill, clipboard-paste

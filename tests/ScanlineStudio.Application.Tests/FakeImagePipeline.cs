@@ -17,8 +17,16 @@ internal sealed class FakeImageSourceWriter : IImageSourceWriter
 
 /// <summary>In-memory <see cref="IImageFileLoader"/> counterpart to <see cref="FakeImageSourceWriter"/>
 /// -- <see cref="LoadOriginalAsync"/> reads back whatever <see cref="Sources"/> has under the same
-/// path, so a save-then-load round trip in a test doesn't touch real disk at all.</summary>
-internal sealed class FakeImageFileLoader : IImageFileLoader
+/// path, so a save-then-load round trip in a test doesn't touch real disk at all.
+/// <paramref name="writer"/> is optional and, when supplied, is checked as a FALLBACK after
+/// <see cref="Sources"/> -- a caller-chosen path (e.g. a test's own `store.GetAssetPath(id,
+/// "asset1.png")`) still needs an explicit `Sources` entry as before, but a path this store minted
+/// INTERNALLY (a random GUID the test could never predict in advance, e.g.
+/// `TemplateStore.ImportLegacyMtmAsync`'s own companion-image asset) now round-trips automatically
+/// through whatever the SAME test's <see cref="FakeImageSourceWriter"/> already wrote there --
+/// closing a real testability gap (a save path that writes-then-immediately-reads-back its own new
+/// asset, e.g. for a thumbnail render) without the test needing to know a GUID ahead of time.</summary>
+internal sealed class FakeImageFileLoader(FakeImageSourceWriter? writer = null) : IImageFileLoader
 {
     public Dictionary<string, IImageSource> Sources { get; } = [];
 
@@ -26,9 +34,19 @@ internal sealed class FakeImageFileLoader : IImageFileLoader
         => LoadOriginalAsync(path, ct);
 
     public Task<IImageSource> LoadOriginalAsync(string path, CancellationToken ct = default)
-        => Task.FromResult(Sources.TryGetValue(path, out var source)
-            ? source
-            : throw new FileNotFoundException($"No fake source configured for '{path}'."));
+    {
+        if (Sources.TryGetValue(path, out var source))
+        {
+            return Task.FromResult(source);
+        }
+
+        if (writer is not null && writer.Files.TryGetValue(path, out var written))
+        {
+            return Task.FromResult(written);
+        }
+
+        throw new FileNotFoundException($"No fake source configured for '{path}'.");
+    }
 }
 
 /// <summary>Minimal real <see cref="IImageSource"/> -- a flat single-color image, enough for

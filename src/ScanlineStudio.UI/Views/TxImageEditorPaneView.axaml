@@ -363,8 +363,12 @@
                                  unlike Export below), so it lives in this header row rather than the
                                  per-row action grid further down. -->
                             <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
-                                <Button Grid.Column="0" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.ImportTemplate}" Command="{Binding ReadyRack.ImportCommand}" />
+                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                            Content="{loc:Translate Panes.TxImageEditor.ImportTemplate}" Command="{Binding ReadyRack.ImportCommand}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                            Content="{loc:Translate Panes.TxImageEditor.ImportLegacyMtmTemplate}" Command="{Binding ReadyRack.ImportLegacyMtmCommand}" />
+                                </StackPanel>
                                 <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
                             </Grid>
                             <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
@@ -1092,7 +1096,10 @@
                                                 <FlyoutBase.AttachedFlyout>
                                                     <Flyout Placement="Right">
                                                         <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="220">
-                                                            <ColorView Color="{Binding FillColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
+                                                            <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.FillColorLabel}"
+                                                                      IsChecked="{Binding FillEnabled}" />
+                                                            <ColorView IsEnabled="{Binding FillEnabled}"
+                                                                       Color="{Binding FillColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
                                                                        IsAlphaEnabled="False" IsAccentColorsVisible="False" />
                                                             <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.BorderLabel}"
                                                                       IsChecked="{Binding HasBorder}" />
@@ -2285,9 +2292,11 @@
                             <StackPanel Spacing="{StaticResource IndustrySpacingTight}"
                                         IsVisible="{Binding SelectedOverlayElement, Converter={x:Static conv:IsBoxElementConverter.Instance}}">
                                 <TextBlock Classes="IndustryGbTitle" Margin="0,4,0,0" Text="{loc:Translate Panes.TxImageEditor.BoxStyleHeader}" />
-                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FillColorLabel}" />
-                                    <ColorPicker Grid.Column="1" HorizontalAlignment="Right"
+                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                                    <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.FillColorLabel}"
+                                              IsChecked="{Binding SelectedBoxElement.FillEnabled}" />
+                                    <ColorPicker Grid.Column="2" HorizontalAlignment="Right"
+                                                 IsEnabled="{Binding SelectedBoxElement.FillEnabled}"
                                                  Color="{Binding SelectedBoxElement.FillColor, Converter={x:Static conv:Rgb24ToColorConverter.Instance}}" />
                                 </Grid></Border>
                                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
