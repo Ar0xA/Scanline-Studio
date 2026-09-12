@@ -71,3 +71,8 @@ __pycache__/
 # User-supplied OTA captures and decodes -- local only, never committed (same posture as
 # ota-recordings/ and the HF noise corpus).
 tests/test/
+
+# The user's real Windows MMSSTV install (settings, personal templates carrying a real callsign,
+# the licensed MMSSTV.EXE binary) -- personal data and third-party licensed content, never
+# committed, same posture as yoniq-old/ above.
+MMSSTV/
