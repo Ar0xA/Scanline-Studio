@@ -400,6 +400,31 @@ public sealed partial class FilePickerService : IFilePickerService
         return files.Count > 0 ? files[0].TryGetLocalPath() : null;
     }
 
+    // .mti is a UI filter/default-extension convention only, not a structural distinction from .mtm
+    // (docs/mtm-binary-format.md's own confirmed finding, against Main.cpp's file-picker setup) --
+    // one file type accepting both, matching what a real legacy install's Save dialog itself allowed.
+    private static readonly FilePickerFileType LegacyMtmTemplateFileType = new("Legacy YONIQ/MMSSTV templates")
+    {
+        Patterns = ["*.mtm", "*.mti"],
+    };
+
+    public async Task<string?> PickOpenLegacyMtmTemplateAsync()
+    {
+        if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })
+        {
+            Log.NoMainWindow(_logger);
+            return null;
+        }
+
+        var files = await mainWindow.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            AllowMultiple = false,
+            FileTypeFilter = [LegacyMtmTemplateFileType],
+        });
+
+        return files.Count > 0 ? files[0].TryGetLocalPath() : null;
+    }
+
     public async Task<string?> PickFolderAsync(string? suggestedStartDirectory)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is not IClassicDesktopStyleApplicationLifetime { MainWindow: { } mainWindow })

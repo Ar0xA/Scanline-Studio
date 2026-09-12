@@ -382,7 +382,14 @@ public readonly record struct PerspectiveCorners(
 /// null-means-none convention <see cref="TemplateTextElement.Gradient"/> already established.</summary>
 public sealed record TemplateBoxElement(
     NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
-    double CornerRadius = 0, TextGradient? Gradient = null, PerspectiveCorners? Perspective = null)
+    double CornerRadius = 0, TextGradient? Gradient = null, PerspectiveCorners? Perspective = null,
+    // Legacy `.mtm` import -- plan-review finding: legacy's plain CM_BOX draws an outline with NO
+    // fill (GetStockObject(NULL_BRUSH)), which this model could not express at all before this field
+    // existed. Trailing/defaulted true so every existing caller (nobody sets this) keeps today's
+    // "always opaque fill" behavior byte-for-byte unchanged -- chosen over a nullable FillColor
+    // (plan-review: cheaper, touches fewer call sites, no discriminator/fallback-color ambiguity for
+    // a gradient-enabled box with no fill).
+    bool FillEnabled = true)
     : TemplateElement(Bounds, Z);
 
 /// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th element kind, a single
@@ -587,9 +594,10 @@ public interface ITransmitImagePreparer
     /// problem. For a <see cref="TemplateImageElement"/>: a plain (unwarped) <see cref="Resize"/> to
     /// the target size, opaque-alpha-expanded into a <see cref="BgraPixelBuffer"/> -- fit-mode-
     /// APPROXIMATE, not a byte-for-byte match of the real warp (a fake has no reason to implement real
-    /// perspective math). For a <see cref="TemplateBoxElement"/> (no source image to resize): a flat,
-    /// fully-opaque buffer solid-filled with the element's own <c>FillColor</c> (border/corner-radius/
-    /// gradient ignored in this fallback specifically) -- the real, production
+    /// perspective math). For a <see cref="TemplateBoxElement"/> (no source image to resize): a flat
+    /// buffer solid-filled with the element's own <c>FillColor</c> (border/corner-radius/gradient
+    /// ignored in this fallback specifically), or fully TRANSPARENT when
+    /// <see cref="TemplateBoxElement.FillEnabled"/> is <see langword="false"/> -- the real, production
     /// <c>TransmitImagePreparer</c> always overrides this with the true warp; this default only matters
     /// to a test double that never exercises perspective rendering directly.</para></summary>
     /// <remarks><paramref name="styleImageHeightPx"/> is the full output image height mapped into
@@ -608,7 +616,9 @@ public interface ITransmitImagePreparer
 
         if (element is TemplateBoxElement box)
         {
-            return BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx);
+            return box.FillEnabled
+                ? BgraPixelBuffer.FromSolidColor(box.FillColor, targetWidthPx, targetHeightPx)
+                : BgraPixelBuffer.FromTransparent(targetWidthPx, targetHeightPx);
         }
 
         return BgraPixelBuffer.FromSolidColor(new Rgb24(0, 0, 0), targetWidthPx, targetHeightPx);
@@ -667,4 +677,12 @@ public sealed class BgraPixelBuffer
 
         return new BgraPixelBuffer { Pixels = pixels, Width = width, Height = height };
     }
+
+    /// <summary>All-zero premultiplied BGRA -- fully transparent, not merely alpha-0-with-arbitrary-
+    /// color (irrelevant here since alpha 0 makes color unobservable either way, but zero-init is
+    /// simplest and matches every other "nothing to show" buffer in this class). Legacy `.mtm` import
+    /// -- a <see cref="TemplateBoxElement"/> with <see cref="TemplateBoxElement.FillEnabled"/> false
+    /// (an outline-only legacy box) has nothing to paint here; the real border still draws separately.</summary>
+    public static BgraPixelBuffer FromTransparent(int width, int height) =>
+        new() { Pixels = new byte[width * height * 4], Width = width, Height = height };
 }

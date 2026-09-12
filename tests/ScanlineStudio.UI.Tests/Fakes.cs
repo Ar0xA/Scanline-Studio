@@ -1380,6 +1380,26 @@ internal sealed class FakeTemplateStore : ITemplateStore
         _templates[templateId] = (ImportResult.Name, DateTimeOffset.Now, ImportResult.Document);
         return Task.FromResult(templateId);
     }
+
+    public Exception? ImportLegacyMtmExceptionToThrow { get; set; }
+
+    /// <summary>Same "configure what the next import produces" convention as <see cref="ImportResult"/>
+    /// -- a separate property since a legacy import carries <see cref="LegacyMtmImportResult.Notes"/>
+    /// too, which the `.sstemplate` bundle path has no equivalent of.</summary>
+    public (string Name, PersistedTemplateDocument Document, IReadOnlyList<string> Notes) ImportLegacyMtmResult { get; set; } =
+        ("Imported Legacy Template", new PersistedTemplateDocument([]), []);
+
+    public Task<LegacyMtmImportResult> ImportLegacyMtmAsync(string mtmPath, CancellationToken ct = default)
+    {
+        if (ImportLegacyMtmExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        var templateId = CreateTemplateId(ImportLegacyMtmResult.Name);
+        _templates[templateId] = (ImportLegacyMtmResult.Name, DateTimeOffset.Now, ImportLegacyMtmResult.Document);
+        return Task.FromResult(new LegacyMtmImportResult(templateId, ImportLegacyMtmResult.Notes));
+    }
 }
 
 internal sealed class FakeImageFileLoader : IImageFileLoader
@@ -1547,6 +1567,10 @@ internal sealed class FakeFilePickerService : IFilePickerService
     public string? OpenTemplateBundlePathToReturn { get; set; } = "/tmp/fake-open.sstemplate";
 
     public Task<string?> PickOpenTemplateBundleAsync() => Task.FromResult(OpenTemplateBundlePathToReturn);
+
+    public string? OpenLegacyMtmTemplatePathToReturn { get; set; } = "/tmp/fake-open.mtm";
+
+    public Task<string?> PickOpenLegacyMtmTemplateAsync() => Task.FromResult(OpenLegacyMtmTemplatePathToReturn);
 }
 
 internal sealed class FakeUrlLauncher : IUrlLauncher

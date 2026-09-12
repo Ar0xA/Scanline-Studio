@@ -10,7 +10,15 @@ public sealed class TemplateStoreTests : IDisposable
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "scanlinestudio-template-store-tests", Guid.NewGuid().ToString("N"));
     private readonly FakeImageSourceWriter _imageSourceWriter = new();
-    private readonly FakeImageFileLoader _imageFileLoader = new();
+    private readonly FakeImageFileLoader _imageFileLoader;
+
+    public TemplateStoreTests()
+    {
+        // Linked so a path THIS store mints internally (a random GUID a test could never predict --
+        // e.g. ImportLegacyMtmAsync's own companion-image asset) round-trips through the SAME fake
+        // writer's own record of what it wrote, without every test needing its own Sources entry.
+        _imageFileLoader = new FakeImageFileLoader(_imageSourceWriter);
+    }
     private readonly FakeTransmitImagePreparer _preparer = new();
 
     private TemplateStore CreateStore() => new(_imageSourceWriter, _imageFileLoader, _preparer, NullLogger<TemplateStore>.Instance, _root);
@@ -830,5 +838,181 @@ public sealed class TemplateStoreTests : IDisposable
         }
 
         return zipPath;
+    }
+
+    // BACKLOG.md's legacy .mtm importer -- companion-image lookup (task 12). Legacy pairs a numbered
+    // stock-slot template with a same-numbered picture as two INDEPENDENT files (confirmed directly
+    // against Main.cpp's TMmsstv::LoadStockTemp/LoadBitmapS and the PBoxTXDragDrop handler), never
+    // embedded in the .mtm itself. Hand-built raw bytes here rather than MtmFixtureBuilder (that
+    // helper lives in the same project but is scoped to LegacyMtmReaderTests's own needs) -- a single
+    // CM_BOX element is enough, this file's own tests care about the companion-image side, not the
+    // parser.
+    private static byte[] BuildGroupWithOneBox()
+    {
+        var builder = new List<byte>();
+        void Int32(int v) => builder.AddRange(BitConverter.GetBytes(v));
+
+        // Element: CM_BOX (tag 3), base record only, version 0.
+        var element = new List<byte>();
+        void ElemInt32(int v) => element.AddRange(BitConverter.GetBytes(v));
+        ElemInt32(3); // CM_BOX tag
+        ElemInt32(0); // version
+        ElemInt32(0); ElemInt32(0); ElemInt32(50); ElemInt32(50); // x1,y1,x2,y2
+        ElemInt32(0); // line color
+        element.Add(0); // line style, 1 byte, solid
+        ElemInt32(1); // line width (no boxstyle magic)
+
+        // Top-level CM_GROUP, version 2 (Sx/Sy present).
+        Int32(1); // CM_GROUP
+        Int32(2); // version
+        Int32(0); Int32(0); Int32(0); Int32(0); // x1,y1,x2,y2 (unused by the group itself)
+        Int32(0); // line color
+        builder.Add(0); // line style
+        Int32(1); // line width
+        Int32(0); Int32(0); Int32(0); // TransX, TransY, TransCol (version >= 1)
+        Int32(320); Int32(256); // Sx, Sy (version >= 2)
+        Int32(1); // element count
+        builder.AddRange(element);
+
+        return [.. builder];
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_NumberedStockSlotWithACompanionBitmap_PrependsItAsTheBackground()
+    {
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "t1.mtm");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        var companionPath = Path.Combine(_root, "TxStock1.bmp");
+        await File.WriteAllBytesAsync(companionPath, [0]); // content irrelevant -- the fake loader ignores it
+        _imageFileLoader.Sources[companionPath] = new FakeImageSource(64, 64, new Rgb24(10, 20, 30));
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Equal(2, document.Elements.Count);
+        var background = Assert.IsType<PersistedImageElement>(document.Elements[0]);
+        Assert.True(background.IsBackground);
+        Assert.True(background.Locked);
+        Assert.Equal(ImageFitMode.Stretch, background.Fit);
+        Assert.Equal(-1, background.Z);
+        Assert.Equal(0.5, background.X);
+        Assert.Equal(0.5, background.Y);
+        Assert.Equal(1.0, background.Width);
+        Assert.Equal(1.0, background.Height);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_CompanionLookupIsCaseInsensitive()
+    {
+        // Code-review finding: the .mtm name match is case-insensitive (legacy's own authoring
+        // filesystem, Windows, is too), so the sibling-image lookup must be too -- an all-uppercase
+        // legacy folder must still find its companion, not silently import without one.
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "T3.MTM");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        var companionPath = Path.Combine(_root, "TXSTOCK3.BMP");
+        await File.WriteAllBytesAsync(companionPath, [0]);
+        _imageFileLoader.Sources[companionPath] = new FakeImageSource(64, 64, new Rgb24(5, 5, 5));
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Equal(2, document.Elements.Count);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_UnreadableCompanionBitmap_ImportsTheOverlayAnywayAndReportsIt()
+    {
+        // Code-review finding: an unreadable/corrupt companion must degrade the same way an ABSENT
+        // one does (this is a bonus, not a requirement) -- not fail an otherwise-valid .mtm import.
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "t4.mtm");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        var companionPath = Path.Combine(_root, "TxStock4.bmp");
+        await File.WriteAllBytesAsync(companionPath, [0]);
+        // Deliberately NOT registered in _imageFileLoader.Sources -- LoadOriginalAsync will throw.
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Single(document.Elements);
+        Assert.IsType<PersistedBoxElement>(document.Elements[0]);
+        Assert.Contains(result.Notes, n => n.Contains("TxStock4.bmp", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_NumberedStockSlotWithNoCompanionBitmap_ImportsJustTheOverlay()
+    {
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "t2.mtm");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        // Deliberately no TxStock2.bmp/.jpg written next to it.
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Single(document.Elements);
+        Assert.IsType<PersistedBoxElement>(document.Elements[0]);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_CurrentMtmWithACompanionBitmap_PrependsItAsTheBackground()
+    {
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "Current.mtm");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        var companionPath = Path.Combine(_root, "Current.bmp");
+        await File.WriteAllBytesAsync(companionPath, [0]);
+        _imageFileLoader.Sources[companionPath] = new FakeImageSource(64, 64, new Rgb24(1, 2, 3));
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Equal(2, document.Elements.Count);
+        Assert.True(Assert.IsType<PersistedImageElement>(document.Elements[0]).IsBackground);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_MtiExtension_NeverMatchesTheNumberedStockSlotPattern()
+    {
+        // Code-review finding: legacy's own sprintf never produces "t{N}.mti" -- .mti is a DIFFERENT
+        // legacy feature ("Template items"). A user's own unrelated t1.mti must not be treated as a
+        // numbered stock slot just because it happens to start with "t" + a digit.
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "t5.mti");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        await File.WriteAllBytesAsync(Path.Combine(_root, "TxStock5.bmp"), [0]);
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Single(document.Elements);
+        Assert.IsType<PersistedBoxElement>(document.Elements[0]);
+    }
+
+    [Fact]
+    public async Task ImportLegacyMtmAsync_AnOrdinaryNamedTemplate_NeverLooksForACompanionImage()
+    {
+        // def1.mtm doesn't match either naming pattern (t{N}.mtm / Current.mtm) -- confirms the
+        // lookup is scoped to the two confirmed legacy pairings, not every imported file.
+        Directory.CreateDirectory(_root);
+        var mtmPath = Path.Combine(_root, "def1.mtm");
+        await File.WriteAllBytesAsync(mtmPath, BuildGroupWithOneBox());
+        // A same-directory file that would match if the naming check were wrong.
+        await File.WriteAllBytesAsync(Path.Combine(_root, "TxStock1.bmp"), [0]);
+        var store = CreateStore();
+
+        var result = await store.ImportLegacyMtmAsync(mtmPath);
+        var document = await store.LoadAsync(result.TemplateId);
+
+        Assert.Single(document.Elements);
+        Assert.IsType<PersistedBoxElement>(document.Elements[0]);
     }
 }
