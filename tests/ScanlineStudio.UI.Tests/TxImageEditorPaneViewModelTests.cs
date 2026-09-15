@@ -6700,6 +6700,49 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Contains(nameof(vm.CropHeightPixels), raised);
     }
 
+    // User-reported bug (2026-09-15): "when i set an image as backdrop and i pick the option 'reset
+    // to original size' it gives an error but does not return as a non-backdropped image of the
+    // previous size." A locked backdrop is defined as covering the whole frame (SetAsBackdrop's own
+    // doc comment) -- resetting it to its natural size, with no Locked check at all, left it Locked
+    // and IsBackground=true but no longer full-frame, a self-contradictory state. Fixed by adding the
+    // same "skip locked elements" check every other geometry-changing operation in this class already
+    // has (NudgeSelectedElements' own precedent).
+
+    [AvaloniaFact]
+    public void ResetImageElementToOriginalSizeCommand_ForALockedBackdrop_IsRefusedAsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(image);
+        Assert.True(image.Locked);
+        var widthBefore = image.Width;
+        var heightBefore = image.Height;
+
+        Assert.False(vm.ResetImageElementToOriginalSizeCommand.CanExecute(image));
+        // Direct Execute bypasses CanExecute (same "body-level check is the real backstop" reasoning
+        // this class's other commands already document) -- must still be a safe no-op.
+        vm.ResetImageElementToOriginalSizeCommand.Execute(image);
+
+        Assert.Equal(widthBefore, image.Width);
+        Assert.Equal(heightBefore, image.Height);
+        Assert.True(image.Locked);
+        Assert.True(image.IsBackground);
+    }
+
+    [AvaloniaFact]
+    public void ResetImageElementToOriginalSizeCommand_ForAnUnlockedElement_StillAllowed()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        Assert.False(image.Locked);
+
+        Assert.True(vm.ResetImageElementToOriginalSizeCommand.CanExecute(image));
+    }
+
     // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
     // finding: this logic shipped with zero test coverage since it lived entirely in code-behind;
     // splitting it into a public static method makes it testable without simulating real Avalonia
