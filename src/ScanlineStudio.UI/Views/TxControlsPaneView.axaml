@@ -287,14 +287,16 @@
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <!-- Background/backdrop naming work (2026-09-15): a real, previously-reported source
-                     of confusion is that STOCK/Browse loads what this app calls the "background" —
+                     of confusion is that this section loads what this app calls the "background" —
                      not saved with templates — while a DIFFERENT command elsewhere (the image
-                     element's own "Set as backdrop") IS saved. Same shared IndustryHelpGlyph pattern
-                     already used throughout OptionsWindowView.axaml, ToolTip.Tip carries the real
-                     explanation rather than growing the header text itself. -->
+                     element's own "Set as backdrop") IS saved. Header itself renamed "Background"
+                     (2026-09-15, user-requested) from its earlier "STOCK" wording, same reasoning.
+                     Same shared IndustryHelpGlyph pattern already used throughout
+                     OptionsWindowView.axaml, ToolTip.Tip carries the real explanation rather than
+                     growing the header text itself. -->
                 <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.StockLabel}" />
-                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.TxControls.StockHelp}" />
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.BackgroundLabel}" />
+                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.TxControls.BackgroundHelp}" />
                 </StackPanel>
             </HeaderedContentControl.Header>
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
@@ -344,15 +346,13 @@
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
                         Command="{Binding SelectImageCommand}" IsEnabled="{Binding CanChangeSourceOrMode}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
-                <!-- Backlog fix (user request, 2026-08-17): opens the editor directly with a blank
-                     neutral-gray placeholder instead of requiring Browse/Stock first — "don't leave
-                     the TX window completely empty until you load an image, that makes no sense when
-                     you have ready images already/templates." The operator can then Load a Ready
-                     Rack/Template Library entry, or use Browse/Stock inside the editor's own STOCK
-                     panel, to swap in a real photo. Same IsEnabled gate as Browse/Stock above. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.OpenBlankEditor}"
-                        Command="{Binding OpenBlankEditorCommand}" IsEnabled="{Binding CanChangeSourceOrMode}"
-                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
+                <!-- User-requested (2026-09-15): this card's own "Open editor" button removed —
+                     redundant with the editor's own "NEW TEMPLATE" button (TxImageEditorPaneView.axaml,
+                     the renamed Cancel button), which opens the exact same fresh blank editor from
+                     inside the always-open editor itself. OpenBlankEditorCommand/OpenBlankEditorAsync
+                     stay on the view model — MainViewModel's own startup auto-open
+                     (OpenBlankEditorSafelyAsync) and OnEditorCancelled/OnSelectedModeChanged's own
+                     auto-reopen still call it directly, only this button is gone. -->
                 <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
                            IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
                 <Image Source="{Binding PreviewImage}"
