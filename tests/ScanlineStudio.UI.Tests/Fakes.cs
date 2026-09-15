@@ -131,6 +131,13 @@ internal sealed class FakeLocalizationService : ILocalizationService
 
     public object[] LastArgs { get; private set; } = [];
 
+    /// <summary>Every call's key/args, in order -- unlike <see cref="LastKey"/>/<see cref="LastArgs"/>
+    /// (which only ever hold the MOST RECENT call), this lets a test find a SPECIFIC earlier call's
+    /// args when the method under test makes several GetString calls before the test gets a chance
+    /// to read anything (e.g. building several already-localized constructor arguments in one
+    /// expression, all evaluated before an awaited callback fires).</summary>
+    public List<(string Key, object[] Args)> Calls { get; } = [];
+
     public Exception? ThrowOnGetString { get; set; }
 
     /// <summary>When set, <see cref="ThrowOnGetString"/> only fires for this specific key -- lets a
@@ -148,6 +155,7 @@ internal sealed class FakeLocalizationService : ILocalizationService
 
         LastKey = key;
         LastArgs = args;
+        Calls.Add((key, args));
         return key;
     }
 }
@@ -1323,6 +1331,20 @@ internal sealed class FakeTemplateStore : ITemplateStore
     public Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default) =>
         LoadGates.TryGetValue(templateId, out var gate) ? gate.Task : Task.FromResult(_templates[templateId].Document);
 
+    public Exception? RenameExceptionToThrow { get; set; }
+
+    public Task RenameAsync(string templateId, string newName, CancellationToken ct = default)
+    {
+        if (RenameExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
+        var existing = _templates[templateId];
+        _templates[templateId] = (newName, existing.SavedAt, existing.Document);
+        return Task.CompletedTask;
+    }
+
     public TaskCompletionSource<IReadOnlyList<TemplateMetadata>>? ListGate { get; set; }
 
     public Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default)
@@ -1780,7 +1802,7 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     public double MeasureFittedFontSize(
         string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
         double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0,
-        double stackStepXRelative = 0, double stackStepYRelative = 0)
+        double stackStepXRelative = 0, double stackStepYRelative = 0, bool growToFill = false)
         => font.Size * imageHeightPx;
 
     // Phase 4: two plain names, no real font loading -- this fake never touches SixLabors.Fonts, so

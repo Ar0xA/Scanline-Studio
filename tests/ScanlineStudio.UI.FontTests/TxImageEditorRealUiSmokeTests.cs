@@ -244,6 +244,64 @@ public sealed class TxImageEditorRealUiSmokeTests
     }
 
     [AvaloniaFact]
+    public void DraggingTheSelectionReadoutBadge_MovesTheSelectedElement()
+    {
+        // User-requested (2026-09-16): the floating selection-readout badge above a selected element
+        // previously had IsHitTestVisible="False" -- clicking/dragging it did nothing instead of
+        // moving the element the same way dragging the element's own body does. Real drag through
+        // Avalonia's actual input pipeline, not a VM-level property check -- a plain XAML wiring
+        // mistake (e.g. leaving IsHitTestVisible="False" in place) wouldn't be caught by one.
+        var (window, vm, editorCanvas) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            vm.AddOverlayElementCommand.Execute(null);
+            vm.SnapToGrid = false; // exact-delta assertion below, not the post-drag 5% grid snap
+            PumpDispatcher();
+            var element = Assert.IsType<OverlayElementViewModel>(vm.SelectedOverlayElement);
+            var xBefore = element.X;
+            var yBefore = element.Y;
+
+            var view = (TxImageEditorPaneView)window.Content!;
+            var badge = view.FindControl<Border>("SelectionReadoutBadge")
+                ?? throw new InvalidOperationException("SelectionReadoutBadge not found in the real View's visual tree.");
+            var pressPoint = badge.TranslatePoint(new Point(5, 5), window)!.Value;
+            var pressPointInCanvas = window.TranslatePoint(pressPoint, editorCanvas)!.Value;
+            var dragVector = new Vector(50, 35);
+            var releasePoint = editorCanvas.TranslatePoint(pressPointInCanvas + dragVector, window)!.Value;
+
+            window.MouseDown(pressPoint, MouseButton.Left, RawInputModifiers.None);
+            window.MouseMove(releasePoint);
+            window.MouseUp(releasePoint, MouseButton.Left, RawInputModifiers.None);
+            PumpDispatcher();
+
+            // Same "read the real formula, predict the real value" strategy as this file's other drag
+            // tests (e.g. ComputeRectFromDrag above) -- a real drop also runs alignment-guide snap
+            // (TxImageEditorPaneView.ComputeAlignmentSnap, UNCONDITIONAL for DragMode.Overlay, no VM
+            // flag to disable it, unlike SnapToGrid), so the raw linear delta alone isn't always the
+            // final value; predicting it via the production formula (rather than picking a drag
+            // distance that happens to dodge the 1% threshold) keeps this robust if defaults change.
+            var rawExpectedX = xBefore + (dragVector.X / vm.CanvasDisplayWidth);
+            var rawExpectedY = yBefore + (dragVector.Y / vm.CanvasDisplayHeight);
+            var cropCenter = (vm.CropRect.X + (vm.CropRect.Width / 2), vm.CropRect.Y + (vm.CropRect.Height / 2));
+            var (snapX, snapY) = TxImageEditorPaneView.ComputeAlignmentSnap(
+                (rawExpectedX, rawExpectedY, element.Width, element.Height), [], cropCenter);
+
+            AssertClose(snapX ?? rawExpectedX, element.X);
+            AssertClose(snapY ?? rawExpectedY, element.Y);
+            // The regression this test actually guards against: the badge press/drag wiring itself.
+            // If IsHitTestVisible were still False (or the handler weren't wired), the element simply
+            // wouldn't have moved at all -- both snap and raw-delta predictions above would then fail
+            // this pair of checks too, but this makes the real intent explicit.
+            Assert.NotEqual(xBefore, element.X);
+            Assert.NotEqual(yBefore, element.Y);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void CtrlDraggingAnExistingElement_DuplicatesItAndDragsOnlyTheClone_UndoRemovesJustTheClone()
     {
         var (window, vm, editorCanvas) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));

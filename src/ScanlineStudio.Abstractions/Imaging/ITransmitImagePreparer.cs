@@ -118,10 +118,13 @@ public enum ImageFitMode { Stretch, Contain, Cover }
 /// used to say it wasn't meaningfully consumed; that was stale even before today (Phase 4 already
 /// added real family selection), corrected here while adding <paramref name="Bold"/>/<paramref
 /// name="Italic"/> (auditor usability review follow-up, 2026-08-18) -- both false is the pre-existing
-/// Regular-only behavior, unchanged. A requested Bold/Italic combination the selected family has no
-/// matching bundled variant for throws at draw time (verified against the actually-bundled variant
-/// set, not silently substituted) -- see <c>TransmitImagePreparer</c>'s own constructor for exactly
-/// which weight/style files are registered per family.</summary>
+/// Regular-only behavior, unchanged. The two BUNDLED families always have a real Bold/Italic/
+/// BoldItalic variant registered (see <c>TransmitImagePreparer</c>'s own constructor for exactly
+/// which weight/style files are loaded per family), so a Bold/Italic combination never falls back
+/// for them. <paramref name="Family"/> can also name an OS-installed SYSTEM font (added later,
+/// discovered via <c>FontCollectionExtensions.AddSystemFonts</c>) -- an arbitrary system font may
+/// have no real face for the requested style, which silently falls back to Regular rather than
+/// throwing (<c>TransmitImagePreparer.ResolveAvailableStyle</c>).</summary>
 public sealed record FontSpec(string Family, double Size, bool Bold = false, bool Italic = false);
 
 /// <summary>Base for every element a <see cref="TemplateDocument"/> can composite —
@@ -246,14 +249,19 @@ public sealed record TextGradient(TextGradientKind Kind, IReadOnlyList<GradientC
 /// nothing here enforces mutual exclusivity at the data level), <see cref="BitmapFill"/> wins -- this
 /// rule is stated ONCE here and must be enforced identically at every site that COMPOSES this
 /// record (the live pipeline, the persisted-template thumbnail-reconstruction path, and the editor's
-/// own canvas preview), not just wherever a caller happens to check first.</para></summary>
+/// own canvas preview), not just wherever a caller happens to check first.</para>
+/// <para>User-requested (2026-09-15): <paramref name="GrowToFillEnabled"/> opts a single element into
+/// searching ABOVE <see cref="FontSpec.Size"/>, not just below it, when its box has room -- see
+/// <c>OverlayElementViewModel.GrowToFillEnabled</c>'s own doc comment for the legacy precedent
+/// (<c>CDrawText::Move</c> scales font size proportionally with box-drag in both directions) and why
+/// this stays opt-in rather than becoming the new default search behavior.</para></summary>
 public sealed record TemplateTextElement(
     NormalizedRect Bounds, int Z, string Content, FontSpec Font, Rgb24 Color,
     Rgb24? StrokeColor = null, double StrokeThickness = 0,
     Rgb24? ShadowColor = null, double ShadowOffsetX = 0, double ShadowOffsetY = 0,
     double RotationDegrees = 0, TextGradient? Gradient = null,
     Rgb24? StackColor = null, double StackStepX = 0, double StackStepY = 0,
-    IImageSource? BitmapFill = null)
+    IImageSource? BitmapFill = null, bool GrowToFillEnabled = false)
     : TemplateElement(Bounds, Z);
 
 /// <summary><paramref name="Source"/> is an already-resolved <see cref="IImageSource"/>, not a
@@ -498,11 +506,15 @@ public interface ITransmitImagePreparer
     /// <para>Auditor usability review follow-up (2026-08-18): <paramref name="stackStepXRelative"/>/
     /// <paramref name="stackStepYRelative"/> are the fourth occurrence, for
     /// <see cref="TemplateTextElement.StackColor"/>'s stepped-copy effect -- same reasoning, same
-    /// "pass 0 when inactive" default.</para></summary>
+    /// "pass 0 when inactive" default.</para>
+    /// <para>User-requested (2026-09-15): <paramref name="growToFill"/> mirrors
+    /// <see cref="TemplateTextElement.GrowToFillEnabled"/> -- see that field's own doc comment.
+    /// Defaults <see langword="false"/> so every existing call site keeps today's shrink-only
+    /// behavior unchanged.</para></summary>
     double MeasureFittedFontSize(
         string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
         double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0,
-        double stackStepXRelative = 0, double stackStepYRelative = 0);
+        double stackStepXRelative = 0, double stackStepYRelative = 0, bool growToFill = false);
 
     /// <summary>Font family names available for <see cref="FontSpec.Family"/>/
     /// <see cref="TemplateTextElement.Font"/> — the TX template editor's font-family picker's

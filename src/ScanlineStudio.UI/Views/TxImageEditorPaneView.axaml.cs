@@ -229,6 +229,156 @@ public partial class TxImageEditorPaneView : UserControl
 
     private void OnFitHeightClick(object? sender, RoutedEventArgs e) => ViewModel?.ApplyFitHeight(EditorScrollViewer.Bounds.Height);
 
+    /// <summary>Canvas context menu's own "Save Template" item is disabled while there's nothing to
+    /// save -- <see cref="TxImageEditorPaneViewModel.OverlayElements"/> has no live-bound bool for
+    /// this today (no <c>CollectionChanged</c> subscription anywhere in the VM), so this is computed
+    /// fresh right before the menu shows, same "View computes a View-owned check" pattern as
+    /// <see cref="OnFitSafeAreaClick"/> reading <c>EditorScrollViewer.Bounds</c>.</summary>
+    private void OnCanvasContextMenuOpened(object? sender, RoutedEventArgs e) =>
+        SaveTemplateMenuItem.IsEnabled = ViewModel?.OverlayElements.Count > 0;
+
+    /// <summary>If a template name is already typed, saves immediately (identical to clicking the
+    /// Templates rail's own Save button -- same <see cref="TxImageEditorPaneViewModel.SaveTemplateCommand"/>).
+    /// Otherwise focuses the name field rather than no-opping, so the operator sees exactly where to
+    /// type -- same deferred-focus precedent as <c>FocusInlineTextEditor</c> above and
+    /// <c>RadioHeaderView.axaml.cs</c>'s frequency-entry focus grab (both defer to
+    /// <see cref="DispatcherPriority.Loaded"/> since the field may not have finished realizing in the
+    /// same synchronous callback that just closed the context menu).</summary>
+    private void OnSaveTemplateContextMenuClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        if (vm.SaveTemplateCommand.CanExecute(null))
+        {
+            vm.SaveTemplateCommand.Execute(null);
+            return;
+        }
+
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                NewTemplateNameTextBox.Focus();
+                NewTemplateNameTextBox.SelectAll();
+            },
+            DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Templates rack rework -- double-click on a rack slot loads it (same command as the
+    /// action strip's own Load button and the context menu's Load item), reading the tapped item's
+    /// own <c>DataContext</c> off the `Border` inside the slot's `DataTemplate` -- same "code-behind
+    /// pointer handler inside a DataTemplate" convention as `MainWindow.axaml.cs`'s own
+    /// `OnGalleryThumbnailDoubleTapped`. A no-op on an empty slot (`Template` is null).</summary>
+    private void OnReadyRackSlotDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is Control { DataContext: ReadyRackSlotViewModel { Template: { } template } } && ViewModel is { } vm)
+        {
+            vm.ReadyRack.LoadCommand.Execute(template);
+        }
+    }
+
+    /// <summary>Templates rack rework -- the context menu's own Rename item selects the slot (so the
+    /// action strip's inline-rename field appears) and focuses that field, same deferred-focus
+    /// precedent as <see cref="OnSaveTemplateContextMenuClick"/> above.</summary>
+    private void OnRenameTemplateMenuClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: ReadyRackSlotViewModel { Template: not null } slot } || ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        vm.ReadyRack.SelectedSlot = slot;
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                TemplateRenameTextBox.Focus();
+                TemplateRenameTextBox.SelectAll();
+            },
+            DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Templates rack rework -- Enter commits the action strip's inline rename (empty input
+    /// reverts inside <see cref="ReadyRackViewModel.RenameAsync"/> itself, not here), Esc reverts
+    /// without ever calling the store. Reads <c>ReadyRack.SelectedSlot</c> directly rather than the
+    /// TextBox's own <c>DataContext</c> -- this TextBox binds an ABSOLUTE path
+    /// (<c>ReadyRack.SelectedSlot.Template.EditingName</c>) from the parent VM, so its DataContext is
+    /// still the editor VM, not the row.</summary>
+    private void OnTemplateRenameKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ViewModel?.ReadyRack.SelectedSlot?.Template is not { } row)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            ViewModel.ReadyRack.RenameCommand.Execute(row);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            row.EditingName = row.Name;
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>Expanded template selector -- double-click on a Library row/tile loads it, same
+    /// command the row's own context-menu Load item and the shared action strip's Load button use.
+    /// Reads the tapped item's own <c>DataContext</c> off the <c>Border</c> inside the row/tile
+    /// DataTemplate, same convention as <see cref="OnReadyRackSlotDoubleTapped"/> above.</summary>
+    private void OnLibraryItemDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (sender is Control { DataContext: TemplateListRowViewModel row } && ViewModel is { } vm)
+        {
+            vm.ReadyRack.LoadCommand.Execute(row);
+        }
+    }
+
+    /// <summary>Expanded template selector -- same shape as <see cref="OnRenameTemplateMenuClick"/>
+    /// above, but for a Library row/tile: selects it (so the shared action strip's inline-rename
+    /// field appears) and focuses that field.</summary>
+    private void OnRenameLibraryItemMenuClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: TemplateListRowViewModel row } || ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        vm.ReadyRack.SelectedLibraryItem = row;
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                LibraryRenameTextBox.Focus();
+                LibraryRenameTextBox.SelectAll();
+            },
+            DispatcherPriority.Loaded);
+    }
+
+    /// <summary>Expanded template selector -- same shape as <see cref="OnTemplateRenameKeyDown"/>
+    /// above, but reads <c>ReadyRack.SelectedLibraryItem</c> instead of
+    /// <c>ReadyRack.SelectedSlot.Template</c> (this TextBox binds the same kind of ABSOLUTE path, so
+    /// its own DataContext is still the editor VM, not the row).</summary>
+    private void OnLibraryRenameKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ViewModel?.ReadyRack.SelectedLibraryItem is not { } row)
+        {
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            ViewModel.ReadyRack.RenameCommand.Execute(row);
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            row.EditingName = row.Name;
+            e.Handled = true;
+        }
+    }
+
     /// <summary>Macros help plan session, real-UI-smoke-test finding (2026-09-01): the ORIGINAL
     /// version of this handler read <c>menuItem.FindLogicalAncestorOfType&lt;ContextMenu&gt;().PlacementTarget</c>
     /// on the (incorrect) assumption that Avalonia sets it automatically on right-click. Confirmed
@@ -731,7 +881,24 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
-        if (element.Locked || !isLeft)
+        if (!isLeft)
+        {
+            return;
+        }
+
+        StartElementMoveDrag(element, vm, e);
+    }
+
+    /// <summary>Shared "start dragging (or Ctrl-duplicate-and-drag) an already-selected, unlocked
+    /// element" logic -- used both by a direct press on the element's own canvas visual (the tail of
+    /// <see cref="OnOverlayElementPointerPressed"/> above) and a press on the floating
+    /// selection-readout badge above it (<see cref="OnSelectionReadoutBadgePointerPressed"/>,
+    /// user-requested 2026-09-16: that badge previously had <c>IsHitTestVisible="False"</c>, so
+    /// clicking it did nothing instead of moving the element the same way clicking the element body
+    /// does). One copy, not two independently-maintained ones.</summary>
+    private void StartElementMoveDrag(ITemplateElementViewModel element, TxImageEditorPaneViewModel vm, PointerPressedEventArgs e)
+    {
+        if (element.Locked)
         {
             return;
         }
@@ -759,6 +926,30 @@ public partial class TxImageEditorPaneView : UserControl
 
         _draggedElement = element;
         StartDrag(DragMode.Overlay, e);
+    }
+
+    /// <summary>User-requested (2026-09-16): the floating selection-readout badge sits ABOVE the
+    /// selected element's own bounds (a negative Margin lifts it past the top edge, see the badge's
+    /// own AXAML doc comment), so it needs its own <c>PointerPressed</c> wiring rather than reusing
+    /// <see cref="OnOverlayElementPointerPressed"/> directly -- this badge's DataContext is the
+    /// PARENT VM (it binds <c>SelectionReadoutText</c>, which lives there, not on any one element),
+    /// so <c>sender.DataContext</c> can't resolve to an <see cref="ITemplateElementViewModel"/> the
+    /// way that handler expects. Reads <see cref="TxImageEditorPaneViewModel.SelectedOverlayElement"/>
+    /// directly instead -- always correct here, since this badge is only ever visible/reachable while
+    /// something is selected (see its own <c>IsVisible</c> binding).</summary>
+    private void OnSelectionReadoutBadgePointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (ViewModel is not { SelectedOverlayElement: { } element } vm)
+        {
+            return;
+        }
+
+        if (!e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        StartElementMoveDrag(element, vm, e);
     }
 
     /// <summary>Best-effort focus grab for the inline edit TextBox that
@@ -1538,6 +1729,31 @@ public partial class TxImageEditorPaneView : UserControl
         if (e.Key == Key.Escape && vm.SelectedOverlayElement is not null)
         {
             vm.SelectedOverlayElement = null;
+            e.Handled = true;
+            return;
+        }
+
+        // Templates rack rework -- Escape deselects the rack's own SelectedSlot (hides the action
+        // strip). Checked AFTER the overlay-element deselect above (yoniq-auditor finding: an
+        // earlier draft checked this FIRST, which shadowed that pre-existing "ONLY deselect
+        // affordance" -- with a rack slot selected, Escape cleared the rack instead, needing a
+        // SECOND Escape to reach the overlay-element/crop-nudge recovery path the comment above
+        // documents as load-bearing). Escape while actually focused in the strip's own inline-rename
+        // TextBox is handled by OnTemplateRenameKeyDown instead (it reverts the in-progress edit,
+        // not the selection) -- that handler marks the event Handled, so it never reaches here.
+        if (e.Key == Key.Escape && vm.ReadyRack.SelectedSlot is not null)
+        {
+            vm.ReadyRack.SelectedSlot = null;
+            e.Handled = true;
+            return;
+        }
+
+        // Expanded template selector -- same deselect for the Library panel's own SelectedLibraryItem,
+        // same ordering reasoning (after overlay-element deselect) and same OnLibraryRenameKeyDown
+        // Handled-before-bubbling guard for its own inline-rename TextBox.
+        if (e.Key == Key.Escape && vm.ReadyRack.SelectedLibraryItem is not null)
+        {
+            vm.ReadyRack.SelectedLibraryItem = null;
             e.Handled = true;
             return;
         }

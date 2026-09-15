@@ -29,6 +29,11 @@ public interface ITemplateStore
 
     Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default);
 
+    /// <summary>Rewrites only the persisted display name -- the template's id/folder never changes
+    /// (see <see cref="CreateTemplateId"/>'s own doc comment) and the thumbnail is untouched, unlike
+    /// a full <see cref="SaveAsync"/>.</summary>
+    Task RenameAsync(string templateId, string newName, CancellationToken ct = default);
+
     /// <summary>Re-enumerates the template storage directory on every call — a template folder
     /// copied in by hand must show up without an app restart (plan-review finding).</summary>
     Task<IReadOnlyList<TemplateMetadata>> ListAsync(CancellationToken ct = default);

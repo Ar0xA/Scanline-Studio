@@ -9,11 +9,12 @@
 
     <!-- Ported to Industry atoms (was old Cards.axaml "card"/"cardHeader"/"kv"/"label"/"value"/
          "caption"/"pill"/"segment"/"seg"/"small"/"plot" styling). Transmit/Stop toggle row: Phase 7
-         finally ported the last landmine (ScanlineStudioTxToggleButtonTheme, flagged in the
-         original redesign plan's own round-1 auditor review as a StaticResource that would crash
-         the pane at XAML load once Tokens/Cards/ChromeOverrides were deleted) to a real
-         IndustryTxToggle atom (Atoms.axaml) — same behavior (plain at rest, solid red while
-         transmitting), just relocated. -->
+         ported the last landmine (ScanlineStudioTxToggleButtonTheme, flagged in the original
+         redesign plan's own round-1 auditor review as a StaticResource that would crash the pane at
+         XAML load once Tokens/Cards/ChromeOverrides were deleted) to a real IndustryTxToggle atom
+         (Atoms.axaml). User-requested (2026-09-16): that toggle button (and the IndustryTxToggle
+         atom backing it) is gone now — the TX image editor's own TRANSMIT button
+         (IndustryBtnTransmit, Atoms.axaml) is the sole send action; this row keeps only Stop TX. -->
     <!-- Margin top=6 (real-window-caught fix, same reasoning as the Receive tab's own left
          column): the ScrollViewer wrapping this UserControl in MainWindow.axaml necessarily clips
          its content to its own viewport, so the FIRST card's title notch here needs literal
@@ -363,12 +364,14 @@
                    TextWrapping="Wrap"
                    IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}" />
 
+        <!-- User-requested (2026-09-16): the sidebar's own Transmit button was removed — the TX
+             image editor's own big "TRANSMIT" button (TxImageEditorPaneView.axaml, IndustryBtnTransmit)
+             is now the single, unambiguous send action; this sidebar previously had a SECOND, smaller,
+             easily-missed one. StopTransmit stays — it's still needed to halt an in-progress transmit
+             started via the editor, and TransmitCommand itself is still reachable from
+             OnEditorAppliedAndTransmit/ResendSentFrame (TxControlsPaneViewModel.cs), so nothing else
+             depended on this specific button existing. -->
         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-            <ToggleButton Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary IndustryTxToggle"
-                          Content="{loc:Translate Panes.TxControls.Transmit}"
-                          Command="{Binding TransmitCommand}"
-                          IsChecked="{Binding IsTransmitting, Mode=OneWay}"
-                          HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
             <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger IndustryBtnDangerAlwaysOn" Padding="7,0" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
         </StackPanel>
 

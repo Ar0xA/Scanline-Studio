@@ -250,18 +250,27 @@
                      scrolled stack. -->
                 <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
 
-                    <!-- READY RACK: vertical list of 9 rows (design-fidelity Phase D reshape of the
-                         old 3x3 button grid, mock lines 47-56), 1 = top, matching the same reading
-                         order as the number-key accelerators (D1..D9, see
-                         TxImageEditorPaneView.axaml.cs's OnRootKeyDown). An empty slot renders a
-                         dashed placeholder + a "pin from library" hint (mock's own decorative label
-                         for the same underlying action — pinning a template from the LIBRARY list
-                         below fills the first empty slot, see ReadyRackViewModel.TogglePinAsync; this
-                         row has no command of its own, same as before). RecallCommand no-ops on click
-                         for an empty slot (see ReadyRackViewModel.RecallSlot's own doc comment). -->
+                    <!-- TEMPLATES (renamed from READY RACK, user request 2026-09-14): vertical list of
+                         9 rows (design-fidelity Phase D reshape of the old 3x3 button grid, mock
+                         lines 47-56), 1 = top, matching the same reading order as the number-key
+                         accelerators (D1..D9, see TxImageEditorPaneView.axaml.cs's OnRootKeyDown). An
+                         empty slot renders a dashed placeholder + a "pin from library" hint (mock's
+                         own decorative label for the same underlying action — pinning a template from
+                         the LIBRARY list below fills the first empty slot, see
+                         ReadyRackViewModel.TogglePinAsync).
+
+                         Templates rack rework: `ListBox` (was `ItemsControl`) for native
+                         `SelectedItem` single-click selection — same pattern as the RX History
+                         gallery (`MainWindow.axaml`'s own `FilteredEntries` ListBox). Each slot's own
+                         `Button` became a plain `Border` (a `ListBoxItem`'s own selection handles what
+                         the Button used to), with `DoubleTapped` for load (same
+                         "code-behind pointer handler inside a DataTemplate" convention as
+                         `MainWindow.axaml.cs`'s own gallery double-tap) and a `ContextMenu` for
+                         right-click — items stay present but disabled on an empty slot (no Template)
+                         rather than an absent menu, simpler XAML for the same "does nothing" result. -->
                     <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
-                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.ReadyRackHeader}" />
+                            <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.TemplatesHeader}" />
                         </HeaderedContentControl.Header>
                         <!-- KEYS 1-9 hint moved from the header tab into the content's own top row
                              (real-window finding): the group-box title tab (IndustryGroupBoxTheme)
@@ -281,8 +290,14 @@
                                        Text="{Binding ReadyRack.StatusMessage}"
                                        IsVisible="{Binding ReadyRack.StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
                             <TextBlock Classes="IndustryKicker" HorizontalAlignment="Right" Text="{loc:Translate Panes.TxImageEditor.ReadyRackKeysHint}" />
-                            <ItemsControl ItemsSource="{Binding ReadyRack.Slots}">
-                            <ItemsControl.ItemTemplate>
+                            <!-- IsEnabled-only busy state (no Opacity dim) — matches this file's own
+                                 existing IsExporting/"IsEnabled binding, no visual dim" idiom, not a
+                                 new spinner/dim control this codebase has no other precedent for. -->
+                            <ListBox ItemsSource="{Binding ReadyRack.Slots}" SelectedItem="{Binding ReadyRack.SelectedSlot}"
+                                     ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
+                                     Background="Transparent" BorderThickness="0" Padding="0"
+                                     IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
+                            <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="vm:ReadyRackSlotViewModel">
                                     <!-- design-fidelity Phase I (minor #5, nit: padding order): Margin
                                          dropped to 0 (rows touch instead of sitting in individually
@@ -291,18 +306,29 @@
                                          via TemplateBinding (same local-value-wins precedence this
                                          codebase already relies on for Padding overrides elsewhere) —
                                          closer to the mock's own flush, hairline-separated list (mock
-                                         lines 48-56) than the previous individually-boxed rows. The
-                                         mock's own additional "active slot" tint + left accent bar
-                                         needs a real IsCurrent/currently-loaded concept this app's
-                                         ReadyRackSlotViewModel doesn't track — new state, not a style
-                                         tweak, left out of this pass. Padding "4,3"->"6,4": Avalonia's
-                                         2-value Thickness is (horizontal,vertical), the mock's own CSS
-                                         pair (padding:4px 6px) is (vertical,horizontal) — the value
-                                         had been carried across in the wrong order. -->
-                                    <Button Classes="Industry IndustryBtn IndustryBtnSecondary" Padding="6,4" Margin="0" BorderThickness="0,0,0,1" CornerRadius="0"
-                                            HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch"
-                                            Command="{Binding RecallCommand}" CommandParameter="{Binding SlotNumber}"
+                                         lines 48-56) than the previous individually-boxed rows. Padding
+                                         "4,3"->"6,4": Avalonia's 2-value Thickness is
+                                         (horizontal,vertical), the mock's own CSS pair (padding:4px 6px)
+                                         is (vertical,horizontal) — the value had been carried across in
+                                         the wrong order. -->
+                                    <Border Padding="6,4" Margin="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource IndustryChromeBorder}"
+                                            DoubleTapped="OnReadyRackSlotDoubleTapped"
                                             ToolTip.Tip="{Binding Template.Name}">
+                                        <Border.ContextMenu>
+                                            <ContextMenu Classes="Industry">
+                                                <MenuItem Header="{loc:Translate Panes.TxImageEditor.LoadTemplate}" IsEnabled="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                          Command="{Binding Template.LoadCommand}" CommandParameter="{Binding Template}" />
+                                                <MenuItem Header="{loc:Translate Panes.TxImageEditor.UnpinTemplate}" IsEnabled="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                          Command="{Binding Template.TogglePinCommand}" CommandParameter="{Binding Template}" />
+                                                <MenuItem Header="{loc:Translate Panes.TxImageEditor.ExportTemplate}" IsEnabled="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                          Command="{Binding Template.ExportCommand}" CommandParameter="{Binding Template}" />
+                                                <Separator />
+                                                <MenuItem Header="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsEnabled="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                          Command="{Binding Template.DeleteFromRackCommand}" CommandParameter="{Binding Template}" />
+                                                <MenuItem Header="{loc:Translate Panes.TxImageEditor.RenameTemplate}" IsEnabled="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                                          Click="OnRenameTemplateMenuClick" />
+                                            </ContextMenu>
+                                        </Border.ContextMenu>
                                         <Grid ColumnDefinitions="16,50,*" ColumnSpacing="7">
                                             <TextBlock Classes="IndustryKicker" Text="{Binding SlotNumber}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             <Panel Grid.Column="1" Width="50" Height="36">
@@ -329,15 +355,48 @@
                                                  grey lozenge behind the name here. IndustryRowLabel is
                                                  legible left-aligned body text with no background, matching
                                                  what a list-row name actually needs. -->
-                                            <TextBlock Grid.Column="2" Classes="IndustryRowLabel" HorizontalAlignment="Left" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
-                                                       Text="{Binding Template.Name}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                                            <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center"
-                                                       Text="{loc:Translate Panes.TxImageEditor.PinFromLibraryHint}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
+                                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                                <TextBlock Classes="IndustryRowLabel" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"
+                                                           Text="{Binding Template.Name}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                                <TextBlock Classes="IndustryKicker" Text="{loc:Translate Panes.TxImageEditor.PinFromLibraryHint}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
+                                                <!-- Templates rack rework: the "which slot is the canvas
+                                                     currently loaded from" indicator called out as
+                                                     missing when this rack was still a plain ItemsControl
+                                                     (see this file's own git history) — pushed by
+                                                     ReadyRackViewModel.SetLoadedTemplate/SetCanvasDirty,
+                                                     not a live binding (see those methods' own doc
+                                                     comments). -->
+                                                <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}"
+                                                           Text="{loc:Translate Panes.TxImageEditor.LoadedBadge}" IsVisible="{Binding IsLoadedOnly}" />
+                                                <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}"
+                                                           Text="{loc:Translate Panes.TxImageEditor.LoadedEditedBadge}" IsVisible="{Binding IsLoadedAndEdited}" />
+                                            </StackPanel>
                                         </Grid>
-                                    </Button>
+                                    </Border>
                                 </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                            </ItemsControl>
+                            </ListBox.ItemTemplate>
+                            </ListBox>
+                            <!-- Templates rack rework: the single-click action strip — Load/Unpin/
+                                 Export/Delete plus inline rename, shown only while a filled slot is
+                                 selected (an empty slot's Template is null, same guard the context menu
+                                 above uses). OnTemplateRenameKeyDown commits on Enter, reverts on Esc.
+                                 IsEnabled gated on IsLoadInFlight too (yoniq-auditor finding: only the
+                                 ListBox itself was gated before, so these stayed clickable mid-load). -->
+                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}"
+                                  IsVisible="{Binding ReadyRack.SelectedSlot.Template, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                  IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
+                                <TextBox x:Name="TemplateRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedSlot.Template.EditingName}"
+                                         KeyDown="OnTemplateRenameKeyDown" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.UnpinTemplate}" Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        IsEnabled="{Binding !ReadyRack.SelectedSlot.Template.IsExporting}"
+                                        Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding ReadyRack.DeleteFromRackCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                            </Grid>
                         </StackPanel>
                     </HeaderedContentControl>
 
@@ -358,70 +417,165 @@
                         </HeaderedContentControl.Header>
                         <!-- Count badge moved from the header tab into row 0 of the content Grid —
                              same title-tab-doesn't-stretch finding as the READY RACK panel above. -->
-                        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
+                        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
                             <!-- ui_transition_plan.md step 13: Import is panel-level (no row target,
                                  unlike Export below), so it lives in this header row rather than the
-                                 per-row action grid further down. -->
-                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto">
+                                 per-row action grid further down. Expanded template selector: List/
+                                 Grid segmented toggle added here too — same IndustrySegTheme/
+                                 RadioButton/GroupName pattern already shipped for the sideband
+                                 selector (RadioHeaderView.axaml), not a new control shape. Bound with
+                                 this codebase's own `!`-negation-in-binding-path convention (already
+                                 used e.g. IsEnabled="{Binding !ReadyRack.IsLoadInFlight}") rather than
+                                 a second computed property. -->
+                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto">
                                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                             Content="{loc:Translate Panes.TxImageEditor.ImportTemplate}" Command="{Binding ReadyRack.ImportCommand}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                             Content="{loc:Translate Panes.TxImageEditor.ImportLegacyMtmTemplate}" Command="{Binding ReadyRack.ImportLegacyMtmCommand}" />
                                 </StackPanel>
-                                <TextBlock Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
+                                <!-- Debugging finding, yoniq-auditor-refined: a TwoWay-bound negated
+                                     pair on IsChecked (!IsGridView / IsGridView) across two
+                                     RadioButtons sharing one GroupName is SAFE for a single live
+                                     view instance — see ReadyRackViewModel.IsGridView's own doc
+                                     comment for why this exact negated-pair shape already ships
+                                     safely elsewhere in this codebase, and for the real trigger
+                                     (negated pair + TwoWay + MULTIPLE live instances of this view
+                                     sharing one GroupName registry, which is what this specific view
+                                     does per-editor and per-test). Fixed by making IsChecked purely
+                                     Mode=OneWay (a read-only reflection of state) and switching modes
+                                     through two explicit, parameterless commands instead — no TwoWay
+                                     write path on IsChecked at all, which closes this regardless of
+                                     instance count. -->
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0" Margin="6,0">
+                                    <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
+                                                 GroupName="TemplateLibraryViewMode" IsChecked="{Binding !ReadyRack.IsGridView, Mode=OneWay}"
+                                                 Command="{Binding ReadyRack.SelectListViewCommand}"
+                                                 Content="{loc:Translate Panes.TxImageEditor.LibraryViewModeList}" />
+                                    <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
+                                                 GroupName="TemplateLibraryViewMode" IsChecked="{Binding ReadyRack.IsGridView, Mode=OneWay}"
+                                                 Command="{Binding ReadyRack.SelectGridViewCommand}"
+                                                 Content="{loc:Translate Panes.TxImageEditor.LibraryViewModeGrid}" />
+                                </StackPanel>
+                                <TextBlock Grid.Column="3" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
                             </Grid>
                             <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
 
-                            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                                <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                                    <!-- design-fidelity Phase H (final confirming pass finding #5):
-                                         same IndustryRowValue->IndustryRowLabel fix as the rack row
-                                         above — these are empty-state PROSE messages and a list-row
-                                         NAME, not value cells. -->
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
-                                    <ItemsControl ItemsSource="{Binding ReadyRack.FilteredTemplates}">
-                                        <ItemsControl.ItemTemplate>
-                                            <DataTemplate x:DataType="vm:TemplateListRowViewModel">
-                                                <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="0,2" ColumnSpacing="4">
-                                                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
-                                                    <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                            Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
-                                                    <!-- Backlog item (auditor usability review, 2026-08-17, item 9): "PIN
-                                                         silently no-ops on a full rack but the toggle visually latches
-                                                         'pinned' anyway." Disabled pre-emptively via CanPin instead of
-                                                         chasing the visual desync after the fact — see that property's
-                                                         own doc comment. -->
-                                                    <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                                  IsChecked="{Binding IsPinned, Mode=OneWay}" IsEnabled="{Binding CanPin}"
-                                                                  Command="{Binding TogglePinCommand}" CommandParameter="{Binding}"
-                                                                  Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
-                                                    <!-- ui_transition_plan.md step 13: IsEnabled disabled while THIS row's
-                                                         own export is in flight (a real file-save dialog await + zip write,
-                                                         unlike Load/TogglePin's near-instant operations). -->
-                                                    <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                                            IsEnabled="{Binding !IsExporting}"
-                                                            Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ExportCommand}" CommandParameter="{Binding}" />
-                                                    <!-- Backlog item (auditor usability review, 2026-08-17, item 3):
-                                                         "Template DELETE is a single unconfirmed click." Arm/confirm —
-                                                         see ReadyRackViewModel.DeleteAsync's own doc comment. -->
-                                                    <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsPendingDelete}"
-                                                            Padding="6,0" Command="{Binding DeleteCommand}" CommandParameter="{Binding}">
-                                                        <Panel>
-                                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !IsPendingDelete}" />
-                                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding IsPendingDelete}" />
-                                                        </Panel>
-                                                    </Button>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ItemsControl.ItemTemplate>
-                                    </ItemsControl>
-                                </StackPanel>
-                            </ScrollViewer>
+                            <!-- Expanded template selector: two ListBoxes (list/grid), mutually
+                                 exclusive IsVisible off ReadyRack.IsGridView, sharing the SAME
+                                 ItemsSource/SelectedItem — same "no dynamic ItemsPanel switching,
+                                 just swap which control is visible" approach as the rack's own
+                                 already-shipped click model (single-click selects/reveals the action
+                                 strip below, double-click loads, right-click opens the context menu),
+                                 which this reuses wholesale rather than inventing a second pattern.
+                                 Delete stays on the Library's own existing DeleteCommand (inline
+                                 IsPendingDelete arm/confirm, unchanged) — NOT the rack's
+                                 DeleteFromRackCommand modal, since this flow already worked and
+                                 wasn't broken; only its visibility moves off an always-on button. -->
+                            <Grid Grid.Row="2">
+                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
+                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
 
-                            <Grid Grid.Row="3" ColumnDefinitions="*,Auto" ColumnSpacing="4">
-                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
+                                <ListBox ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
+                                         ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
+                                         Background="Transparent" BorderThickness="0" Padding="0"
+                                         IsVisible="{Binding !ReadyRack.IsGridView}">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:TemplateListRowViewModel">
+                                            <Border Padding="6,4" Margin="0" BorderThickness="0,0,0,1" BorderBrush="{DynamicResource IndustryChromeBorder}"
+                                                    DoubleTapped="OnLibraryItemDoubleTapped" ToolTip.Tip="{Binding Name}">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu Classes="Industry">
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.PinTemplate}" IsEnabled="{Binding CanPin}" Command="{Binding TogglePinCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ExportCommand}" CommandParameter="{Binding}" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding DeleteCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.RenameTemplate}" Click="OnRenameLibraryItemMenuClick" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
+                                                <Grid ColumnDefinitions="32,*" ColumnSpacing="7">
+                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform" Width="32" Height="24" />
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                                        <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}" Text="{loc:Translate Panes.TxImageEditor.PinnedBadge}" IsVisible="{Binding IsPinned}" />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <!-- No outer ScrollViewer needed — a ListBox already scrolls
+                                     internally (same as the plain list ListBox above and the rack's
+                                     own), the WrapPanel just changes how items lay out inside it. -->
+                                <ListBox ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
+                                         ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
+                                         Background="Transparent" BorderThickness="0" Padding="0"
+                                         IsVisible="{Binding ReadyRack.IsGridView}">
+                                        <ListBox.ItemsPanel>
+                                            <ItemsPanelTemplate>
+                                                <!-- Fable's own sizing (2026-09-14 consult): ~96x72 tiles, 4:3 to match
+                                                     SSTV aspect, 2-3 columns at this rail's width. -->
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </ListBox.ItemsPanel>
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:TemplateListRowViewModel">
+                                                <Border Width="96" Padding="4" Margin="2" BorderThickness="1" BorderBrush="{DynamicResource IndustryChromeBorder}"
+                                                        DoubleTapped="OnLibraryItemDoubleTapped" ToolTip.Tip="{Binding Name}">
+                                                    <Border.ContextMenu>
+                                                        <ContextMenu Classes="Industry">
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding LoadCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.PinTemplate}" IsEnabled="{Binding CanPin}" Command="{Binding TogglePinCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ExportCommand}" CommandParameter="{Binding}" />
+                                                            <Separator />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding DeleteCommand}" CommandParameter="{Binding}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.RenameTemplate}" Click="OnRenameLibraryItemMenuClick" />
+                                                        </ContextMenu>
+                                                    </Border.ContextMenu>
+                                                    <StackPanel>
+                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" Width="88" Height="66" />
+                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" HorizontalAlignment="Center" />
+                                                        <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}" Text="{loc:Translate Panes.TxImageEditor.PinnedBadge}"
+                                                                   HorizontalAlignment="Center" IsVisible="{Binding IsPinned}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                            </Grid>
+
+                            <!-- Expanded template selector: the shared action strip, same shape as
+                                 the rack's own (TxImageEditorPaneView.axaml's Templates block) —
+                                 Load/Pin/Export/Delete plus inline rename, shown only while a Library
+                                 item is selected. OnLibraryRenameKeyDown commits on Enter, reverts on
+                                 Esc. Delete's own IsPendingDelete arm/confirm still renders here
+                                 (unchanged), just relocated off the always-visible row. -->
+                            <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}"
+                                  IsVisible="{Binding ReadyRack.SelectedLibraryItem, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                <TextBox x:Name="LibraryRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedLibraryItem.EditingName}"
+                                         KeyDown="OnLibraryRenameKeyDown" />
+                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
+                                <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                              IsChecked="{Binding ReadyRack.SelectedLibraryItem.IsPinned, Mode=OneWay}" IsEnabled="{Binding ReadyRack.SelectedLibraryItem.CanPin}"
+                                              Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}"
+                                              Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
+                                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
+                                        IsEnabled="{Binding !ReadyRack.SelectedLibraryItem.IsExporting}"
+                                        Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
+                                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}"
+                                        Padding="6,0" Command="{Binding ReadyRack.DeleteCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}">
+                                    <Panel>
+                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
+                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
+                                    </Panel>
+                                </Button>
+                            </Grid>
+
+                            <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                                <TextBox x:Name="NewTemplateNameTextBox" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0"
                                         Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Command="{Binding SaveTemplateCommand}" />
                             </Grid>
@@ -535,7 +689,20 @@
                                  needs Phase 3a's target-rect parameter on AddOverlayElement/
                                  AddBoxElement, not built yet; add it once that lands. -->
                             <Canvas.ContextMenu>
-                                <ContextMenu Classes="Industry">
+                                <!-- User-reported gap (2026-09-14): the canvas had no "Save Template"
+                                     entry anywhere except the small always-visible name field + button
+                                     at the bottom of the Templates rail (easy to miss). Added here,
+                                     disabled when the canvas has no elements to save (computed in
+                                     OnCanvasContextMenuOpened — OverlayElements.Count has no live
+                                     bound bool today, so this follows the same "View computes a
+                                     View-owned check right before the menu shows" pattern already used
+                                     by OnFitSafeAreaClick/etc for EditorScrollViewer.Bounds, rather than
+                                     wiring a new CollectionChanged subscription into the VM for one
+                                     MenuItem). Click focuses the name field instead of no-opping when
+                                     no name has been typed yet (SaveTemplateCommand's own CanSaveTemplate
+                                     gate gets called first — a typed name saves immediately, matching
+                                     the existing Save button). -->
+                                <ContextMenu Classes="Industry" Opened="OnCanvasContextMenuOpened">
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteElementCommand}" />
                                     <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitSafeArea}" Click="OnFitSafeAreaClick" />
@@ -543,6 +710,8 @@
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitHeight}" Click="OnFitHeightClick" />
                                     <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToggleType="CheckBox" IsChecked="{Binding SnapToGrid, Mode=TwoWay}" />
+                                    <Separator />
+                                    <MenuItem x:Name="SaveTemplateMenuItem" Header="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Click="OnSaveTemplateContextMenuClick" />
                                 </ContextMenu>
                             </Canvas.ContextMenu>
 
@@ -821,6 +990,13 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeLarge}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="Large" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FontSizeXLarge}" Command="{Binding SetFontSizePresetCommand}" CommandParameter="XLarge" />
                                                         </MenuItem>
+                                                        <!-- User-requested (2026-09-15): growing a text box previously never grew the
+                                                             font past its last explicitly-set size (shrink-to-fit only, no grow-to-fit).
+                                                             Session-only per-element toggle, same "no command, direct TwoWay IsChecked"
+                                                             pattern as Lock above — not persisted (see GrowToFillEnabled's own doc
+                                                             comment), so it always resets off on reload/reopen, matching the user's own
+                                                             explicit choice not to remember it. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.GrowToFillEnabled}" ToggleType="CheckBox" IsChecked="{Binding GrowToFillEnabled, Mode=TwoWay}" ToolTip.Tip="{loc:Translate Panes.TxImageEditor.GrowToFillEnabledHint}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.TextColorMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorWhite}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="White" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.ColorBlack}" Command="{Binding SetTextColorPresetCommand}" CommandParameter="Black" />
@@ -1480,12 +1656,27 @@
                                  needing subtraction inside the binding (no arithmetic-in-binding
                                  converter exists in this codebase for that). A sibling of
                                  OverlayElementsHost, not inside its DataTemplate — this is ONE badge
-                                 for the current selection, not a per-item template concern. -->
-                            <Border Canvas.Left="{Binding SelectedOverlayElement.LeftPixels}"
+                                 for the current selection, not a per-item template concern.
+                                 User-requested (2026-09-16): now also a drag handle for the selected
+                                 element (same as clicking the element's own body) — IsHitTestVisible
+                                 was False before, so clicking this badge did nothing. Not Locked-gated
+                                 here in AXAML (OnSelectionReadoutBadgePointerPressed's own shared
+                                 StartElementMoveDrag helper already re-checks Locked, same real-gate
+                                 convention as every other drag entry point in this file). yoniq-auditor
+                                 finding: Margin was -20 (unchanged since the badge's own first design-
+                                 fidelity pass, when it was purely decorative) — now that it's a real
+                                 hit-test target too, that overlapped the element's own top/top-left/
+                                 top-right resize handles (10x10, centered on the element's own top
+                                 edge, so spanning [top-5, top+5]) at the Large font-size preset, where
+                                 the badge's own rendered height grows to ~21px. -28 keeps the badge's
+                                 own bottom edge above that band at both font-size presets. -->
+                            <Border x:Name="SelectionReadoutBadge"
+                                    Canvas.Left="{Binding SelectedOverlayElement.LeftPixels}"
                                     Canvas.Top="{Binding SelectedOverlayElement.TopPixels}"
-                                    Margin="0,-20,0,0" Padding="4,2" IsHitTestVisible="False"
+                                    Margin="0,-28,0,0" Padding="4,2" Cursor="SizeAll"
                                     Background="{DynamicResource IndustryAccent}"
-                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                    IsVisible="{Binding SelectedOverlayElement, Converter={x:Static ObjectConverters.IsNotNull}}"
+                                    PointerPressed="OnSelectionReadoutBadgePointerPressed">
                                 <TextBlock Text="{Binding SelectionReadoutText}" FontFamily="{StaticResource IndustryMonoFontFamily}" FontSize="{DynamicResource IndustryTxSelectionReadoutFontSize}" Foreground="{DynamicResource IndustryBg}" />
                             </Border>
 
@@ -2564,9 +2755,16 @@
                         <!-- ui_transition_plan.md step 2 (T1-2): SEND used to mean apply-only, with
                              the real Transmit button off in TxControlsPaneView's own sidebar column
                              (potentially below its scroll position) — a human finishing a card
-                             expects the large action HERE to send it. Apply & Transmit is now the
-                             primary action; plain Apply (still real, still needed for a card the
-                             operator wants staged but not sent yet) demotes to Secondary. -->
+                             expects the large action HERE to send it. The primary action here demotes
+                             plain Apply (still real, still needed for a card the operator wants staged
+                             but not sent yet) to Secondary.
+                             User-requested (2026-09-16): the sidebar's own Transmit button is gone now
+                             (removed entirely, not just deprioritized) — this button is the ONLY way
+                             to send a picture, so it gets its own dedicated color (IndustryBtnTransmit,
+                             Atoms.axaml) instead of the generic IndustryBtnPrimary accent shared by
+                             ~16 other OK/Save/Confirm buttons across the app, and a plain "TRANSMIT"
+                             label instead of the combined "Apply & Transmit" verb phrase — the command
+                             itself is unchanged, it still applies pending edits before sending. -->
                         <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
                             <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                 <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
@@ -2587,9 +2785,9 @@
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Apply.Help}"
                                         Command="{Binding ApplyCommand}" />
                             </Grid>
-                            <Button Grid.Row="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnPrimary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                    Content="{loc:Translate Panes.TxImageEditor.ApplyAndTransmit}"
-                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.ApplyAndTransmit.Help}"
+                            <Button Grid.Row="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Content="{loc:Translate Panes.TxImageEditor.Transmit}"
+                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Transmit.Help}"
                                     Command="{Binding ApplyAndTransmitCommand}" />
                         </Grid>
                     </StackPanel>

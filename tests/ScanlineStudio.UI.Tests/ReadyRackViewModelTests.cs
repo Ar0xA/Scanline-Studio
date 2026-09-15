@@ -556,4 +556,324 @@ public sealed class ReadyRackViewModelTests
         Assert.DoesNotContain("simulated I/O failure", readyRack.StatusMessage);
         Assert.Empty(readyRack.AllTemplates);
     }
+
+    [Fact]
+    public async Task SetLoadedTemplate_MarksOnlyTheMatchingSlotAsLoaded()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var idA = await SaveTemplateAsync(templateStore, "A");
+        var idB = await SaveTemplateAsync(templateStore, "B");
+        await readyRack.RefreshAsync();
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == idA));
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == idB));
+
+        readyRack.SetLoadedTemplate(idB);
+
+        Assert.False(readyRack.Slots[0].IsLoaded);
+        Assert.True(readyRack.Slots[1].IsLoaded);
+    }
+
+    [Fact]
+    public async Task SetCanvasDirty_OnlyMarksTheLoadedSlotAsEdited()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == id));
+        readyRack.SetLoadedTemplate(id);
+
+        Assert.False(readyRack.Slots[0].IsLoadedAndEdited);
+        readyRack.SetCanvasDirty(true);
+        Assert.True(readyRack.Slots[0].IsLoadedAndEdited);
+        readyRack.SetCanvasDirty(false);
+        Assert.False(readyRack.Slots[0].IsLoadedAndEdited);
+        // Still loaded either way -- only the "edited" half flips.
+        Assert.True(readyRack.Slots[0].IsLoaded);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ReappliesLoadedStateToFreshSlotInstances()
+    {
+        // Slots[i].Template is a FRESH TemplateListRowViewModel every refresh -- IsLoaded/
+        // IsLoadedAndEdited live on the SLOT, not the row, specifically so a refresh triggered by an
+        // unrelated mutation (rename/pin/delete of a DIFFERENT template) can't silently clear the
+        // badge on this one.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var idA = await SaveTemplateAsync(templateStore, "A");
+        var idB = await SaveTemplateAsync(templateStore, "B");
+        await readyRack.RefreshAsync();
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == idA));
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == idB));
+        readyRack.SetLoadedTemplate(idA);
+
+        await readyRack.RefreshAsync();
+
+        Assert.True(readyRack.Slots[0].IsLoaded);
+    }
+
+    [Fact]
+    public async Task DeleteFromRackAsync_ConfirmRequestedUnwired_DoesNotDelete()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        await readyRack.DeleteFromRackCommand.ExecuteAsync(row);
+
+        Assert.Contains(id, templateStore.Templates.Keys);
+    }
+
+    [Fact]
+    public async Task DeleteFromRackAsync_Declined_DoesNotDelete()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        readyRack.ConfirmRequested = _ => Task.FromResult(false);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        await readyRack.DeleteFromRackCommand.ExecuteAsync(row);
+
+        Assert.Contains(id, templateStore.Templates.Keys);
+    }
+
+    [Fact]
+    public async Task DeleteFromRackAsync_Confirmed_DeletesAndClearsTheLoadedBadgeIfItWasLoaded()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        readyRack.ConfirmRequested = _ => Task.FromResult(true);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        await readyRack.TogglePinCommand.ExecuteAsync(row);
+        readyRack.SetLoadedTemplate(id);
+
+        // Re-fetch the row: TogglePinCommand's own RefreshAsync rebuilt AllTemplates with a fresh
+        // instance.
+        await readyRack.DeleteFromRackCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == id));
+
+        Assert.DoesNotContain(id, templateStore.Templates.Keys);
+        Assert.Empty(readyRack.AllTemplates);
+        Assert.False(readyRack.Slots[0].IsLoaded);
+    }
+
+    [Fact]
+    public async Task TogglePinAsync_UnpinningTheLoadedTemplate_ClearsTheLoadedBadgeWithoutDeleting()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = readyRack.AllTemplates.Single(t => t.Id == id);
+        await readyRack.TogglePinCommand.ExecuteAsync(row);
+        readyRack.SetLoadedTemplate(id);
+        Assert.True(readyRack.Slots[0].IsLoaded);
+
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == id));
+
+        Assert.False(readyRack.Slots[0].IsLoaded);
+        Assert.Contains(id, templateStore.Templates.Keys); // still exists, just unpinned
+    }
+
+    [Fact]
+    public async Task RenameAsync_EmptyEditingName_RevertsWithoutCallingTheStore()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Original");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        row.EditingName = "   ";
+
+        await readyRack.RenameCommand.ExecuteAsync(row);
+
+        Assert.Equal("Original", row.EditingName);
+        Assert.Equal("Original", Assert.Single(readyRack.AllTemplates).Name);
+    }
+
+    [Fact]
+    public async Task RenameAsync_ValidName_RenamesInPlaceAndRefreshes()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "Original");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        row.EditingName = "Renamed";
+
+        await readyRack.RenameCommand.ExecuteAsync(row);
+
+        var refreshed = Assert.Single(readyRack.AllTemplates);
+        Assert.Equal("Renamed", refreshed.Name);
+        Assert.Equal(id, refreshed.Id); // rename never changes the id/folder
+    }
+
+    [Fact]
+    public async Task RenameAsync_StoreThrows_SetsFailureStatusAndDoesNotRefresh()
+    {
+        var templateStore = new FakeTemplateStore { RenameExceptionToThrow = new InvalidOperationException("simulated I/O failure") };
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Original");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        row.EditingName = "Renamed";
+
+        await readyRack.RenameCommand.ExecuteAsync(row);
+
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.DoesNotContain("simulated I/O failure", readyRack.StatusMessage);
+        Assert.Equal("Original", Assert.Single(readyRack.AllTemplates).Name);
+    }
+
+    [Fact]
+    public async Task RenameAsync_NameAlreadyUsedByAnotherTemplate_RejectsAndReverts()
+    {
+        // yoniq-auditor finding: SaveTemplateAsync resolves its overwrite target by matching NAME
+        // (case-insensitive) -- renaming B to A's name would let a later Save silently overwrite
+        // whichever of the two same-named templates ListAsync happens to enumerate first. Rejected
+        // up front instead.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "A");
+        var idB = await SaveTemplateAsync(templateStore, "B");
+        await readyRack.RefreshAsync();
+        var rowB = readyRack.AllTemplates.Single(t => t.Id == idB);
+        rowB.EditingName = "A";
+
+        await readyRack.RenameCommand.ExecuteAsync(rowB);
+
+        Assert.Equal("B", rowB.EditingName); // reverted, not "A"
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.Equal("B", Assert.Single(readyRack.AllTemplates, t => t.Id == idB).Name);
+        Assert.Equal(2, readyRack.AllTemplates.Count); // both templates still exist, unchanged
+    }
+
+    [Fact]
+    public async Task RenameAsync_SameNameAsSelf_IsANoOpNotACollision()
+    {
+        // Renaming a template to its OWN current name (whitespace trimmed differently, or just
+        // re-confirming) must not trip the duplicate-name rejection against itself.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        row.EditingName = "A";
+
+        await readyRack.RenameCommand.ExecuteAsync(row);
+
+        Assert.Null(readyRack.StatusMessage);
+        Assert.Equal("A", Assert.Single(readyRack.AllTemplates, t => t.Id == id).Name);
+    }
+
+    [Fact]
+    public async Task SelectedLibraryItem_SurvivesARefresh_WithAFreshInstanceOfTheSameId()
+    {
+        // Unlike Slots (a stable wrapper whose own .Template swaps), AllTemplates/FilteredTemplates
+        // get entirely FRESH row instances on every RefreshAsync -- a naive "leave SelectedLibraryItem
+        // alone" would silently point it at a discarded instance no ListBox could ever show as
+        // selected again once a rename/pin/delete ELSEWHERE triggers a refresh.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var firstInstance = Assert.Single(readyRack.AllTemplates);
+        readyRack.SelectedLibraryItem = firstInstance;
+
+        await readyRack.RefreshAsync();
+
+        Assert.NotNull(readyRack.SelectedLibraryItem);
+        Assert.Equal(id, readyRack.SelectedLibraryItem!.Id);
+        Assert.NotSame(firstInstance, readyRack.SelectedLibraryItem);
+    }
+
+    [Fact]
+    public async Task SelectedLibraryItem_ClearsWhenTheUnderlyingTemplateIsDeleted()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        readyRack.SelectedLibraryItem = row;
+
+        await templateStore.DeleteAsync(row.Id);
+        await readyRack.RefreshAsync();
+
+        Assert.Null(readyRack.SelectedLibraryItem);
+    }
+
+    [Fact]
+    public async Task IsGridView_RoundTripsThroughSettingsAcrossTwoInstances()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var first = CreateReadyRack(settingsStore: settingsStore);
+        await first.RefreshAsync(); // triggers the one-time settings load
+        Assert.False(first.IsGridView); // default
+
+        first.SelectGridViewCommand.Execute(null);
+
+        // A fresh instance (a real editor re-open) must pick up the persisted choice.
+        var second = CreateReadyRack(settingsStore: settingsStore);
+        await second.RefreshAsync();
+
+        Assert.True(second.IsGridView);
+    }
+
+    [Fact]
+    public void SelectListViewAndSelectGridViewCommands_SetIsGridViewDirectly()
+    {
+        // Deliberately NOT exercised via a TwoWay-bound RadioButton IsChecked in this test -- see
+        // TxImageEditorPaneView.axaml's own comment on the toggle for why (a TwoWay-bound negated
+        // pair sharing one GroupName caused a real binding/group-exclusivity feedback loop that
+        // pinned a test host at ~100% CPU). These commands are the only write path to IsGridView
+        // from the view; IsChecked itself is Mode=OneWay only.
+        var readyRack = CreateReadyRack();
+
+        readyRack.SelectGridViewCommand.Execute(null);
+        Assert.True(readyRack.IsGridView);
+
+        readyRack.SelectListViewCommand.Execute(null);
+        Assert.False(readyRack.IsGridView);
+    }
+
+    [Fact]
+    public async Task LibraryFilterText_ExcludingTheSelectedRow_ClearsTheSelection()
+    {
+        // yoniq-auditor finding: RefreshFilteredTemplates used to leave SelectedLibraryItem
+        // pointing at a row no longer in FilteredTemplates once a typed filter excluded it -- the VM
+        // and the ListBox could disagree about what's selected. Explicit clear keeps them consistent.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Alpha");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        readyRack.SelectedLibraryItem = row;
+
+        readyRack.LibraryFilterText = "Zulu"; // excludes "Alpha"
+
+        Assert.Null(readyRack.SelectedLibraryItem);
+    }
+
+    [Fact]
+    public async Task LibraryFilterText_StillMatchingTheSelectedRow_LeavesTheSelectionAlone()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        await SaveTemplateAsync(templateStore, "Alpha");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        readyRack.SelectedLibraryItem = row;
+
+        readyRack.LibraryFilterText = "Alp";
+
+        Assert.Same(row, readyRack.SelectedLibraryItem);
+    }
 }

@@ -60,6 +60,28 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private bool _isEditingText;
 
+    /// <summary>Per-element, session-only override of the shrink-to-fit search
+    /// (<see cref="ITransmitImagePreparer.MeasureFittedFontSize"/>/<c>ApplyTemplate</c>'s font-fit
+    /// search): when set, the fit search may also grow PAST <see cref="FontSizeRelative"/> if the box
+    /// has room, not just shrink below it. User-requested (2026-09-15): growing a text box previously
+    /// never grew the font past its last explicitly-set size, matching legacy YONIQ's port-first
+    /// default in every OTHER respect except this one -- legacy's own <c>CDrawText::Move</c>
+    /// (<c>Draw.cpp:2965-2988</c>) scales the font proportionally with box-drag in BOTH directions, no
+    /// asymmetric cap, so growing past nominal is the more legacy-faithful behavior; this stays an
+    /// opt-in per the user's own explicit choice (right-click menu), not a default-on behavior change.
+    /// Deliberately NOT in <see cref="ScanlineStudio.Application.PersistedTextElement"/> -- resets to
+    /// <see langword="false"/> on a template SAVE/LOAD round-trip (create a fresh element, reload a
+    /// template, import), same "transient, no persisted-storage tier" as <see cref="IsSelected"/>/
+    /// <see cref="IsEditingText"/> above. Unlike those two, this DOES feed the pipeline (see
+    /// <c>OnOverlayElementPropertyChanged</c>'s own filter list -- deliberately NOT early-returned
+    /// there, since it changes rendered output) and IS carried by
+    /// <c>TxImageEditorPaneViewModel.RawTextElementSnapshot</c> (yoniq-auditor-flagged: without that,
+    /// Undo/Redo would silently reset it on every text element, not just the one edit being undone) --
+    /// so it survives Undo/Redo/Duplicate/Copy-Paste within one editor session, just not a
+    /// save/reload.</summary>
+    [ObservableProperty]
+    private bool _growToFillEnabled;
+
     [ObservableProperty]
     private double _fontSizeRelative = 0.1;
 

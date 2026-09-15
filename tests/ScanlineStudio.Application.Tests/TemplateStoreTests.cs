@@ -60,6 +60,54 @@ public sealed class TemplateStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task RenameAsync_RenamesInPlace_IdFolderAndElementsUnchanged()
+    {
+        var store = CreateStore();
+        var id = store.CreateTemplateId("Original");
+        var document = new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]);
+        await store.SaveAsync(id, "Original", document);
+        var thumbnailWritesBefore = _imageSourceWriter.Files.Count;
+
+        await store.RenameAsync(id, "Renamed");
+
+        var metadata = Assert.Single(await store.ListAsync());
+        Assert.Equal("Renamed", metadata.Name);
+        Assert.Equal(id, metadata.Id); // folder/id never changes on rename
+        Assert.True(Directory.Exists(Path.Combine(_root, id)));
+        Assert.Equal(thumbnailWritesBefore, _imageSourceWriter.Files.Count); // never re-rendered
+        var reloaded = await store.LoadAsync(id);
+        Assert.Single(reloaded.Elements);
+        Assert.IsType<PersistedBoxElement>(reloaded.Elements[0]);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, id), "*.tmp"));
+    }
+
+    [Fact]
+    public async Task RenameAsync_PartialManifestWriteFailurePreservesExistingTemplate()
+    {
+        var store = CreateStore();
+        var id = store.CreateTemplateId("Original");
+        await store.SaveAsync(id, "Original", new PersistedTemplateDocument([]));
+        var manifestPath = Path.Combine(_root, id, "template.json");
+        var original = await File.ReadAllBytesAsync(manifestPath);
+        var failingStore = new TemplateStore(_imageSourceWriter, _imageFileLoader, _preparer, NullLogger<TemplateStore>.Instance, _root)
+        {
+            WriteManifestFileAsync = async (path, json, ct) =>
+            {
+                await File.WriteAllTextAsync(path, json[..10], ct);
+                throw new IOException("Injected partial manifest write failure");
+            },
+        };
+
+        await Assert.ThrowsAsync<IOException>(() => failingStore.RenameAsync(id, "Replacement"));
+
+        Assert.Equal(original, await File.ReadAllBytesAsync(manifestPath));
+        Assert.Equal("Original", Assert.Single(await store.ListAsync()).Name);
+        Assert.Empty(Directory.EnumerateFiles(Path.Combine(_root, id), "*.tmp"));
+    }
+
+    [Fact]
     public async Task ExportAsync_SourceReadFailurePreservesExistingBundle()
     {
         var store = CreateStore();

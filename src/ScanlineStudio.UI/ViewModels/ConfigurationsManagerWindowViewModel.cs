@@ -75,7 +75,10 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
             return false;
         }
 
-        var confirmVm = new ConfirmActionDialogViewModel(title, message);
+        // yoniq-auditor finding: labels are now required, not defaulted -- same generic Yes/No text
+        // this dialog always showed.
+        var confirmVm = new ConfirmActionDialogViewModel(
+            title, message, _localization.GetString("Configurations.ConfirmYes"), _localization.GetString("Configurations.ConfirmNo"));
         return await ConfirmRequested(confirmVm).ConfigureAwait(true);
     }
 

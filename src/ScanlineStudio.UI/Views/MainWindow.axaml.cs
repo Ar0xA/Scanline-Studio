@@ -790,6 +790,25 @@ public partial class MainWindow : Window
                     return await confirmView.ShowDialog<bool>(this);
                 };
 
+                // Templates rack rework: unlike RxHistory/Logbook (constructed once), a
+                // TxImageEditorPaneViewModel/ReadyRackViewModel pair is constructed FRESH every time
+                // the operator opens the editor (TxControlsPaneViewModel.OpenEditor*Async), so the
+                // same ConfirmRequested wiring has to happen once PER instance, via EditorOpened
+                // rather than once at startup.
+                vm.TxControls.EditorOpened += editor =>
+                {
+                    editor.ConfirmRequested = async confirmVm =>
+                    {
+                        var confirmView = new ConfirmActionDialogView { DataContext = confirmVm };
+                        return await confirmView.ShowDialog<bool>(this);
+                    };
+                    editor.ReadyRack.ConfirmRequested = async confirmVm =>
+                    {
+                        var confirmView = new ConfirmActionDialogView { DataContext = confirmVm };
+                        return await confirmView.ShowDialog<bool>(this);
+                    };
+                };
+
                 // ui_transition_plan.md step 5 (T1-6): same two values LogQsoRequested's own handler
                 // above already trusts as "the received station's callsign/grid" -- see
                 // TxControlsPaneViewModel.CurrentContactRequested's own doc comment.

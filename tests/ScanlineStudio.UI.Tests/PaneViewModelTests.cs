@@ -69,7 +69,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_PushedFrame_UpdatesLatestFrameOnUiThread()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         var frame = new WaterfallFrame([0f, 1f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
 
         ((FakeWaterfallSource)sstvSession.Waterfall).Emit(frame);
@@ -88,7 +88,7 @@ public sealed class PaneViewModelTests
         // thread burst would) must collapse to exactly one PropertyChanged and the LAST frame shown,
         // not the first, and not three separate updates.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         var frame1 = new WaterfallFrame([0f, 1f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
         var frame2 = new WaterfallFrame([2f, 3f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
         var frame3 = new WaterfallFrame([4f, 5f], BinWidthHz: 100, ObservedAt: DateTimeOffset.UtcNow);
@@ -112,6 +112,56 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void WaterfallPaneViewModel_Constructor_LoadsZeroAndGainFromPersistedSettings()
+    {
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RxPaneUiSettings.SectionKey,
+                new RxPaneUiSettings { ZeroDb = -12.0, GainDb = 30.0 },
+                RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings),
+        };
+
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), settingsStore, NullLogger<WaterfallPaneViewModel>.Instance);
+
+        Assert.Equal(-12.0, vm.ZeroDb);
+        Assert.Equal(30.0, vm.GainDb);
+    }
+
+    [AvaloniaFact]
+    public async Task WaterfallPaneViewModel_ChangingZeroOrGain_PersistsAfterDebounceWithoutClobberingQuickModeGridIds()
+    {
+        // RxImagePaneViewModel also writes RxPaneUiSettings.QuickModeGridIds into this same section --
+        // the read-modify-write in PersistGainZeroSettingsAsync must preserve it, same reasoning as
+        // TxControlsAutoFollowAndQuickModeGridTests' own sibling-field test. Debounced (same reasoning
+        // as RadioStatusViewModelTests.TxVolumePercentChange_PersistsAfterDebounceDelay) -- a slider
+        // drag fires many changes; only the settled value after the delay should hit the store.
+        var customIds = new[] { "robot36" };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                RxPaneUiSettings.SectionKey,
+                new RxPaneUiSettings { QuickModeGridIds = customIds },
+                RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings),
+        };
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), settingsStore, NullLogger<WaterfallPaneViewModel>.Instance);
+
+        vm.ZeroDb = -20.0;
+        vm.GainDb = 40.0;
+        Dispatcher.UIThread.RunJobs();
+        var beforeDebounce = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        Assert.Equal(0.0, beforeDebounce?.ZeroDb); // not persisted yet -- still debouncing
+
+        await Task.Delay(600);
+        Dispatcher.UIThread.RunJobs();
+
+        var rxPaneUi = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+        Assert.Equal(-20.0, rxPaneUi?.ZeroDb);
+        Assert.Equal(40.0, rxPaneUi?.GainDb);
+        Assert.Equal(customIds, rxPaneUi?.QuickModeGridIds);
+    }
+
+    [AvaloniaFact]
     public void WaterfallPaneViewModel_ModeDetectedEvent_UpdatesCurrentModeOnUiThread()
     {
         // Auditor-caught (batch 8 plan review): ISstvSessionService.ModeDetected fires synchronously
@@ -127,7 +177,7 @@ public sealed class PaneViewModelTests
         // a non-UI thread instead, and the captured CheckAccess() below makes the marshaling claim
         // an explicit assertion rather than an inference from the property just happening to update.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         Assert.Null(vm.CurrentMode);
         var handlerRanOnUiThread = (bool?)null;
         vm.PropertyChanged += (_, e) =>
@@ -152,7 +202,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_ViewMode_DefaultsToBoth()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         Assert.Equal(WaterfallViewMode.Both, vm.ViewMode);
         Assert.True(vm.IsViewBoth);
@@ -163,7 +213,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_SettingIsViewSpectrumOnly_UpdatesViewModeAndTheOtherComputedBools()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         vm.IsViewSpectrumOnly = true;
 
@@ -176,7 +226,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_SettingIsViewWaterfallOnly_UpdatesViewModeAndTheOtherComputedBools()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         vm.IsViewWaterfallOnly = true;
 
@@ -189,7 +239,7 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public void WaterfallPaneViewModel_StartHzSpanHzPeakHoldEnabled_HaveTheDocumentedDefaults()
     {
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         Assert.Equal(1000.0, vm.StartHz);
         Assert.Equal(1600.0, vm.SpanHz);
@@ -208,7 +258,7 @@ public sealed class PaneViewModelTests
         // [NotifyPropertyChangedFor] attributes -- only a real PropertyChanged subscription proves
         // the binding would actually refresh).
         var localization = new FakeLocalizationService();
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization, new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         _ = vm.RangeCaptionDisplay;
         Assert.Equal("Panes.Waterfall.RangeCaptionFormat", localization.LastKey);
@@ -234,7 +284,7 @@ public sealed class PaneViewModelTests
     {
         // Matches NotchFilter/AnalogFmSstvDecoder._notchFrequencyHz's own default -- see
         // WaterfallPaneViewModel.NotchFrequencyHz's own doc comment for why that matters.
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         Assert.False(vm.NotchEnabled);
         Assert.Equal(2400.0, vm.NotchFrequencyHz);
@@ -244,7 +294,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_TogglingNotchEnabled_ForwardsToTheSessionWithTheCurrentFrequency()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchFrequencyHz = 1750.0 };
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance) { NotchFrequencyHz = 1750.0 };
 
         vm.NotchEnabled = true;
 
@@ -257,7 +307,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_TogglingNotchDisabled_ForwardsNullFrequency()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchEnabled = true };
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance) { NotchEnabled = true };
 
         vm.NotchEnabled = false;
 
@@ -272,7 +322,7 @@ public sealed class PaneViewModelTests
         // Click-to-tune (SpectrumTraceControl.NotchTuneRequestedCommand) -- legacy's left-click both
         // tunes AND enables (Main.cpp:14364-14371).
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         vm.TuneNotchCommand.Execute(1900.0);
 
@@ -289,7 +339,7 @@ public sealed class PaneViewModelTests
         // doesn't actually change -- this proves TuneNotch's own explicit RequestNotch call covers
         // the already-enabled retune-by-drag case regardless.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService()) { NotchEnabled = true };
+        var vm = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance) { NotchEnabled = true };
         var callCountBeforeRetune = sstvSession.RequestNotchCallCount;
 
         vm.TuneNotchCommand.Execute(2100.0);
@@ -308,7 +358,7 @@ public sealed class PaneViewModelTests
         // only a real PropertyChanged subscription proves the bound TextBlock would actually refresh.
         // Caught live: the toggle chip visibly flipped and the session-service call landed correctly,
         // but the Input Chain row's frequency text stayed stuck on "Off" until this was added.
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         var raisedProperties = new List<string?>();
         vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
 
@@ -321,7 +371,7 @@ public sealed class PaneViewModelTests
     public void WaterfallPaneViewModel_NotchStatusDisplay_ShowsFrequencyWhenEnabled_AndOffLiteralWhenNot()
     {
         var localization = new FakeLocalizationService();
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization, new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         _ = vm.NotchStatusDisplay;
         Assert.Equal("Panes.RxInput.NotchValue", localization.LastKey);
@@ -340,7 +390,7 @@ public sealed class PaneViewModelTests
         // "On" loc-key literal in the AXAML, so it never changed regardless of NotchEnabled --
         // fixed by binding it to this new property instead. Same "only a real PropertyChanged
         // subscription proves it" reasoning as the sibling NotchStatusDisplay test above.
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         var raisedProperties = new List<string?>();
         vm.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
 
@@ -356,7 +406,7 @@ public sealed class PaneViewModelTests
         // clicking the chip will DO next), not a state label -- "On" while disabled (click to turn
         // it on), "Off" while enabled (click to turn it off).
         var localization = new FakeLocalizationService();
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization);
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), localization, new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
 
         _ = vm.NotchToggleLabel;
         Assert.Equal("Panes.RxInput.NotchToggle", localization.LastKey); // "On" -- disabled, click to enable
@@ -8802,15 +8852,10 @@ public sealed class PaneViewModelTests
         var vm = CreateLogbookPaneViewModel(logbook, localization: localization);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
-        string? confirmMessageKey = null;
-        object[]? confirmMessageArgs = null;
-        vm.ConfirmRequested = _ =>
+        ConfirmActionDialogViewModel? seenConfirmVm = null;
+        vm.ConfirmRequested = confirmVm =>
         {
-            // Captured HERE, not after ExecuteAsync completes -- the success-path StatusMessage's
-            // own GetString call afterward would otherwise overwrite LastKey/LastArgs before this
-            // test ever reads them.
-            confirmMessageKey = localization.LastKey;
-            confirmMessageArgs = localization.LastArgs;
+            seenConfirmVm = confirmVm;
             return Task.FromResult(true);
         };
 
@@ -8818,10 +8863,14 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         // The dialog message names the callsign being deleted (auditor plan-review round 2
-        // finding) -- verified via LastKey/LastArgs, since FakeLocalizationService.GetString
-        // returns the raw key, not a formatted string.
-        Assert.Equal("Panes.Logbook.ConfirmDeleteMessage", confirmMessageKey);
-        Assert.Equal(["N0CALL"], confirmMessageArgs);
+        // finding). FakeLocalizationService.GetString returns the raw key, so confirmVm.Message
+        // equals the key itself; the callsign arg is verified via Calls (not LastKey/LastArgs --
+        // the confirm/cancel BUTTON labels are also GetString'd while building the same
+        // ConfirmActionDialogViewModel constructor call, all before ConfirmRequested's callback
+        // ever fires, so only the full call history can still identify THIS specific call).
+        Assert.Equal("Panes.Logbook.ConfirmDeleteMessage", seenConfirmVm!.Message);
+        var messageCall = localization.Calls.Single(c => c.Key == "Panes.Logbook.ConfirmDeleteMessage");
+        Assert.Equal(["N0CALL"], messageCall.Args);
         Assert.Contains("1", logbook.DeletedIds);
         Assert.Empty(vm.Entries);
         Assert.NotNull(vm.StatusMessage);

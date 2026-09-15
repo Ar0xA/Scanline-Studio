@@ -120,6 +120,35 @@ public sealed partial class TemplateStore : ITemplateStore
         }
     }
 
+    /// <summary>Rewrites only <c>template.json</c>'s own <c>Name</c> field -- the folder/id never
+    /// changes (see <see cref="CreateTemplateId"/>'s own doc comment: "renaming a template's
+    /// display name later never renames its folder"), and the thumbnail doesn't depend on the name,
+    /// so this deliberately does NOT go through <see cref="SaveAsync"/> (that method unconditionally
+    /// re-renders and overwrites <c>thumbnail.png</c>, wasted work for a pure rename). Same atomic
+    /// write-to-temp-then-<see cref="File.Move(string,string,bool)"/> discipline as
+    /// <see cref="SaveAsync"/> for the same reason -- a crash mid-write must never leave
+    /// <c>template.json</c> truncated.</summary>
+    public async Task RenameAsync(string templateId, string newName, CancellationToken ct = default)
+    {
+        var directory = GetTemplateDirectory(templateId);
+        var manifest = await ReadManifestAsync(directory, ct).ConfigureAwait(false);
+        var renamed = manifest with { Name = newName };
+        var json = JsonSerializer.Serialize(renamed, PersistedTemplateJsonContext.Default.TemplateManifest);
+        var manifestPath = Path.Combine(directory, "template.json");
+        var temporaryPath = manifestPath + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await WriteManifestFileAsync(temporaryPath, json, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, manifestPath, overwrite: true);
+            Log.TemplateRenamed(_logger, templateId);
+        }
+        finally
+        {
+            DeleteTemporaryFile(temporaryPath);
+        }
+    }
+
     public async Task<PersistedTemplateDocument> LoadAsync(string templateId, CancellationToken ct = default)
     {
         var manifest = await ReadManifestAsync(GetTemplateDirectory(templateId), ct).ConfigureAwait(false);
@@ -902,6 +931,9 @@ public sealed partial class TemplateStore : ITemplateStore
     {
         [LoggerMessage(Level = LogLevel.Information, Message = "Template {TemplateId} saved")]
         public static partial void TemplateSaved(ILogger logger, string templateId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Template {TemplateId} renamed")]
+        public static partial void TemplateRenamed(ILogger logger, string templateId);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Template {TemplateId} exported to {Path}")]
         public static partial void TemplateExported(ILogger logger, string templateId, string path);
