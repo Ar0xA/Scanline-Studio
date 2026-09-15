@@ -839,9 +839,12 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // retract an already-made GridTracker/ADIF-UDP broadcast or QRZ upload, and the confirm
         // dialog is the only moment the operator can actually act on that information -- a
         // doc-comment-only note would be invisible to the person making the decision.
+        // yoniq-auditor finding: labels are now required, not defaulted -- same generic Yes/No text
+        // this dialog always showed.
         var confirmVm = new ConfirmActionDialogViewModel(
             _localization.GetString("Panes.Logbook.ConfirmDeleteTitle"),
-            _localization.GetString("Panes.Logbook.ConfirmDeleteMessage", callsign));
+            _localization.GetString("Panes.Logbook.ConfirmDeleteMessage", callsign),
+            _localization.GetString("Configurations.ConfirmYes"), _localization.GetString("Configurations.ConfirmNo"));
         return await ConfirmRequested(confirmVm).ConfigureAwait(true);
     }
 

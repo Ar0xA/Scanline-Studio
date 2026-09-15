@@ -102,7 +102,7 @@ public sealed class MainViewModelTests
             new FakeReceiveHistoryStore(),
             NullLogger<LogbookPaneViewModel>.Instance);
 
-        var waterfall = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService());
+        var waterfall = new WaterfallPaneViewModel(sstvSession, new FakeLocalizationService(), new FakeSettingsStore(), NullLogger<WaterfallPaneViewModel>.Instance);
         var decoderTrace = new DecoderTracePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService());
         var urlLauncher = new FakeUrlLauncher();
 

@@ -72,7 +72,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
         bool Bold = false, bool Italic = false,
         Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02,
-        bool BitmapFillEnabled = false, IImageSource? BitmapFillSource = null)
+        bool BitmapFillEnabled = false, IImageSource? BitmapFillSource = null,
+        // User-requested (2026-09-15) grow-to-fill toggle -- yoniq-auditor-flagged risk: without this
+        // field, Undo/Redo silently reset EVERY text element's own toggle to off (ApplyState's own
+        // recreate-every-element-from-a-snapshot path has nowhere else to read it from), a much wider
+        // and more visible reset than OverlayElementViewModel.GrowToFillEnabled's own doc comment
+        // ("resets on every template reload") implied. Deliberately NOT read by PasteSelectedElementStyle
+        // (that method copies fields explicitly, one at a time -- this one is simply never among
+        // them), so Copy Style/Paste Style still correctly does NOT carry it between elements, only
+        // Undo/Redo/Duplicate/Copy-Paste (which reuse this same record) do.
+        bool GrowToFillEnabled = false)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary><paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
@@ -313,6 +322,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private int _sourceBaselineRotation;
 
     private readonly List<EditorSnapshot> _undoStack = [];
+
+    /// <summary>Templates rack rework, yoniq-auditor finding -- <see cref="_undoStack"/>'s own count
+    /// snapshot taken right after the most recent successful template load (or 0, for an editor that
+    /// has never loaded one). <see cref="LoadTemplateIntoLiveEditor"/> pushes ITS OWN undo snapshot
+    /// (so the load itself is undoable, a deliberate existing design decision -- see that method's
+    /// own doc comment), which means <see cref="HasUnsavedEdits"/> goes permanently true the instant
+    /// ANY template is first loaded, with zero operator edits. Reusing that raw flag for the
+    /// Templates rack's own "Loaded • edited" badge and its discard-confirm gate made both wrong: the
+    /// badge read "edited" from the moment of load, and the modal fired on every SUBSEQUENT load in
+    /// the same session even with nothing actually typed since. <see cref="IsDirtySinceLastTemplateLoad"/>
+    /// below measures relative to THIS baseline instead -- true only once the stack grows (or
+    /// shrinks via Undo) past what it was right after that load.</summary>
+    private int _undoStackDepthAtLastTemplateLoad;
     private readonly List<EditorSnapshot> _redoStack = [];
 
     // Dispatcher-idle coalescing for PushUndoSnapshotCoalesced (round-1 plan-review: sliders/
@@ -502,24 +524,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [ObservableProperty]
     private bool _isCancelArmed;
 
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Ready Rack number keys ...
-    /// recall silently replaces the whole layout with no confirmation." Same arm/confirm shape as
-    /// <see cref="IsCancelArmed"/>, keyed by template id so pressing a DIFFERENT slot/row re-arms for
-    /// the new target rather than confirming an unrelated one. Lives here (not on <see cref="ReadyRack"/>)
-    /// since only this VM knows <see cref="HasUnsavedEdits"/> -- both the rack's numbered slots and the
-    /// Template Library's own Load button funnel through the same <see cref="ReadyRackViewModel.TemplateSelected"/>
-    /// event into <see cref="OnReadyRackTemplateSelected"/>, so one guard there covers both surfaces.</summary>
-    private string? _pendingRecallTemplateId;
+    /// <summary>Templates rack rework -- replaces the old arm/confirm status-bar warning
+    /// (<c>_pendingRecallTemplateId</c>) with a real confirm dialog, same delegate-property shape as
+    /// <see cref="ReadyRackViewModel.ConfirmRequested"/>/<c>RxHistoryPaneViewModel.ConfirmRequested</c>.
+    /// Set once per editor instance by <c>MainWindow.axaml.cs</c>'s <c>EditorOpened</c> subscription
+    /// (this VM is constructed fresh per editor, not a DI singleton). Returns <see langword="false"/>
+    /// (decline -- stay on the current canvas) when unwired, the safe default.</summary>
+    public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
 
-    /// <summary>Ready Rack direct-fire plan (2026-09-01): a SEPARATE arm/confirm token from
-    /// <see cref="_pendingRecallTemplateId"/> -- code-review finding on an earlier draft of this
-    /// feature: sharing one token would let a plain-recall's own "will discard your edits" arm
-    /// double as an unintended "yes, transmit" confirmation for a LATER Ctrl+N on the same slot,
-    /// since the operator would only ever have read a discard warning, never a transmit one. Cleared
-    /// at the SAME 4 points <see cref="_pendingRecallTemplateId"/> is (<see cref="PushUndoSnapshot"/>,
-    /// <see cref="PushUndoSnapshotCoalesced"/>, <see cref="ApplyState"/>, and its own consume-on-fire
-    /// point in <see cref="OnReadyRackDirectFireRequested"/>) -- same "any real edit disarms a stale
-    /// confirmation" rule, applied uniformly to both tokens.</summary>
+    private async Task<bool> RequestConfirmAsync(string title, string message, string confirmLabel) =>
+        ConfirmRequested is null
+            ? false
+            : await ConfirmRequested(new ConfirmActionDialogViewModel(title, message, confirmLabel, _localization.GetString("Panes.TxImageEditor.DialogCancel"))).ConfigureAwait(true);
+
+    /// <summary>Ready Rack direct-fire plan (2026-09-01): a SEPARATE arm/confirm token from plain
+    /// recall's own (now <see cref="ConfirmRequested"/>'s real dialog, formerly a status-bar arm) --
+    /// code-review finding on an earlier draft of this feature: sharing one token would let a
+    /// plain-recall's own "will discard your edits" arm double as an unintended "yes, transmit"
+    /// confirmation for a LATER Ctrl+N on the same slot, since the operator would only ever have
+    /// read a discard warning, never a transmit one. Cleared at every real-edit point
+    /// (<see cref="PushUndoSnapshot"/>, <see cref="PushUndoSnapshotCoalesced"/>,
+    /// <see cref="ApplyState"/>) and its own consume-on-fire point in
+    /// <see cref="OnReadyRackDirectFireRequested"/> -- same "any real edit disarms a stale
+    /// confirmation" rule plain recall's own dialog-gated flow follows.</summary>
     private string? _pendingDirectFireTemplateId;
 
     /// <summary>Tier B audit finding: <see cref="ReadyRackViewModel"/>'s Load/RecallSlot commands are
@@ -765,39 +792,74 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// in this constructor for why no unsubscribe/IDisposable is needed either (both die together).</summary>
     public ReadyRackViewModel ReadyRack { get; }
 
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): "recall silently replaces the
-    /// whole layout with no confirmation" -- arm/confirm gate (see <see cref="_pendingRecallTemplateId"/>'s
-    /// own doc comment), applied uniformly to BOTH the rack's numbered-slot recall and the Template
+    /// <summary>Templates rack rework -- replaces the old arm/confirm status-bar warning with a real
+    /// confirm dialog (<see cref="ConfirmRequested"/>) when <see cref="IsDirtySinceLastTemplateLoad"/>,
+    /// applied uniformly to BOTH the rack's numbered-slot recall/double-click and the Template
     /// Library's own Load button (both funnel through <see cref="ReadyRackViewModel.TemplateSelected"/>
-    /// into this one handler). Also the error-surface fix for a failed load (item 11) -- previously
-    /// ILogger-only.</summary>
+    /// into this one handler). Declining leaves the canvas untouched. Also the error-surface fix for
+    /// a failed load (item 11) -- previously ILogger-only.
+    /// <para>yoniq-auditor finding: the confirm-dialog await now lives INSIDE the try -- it used to
+    /// sit before it, so a throw from <c>ShowDialog</c> itself (e.g. the owner window closing mid-
+    /// await) was an unhandled exception out of an <c>async void</c> method, a process crash rather
+    /// than a logged, surfaced failure.</para></summary>
     private async void OnReadyRackTemplateSelected(string templateId)
     {
         if (_disposed) return;
-        if (HasUnsavedEdits && _pendingRecallTemplateId != templateId)
-        {
-            _pendingRecallTemplateId = templateId;
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.ConfirmRecallOverwrite");
-            return;
-        }
-
-        _pendingRecallTemplateId = null;
-        StatusMessage = null;
-        var generation = ++_templateLoadGeneration;
         try
         {
-            await LoadTemplateAsync(templateId, generation);
+            if (IsDirtySinceLastTemplateLoad)
+            {
+                var confirmed = await RequestConfirmAsync(
+                    _localization.GetString("Panes.TxImageEditor.ConfirmDiscardTitle"),
+                    _localization.GetString("Panes.TxImageEditor.ConfirmDiscardBody", ReadyRack.GetTemplateName(templateId)),
+                    _localization.GetString("Panes.TxImageEditor.ConfirmDiscardButton"));
+                if (_disposed || !confirmed)
+                {
+                    return;
+                }
+            }
+
+            StatusMessage = null;
+            var generation = ++_templateLoadGeneration;
+            ReadyRack.SetLoadInFlight(true);
+            try
+            {
+                if (await LoadTemplateAsync(templateId, generation))
+                {
+                    // Order matters here: LoadTemplateIntoLiveEditor's own PushUndoSnapshot (inside
+                    // LoadTemplateAsync, above) already fired SetCanvasDirty(true) against the OLD
+                    // baseline, since the load itself grew the undo stack -- update the baseline and
+                    // re-push the NOW-correct (false) dirty state BEFORE SetLoadedTemplate, so its own
+                    // ApplyLoadedState computes IsLoadedAndEdited from the right value instead of the
+                    // stale "dirty" one Push left behind. Doing it in the opposite order (an earlier
+                    // draft's bug, caught by LoadTemplate_CleanEditor_FirstLoad_DoesNotAskAndBadgeIsPlainLoaded)
+                    // left a freshly-loaded, unedited slot showing "Loaded • edited".
+                    _undoStackDepthAtLastTemplateLoad = _undoStack.Count;
+                    ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+                    ReadyRack.SetLoadedTemplate(templateId);
+                }
+            }
+            finally
+            {
+                if (!_disposed)
+                {
+                    ReadyRack.SetLoadInFlight(false);
+                }
+            }
         }
         catch (Exception ex)
         {
             Log.LoadTemplateFailed(_logger, templateId, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.LoadTemplateFailed");
+            if (!_disposed)
+            {
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.LoadTemplateFailed");
+            }
         }
     }
 
     /// <summary>Ready Rack direct-fire plan (2026-09-01): Ctrl+number's own handler -- load + re-seed
     /// + bake + fire, all in one keystroke. Own arm/confirm token (<see cref="_pendingDirectFireTemplateId"/>),
-    /// separate from <see cref="_pendingRecallTemplateId"/>/<see cref="OnReadyRackTemplateSelected"/> --
+    /// separate from plain recall's own dialog-gated flow in <see cref="OnReadyRackTemplateSelected"/> --
     /// code-review finding on an earlier draft: sharing one token would let a plain-recall's own
     /// discard-only warning double as an unintended transmit confirmation for a later Ctrl+N on the
     /// same slot.
@@ -815,10 +877,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     ///    only on a real flatten, restored on undo/redo -- so this refuses through any number of
     ///    rotates, allows once the operator actually flattens a real photo in, and correctly refuses
     ///    again if that flatten is undone.
-    /// 2. Arm/confirm on <see cref="_pendingDirectFireTemplateId"/>, same shape as
-    ///    <see cref="OnReadyRackTemplateSelected"/> but its OWN loc key that names both halves
-    ///    ("will discard your edits AND transmit") -- never the discard-only
-    ///    <c>ConfirmRecallOverwrite</c> text.
+    /// 2. Arm/confirm on <see cref="_pendingDirectFireTemplateId"/>, its OWN loc key that names both
+    ///    halves ("will discard your edits AND transmit") -- never plain recall's own discard-only
+    ///    dialog text (<see cref="OnReadyRackTemplateSelected"/>'s <c>ConfirmDiscardBody</c>).
     /// 3. <see cref="LoadTemplateAsync"/> now returns <see langword="false"/> on a lost
     ///    <see cref="_templateLoadGeneration"/> race -- abandoned silently (no error shown; a
     ///    superseded fire during rapid slot-switching is expected pileup behavior, not a failure),
@@ -986,6 +1047,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <c>NotifyCanExecuteChanged</c> already fires from -- both conditions flip on exactly the same
     /// <c>_undoStack.Count &gt; 0</c> transition, so they're always in lockstep.</summary>
     public bool HasUnsavedEdits => _undoStack.Count > 0;
+
+    /// <summary>Templates rack rework -- see <see cref="_undoStackDepthAtLastTemplateLoad"/>'s own
+    /// doc comment for why this is a SEPARATE signal from <see cref="HasUnsavedEdits"/>, not a
+    /// reuse. Used ONLY by the Templates rack (the discard-confirm gate in
+    /// <see cref="OnReadyRackTemplateSelected"/> and the "Loaded • edited" badge via
+    /// <see cref="ReadyRackViewModel.SetCanvasDirty"/>) -- Cancel/Revert/the "UNSAVED EDITS" chip
+    /// keep using <see cref="HasUnsavedEdits"/> unchanged, since THEIR question really is "is there
+    /// anything at all to lose," not "since the last template load specifically."</summary>
+    private bool IsDirtySinceLastTemplateLoad => _undoStack.Count != _undoStackDepthAtLastTemplateLoad;
 
     /// <summary>Design-fidelity Phase C (mockups/Editwindow line 130) -- canvas footer, bottom-left:
     /// crop dims (always the target mode's own fixed render size, same numbers as
@@ -1378,7 +1448,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
             text.Bold, text.Italic,
             text.StackColor, text.StackStepX, text.StackStepY,
-            text.BitmapFillEnabled, text.BitmapFillSource),
+            text.BitmapFillEnabled, text.BitmapFillSource, text.GrowToFillEnabled),
         BoxElementViewModel box => new RawBoxElementSnapshot(
             box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
             box.CornerRadius,
@@ -2686,7 +2756,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
         bool bold = false, bool italic = false,
         Rgb24? stackColor = null, double stackStepX = 0.02, double stackStepY = 0.02,
-        bool bitmapFillEnabled = false, IImageSource? bitmapFillSource = null)
+        bool bitmapFillEnabled = false, IImageSource? bitmapFillSource = null,
+        bool growToFillEnabled = false)
     {
         var element = new OverlayElementViewModel
         {
@@ -2730,6 +2801,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // Gradient.
             BitmapFillSource = bitmapFillSource,
             BitmapFillEnabled = bitmapFillEnabled,
+            GrowToFillEnabled = growToFillEnabled,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -3025,7 +3097,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
             text.Bold, text.Italic,
             text.StackColor, text.StackStepX, text.StackStepY,
-            text.BitmapFillEnabled, text.BitmapFillSource),
+            text.BitmapFillEnabled, text.BitmapFillSource, text.GrowToFillEnabled),
         RawBoxElementSnapshot box => CreateBoxElement(
             box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
             box.CornerRadius,
@@ -5856,7 +5928,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // updated doc comment.
                 or nameof(OverlayElementViewModel.StackColor)
                 or nameof(OverlayElementViewModel.StackStepX)
-                or nameof(OverlayElementViewModel.StackStepY))
+                or nameof(OverlayElementViewModel.StackStepY)
+                // User-requested (2026-09-15) grow-to-fill toggle -- feeds MeasureFittedFontSize's
+                // own growToFill argument directly (see ComputeCanvasFontSize's own updated call),
+                // so toggling it must recompute CanvasFontSize the same as every other fit-search
+                // input above. Deliberately NOT added to the early-return filter list at the top of
+                // this method -- unlike Locked/IsSelected/IsEditingText, this one changes rendered
+                // output, so it must also fall through to this method's own trailing
+                // RecomputePreviewCoalesced() call.
+                or nameof(OverlayElementViewModel.GrowToFillEnabled))
         {
             textElement.CanvasFontSize = ComputeCanvasFontSize(textElement);
             textElement.CanvasStrokeThicknessPixels = ComputeCanvasStrokeThicknessPixels(textElement);
@@ -6131,6 +6211,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
     }
 
     /// <summary>EditWindow redesign, design-fidelity Phase B -- the context bar's REVERT action.
@@ -6168,6 +6249,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
     }
 
     /// <summary>Pushes the CURRENT state (before the caller's own change) as one undo step and
@@ -6194,7 +6276,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // Cancel/Recall confirmation -- see IsCancelArmed's own doc comment for why a stale arm from
         // long before a later, unrelated Cancel click would otherwise silently skip its warning.
         IsCancelArmed = false;
-        _pendingRecallTemplateId = null;
         _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
@@ -6209,6 +6290,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
     }
 
     /// <summary>Same contract as <see cref="PushUndoSnapshot"/>, but coalesces a rapid BURST of
@@ -6241,7 +6323,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         // Same disarm reasoning as PushUndoSnapshot's own -- see that method's own comment.
         IsCancelArmed = false;
-        _pendingRecallTemplateId = null;
         _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
@@ -6265,6 +6346,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
     }
 
     /// <summary>Restores the editor to a previously-captured <see cref="EditorSnapshot"/> -- shared
@@ -6306,7 +6388,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // snapshot instead of pushing a fresh step -- the edit became invisibly non-undoable, with
         // HasUnsavedEdits reading false while the document was actually dirty.
         IsCancelArmed = false;
-        _pendingRecallTemplateId = null;
         _pendingDirectFireTemplateId = null;
         _pendingCoalesceProperty = null;
 
@@ -6440,7 +6521,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // TemplateTextElement.BitmapFill's own doc comment): the render pipeline's own
                 // DrawTemplateText checks BitmapFill first, so composing both fields here is safe
                 // regardless -- this switch doesn't need its own precedence logic.
-                text.BitmapFillEnabled ? text.BitmapFillSource : null),
+                text.BitmapFillEnabled ? text.BitmapFillSource : null, text.GrowToFillEnabled),
             BoxElementViewModel box => BuildBoxTemplateElement(box, bounds),
             ImageElementViewModel image => BuildImageTemplateElement(image, bounds),
             // Deliberately NOT `bounds` (computed above from element.X/Y/Width/Height, which for a
@@ -6730,7 +6811,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             element.ResolvedText, new FontSpec(element.FontFamily, element.FontSizeRelative, element.Bold, element.Italic), (int)Math.Round(targetHeight),
             boundsWidthPx, boundsHeightPx, strokeThicknessRelative,
             shadowOffsetXRelative, shadowOffsetYRelative, element.RotationDegrees,
-            stackStepXRelative, stackStepYRelative);
+            stackStepXRelative, stackStepYRelative, element.GrowToFillEnabled);
 
         // [Code-review blocker, fixed here] NO extra * ZoomFactor -- zoom already arrives here
         // implicitly, through scaleY: cropHeightPixels (both PreserveAspect and stretch branches

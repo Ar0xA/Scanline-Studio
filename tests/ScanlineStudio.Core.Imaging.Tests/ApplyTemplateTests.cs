@@ -740,6 +740,50 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public void MeasureFittedFontSize_GrowToFillDefaultsToFalse_TextThatFitsWithRoomToSpare_DoesNotGrowPastRequestedSize()
+    {
+        // User-requested (2026-09-15): growing a text box previously never grew the font past its
+        // last explicitly-set size -- this pins that EXISTING behavior stays the default (growToFill
+        // omitted, same as every call site before this parameter existed).
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", Size: 0.05); // 5% of a 200px-tall image = 10px
+        const int imageHeightPx = 200;
+
+        var fitted = preparer.MeasureFittedFontSize("W", font, imageHeightPx, boundsWidthPx: 3000, boundsHeightPx: 1000);
+
+        Assert.Equal(font.Size * imageHeightPx, fitted, precision: 3);
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_GrowToFillTrue_TextThatFitsWithRoomToSpare_GrowsPastRequestedSize()
+    {
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", Size: 0.05); // 5% of a 200px-tall image = 10px
+        const int imageHeightPx = 200;
+
+        var fitted = preparer.MeasureFittedFontSize(
+            "W", font, imageHeightPx, boundsWidthPx: 3000, boundsHeightPx: 1000, growToFill: true);
+
+        Assert.True(fitted > font.Size * imageHeightPx, $"Expected grow-to-fill to grow above the requested {font.Size * imageHeightPx}px, got {fitted}.");
+    }
+
+    [Fact]
+    public void MeasureFittedFontSize_GrowToFillTrue_OversizedText_StillShrinksToFit()
+    {
+        // growToFill's own upward branch only runs once the nominal size already fits -- an
+        // oversized nominal size must still take the existing downward search, unaffected by the new
+        // parameter.
+        var preparer = new TransmitImagePreparer(FontPath);
+        var font = new FontSpec("DejaVu Sans Mono", Size: 0.5); // 50% of image height -- deliberately huge
+        const int imageHeightPx = 200;
+
+        var fitted = preparer.MeasureFittedFontSize(
+            "A REASONABLY LONG CALLSIGN STRING", font, imageHeightPx, boundsWidthPx: 40, boundsHeightPx: 20, growToFill: true);
+
+        Assert.True(fitted < font.Size * imageHeightPx, $"Expected shrink-to-fit to reduce below the requested {font.Size * imageHeightPx}px, got {fitted}.");
+    }
+
+    [Fact]
     public async Task ApplyTemplate_TextShrinksToFitASmallBox_NoPixelDrawnOutsideBounds()
     {
         // Code-review round-1 blocker: the original version of this test asserted ONLY absence
@@ -1623,6 +1667,52 @@ public sealed class ApplyTemplateTests
             var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
             var document = new TemplateDocument(null, [
                 new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec("Barlow", 0.3), new Rgb24(0, 0, 255)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void Constructor_AlwaysKeepsTheTwoGuaranteedBundledFamiliesFirstRegardlessOfSystemFontDiscovery()
+    {
+        // System-font enumeration (FontCollectionExtensions.AddSystemFonts) is best-effort and can
+        // legitimately be empty (LICENSES.md's DejaVu Sans Mono entry, "can legitimately be empty
+        // on a minimal Linux install") -- pins that construction never throws regardless, and that
+        // the two bundled families stay first/guaranteed no matter what the host OS has installed.
+        var preparer = new TransmitImagePreparer(FontPath);
+
+        Assert.True(preparer.AvailableFontFamilies.Count >= 2);
+        Assert.Equal("DejaVu Sans Mono", preparer.AvailableFontFamilies[0]);
+        Assert.Equal("Barlow", preparer.AvailableFontFamilies[1]);
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_TextWithADiscoveredSystemFontName_RendersWithoutThrowingEvenWithBoldItalicRequested()
+    {
+        // Skips itself (rather than asserting a specific font name) on an environment with no
+        // discoverable system fonts beyond the two bundled ones -- there's nothing to exercise
+        // there, and that's the expected/legitimate case, not a failure (see the test above).
+        var preparer = new TransmitImagePreparer(FontPath);
+        var systemFontName = preparer.AvailableFontFamilies.Skip(2).FirstOrDefault();
+        if (systemFontName is null)
+        {
+            return;
+        }
+
+        var path = await WriteFixturePngAsync(64, 64, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 64, 64);
+            var bounds = new NormalizedRect(0.1, 0.1, 0.8, 0.4);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "HI", new FontSpec(systemFontName, 0.3, Bold: true, Italic: true), new Rgb24(0, 0, 255)),
             ]);
 
             var result = preparer.ApplyTemplate(source, document);

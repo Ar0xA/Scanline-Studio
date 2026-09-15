@@ -1074,6 +1074,26 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void Undo_PreservesGrowToFillEnabled_OnAnUnrelatedElement()
+    {
+        // yoniq-auditor-flagged risk: ApplyState's own recreate-every-element-from-a-snapshot path
+        // had no home for GrowToFillEnabled before RawTextElementSnapshot carried it -- any unrelated
+        // Undo (here, RotateCommand, which pushes its own whole-editor undo step) would silently
+        // reset the toggle on EVERY text element, not just whatever change was actually undone.
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.GrowToFillEnabled = true;
+
+        vm.RotateCommand.Execute(null);
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        vm.UndoCommand.Execute(null);
+
+        var restoredElement = Assert.Single(vm.OverlayElements);
+        Assert.True(((OverlayElementViewModel)restoredElement).GrowToFillEnabled);
+    }
+
+    [AvaloniaFact]
     public void Rotate_ThenUndo_ThenRedo_ReappliesTheRotation()
     {
         var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
@@ -3300,15 +3320,12 @@ public sealed class TxImageEditorPaneViewModelTests
         await readyRack.RefreshAsync();
         var row = Assert.Single(readyRack.AllTemplates);
 
-        // This VM already has an unsaved edit on it (the AddOverlayElementCommand above), so the
-        // FIRST click only arms the recall-overwrite confirm gate (OnReadyRackTemplateSelected's own
-        // HasUnsavedEdits check) -- the SECOND click actually loads, same established
-        // arm-then-confirm shape LoadTemplate_BoxGradientFill_RehydratesIntoALiveElementWithMatchingValues
-        // uses (that test's own comment explains why ITS single click is enough: a fresh editor with
-        // no prior edits skips the gate entirely).
+        // This VM already has an unsaved edit on it (the AddOverlayElementCommand above), so
+        // OnReadyRackTemplateSelected awaits a real confirm dialog before loading (Templates rack
+        // rework -- wired here to auto-confirm) -- one click is enough now, no more two-click arm.
+        vm.ConfirmRequested = _ => Task.FromResult(true);
         readyRack.LoadCommand.Execute(row);
         Dispatcher.UIThread.RunJobs();
-        readyRack.LoadCommand.Execute(row);
         Dispatcher.UIThread.RunJobs();
         Dispatcher.UIThread.RunJobs();
 
@@ -7263,6 +7280,48 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void BuildTemplateElement_GrowToFillEnabled_PassesThroughToTheRealPipeline()
+    {
+        // Same "the real pipeline call site" regression guard as
+        // BuildTemplateElement_PassesFontFamilyAndStroke_ToTheRealPipeline above -- confirms
+        // GrowToFillEnabled reaches TemplateTextElement (what DrawTemplateText actually renders
+        // with), not just ComputeCanvasFontSize's own canvas-preview-only call site.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.False(element.GrowToFillEnabled); // off by default (user-requested opt-in)
+
+        element.GrowToFillEnabled = true;
+        Dispatcher.UIThread.RunJobs();
+
+        var text = Assert.IsType<TemplateTextElement>(Assert.Single(preparer.TemplateDocuments[^1].Elements));
+        Assert.True(text.GrowToFillEnabled);
+    }
+
+    [AvaloniaFact]
+    public void GrowToFillEnabled_Toggling_GrowsCanvasFontSizePastNominal()
+    {
+        // yoniq-auditor nit: a FakeTransmitImagePreparer-based version of this test would be vacuous
+        // (the fake's own MeasureFittedFontSize ignores growToFill entirely, same reasoning as
+        // BuildTemplateElement_GrowToFillEnabled_PassesThroughToTheRealPipeline above needing the
+        // fake instead). This one uses the REAL preparer with a deliberately huge box, so
+        // OnOverlayElementPropertyChanged's own filter genuinely has to include GrowToFillEnabled (not
+        // just avoid throwing) for CanvasFontSize to move at all.
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Width = 0.95;
+        element.Height = 0.95;
+        var beforeGrow = element.CanvasFontSize;
+
+        element.GrowToFillEnabled = true;
+
+        Assert.True(element.CanvasFontSize > beforeGrow, $"Expected grow-to-fill to grow CanvasFontSize above {beforeGrow}, got {element.CanvasFontSize}.");
+    }
+
+    [AvaloniaFact]
     public void ChangingFontFamilyOrStroke_RefreshesCanvasFontSize()
     {
         // Code-review-class regression guard: OnOverlayElementPropertyChanged's own filter must
@@ -7774,6 +7833,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddOverlayElementCommand.Execute(null);
         var originalElementCount = vm.OverlayElements.Count;
 
+        vm.ConfirmRequested = _ => Task.FromResult(true);
         var templateId = templateStore.CreateTemplateId("Loadable");
         await templateStore.SaveAsync(templateId, "Loadable", new PersistedTemplateDocument([
             new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
@@ -7782,13 +7842,10 @@ public sealed class TxImageEditorPaneViewModelTests
         await readyRack.RefreshAsync();
         var row = Assert.Single(readyRack.AllTemplates);
 
-        // Backlog item (auditor usability review, 2026-08-17): loading a template while the editor
-        // HasUnsavedEdits (AddOverlayElementCommand above pushed one) now arms a confirm instead of
-        // loading immediately -- see OnReadyRackTemplateSelected's own doc comment. The FIRST click
-        // only arms; the SECOND click on the SAME row actually loads.
-        readyRack.LoadCommand.Execute(row);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal(originalElementCount, vm.OverlayElements.Count);
+        // Templates rack rework: loading a template while the editor HasUnsavedEdits
+        // (AddOverlayElementCommand above pushed one) now awaits a real confirm dialog (wired above
+        // to auto-confirm) instead of the old two-click status-bar arm -- see
+        // OnReadyRackTemplateSelected's own doc comment. One click is enough.
         readyRack.LoadCommand.Execute(row);
         Dispatcher.UIThread.RunJobs();
         Dispatcher.UIThread.RunJobs();
@@ -7844,15 +7901,113 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(3, vm.OverlayElements.Count);
     }
 
-    // Backlog item (auditor usability review, 2026-08-17): "Ready Rack ... recall silently replaces
-    // the whole layout with no confirmation."
+    [AvaloniaFact]
+    public async Task LoadTemplate_CleanEditor_FirstLoad_DoesNotAskAndBadgeIsPlainLoaded()
+    {
+        // yoniq-auditor finding: LoadTemplateIntoLiveEditor pushes its OWN undo snapshot (a template
+        // load must be undoable, a deliberate pre-existing design decision), which made the OLD
+        // "reuse HasUnsavedEdits" design read the slot as "Loaded • edited" from the very first
+        // load, with zero operator edits. Confirms the fix: a fresh editor's first load neither
+        // requests a confirm dialog nor marks IsLoadedAndEdited.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var templateId = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(templateId, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        await readyRack.TogglePinCommand.ExecuteAsync(row); // the Loaded badge only shows on a PINNED slot
+
+        readyRack.LoadCommand.Execute(readyRack.AllTemplates.Single(t => t.Id == templateId));
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(confirmRequested);
+        Assert.Contains(readyRack.Slots, s => s.IsLoadedOnly);
+        Assert.DoesNotContain(readyRack.Slots, s => s.IsLoadedAndEdited);
+    }
 
     [AvaloniaFact]
-    public async Task LoadTemplate_WithUnsavedEdits_ArmingSetsAWarningStatusMessage()
+    public async Task LoadTemplate_SecondLoadWithNoRealEditsSinceTheFirst_DoesNotAskAgain()
     {
         var templateStore = new FakeTemplateStore();
         var readyRack = CreateReadyRack(templateStore);
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var confirmCount = 0;
+        vm.ConfirmRequested = _ => { confirmCount++; return Task.FromResult(true); };
+        var idA = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(idA, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var idB = templateStore.CreateTemplateId("B");
+        await templateStore.SaveAsync(idB, "B", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.3, 0.3, 0.1, 0.1, 0, false, new Rgb24(4, 5, 6), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var rowA = readyRack.AllTemplates.Single(t => t.Id == idA);
+        var rowB = readyRack.AllTemplates.Single(t => t.Id == idB);
+        readyRack.LoadCommand.Execute(rowA);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(0, confirmCount);
+
+        // Load a DIFFERENT template with zero operator edits since A's own load completed -- must
+        // still proceed without a dialog, since HasUnsavedEdits (permanently true after any load)
+        // is no longer what gates this.
+        readyRack.LoadCommand.Execute(rowB);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, confirmCount);
+        Assert.Single(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ARealEditAfterLoading_AsksOnTheNextLoadAndMarksTheBadgeEdited()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var confirmCount = 0;
+        vm.ConfirmRequested = _ => { confirmCount++; return Task.FromResult(true); };
+        var idA = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(idA, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var idB = templateStore.CreateTemplateId("B");
+        await templateStore.SaveAsync(idB, "B", new PersistedTemplateDocument([]));
+        await readyRack.RefreshAsync();
+        await readyRack.TogglePinCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == idA)); // the badge only shows on a PINNED slot
+        readyRack.LoadCommand.Execute(readyRack.AllTemplates.Single(t => t.Id == idA));
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.AddOverlayElementCommand.Execute(null); // a REAL operator edit since the load
+
+        Assert.Contains(readyRack.Slots, s => s.IsLoadedAndEdited);
+        readyRack.LoadCommand.Execute(readyRack.AllTemplates.Single(t => t.Id == idB));
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, confirmCount);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_FromLibrarySelection_GoesThroughTheSameConfirmGatedFlowAsTheRack()
+    {
+        // Expanded template selector: OnLibraryItemDoubleTapped (the real code-behind handler a
+        // double-click on a Library row/tile invokes) just calls ReadyRack.LoadCommand.Execute(row)
+        // -- this proves that reuse actually wires up to the SAME OnReadyRackTemplateSelected confirm
+        // gate the rack already has tests for, not a full re-test of that gate's own logic.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        ConfirmActionDialogViewModel? seenConfirmVm = null;
+        vm.ConfirmRequested = confirmVm => { seenConfirmVm = confirmVm; return Task.FromResult(true); };
         vm.AddOverlayElementCommand.Execute(null);
         var templateId = templateStore.CreateTemplateId("Loadable");
         await templateStore.SaveAsync(templateId, "Loadable", new PersistedTemplateDocument([
@@ -7860,20 +8015,74 @@ public sealed class TxImageEditorPaneViewModelTests
         ]));
         await readyRack.RefreshAsync();
         var row = Assert.Single(readyRack.AllTemplates);
-        Assert.Null(vm.StatusMessage);
 
+        // Same call OnLibraryItemDoubleTapped makes -- not simulating the actual pointer event,
+        // since this is a VM-level test.
         readyRack.LoadCommand.Execute(row);
         Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
 
-        Assert.False(string.IsNullOrEmpty(vm.StatusMessage));
+        Assert.NotNull(seenConfirmVm);
+        Assert.Equal("Panes.TxImageEditor.ConfirmDiscardTitle", seenConfirmVm!.Title);
+        Assert.Single(vm.OverlayElements);
+        Assert.IsType<BoxElementViewModel>(vm.OverlayElements[0]);
     }
 
+    // Backlog item (auditor usability review, 2026-08-17): "Ready Rack ... recall silently replaces
+    // the whole layout with no confirmation."
+
     [AvaloniaFact]
-    public async Task LoadTemplate_WithUnsavedEdits_SelectingADifferentTemplateReArmsInsteadOfConfirmingTheOldOne()
+    public async Task LoadTemplate_WithUnsavedEdits_RequestsARealConfirmDialogWithTheRightText()
     {
         var templateStore = new FakeTemplateStore();
         var readyRack = CreateReadyRack(templateStore);
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        ConfirmActionDialogViewModel? seenConfirmVm = null;
+        vm.ConfirmRequested = confirmVm =>
+        {
+            seenConfirmVm = confirmVm;
+            return Task.FromResult(false); // decline
+        };
+        vm.AddOverlayElementCommand.Execute(null);
+        var originalElementCount = vm.OverlayElements.Count;
+        var templateId = templateStore.CreateTemplateId("Loadable");
+        await templateStore.SaveAsync(templateId, "Loadable", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotNull(seenConfirmVm);
+        // FakeLocalizationService.GetString returns the raw key -- asserting the exact keys proves
+        // title/body/both button labels all reach the dialog, not just "some text was set."
+        Assert.Equal("Panes.TxImageEditor.ConfirmDiscardTitle", seenConfirmVm!.Title);
+        Assert.Equal("Panes.TxImageEditor.ConfirmDiscardBody", seenConfirmVm.Message);
+        Assert.Equal("Panes.TxImageEditor.ConfirmDiscardButton", seenConfirmVm.ConfirmLabel);
+        Assert.Equal("Panes.TxImageEditor.DialogCancel", seenConfirmVm.CancelLabel);
+        // Declining leaves the canvas untouched.
+        Assert.Equal(originalElementCount, vm.OverlayElements.Count);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_WithUnsavedEdits_EachSelectionGetsItsOwnIndependentConfirmation()
+    {
+        // Templates rack rework: the old status-bar arm/confirm re-armed on a different target
+        // instead of confirming the old one -- there's no shared arm token anymore for that failure
+        // mode to exist in. This proves the replacement: two different templates each independently
+        // trigger (and here, each decline) their own dialog, with neither ever loading.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var confirmCallCount = 0;
+        vm.ConfirmRequested = _ =>
+        {
+            confirmCallCount++;
+            return Task.FromResult(false);
+        };
         vm.AddOverlayElementCommand.Execute(null);
         var originalElementCount = vm.OverlayElements.Count;
         var firstId = templateStore.CreateTemplateId("First");
@@ -7888,12 +8097,13 @@ public sealed class TxImageEditorPaneViewModelTests
         var first = readyRack.AllTemplates.Single(r => r.Id == firstId);
         var second = readyRack.AllTemplates.Single(r => r.Id == secondId);
 
-        readyRack.LoadCommand.Execute(first); // arms for `first`
+        readyRack.LoadCommand.Execute(first);
         Dispatcher.UIThread.RunJobs();
-        readyRack.LoadCommand.Execute(second); // a DIFFERENT template re-arms instead of confirming `first`
+        readyRack.LoadCommand.Execute(second);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal(originalElementCount, vm.OverlayElements.Count); // neither loaded yet
+        Assert.Equal(2, confirmCallCount);
+        Assert.Equal(originalElementCount, vm.OverlayElements.Count); // neither loaded
     }
 
     [AvaloniaFact]
@@ -8007,7 +8217,12 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.DirectFireRequested += _ => fires++;
         rack.DirectFireSlotCommand.Execute(1);
         store.ListGate = null;
-        rack.RecallSlotCommand.Execute(2);
+        // Templates rack rework: plain recall now awaits a real confirm dialog instead of a
+        // two-click status-bar arm -- wired here to auto-confirm (synchronously, same as every
+        // other FakeTemplateStore await in this test) so this still exercises the SAME race this
+        // test is actually about (a plain recall completing while direct-fire's own metadata fetch
+        // is still gated), not the confirm mechanism itself.
+        vm.ConfirmRequested = _ => Task.FromResult(true);
         rack.RecallSlotCommand.Execute(2);
         Assert.Equal("B", vm.NewTemplateName);
         if (failMetadata) gate.SetException(new IOException("metadata unavailable"));
@@ -8089,7 +8304,11 @@ public sealed class TxImageEditorPaneViewModelTests
     /// <summary>Code-review finding on an earlier draft of this feature: a SHARED arm token would
     /// let a plain-recall's own discard-only warning double as an unintended transmit confirmation.
     /// This proves the fix -- direct-fire's OWN token requires its OWN two presses, never satisfied
-    /// by a plain-recall arm on the same slot.</summary>
+    /// by a plain recall on the same slot. Templates rack rework: plain recall no longer arms
+    /// anything at all (it awaits a real confirm dialog instead) -- with no
+    /// <see cref="TxImageEditorPaneViewModel.ConfirmRequested"/> wired here, it auto-declines and
+    /// touches neither <c>StatusMessage</c> nor the direct-fire token, which is exactly the
+    /// independence this test still needs to prove.</summary>
     [AvaloniaFact]
     public async Task DirectFire_WithUnsavedEdits_PlainRecallArmDoesNotSatisfyDirectFireArm()
     {
@@ -8098,7 +8317,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var fired = false;
         vm.DirectFireRequested += _ => fired = true;
 
-        readyRack.RecallSlotCommand.Execute(1); // arms _pendingRecallTemplateId, NOT the direct-fire token
+        readyRack.RecallSlotCommand.Execute(1); // no ConfirmRequested wired -- auto-declines, no-op
         Dispatcher.UIThread.RunJobs();
         readyRack.DirectFireSlotCommand.Execute(1); // must ALSO only arm, not fire on this first press
         Dispatcher.UIThread.RunJobs();

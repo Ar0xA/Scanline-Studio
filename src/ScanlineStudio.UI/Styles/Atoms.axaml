@@ -1093,9 +1093,7 @@
          | white text 600 | HALT TX, Abort, Delete. Always red, every context") — was a tinted/
          outlined pink button (ported from the old design's Button.halt, Cards.axaml), which the
          new spec explicitly does not want: destructive actions get the SAME solid-fill treatment
-         as primary, just red instead of blue, so they read with equal weight/urgency, not softer.
-         IndustryTxToggle below is a SEPARATE control (the transmit toggle itself, not a plain
-         button) and is handled on its own in the next pass — not touched here. -->
+         as primary, just red instead of blue, so they read with equal weight/urgency, not softer. -->
     <Style Selector="Button.IndustryBtnDanger /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryDangerSolidBorder}" />
@@ -1194,15 +1192,46 @@
         <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
 
-    <!-- TX transmit toggle (Phase 7): ported 1:1 from the old design's ScanlineStudioTxToggleButtonTheme
-         (Tokens.axaml) - plain/secondary look at rest (now real, see the fix just above), solid red
-         fill only while actually transmitting (IsChecked). Call sites pair this with the plain
-         "Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" classes for the rest-state look,
-         same base as any other secondary toggle; this adds only the :checked override. -->
-    <Style Selector="ToggleButton.IndustryTxToggle:checked /template/ ContentPresenter">
-        <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
-        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDanger}" />
-        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDangerForeground}" />
+    <!-- User-requested (2026-09-16): the sidebar Transmit ToggleButton this style backed was removed
+         entirely (TxControlsPaneView.axaml) — its only consumer, so the style goes with it rather than
+         staying as dead CSS. -->
+
+    <!-- User-requested (2026-09-16): the TX image editor's own big send button gets a color no other
+         button in the app uses (previously reused IndustryBtnPrimary — the same generic accent as
+         ~16 other OK/Save/Confirm buttons elsewhere), so "this color = send" becomes an unambiguous,
+         learnable signal. Backed by the existing IndustryAttention token family (AtomsTokens.axaml),
+         which had no button consumer yet — same Primary/Secondary/Danger structure (base/
+         :pointerover/:pressed/:disabled, /template/ ContentPresenter selectors) as every other
+         Button.IndustryBtn* class above, not a new pattern.
+         yoniq-auditor finding, fixed here: the REST state originally used IndustryAttention itself as
+         the fill (the family's brighter tone) with IndustryBg text — WCAG-measured 2.60:1 in the light
+         theme (needs 4.5:1), a real regression from the outgoing IndustryBtnPrimary's own 6.4:1, on
+         the app's single most important action. IndustryAttentionSolidBorder (the family's darker
+         tone) with the same IndustryBg text measures 4.66:1 light / 6.65:1 dark — both pass — so REST
+         uses that instead; :pointerover brightens to the family's own lighter IndustryAttention tone
+         (explicitly reasserting Background/BorderBrush, not just Opacity, per the same finding: a
+         plain Opacity-only :pointerover rule was the ONE button class in this file that didn't
+         re-assert Background/BorderBrush, an unnecessary risk under FluentTheme's own competing
+         :pointerover style). :pressed dims the rest color instead of introducing a third tone this
+         token family doesn't have. -->
+    <Style Selector="Button.IndustryBtnTransmit /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryAttentionSolidBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAttentionSolidBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryBg}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnTransmit:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryAttention}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAttention}" />
+    </Style>
+    <Style Selector="Button.IndustryBtnTransmit:pressed /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryAttentionSolidBorder}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAttentionSolidBorder}" />
+        <Setter Property="Opacity" Value="0.85" />
+    </Style>
+    <Style Selector="Button.IndustryBtnTransmit:disabled /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
 
     <!-- 8. .input — a SEPARATE IndustryInput class, distinct from the bare Industry exclusion

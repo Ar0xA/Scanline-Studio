@@ -26,6 +26,39 @@ merged (`master`, 2026-09-09).
 
 ---
 
+## 0. Top priority — user-requested, put ahead of everything below
+
+### UX1. OPEN — drag-and-drop an image straight onto a Ready Rack/Templates slot
+
+**Today's flow has no direct slot assignment.** Getting an image into a template slot is three
+manual steps: insert an image element onto the canvas, type a name and click Save Template
+(`TxImageEditorPaneViewModel.cs:3058` `SaveTemplateAsync`, gated by `CanSaveTemplate` at line 3049),
+then separately Pin it — and `ReadyRackViewModel.TogglePinAsync` (`ReadyRackViewModel.cs:336+`)
+always appends to the first empty slot; the operator cannot choose which slot. The rail itself
+(`TxImageEditorPaneView.axaml:241-429`) has zero `DragDrop.*` attachments today — the only existing
+drag-and-drop target in the editor is the canvas well (`TxImageEditorPaneView.axaml:483-484`,
+`OnEditorDrop`/`OnEditorDragOver` at `TxImageEditorPaneView.axaml.cs:1881-1905`), which inserts a
+picture ELEMENT, not a saved template.
+
+**Legacy precedent to port the interaction model from** (`yoniq-old/YONIQ-main/Main.cpp`, the
+`PBoxS` stock/template slot grid — the direct analog of the Ready Rack):
+- Drop target: `PBoxSDragDrop` (`Main.cpp:9481-9515`) hit-tests the drop point via `GetStockNo(X, Y)`
+  (`Main.cpp:9614-9622`) to find which numbered slot was targeted, then writes straight into it
+  (`SaveBitmapS`/`SaveStockTemp`) — no separate save-as-template step.
+- Drop from a file/thumbnail browser (`TFileViewDlg`) directly onto a slot is the same code path
+  (`Main.cpp:9481-9515`'s third branch) — the closest legacy match to "drag an image file onto an
+  empty template slot."
+- DragOver feedback only accepts when hovering a real slot (`PBoxSDragOver`, `Main.cpp:9518-9548`).
+- Dragging a slot OUT onto the TX canvas loads it (`PBoxSMouseDown`/`MouseMove` +
+  `PBoxTXDragDrop`, `Main.cpp:9374-9403`); double-click on a slot is a shortcut for that same
+  drag-drop call (`PBoxSDblClick`, `Main.cpp:9576-9583`).
+
+Review tier: needs an `audit-ui-design-before-building`-style plan-review pass first
+([[feedback_audit_ui_design_before_building]]) — this is a real interaction-model change (drag
+source AND drop target, slot targeting, file-browser drop), not a mechanical wire-up.
+
+---
+
 ## 1. Decode path — do the probe first
 
 ### D1. CLOSED 2026-09-10 — legacy behaviour, and the correctable part is imperceptible
@@ -961,6 +994,29 @@ Framework or Mono, only against the project's actual .NET 8 target.
 `RadioController.cs:287-301` and `RadioSessionService.cs:55-63` and `:125-133`. About 15 lines. The
 only observable effect today is three different error strings for one condition. Do it when already
 in those files.
+
+### UX-TR1. Templates rack: two narrow `IsDirtySinceLastTemplateLoad` false-negatives
+
+Found by `yoniq-auditor`'s verification pass on the Templates rack rework (2026-09-14), explicitly
+scoped out as non-blocking. `TxImageEditorPaneViewModel.cs` `IsDirtySinceLastTemplateLoad`
+(`_undoStack.Count != _undoStackDepthAtLastTemplateLoad`) uses count EQUALITY, which has two paths
+where the count returns to the baseline value without the canvas actually matching the state at
+load time: (1) load → Undo → one further edit can push the count back to exactly the baseline; (2)
+`MaxUndoDepth` (50) trims the oldest entry on overflow, so a stack already at 50 when a load happens
+stays at 50 forever after, permanently reading "not dirty." Effect in both cases: a stale "Loaded"
+badge (should read "edited") and a skipped discard-confirm dialog on the next rack load — not lost
+work, since the load itself pushed an undo snapshot, recoverable with one Ctrl+Z. Fix shape (from
+the auditor): replace the depth-counter with a monotonic edit-sequence counter, incremented on every
+undo-stack push/undo/redo and snapshotted at load time, instead of comparing raw stack depth.
+
+### UX-TR2. Templates rack: direct-fire's reopened editor never sets the "Loaded" badge
+
+Same audit pass. `TxControlsPaneViewModel.OnEditorDirectFire`/`ReopenEditorFromCurrentStateAsync`
+construct a fresh `TxImageEditorPaneViewModel`/`ReadyRackViewModel` pair after a direct-fire, but
+never call `ReadyRack.SetLoadedTemplate` on the new instance — so the reopened editor's canvas
+correctly carries the direct-fired template's content, but no rack slot shows the "Loaded" badge for
+it. Cosmetic, one call site. Direct-fire was deliberately out of scope for the Templates rack rework
+itself.
 
 ---
 

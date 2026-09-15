@@ -19,15 +19,21 @@ namespace ScanlineStudio.Core.Imaging;
 public sealed class TransmitImagePreparer : ITransmitImagePreparer
 {
     private readonly FontCollection _fontCollection;
+    private readonly FontCollection _systemFontCollection;
     private readonly FontFamily _defaultFontFamily;
 
     /// <summary>Phase 4 (spec/15-template-designer.md, "small bundled set that renders identically
-    /// everywhere") -- first entry is the default/fallback family, matching
-    /// <see cref="ResolveFontFamily"/>'s own fallback. Barlow is vendored a SECOND time into this
-    /// pipeline's own <c>assets/fonts/</c> tree (alongside its existing UI-chrome copy under
-    /// <c>src/ScanlineStudio.UI/Assets/Fonts/</c>) -- this project has zero Avalonia reference and
-    /// loads fonts by filesystem path, so the UI's own <c>avares://</c>-embedded copy isn't
-    /// reachable here (Phase 4 plan-review correction; see LICENSES.md's Barlow entry for the
+    /// everywhere") -- first two entries are the guaranteed bundled families (index 0 is also the
+    /// default/fallback family, matching <see cref="ResolveFontFamily"/>'s own fallback); any
+    /// further entries are OS-installed fonts discovered via <see cref="_systemFontCollection"/>,
+    /// offered as additional optional choices, never as a replacement for the guaranteed two --
+    /// system-font enumeration can legitimately be empty (e.g. a minimal Linux install with no
+    /// fonts registered), so a feature that burns text into transmitted pixel data still needs a
+    /// guaranteed-present font (LICENSES.md's DejaVu Sans Mono entry). Barlow is vendored a SECOND
+    /// time into this pipeline's own <c>assets/fonts/</c> tree (alongside its existing UI-chrome
+    /// copy under <c>src/ScanlineStudio.UI/Assets/Fonts/</c>) -- this project has zero Avalonia
+    /// reference and loads fonts by filesystem path, so the UI's own <c>avares://</c>-embedded copy
+    /// isn't reachable here (Phase 4 plan-review correction; see LICENSES.md's Barlow entry for the
     /// dual-vendoring rationale, same precedent DejaVu Sans Mono already established).</summary>
     public IReadOnlyList<string> AvailableFontFamilies { get; }
 
@@ -54,7 +60,26 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         _fontCollection.Add(Path.Combine(fontDirectory, "Barlow", "Barlow-Italic.ttf"), System.Globalization.CultureInfo.InvariantCulture);
         _fontCollection.Add(Path.Combine(fontDirectory, "Barlow", "Barlow-BoldItalic.ttf"), System.Globalization.CultureInfo.InvariantCulture);
 
-        AvailableFontFamilies = [_defaultFontFamily.Name, barlowFamily.Name];
+        var bundledNames = new[] { _defaultFontFamily.Name, barlowFamily.Name };
+        _systemFontCollection = new FontCollection();
+        try
+        {
+            _systemFontCollection.AddSystemFonts();
+        }
+        catch (Exception)
+        {
+            // Best-effort only -- enumeration failure (unreadable font directory, corrupt font
+            // file, sandboxed environment) must never take down the two guaranteed bundled
+            // families above; the picker just offers no extra choices in that case.
+        }
+
+        var systemNames = _systemFontCollection.Families
+            .Select(family => family.Name)
+            .Where(name => !bundledNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase);
+
+        AvailableFontFamilies = [.. bundledNames, .. systemNames];
     }
 
     public IImageSource Crop(IImageSource source, NormalizedRect region)
@@ -449,7 +474,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     public double MeasureFittedFontSize(
         string text, FontSpec font, int imageHeightPx, int boundsWidthPx, int boundsHeightPx, double strokeThicknessRelative = 0,
         double shadowOffsetXRelative = 0, double shadowOffsetYRelative = 0, double rotationDegrees = 0,
-        double stackStepXRelative = 0, double stackStepYRelative = 0)
+        double stackStepXRelative = 0, double stackStepYRelative = 0, bool growToFill = false)
     {
         var fontFamily = ResolveFontFamily(font.Family);
         var startingSizePx = MathF.Max((float)(font.Size * imageHeightPx), MinFontSizePx);
@@ -460,7 +485,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var stackStepYPx = (float)(stackStepYRelative * imageHeightPx);
         var (boundedWidth, boundedHeight) = ShrinkFitBoxForEffects(
             boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, rotationDegrees, stackStepXPx, stackStepYPx);
-        return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight, ToFontStyle(font));
+        return ComputeFittedFontSizePx(text, fontFamily, startingSizePx, MinFontSizePx, boundedWidth, boundedHeight, ResolveAvailableStyle(fontFamily, ToFontStyle(font)), growToFill);
     }
 
     /// <summary>Auditor usability review follow-up (2026-08-18): <see cref="FontSpec.Bold"/>/
@@ -639,8 +664,8 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var stackStepYPx = element.StackColor is { } ? (float)(element.StackStepY * imageHeightPx) : 0f;
         var (fitWidthPx, fitHeightPx) = ShrinkFitBoxForEffects(
             boundsWidthPx, boundsHeightPx, strokeThicknessPx, shadowOffsetXPx, shadowOffsetYPx, element.RotationDegrees, stackStepXPx, stackStepYPx);
-        var fontStyle = ToFontStyle(element.Font);
-        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx, fontStyle);
+        var fontStyle = ResolveAvailableStyle(fontFamily, ToFontStyle(element.Font));
+        var fittedSizePx = ComputeFittedFontSizePx(element.Content, fontFamily, startingSizePx, MinFontSizePx, fitWidthPx, fitHeightPx, fontStyle, element.GrowToFillEnabled);
 
         // [Code-review nits, fixed here] `% 360 == 0` rather than `== 0` -- 360/720/etc. are visually
         // identical to no rotation but previously took the resampling sub-bitmap path anyway (a real,
@@ -1325,10 +1350,19 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// verify-and-decrement pass would ever find something to correct). Returns
     /// <paramref name="minSizePx"/> if even the floor doesn't fit -- <see cref="DrawTemplateText"/>'s
     /// own clip-to-bounds is what actually enforces the render-time overflow policy in that
-    /// case, not this method.</summary>
+    /// case, not this method.
+    /// <para>User-requested (2026-09-15): when <paramref name="growToFill"/> is set and
+    /// <paramref name="startingSizePx"/> already fits, this ALSO searches upward -- an exponential
+    /// probe finds a size that no longer fits (or a safety ceiling, 8x the box's larger dimension,
+    /// which no real glyph run reaches first, since SixLabors glyph metrics are monotonic in point
+    /// size for every font this app resolves), then a binary search mirrors the shrink search above
+    /// exactly, just probing the opposite direction. When <paramref name="growToFill"/> is
+    /// <see langword="false"/> (every existing call site), behavior is completely unchanged: return
+    /// <paramref name="startingSizePx"/> the moment it fits, same as before this parameter
+    /// existed.</para></summary>
     private static float ComputeFittedFontSizePx(
         string text, FontFamily fontFamily, float startingSizePx, float minSizePx, int boundsWidthPx, int boundsHeightPx,
-        SixLabors.Fonts.FontStyle fontStyle = SixLabors.Fonts.FontStyle.Regular)
+        SixLabors.Fonts.FontStyle fontStyle = SixLabors.Fonts.FontStyle.Regular, bool growToFill = false)
     {
         if (string.IsNullOrEmpty(text))
         {
@@ -1351,7 +1385,43 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         var upper = MathF.Max(startingSizePx, minSizePx);
         if (FitsAt(upper))
         {
-            return upper;
+            if (!growToFill)
+            {
+                return upper;
+            }
+
+            var growCeiling = MathF.Max(boundsWidthPx, boundsHeightPx) * 8f;
+            var fitsLow = upper;
+            var doesNotFitHigh = upper * 2f;
+            while (doesNotFitHigh < growCeiling && FitsAt(doesNotFitHigh))
+            {
+                fitsLow = doesNotFitHigh;
+                doesNotFitHigh *= 2f;
+            }
+
+            if (doesNotFitHigh >= growCeiling)
+            {
+                doesNotFitHigh = growCeiling;
+                if (FitsAt(doesNotFitHigh))
+                {
+                    return doesNotFitHigh;
+                }
+            }
+
+            for (var i = 0; i < 12 && doesNotFitHigh - fitsLow > 0.5f; i++)
+            {
+                var mid = (fitsLow + doesNotFitHigh) / 2f;
+                if (FitsAt(mid))
+                {
+                    fitsLow = mid;
+                }
+                else
+                {
+                    doesNotFitHigh = mid;
+                }
+            }
+
+            return fitsLow;
         }
 
         var low = minSizePx;
@@ -1373,16 +1443,43 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     }
 
     /// <summary>Phase 4: a real per-family lookup against <see cref="_fontCollection"/> (both
-    /// bundled families, see <see cref="AvailableFontFamilies"/>), falling back to
-    /// <see cref="_defaultFontFamily"/> on a miss (unknown/unavailable family, or an empty string
-    /// from a pre-Phase-4 call site that never set one). <c>CultureInfo.InvariantCulture</c>
+    /// bundled families, see <see cref="AvailableFontFamilies"/>), then against
+    /// <see cref="_systemFontCollection"/> (OS-installed fonts), falling back to
+    /// <see cref="_defaultFontFamily"/> on a miss in both (unknown/unavailable family, an empty
+    /// string from a pre-Phase-4 call site that never set one, or a system font that was available
+    /// when a template was saved but isn't on this machine). <c>CultureInfo.InvariantCulture</c>
     /// explicitly, matching the constructor's own <c>Add</c> calls -- <see cref="FontCollection"/>
     /// indexes by culture, so a mismatched culture argument would silently miss even a family that
     /// really is loaded.</summary>
-    private FontFamily ResolveFontFamily(string family) =>
-        !string.IsNullOrEmpty(family) && _fontCollection.TryGet(family, System.Globalization.CultureInfo.InvariantCulture, out var found)
-            ? found
+    private FontFamily ResolveFontFamily(string family)
+    {
+        if (string.IsNullOrEmpty(family))
+        {
+            return _defaultFontFamily;
+        }
+
+        if (_fontCollection.TryGet(family, System.Globalization.CultureInfo.InvariantCulture, out var bundled))
+        {
+            return bundled;
+        }
+
+        return _systemFontCollection.TryGet(family, System.Globalization.CultureInfo.InvariantCulture, out var system)
+            ? system
             : _defaultFontFamily;
+    }
+
+    /// <summary>Bundled families always register Bold/Italic/BoldItalic variants (constructor
+    /// comment above), so <c>FontFamily.CreateFont(size, style)</c> never throws for them. An
+    /// arbitrary OS-installed family may lack a real face for the requested style -- SixLabors.Fonts
+    /// throws in that case rather than synthesizing one -- so any style not in
+    /// <see cref="FontFamily.GetAvailableStyles"/> falls back to Regular. Called identically by both
+    /// the fit-measurement path (<see cref="MeasureFittedFontSize"/>) and the draw path
+    /// (<see cref="DrawTemplateText"/>) so they can never disagree about which style actually
+    /// renders.</summary>
+    private static SixLabors.Fonts.FontStyle ResolveAvailableStyle(FontFamily family, SixLabors.Fonts.FontStyle requested) =>
+        requested == SixLabors.Fonts.FontStyle.Regular || family.GetAvailableStyles().Contains(requested)
+            ? requested
+            : SixLabors.Fonts.FontStyle.Regular;
 
     private static PixelBounds ToPixelBounds(NormalizedRect bounds, int imageWidth, int imageHeight) => new(
         (float)(bounds.X * imageWidth), (float)(bounds.Y * imageHeight),
