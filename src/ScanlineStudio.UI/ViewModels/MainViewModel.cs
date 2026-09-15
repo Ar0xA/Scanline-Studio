@@ -167,6 +167,10 @@ public partial class MainViewModel : ViewModelBase
         // TxControlsPaneViewModel.RadioStatus's own doc comment for why.
         txControls.RadioStatus = RadioStatus;
 
+        // Reverse of the above (RadioStatusViewModel.TxControls's own doc comment): lets the
+        // Transceiver card's "Stop TX" button reach TxControlsPaneViewModel.StopTransmitCommand.
+        RadioStatus.TxControls = txControls;
+
         // Backlog item (user request, 2026-08-17): "it should ALWAYS open the editor by default, no
         // need for a button" -- auto-open the blank-placeholder editor immediately so the Transmit
         // tab's center column is never empty on first landing. Triggered HERE, not from

@@ -138,6 +138,20 @@ public sealed class MainViewModelTests
     }
 
     [AvaloniaFact]
+    public void Construction_WiresTheCrossVmTxControlsReference_OnRadioStatus()
+    {
+        // yoniq-auditor finding (2026-09-15): RadioHeaderView.axaml's "Stop TX" button binds
+        // Command="{Binding TxControls.StopTransmitCommand}" -- if the constructor's own
+        // `RadioStatus.TxControls = txControls;` line is ever reordered/dropped, that binding
+        // silently resolves to null and the button becomes a no-op with no build error, no
+        // exception, no other failing test. This is the one-line regression guard for that.
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel();
+
+        Assert.NotNull(viewModel.RadioStatus.TxControls);
+        Assert.Same(viewModel.TxControls, viewModel.RadioStatus.TxControls);
+    }
+
+    [AvaloniaFact]
     public void SaveOrApply_TransmitTabWithActiveEditor_RunsEditorApply_NotSaveFrame()
     {
         var (viewModel, _, _, _, _, _) = CreateMainViewModel();

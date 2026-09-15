@@ -237,33 +237,17 @@ public partial class TxImageEditorPaneView : UserControl
     private void OnCanvasContextMenuOpened(object? sender, RoutedEventArgs e) =>
         SaveTemplateMenuItem.IsEnabled = ViewModel?.OverlayElements.Count > 0;
 
-    /// <summary>If a template name is already typed, saves immediately (identical to clicking the
-    /// Templates rail's own Save button -- same <see cref="TxImageEditorPaneViewModel.SaveTemplateCommand"/>).
-    /// Otherwise focuses the name field rather than no-opping, so the operator sees exactly where to
-    /// type -- same deferred-focus precedent as <c>FocusInlineTextEditor</c> above and
-    /// <c>RadioHeaderView.axaml.cs</c>'s frequency-entry focus grab (both defer to
-    /// <see cref="DispatcherPriority.Loaded"/> since the field may not have finished realizing in the
-    /// same synchronous callback that just closed the context menu).</summary>
+    /// <summary>User-reported gap (2026-09-15): used to just focus the empty name field instead of
+    /// saving, requiring the operator to type something first -- see
+    /// <see cref="TxImageEditorPaneViewModel.SaveTemplateWithAutoNameAsync"/>'s own doc comment for
+    /// the new behavior (auto-fills the next free "tmp{N}" name and saves immediately if the field is
+    /// empty; identical to the ordinary Save button if a name was already typed).</summary>
     private void OnSaveTemplateContextMenuClick(object? sender, RoutedEventArgs e)
     {
-        if (ViewModel is not { } vm)
+        if (ViewModel is { } vm)
         {
-            return;
+            _ = vm.SaveTemplateWithAutoNameAsync();
         }
-
-        if (vm.SaveTemplateCommand.CanExecute(null))
-        {
-            vm.SaveTemplateCommand.Execute(null);
-            return;
-        }
-
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                NewTemplateNameTextBox.Focus();
-                NewTemplateNameTextBox.SelectAll();
-            },
-            DispatcherPriority.Loaded);
     }
 
     /// <summary>Templates rack rework -- double-click on a rack slot loads it (same command as the

@@ -818,6 +818,45 @@ public sealed class ApplyTemplateTests
     }
 
     [Fact]
+    public async Task ApplyTemplate_GrowToFillEnabled_RendersInsideBoundsWithoutThrowing()
+    {
+        // User-reported gap (2026-09-15): a bottom/right edge artifact in the mode-exact PREVIEW
+        // panel on a GrowToFillEnabled text element, root-caused to DrawTemplateText's own
+        // boundsWidthPx/boundsHeightPx (feeds the fit SEARCH plus a few other downstream uses --
+        // see that method's own doc comment) rounding UP from the raw NormalizedRect via
+        // MathF.Round, while the actual UNROTATED draw clip a few lines below uses the RAW,
+        // unrounded bounds -- fixed by switching to MathF.Floor so the fit box can never exceed the
+        // real clip. Same caveat as ApplyTemplate_TextWithLargeStroke_RendersInsideBoundsWithoutThrowing
+        // above: DrawTemplateText's clip is unconditional, so AssertNoNonBackgroundPixelOutsideBounds
+        // cannot distinguish correct from incorrect rounding here either (ink that would sit past the
+        // true edge is hard-clipped there, not leaked outside it) -- this is a real safety net for
+        // this specific code path (GrowToFillEnabled had ZERO render-level/ApplyTemplate coverage
+        // before this), not a bleed-detection test for the exact sub-pixel fix. Bounds chosen so
+        // boundsWidthPx/boundsHeightPx land on a .6 fractional pixel (30.6/20.6 against a 100px-tall
+        // image) -- the exact case where MathF.Round used to round up and MathF.Floor now doesn't.
+        var path = await WriteFixturePngAsync(100, 100, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 100, 100);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var font = new FontSpec("DejaVu Sans Mono", 0.05);
+            var bounds = new NormalizedRect(0.2, 0.2, 0.306, 0.206);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, "W", font, new Rgb24(0, 0, 255), GrowToFillEnabled: true),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertNoNonBackgroundPixelOutsideBounds(result, bounds, background: (255, 255, 255));
+            AssertAtLeastOneNonBackgroundPixelInsideBounds(result, bounds, background: (255, 255, 255));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public async Task ApplyTemplate_RenderTimeOverflow_ClipsToBoundsRatherThanOverflowing()
     {
         // Text that cannot possibly fit even at the minimum font-size floor -- the overflow policy

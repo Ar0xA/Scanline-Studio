@@ -32,7 +32,19 @@ namespace ScanlineStudio.UI.ViewModels;
 /// session, not just at construction/manual-refresh/filter-change as before.</summary>
 public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 {
-    private const int ThumbnailMaxDimension = 96;
+    // User-reported gap (2026-09-15): thumbnails looked fuzzy compared to the sharp selected-frame
+    // preview below -- root cause, not a data/decode issue: the Gallery grid's Image cells render
+    // well over 96px wide on any realistic window (a UniformGrid Columns="6" cell, no fixed Width),
+    // so a 96px-capped thumbnail bitmap was always being stretched UP with Avalonia's default smooth
+    // interpolation, the classic upscale-blur. PreviewImage (below) never showed this because 512 is
+    // already above every real SSTV mode's own width/height (max 640x496, SstvModeRegistry), so it's
+    // loaded at native resolution and only ever mildly downscaled, never stretched up. Raised to 240
+    // -- large enough that the grid's own typical cell size stops being a meaningful upscale for most
+    // modes (320x256 is the common case), without going all the way to 512/native: LoadThumbnailAsync
+    // runs for EVERY history entry eagerly on each RefreshAsync (no virtualization), so this constant
+    // directly scales with a long-running operator's memory footprint -- not raised to match
+    // PreviewMaxDimension outright.
+    private const int ThumbnailMaxDimension = 240;
     private const int PreviewMaxDimension = 512;
 
     /// <summary>Same debounce window/rationale as <c>RadioStatusViewModel.TxVolumePercentChanged</c>'s

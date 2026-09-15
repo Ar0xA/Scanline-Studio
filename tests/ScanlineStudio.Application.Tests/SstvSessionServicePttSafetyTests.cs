@@ -2282,8 +2282,8 @@ public sealed class SstvSessionServicePttSafetyTests
         // Tier B audit finding (Area 3): StartReceivingAsync/StopReceivingAsync's own `_isReceiving`
         // check-then-act had no gate between them, unlike SetPttLockAsync's own identical shape
         // (_pttLockGate). A real UI repro: RadioStatusViewModel.SetReceivingSafeAsync is fire-and-
-        // forget with no busy guard, and HaltReceivingAsync is a SEPARATE command hitting
-        // StopReceivingAsync concurrently -- a Start parked mid-flight (e.g. in a slow settings/device
+        // forget with no busy guard, and the same class's own startup maintenance-retry path is a
+        // SEPARATE caller hitting StopReceivingAsync/StartReceivingAsync concurrently -- a Start parked mid-flight (e.g. in a slow settings/device
         // read) let a concurrent Stop read `_isReceiving == false` and silently no-op, leaving capture
         // live with the UI reporting "not receiving" and no error surfaced. _rxTransitionGate closes
         // this: Stop now genuinely waits for the racing Start to finish, then acts on the real result.

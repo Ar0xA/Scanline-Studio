@@ -472,6 +472,24 @@ public sealed partial class RadioSessionService : IRadioSessionService, IPttTest
 
     public event Action<RadioSafetySpec>? SafetySettingsChanged;
 
+    public async Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default)
+    {
+        var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var section = appSettings.GetSection(RadioOperatingPreferencesSettings.SectionKey, RadioOperatingPreferencesSettingsJsonContext.Default.RadioOperatingPreferencesSettings)
+            ?? new RadioOperatingPreferencesSettings();
+        return section.SsbAsPkt;
+    }
+
+    public async Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default)
+    {
+        await _settingsStore.UpdateAsync(
+            appSettings => appSettings.WithSection(
+                RadioOperatingPreferencesSettings.SectionKey,
+                new RadioOperatingPreferencesSettings { SsbAsPkt = value },
+                RadioOperatingPreferencesSettingsJsonContext.Default.RadioOperatingPreferencesSettings),
+            ct).ConfigureAwait(false);
+    }
+
     // T1-7 (production_audit.md): the disk write above already succeeded by the time this runs --
     // a throwing subscriber (a real one exists, TxControlsPaneViewModel.OnSafetySettingsChanged)
     // used to propagate straight out of SaveSafetySettingsAsync, which OptionsWindowViewModel's own
