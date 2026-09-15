@@ -77,7 +77,7 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     [ObservableProperty]
     private bool _isSelected;
 
-    /// <summary>Set by <see cref="TxImageEditorPaneViewModel.SetAsBackground"/> (Phase 6,
+    /// <summary>Set by <see cref="TxImageEditorPaneViewModel.SetAsBackdrop"/> (Phase 6,
     /// spec/15-template-designer.md) -- NOT inferred structurally from full-frame bounds (a manual
     /// drag could coincidentally produce the same bounds without meaning "background"). Combined
     /// with <see cref="Locked"/> via <see cref="BlocksHitTesting"/> to let a locked background
@@ -134,12 +134,22 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
 
     public IRelayCommand? AlignSelectedElementToCropCommand { get; init; }
 
-    /// <summary>Only image elements can be "set as background" (Phase 2 scope) -- not part of
+    /// <summary>Only image elements can be "set as backdrop" (Phase 2 scope) -- not part of
     /// <see cref="ITemplateElementViewModel"/> itself, so this lives here rather than as a no-op on
     /// text/box. Same parent-pushed pattern as <see cref="RemoveCommand"/> -- bound directly in XAML
-    /// (<c>Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}"</c>), never via a
+    /// (<c>Command="{Binding SetAsBackdropCommand}" CommandParameter="{Binding}"</c>), never via a
     /// <c>$parent[ItemsControl]</c> binding path.</summary>
-    public IRelayCommand? SetAsBackgroundCommand { get; init; }
+    public IRelayCommand? SetAsBackdropCommand { get; init; }
+
+    /// <summary>User-requested (2026-09-15, background-vs-backdrop naming/promote-demote work):
+    /// the reverse of <see cref="SetAsBackdropCommand"/> -- bakes THIS backdrop element's own pixels
+    /// into the editor's background photo and removes the element. Same parent-pushed,
+    /// element-parameterized pattern; gated in XAML via <c>IsEnabled="{Binding IsBackground}"</c>
+    /// rather than a separate CanExecute check on the element itself, since the command's own
+    /// <c>CanExecute</c> already pattern-matches <see cref="IsBackground"/> on whatever element is
+    /// passed as <c>CommandParameter</c> -- the XAML gate exists purely so the menu item doesn't
+    /// render enabled-but-inert for a non-backdrop image element.</summary>
+    public IRelayCommand? DemoteToBackgroundCommand { get; init; }
 
     /// <inheritdoc cref="ITemplateElementViewModel.CopyCommand"/>
     public IRelayCommand? CopyCommand { get; init; }
@@ -149,14 +159,14 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     public IRelayCommand? PasteCommand { get; init; }
 
     /// <summary>TX workflow modernization plan, Phase 1 "Fit ▸" image-menu submenu -- image-only,
-    /// same parent-pushed pattern as <see cref="SetAsBackgroundCommand"/>, string CommandParameter
+    /// same parent-pushed pattern as <see cref="SetAsBackdropCommand"/>, string CommandParameter
     /// (the fit mode name) same shape as <see cref="AlignSelectedElementToCropCommand"/>.</summary>
     public IRelayCommand? FitCommand { get; init; }
 
     /// <summary>TX workflow modernization plan, Phase 7 -- image-only, element-parameterized (NOT
-    /// selection-implicit) same shape as <see cref="RemoveCommand"/>/<see cref="SetAsBackgroundCommand"/>
+    /// selection-implicit) same shape as <see cref="RemoveCommand"/>/<see cref="SetAsBackdropCommand"/>
     /// -- bound with <c>CommandParameter="{Binding}"</c>, never a <c>$parent[ItemsControl]</c>
-    /// binding path (<see cref="SetAsBackgroundCommand"/>'s own doc comment explains why that pattern
+    /// binding path (<see cref="SetAsBackdropCommand"/>'s own doc comment explains why that pattern
     /// is a real, previously-hit crash in this codebase, not a style preference).</summary>
     public IRelayCommand? ResetToOriginalSizeCommand { get; init; }
 
@@ -164,7 +174,7 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     public IRelayCommand? FlattenCommand { get; init; }
 
     /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- toggles
-    /// <see cref="PerspectiveEnabled"/>. Same parent-pushed pattern as <see cref="SetAsBackgroundCommand"/>,
+    /// <see cref="PerspectiveEnabled"/>. Same parent-pushed pattern as <see cref="SetAsBackdropCommand"/>,
     /// element-parameterized. Lives in the PARENT VM (not a plain <c>[RelayCommand]</c> here) because
     /// enabling seeds the 4 corners from the current bbox and disabling writes the current bbox back
     /// into <see cref="NaturalX"/>/etc -- both real, undo-worthy mutations the parent VM's own
@@ -191,6 +201,19 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// on purpose.</summary>
     public bool BlocksHitTesting => Locked && IsBackground;
 
+    /// <summary>Background/backdrop naming work (2026-09-15): the ELEMENTS layers-list row's
+    /// promote/demote button pair needs a REACTIVE "not backdrop" flag -- a real-window test caught
+    /// that a raw <c>IsVisible="{Binding !IsBackground}"</c> binding does NOT react to
+    /// <see cref="IsBackground"/> changing inside this specific <c>ItemsControl.DataTemplates</c>
+    /// context (the promote button stayed visible after becoming a backdrop, confirmed via
+    /// <c>ImageElementLayersRow_BackdropToggleButtons_ResolveAgainstTheRightElementAndFlipVisibility</c>)
+    /// -- the plain, non-negated <c>{Binding IsBackground}</c> the demote button uses DOES react
+    /// correctly in the same context, so the negation itself is what's not reactive here, not the
+    /// binding mechanism generally. Same "wrap in a computed property with an explicit re-notify"
+    /// fix <see cref="BlocksHitTesting"/> already established -- not chasing whether other existing
+    /// raw <c>!Property</c> bindings elsewhere in this file have the same gap, out of scope here.</summary>
+    public bool IsNotBackground => !IsBackground;
+
     /// <summary>TX editor gap-items plan, item 3 -- the 8 axis-aligned resize handles and the 4
     /// perspective-corner handles are mutually exclusive, both additionally gated on <see cref="Locked"/>
     /// (every existing handle already binds <c>IsVisible="{Binding !Locked}"</c> -- these preserve
@@ -206,7 +229,11 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
         OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
     }
 
-    partial void OnIsBackgroundChanged(bool value) => OnPropertyChanged(nameof(BlocksHitTesting));
+    partial void OnIsBackgroundChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BlocksHitTesting));
+        OnPropertyChanged(nameof(IsNotBackground));
+    }
 
     /// <summary>Get: <see cref="NaturalX"/> in the ordinary case, or the CURRENT corners' own bbox
     /// center once <see cref="PerspectiveEnabled"/> (bbox recomputed fresh each read -- corners can

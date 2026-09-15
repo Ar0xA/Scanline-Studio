@@ -1140,10 +1140,18 @@
          ToggleButton element at all. Needed for RadioHeaderView's Receiving toggle specifically
          (a real two-way IsChecked binding, so it can't be swapped to a plain Button) — duplicated
          narrowly for just the one height/variant this phase actually uses, not the full matrix. -->
+    <!-- User-reported fix (2026-09-15): neither ToggleButton size variant below set
+         VerticalContentAlignment, the exact same gap Button.Industry.IndustryBtn's own comment
+         above already fixed once for Button — the TEMPLATE LIBRARY row's Pin toggle uses the same
+         zeroed vertical Padding="6,0" as that comment's own FRONT/BACK/DUP/DEL example, so its text
+         rendered visibly off-center against its row's other 3 (Button-typed, already-centered)
+         siblings. Added to both variants below, matching Button.Industry.IndustryBtn's own "one
+         explicit Center covers every size variant" reasoning. -->
     <Style Selector="ToggleButton.Industry.IndustryBtn26">
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Height" Value="{DynamicResource IndustryBtn26Height}" />
         <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn26MinHeight}" />
         <Setter Property="FontSize" Value="{DynamicResource IndustryBtn26FontSize}" />
@@ -1160,6 +1168,7 @@
         <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
         <Setter Property="FontWeight" Value="SemiBold" />
         <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
         <Setter Property="Height" Value="{DynamicResource IndustryBtn22Height}" />
         <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn22MinHeight}" />
         <Setter Property="FontSize" Value="{DynamicResource IndustryBtn22FontSize}" />
@@ -1180,6 +1189,33 @@
         <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryDisabledBorder}" />
         <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
+    </Style>
+
+    <!-- User-requested (2026-09-15): the Transceiver card's Receiving toggle used to stay a fixed
+         accent-blue regardless of state (a deliberate earlier decision — "the SAME accent-filled
+         palette as a primary button, not a green state color" — explicitly superseded by this
+         request). Now reuses the EXACT same token pair the status bar's own "Receiving" LED+lozenge
+         chip already uses (Border.IndustryStatus.healthyTint above) for true visual consistency
+         between the two, not just a similarly-green color: IndustryDisabledFace/IndustryControlBorder/
+         IndustryStatusText at rest (grey — matches that chip's own un-tinted state, not literally a
+         disabled look, since this button stays fully clickable either way), IndustryHealthyTint/
+         IndustryHealthyTintBorder/IndustryHealthyTintText when checked (green — matches that chip's
+         own tinted state). :checked is declared AFTER :pointerover so a hovered-while-receiving button
+         still reads green, not the unchecked hover color (declaration-order-wins precedent already
+         established elsewhere in this file). -->
+    <Style Selector="ToggleButton.IndustryBtnRxStatus /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryStatusText}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnRxStatus:pointerover /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryHoverFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHoverBorder}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnRxStatus:checked /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryHealthyTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryHealthyTintBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryHealthyTintText}" />
     </Style>
 
     <!-- Bug fix (found via an automated silent-failure sweep, not a real click): ToggleButton is a

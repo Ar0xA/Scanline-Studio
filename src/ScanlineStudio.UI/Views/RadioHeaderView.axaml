@@ -356,12 +356,15 @@
                  other half of the same user direction. TxIsMuted/TxVolumeDisplay still show a real
                  OS mute readout for the TX device (independent of the Pwr gain, see
                  RadioStatusViewModel.TxIsMuted's own doc comment for why that one piece stayed).
-                 Receiving intentionally uses the SAME accent-filled palette as a primary button,
-                 not a green state color (pre-Phase-2 file's own comment: sampled directly against
-                 mock2's own pixels) — preserved, not "improved" toward a green/red status pair; its
-                 Content now flips text between RECEIVING/RX MUTED (RadioStatusViewModel.ReceivingButtonLabel)
-                 since a state-only toggle with no visible label change read as "does nothing" —
-                 user-reported (2026-09-15).
+                 Receiving used to intentionally stay a fixed accent-blue regardless of state (a
+                 pre-Phase-2 decision, "not a green state color... preserved, not 'improved' toward a
+                 green/red status pair") — directly superseded by a later, more specific user request
+                 (2026-09-15): color it the SAME way the status bar's own "Receiving" LED+lozenge chip
+                 already does (IndustryBtnRxStatus, Atoms.axaml — reuses that chip's own exact
+                 healthyTint/rest token pair), so the two agree visually, not just in wording. Content
+                 also flips text between RECEIVING/RX MUTED (RadioStatusViewModel.ReceivingButtonLabel)
+                 since a state-only toggle with no visible change at all read as "does nothing" —
+                 user-reported (2026-09-15), same session as the color change.
                  STOP TX (user-reported rename+rewire, 2026-09-15): this button already carried the
                  spec §7 fixed-exception "HALT TX" always-red styling (mockups/colors/SSTV-Color-
                  Scheme.md) and the shared IndustryBtnDangerAlwaysOn class documented in Atoms.axaml
@@ -392,7 +395,7 @@
                              still really stops capture either way, that click-handling contract is
                              deliberately unchanged (see RadioStatusViewModel.IsCapturePausedForTx's
                              own doc comment for why this is scoped as a visual-only fix). -->
-                        <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnPrimary"
+                        <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnRxStatus"
                                       IsChecked="{Binding IsReceiving}" Content="{Binding ReceivingButtonLabel}"
                                       Opacity="{Binding IsCapturePausedForTx, Converter={x:Static conv:BoolToOpacityConverter.Instance}}"
                                       ToolTip.Tip="{loc:Translate RadioStatus.ReceivingPausedForTx.Help}"

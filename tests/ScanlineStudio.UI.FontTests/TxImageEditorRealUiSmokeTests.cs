@@ -1,14 +1,18 @@
 using System.Collections;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Media.Imaging;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
+using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
+using ScanlineStudio.UI.Tests;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
 using static ScanlineStudio.UI.FontTests.RealWindowTestSupport;
@@ -126,6 +130,195 @@ public sealed class TxImageEditorRealUiSmokeTests
             var contextMenu = RightClickElementBody(window, image);
 
             AssertEveryLeafCommandResolves(contextMenu, image);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task RightClickingALockedBackdrop_OpensItsOwnContextMenu_NotTheCanvasEmptyAreaOne()
+    {
+        // User-reported bug (2026-09-15): "load a background, then add an image, and set that image
+        // as backdrop; the right click menu is that of the background... not the backdrop, even if
+        // the mouse is ON the backdrop." A locked backdrop's own canvas Border used to have
+        // IsHitTestVisible="{Binding !BlocksHitTesting}" = False, so ALL pointer events -- including
+        // right-click -- fell through to whatever was underneath instead of opening its own menu.
+        // BuildRealWindow's own source (a real ArrayImageSource, not BlankImageSource) is already a
+        // real, non-blank background -- exactly the "load a background" half of the repro.
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            await vm.AddImageFromFileCommand.ExecuteAsync(null);
+            PumpDispatcher();
+            var image = Assert.IsType<ImageElementViewModel>(vm.SelectedOverlayElement);
+
+            vm.SetAsBackdropCommand.Execute(image);
+            PumpDispatcher();
+            Assert.True(image.BlocksHitTesting);
+
+            // RightClickElementBody finds THIS element's own Border/ContextMenu by DataContext
+            // identity, then asserts THAT specific ContextMenu instance actually opened -- if the
+            // click had instead fallen through to a DIFFERENT control (the canvas's own empty-area
+            // one, the exact bug reported), this element's own ContextMenu would correctly read
+            // IsOpen=false and the assertion inside RightClickElementBody itself would fail.
+            var contextMenu = RightClickElementBody(window, image);
+
+            AssertEveryLeafCommandResolves(contextMenu, image);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    // Reads a single Bgra8888 pixel back out of a real, Skia-rendered WriteableBitmap. Deliberately
+    // NOT done this way in ScanlineStudio.UI.Tests: that project's headless renderer is documented
+    // (feedback_verify_avalonia_rendering_with_real_window memory) to NOT reliably round-trip raw
+    // pixel bytes through WriteableBitmap.Lock() -- a real diagnostic there wrote known BGRA bytes
+    // and read back different, non-matching values. This project's TestAppBuilder uses a real Skia
+    // backend (UseHeadlessDrawing = false, see IndustryFontResolutionTests' own doc comment for why),
+    // which is the whole reason it exists as a separate project -- exactly the place a pixel-content
+    // assertion like this one belongs.
+    private static Rgb24 SamplePreviewPixel(Bitmap bitmap, int x, int y)
+    {
+        var writeable = Assert.IsType<WriteableBitmap>(bitmap);
+        using var frameBuffer = writeable.Lock();
+        var offset = frameBuffer.Address + (y * frameBuffer.RowBytes) + (x * 4);
+        var b = Marshal.ReadByte(offset);
+        var g = Marshal.ReadByte(offset + 1);
+        var r = Marshal.ReadByte(offset + 2);
+        return new Rgb24(r, g, b);
+    }
+
+    [AvaloniaFact]
+    public async Task SetAsBackdropCommand_RealPipeline_PreviewShowsTheBackdropCoveringTheWholeFrame()
+    {
+        // User-reported bug (2026-09-15): "also if i set as backdrop an image...the preview window
+        // no longer displays the background image information." Investigation (code-reading): the
+        // editor's own PREVIEW panel (TxImageEditorPaneViewModel.PreviewImage, distinct from
+        // TxControlsPaneViewModel's Apply/Transmit-only thumbnail) recomputes via
+        // RecomputePreviewPipeline -> ComposePreview, which composites EVERY OverlayElements member
+        // (backdrop included, via BuildTemplateDocument) ON TOP of the cropped/resized background --
+        // so a full-frame, opaque backdrop is EXPECTED to visually cover the loaded background in
+        // this same preview, by design (the same "only one of background/backdrop is ever the
+        // visible base layer" invariant Promote/Demote already enforce elsewhere). This test proves
+        // that expected replacement actually renders correctly end-to-end (real
+        // TransmitImagePreparer, real Skia-backed WriteableBitmap read-back) rather than silently
+        // rendering something else (stale, blank, or wrong-colored) -- which is what "no longer
+        // displays" would actually look like if this were a genuine bug.
+        var red = new Rgb24(200, 20, 20);
+        var blue = new Rgb24(20, 20, 200);
+        var background = CreateSolidSource(DefaultSourceWidth, DefaultSourceHeight, red);
+        var insertedImage = CreateSolidSource(DefaultSourceWidth, DefaultSourceHeight, blue);
+        var vm = CreateEditor(background, TestMode, new FakeImageFileLoader { ResultToReturn = insertedImage });
+        var (window, _, _) = BuildRealWindowForVm(vm);
+        try
+        {
+            Assert.Equal(red, SamplePreviewPixel(vm.PreviewImage!, 0, 0));
+
+            await vm.AddImageFromFileCommand.ExecuteAsync(null);
+            PumpDispatcher();
+            var image = Assert.IsType<ImageElementViewModel>(vm.SelectedOverlayElement);
+            // Sanity: a freshly-inserted image defaults to less than full-frame, so the corner still
+            // shows the background here -- proves the later color flip is caused specifically by Set
+            // as backdrop, not by AddImageFromFile alone.
+            Assert.Equal(red, SamplePreviewPixel(vm.PreviewImage!, 0, 0));
+
+            vm.SetAsBackdropCommand.Execute(image);
+            PumpDispatcher();
+
+            Assert.Equal(blue, SamplePreviewPixel(vm.PreviewImage!, 0, 0));
+            Assert.Equal(blue, SamplePreviewPixel(vm.PreviewImage!, DefaultSourceWidth / 2, DefaultSourceHeight / 2));
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public void CancelButton_RendersExactlyOneLabel_NotTwoStackedOnes()
+    {
+        // Auditor-found blocker (2026-09-15): migrating Cancel from an in-row two-click arm/confirm
+        // to a real dialog removed the VM's own IsCancelArmed property, but an earlier draft of that
+        // migration left the BUTTON's own AXAML still binding to it (Classes.IndustryBtnDanger and
+        // two IsVisible-gated TextBlocks in a Panel). This project has no compiled bindings enabled
+        // (confirmed via check-help.mjs's own sibling AXAML-integrity checks not covering reflection
+        // bindings either), so an unresolvable binding like that doesn't fail the build -- it resolves
+        // to Avalonia's own UnsetValue, and IsVisible's default is true, so BOTH TextBlocks rendered
+        // "CANCEL" and "DISCARD?" stacked on top of each other, silently, at runtime only. Fixed by
+        // replacing the whole Panel/two-TextBlock structure with a single plain Content binding --
+        // this test pins that structurally: Content is a single string (the raw loc key, via
+        // FakeLocalizationService's own pass-through), not a Panel, so this exact failure mode is no
+        // longer even representable, not just observed-passing today.
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            var view = (TxImageEditorPaneView)window.Content!;
+            var cancelButton = view.FindControl<Button>("CancelButton")
+                ?? throw new InvalidOperationException("CancelButton not found in the real View's visual tree.");
+
+            Assert.Equal("Panes.TxImageEditor.Cancel", Assert.IsType<string>(cancelButton.Content));
+            Assert.DoesNotContain("IndustryBtnDanger", cancelButton.Classes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ImageElementLayersRow_BackdropToggleButtons_ResolveAgainstTheRightElementAndFlipVisibility()
+    {
+        // User-reported gap (2026-09-15): a LOCKED backdrop element's own canvas Border has
+        // IsHitTestVisible="{Binding !BlocksHitTesting}" = False (pre-existing, documented limitation
+        // at that Border's own comment) -- a real right-click on a backdrop falls through to whatever
+        // is underneath (the crop rect / canvas empty-area menu) instead of reaching the backdrop's
+        // own SetAsBackdrop/DemoteToBackground/Remove menu. The ELEMENTS layers-list row is NOT gated
+        // by canvas hit-testing at all, so its own backdrop-toggle buttons are the fix -- this proves
+        // they resolve against the RIGHT element instance through a REAL render and flip IsVisible
+        // correctly as IsBackground changes, exactly the class of bug this whole file exists to catch
+        // (a bare {Binding XCommand} resolving against the wrong DataContext stays silently null/wrong
+        // at runtime, invisible to a VM-level unit test).
+        //
+        // Harness gotcha found while writing this test (not a production bug, auditor-reviewed): an
+        // earlier draft blamed this on two Buttons sharing one Grid.Column -- wrong, Grid attached
+        // properties don't affect binding reactivity, and both buttons now have their own dedicated
+        // column (see the AXAML's own comment on the demote button below) with no change in behavior.
+        // The actual cause: SetAsBackdrop calls OverlayElements.Move(index, 0) -- for this test's
+        // single-element collection that's a same-index move, but ObservableCollection<T> still
+        // raises a real Move notification. A Button captured BEFORE that call (bound to
+        // SetAsBackdropCommand) stopped tracking further changes afterward; a SIBLING Button captured
+        // the exact same way (bound to DemoteToBackgroundCommand) did not -- which specific captured
+        // reference goes stale isn't fully understood, so don't assume it's predictable. What IS
+        // confirmed: a FRESH FindBackdropRowButtons call right after the move always sees the correct,
+        // already-flipped state. Re-query after any mutation that could reorder the backing collection
+        // -- don't hold onto row-button references across one.
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            await vm.AddImageFromFileCommand.ExecuteAsync(null);
+            PumpDispatcher();
+            var image = Assert.IsType<ImageElementViewModel>(vm.SelectedOverlayElement);
+
+            var (promoteButton, demoteButton) = FindBackdropRowButtons(window, image);
+            Assert.True(promoteButton.IsEffectivelyVisible);
+            Assert.False(demoteButton.IsEffectivelyVisible);
+            Assert.Same(image.SetAsBackdropCommand, promoteButton.Command);
+            Assert.Same(image.DemoteToBackgroundCommand, demoteButton.Command);
+
+            vm.SetAsBackdropCommand.Execute(image);
+            PumpDispatcher();
+
+            Assert.True(image.IsBackground);
+
+            var (freshPromote, freshDemote) = FindBackdropRowButtons(window, image);
+            Assert.False(freshPromote.IsVisible);
+            Assert.True(freshDemote.IsVisible);
+            Assert.False(freshPromote.IsEffectivelyVisible);
+            Assert.True(freshDemote.IsEffectivelyVisible);
         }
         finally
         {
@@ -413,6 +606,19 @@ public sealed class TxImageEditorRealUiSmokeTests
             .OfType<Border>()
             .Single(b => ReferenceEquals(b.DataContext, element) && b.ContextMenu is not null);
 
+    /// <summary>The ELEMENTS layers-list row's own promote/demote buttons (background/backdrop
+    /// naming work, 2026-09-15) -- both bound to the SAME <c>DataContext</c> and the SAME
+    /// <c>Content</c> glyph, mutually-exclusive via <c>IsVisible</c>, so <c>Command</c> reference
+    /// identity (not DataContext or Content) is the only thing that discriminates one from the
+    /// other.</summary>
+    private static (Button Promote, Button Demote) FindBackdropRowButtons(Visual root, ImageElementViewModel image)
+    {
+        var buttons = root.GetVisualDescendants().OfType<Button>().Where(b => ReferenceEquals(b.DataContext, image)).ToList();
+        var promote = buttons.Single(b => ReferenceEquals(b.Command, image.SetAsBackdropCommand));
+        var demote = buttons.Single(b => ReferenceEquals(b.Command, image.DemoteToBackgroundCommand));
+        return (promote, demote);
+    }
+
     /// <summary>Real right-click (MouseDown+MouseUp, <see cref="MouseButton.Right"/>, through
     /// Avalonia's actual raw-input pipeline -- same technique
     /// <c>TxImageEditorQuickStyleFlyoutRealClickTests</c> established) on <paramref name="element"/>'s
@@ -460,7 +666,7 @@ public sealed class TxImageEditorRealUiSmokeTests
     /// <paramref name="element"/>, when given, adds a SECOND, stronger check: wherever the AXAML also
     /// sets <c>CommandParameter="{Binding}"</c>, assert that parameter IS <paramref name="element"/>
     /// by reference. This closes a real gap a bare non-null Command check can't: a handful of parent-
-    /// VM commands (Duplicate/AlignSelectedElementToCrop/SetAsBackground/BringToFront/SendToBack) share
+    /// VM commands (Duplicate/AlignSelectedElementToCrop/SetAsBackdrop/BringToFront/SendToBack) share
     /// the exact SAME object reference as the element's own pushed copy (<c>CreateOverlayElement</c>
     /// assigns <c>element.XCommand = this.XCommand</c> directly), so if the binding accidentally
     /// resolved against the PARENT VM instead of the element, <c>Command</c> would STILL be non-null

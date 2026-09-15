@@ -525,10 +525,12 @@
                                  already-shipped click model (single-click selects/reveals the action
                                  strip below, double-click loads, right-click opens the context menu),
                                  which this reuses wholesale rather than inventing a second pattern.
-                                 Delete stays on the Library's own existing DeleteCommand (inline
-                                 IsPendingDelete arm/confirm, unchanged) — NOT the rack's
-                                 DeleteFromRackCommand modal, since this flow already worked and
-                                 wasn't broken; only its visibility moves off an always-on button. -->
+                                 Delete stays on the Library's own existing DeleteCommand — a SEPARATE
+                                 command from the rack's own DeleteFromRackCommand only because their
+                                 confirm dialogs word the consequence differently, not because of a
+                                 UX difference anymore (user-reported feedback, 2026-09-15: both now
+                                 show the same real confirm dialog; DeleteCommand's own inline
+                                 two-click arm/confirm is gone). -->
                             <!-- MinHeight guarantees a few real visible rows (and makes the two
                                  "no templates" placeholders below actually legible) regardless of
                                  how much of the rail's shared height RACK above has already spent.
@@ -612,8 +614,8 @@
                                  the rack's own (TxImageEditorPaneView.axaml's Templates block) —
                                  Load/Pin/Export/Delete plus inline rename, shown only while a Library
                                  item is selected. OnLibraryRenameKeyDown commits on Enter, reverts on
-                                 Esc. Delete's own IsPendingDelete arm/confirm still renders here
-                                 (unchanged), just relocated off the always-visible row. -->
+                                 Esc. Delete's own confirm dialog is unaffected by this row moving —
+                                 see DeleteCommand's own doc comment. -->
                             <!-- User-reported gap (2026-09-15): same 212px overflow the rack's own
                                  action row had (see that row's own comment, above in this file), same
                                  WrapPanel fix. Does NOT share the rack row's other bug: SelectedLibraryItem
@@ -637,13 +639,8 @@
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
                                             IsEnabled="{Binding !ReadyRack.SelectedLibraryItem.IsExporting}"
                                             Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
-                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}"
-                                            Padding="6,0" Margin="0,0,3,3" Command="{Binding ReadyRack.DeleteCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}">
-                                        <Panel>
-                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
-                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
-                                        </Panel>
-                                    </Button>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding ReadyRack.DeleteCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
                                 </WrapPanel>
                             </StackPanel>
 
@@ -784,6 +781,29 @@
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitHeight}" Click="OnFitHeightClick" />
                                     <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.SnapGrid}" ToggleType="CheckBox" IsChecked="{Binding SnapToGrid, Mode=TwoWay}" />
+                                    <Separator />
+                                    <!-- Background/backdrop naming work (2026-09-15): background (the base
+                                         photo loaded via Browse/Stock) and backdrop (a locked, full-frame
+                                         image element, saved with templates) are separate concepts sharing
+                                         the same visual result — see SetAsBackdrop's/PromoteBackgroundToBackdrop's
+                                         own doc comments. This is the promote direction; the reverse ("Turn
+                                         into background") lives on the backdrop element's own context menu.
+                                         IsEnabled computed fresh by OnCanvasContextMenuOpened (same View-owned
+                                         "no live bound bool today" pattern SaveTemplateMenuItem above already
+                                         established), not a VM-level CanExecute — HasRealBackground has no
+                                         [ObservableProperty]/notification of its own to bind against. -->
+                                    <MenuItem x:Name="PromoteBackgroundMenuItem"
+                                              Header="{loc:Translate Panes.TxImageEditor.PromoteBackgroundToBackdrop}"
+                                              ToolTip.Tip="{loc:Translate Panes.TxImageEditor.PromoteBackgroundToBackdrop.Help}"
+                                              Command="{Binding PromoteBackgroundToBackdropCommand}" />
+                                    <!-- User-reported gap (2026-09-15): a plain destructive clear, distinct
+                                         from Promote above (which PRESERVES the photo as a backdrop
+                                         element) — see RemoveBackground's own doc comment. Same
+                                         View-owned IsEnabled pattern as PromoteBackgroundMenuItem above. -->
+                                    <MenuItem x:Name="RemoveBackgroundMenuItem"
+                                              Header="{loc:Translate Panes.TxImageEditor.RemoveBackground}"
+                                              ToolTip.Tip="{loc:Translate Panes.TxImageEditor.RemoveBackground.Help}"
+                                              Command="{Binding RemoveBackgroundCommand}" />
                                     <Separator />
                                     <MenuItem x:Name="SaveTemplateMenuItem" Header="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Click="OnSaveTemplateContextMenuClick" />
                                 </ContextMenu>
@@ -1089,6 +1109,14 @@
                                                              PointerPressed-based capture mechanism — NOT ContextMenu.PlacementTarget,
                                                              which Avalonia never populates on a real right-click). -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.QuickStyleMenu}" Click="OnOpenElementQuickStyleFlyout" />
+                                                        <!-- User-reported gap (2026-09-15): setting a picture fill (Inspector's own TEXT
+                                                             STYLE tab, PICTURE FILL row) had no way to unset it from the context menu — the
+                                                             ONLY place it could be cleared before was that same docked sidebar button
+                                                             (ClearTextBitmapFillCommand, already existed, just never exposed here).
+                                                             IsEnabled matches that sidebar button's own gate exactly (element-scoped here,
+                                                             since this DataTemplate's own DataContext already IS the element — same
+                                                             direct-bind precedent as GrowToFillEnabled above, not SelectedTextElement.*). -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ClearPictureFillMenu}" Command="{Binding ClearTextBitmapFillCommand}" IsEnabled="{Binding BitmapFillEnabled}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignToCropMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignLeft}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Left" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.AlignCenter}" Command="{Binding AlignSelectedElementToCropCommand}" CommandParameter="Center" />
@@ -1562,27 +1590,31 @@
                                                  to the SAME CanvasWidth/HeightPixels as the outer Border
                                                  (which is already inset by its own 1px BorderThickness)
                                                  made the image overflow the border by ~1px right/bottom. -->
-                                            <!-- IsHitTestVisible bound to !BlocksHitTesting (Phase 6,
-                                                 spec/15-template-designer.md): a LOCKED background
-                                                 element stops intercepting canvas clicks entirely, so
-                                                 the crop rect underneath it (drawn earlier in this
-                                                 canvas's own child order, hence normally occluded)
-                                                 becomes reachable again — see
-                                                 ImageElementViewModel.BlocksHitTesting's own doc
-                                                 comment for the full reasoning. -->
+                                            <!-- User-reported bug (2026-09-15): IsHitTestVisible bound to
+                                                 !BlocksHitTesting (Phase 6, spec/15-template-designer.md)
+                                                 used to make a LOCKED backdrop element stop intercepting
+                                                 canvas clicks ENTIRELY — that let left-click-drag reach the
+                                                 crop rect underneath (the original point), but also meant a
+                                                 RIGHT-click fell all the way through to the canvas's own
+                                                 empty-area menu instead of opening the backdrop's own
+                                                 ("load a background, add an image, Set as backdrop, then
+                                                 right-click it" showed the wrong menu even with the mouse
+                                                 directly over the backdrop). This Border now stays
+                                                 unconditionally hit-testable — right-click always resolves
+                                                 to whatever's visually on top, correctly — and
+                                                 OnOverlayElementPointerPressed's own code-behind explicitly
+                                                 redirects a LEFT-press on a locked backdrop to the crop
+                                                 rect's own drag instead (see that method's own comment),
+                                                 preserving the original Phase 6 crop-reachability intent
+                                                 without also breaking right-click. -->
                                             <Border Width="{Binding CanvasWidthPixels}" Height="{Binding CanvasHeightPixels}"
                                                     BorderBrush="{DynamicResource IndustryAccent}" BorderThickness="1"
                                                     Background="Transparent"
-                                                    IsHitTestVisible="{Binding !BlocksHitTesting}"
                                                     PointerPressed="OnOverlayElementPointerPressed">
                                                 <!-- Task #24: same inline-ContextMenu reasoning as the text
                                                      DataTemplate above, plus Set as Background (image-only).
-                                                     Known, stated limitation (plan-review finding, not fixed
-                                                     by this addendum): a LOCKED background element has
-                                                     IsHitTestVisible="{Binding !BlocksHitTesting}" = False on
-                                                     this same Border, so right-click can never reach it while
-                                                     it's in that state — the sidebar's own Lock toggle stays
-                                                     the only way to unlock a background element once set. -->
+                                                     Reachable via right-click even when Locked+IsBackground
+                                                     (2026-09-15 fix, see this Border's own comment above) -->
                                                 <Border.ContextMenu>
                                                     <ContextMenu Classes="Industry">
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Lock}" ToggleType="CheckBox" IsChecked="{Binding Locked, Mode=TwoWay}" />
@@ -1607,7 +1639,21 @@
                                                         </MenuItem>
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Duplicate}" InputGesture="Ctrl+D" Command="{Binding DuplicateCommand}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackground}" Command="{Binding SetAsBackgroundCommand}" CommandParameter="{Binding}" />
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SetAsBackdrop}"
+                                                                  ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SetAsBackdrop.Help}"
+                                                                  Command="{Binding SetAsBackdropCommand}" CommandParameter="{Binding}" />
+                                                        <!-- Background/backdrop naming work (2026-09-15): the demote direction —
+                                                             see PromoteBackgroundToBackdrop's own doc comment for the promote side
+                                                             on the canvas's own empty-area context menu. IsEnabled binds directly to
+                                                             IsBackground (this DataTemplate's own DataContext already IS the element,
+                                                             same direct-bind precedent as GrowToFillEnabled/ClearPictureFillMenu on the
+                                                             text element's menu) — the command's own CanExecute would refuse a
+                                                             non-backdrop element anyway, this just stops the menu item from rendering
+                                                             enabled-but-inert. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.DemoteBackdropToBackground}"
+                                                                  ToolTip.Tip="{loc:Translate Panes.TxImageEditor.DemoteBackdropToBackground.Help}"
+                                                                  Command="{Binding DemoteToBackgroundCommand}" CommandParameter="{Binding}"
+                                                                  IsEnabled="{Binding IsBackground}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.ResetToOriginalSize}" Command="{Binding ResetToOriginalSizeCommand}" CommandParameter="{Binding}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitStretch}" Command="{Binding FitCommand}" CommandParameter="Stretch" />
@@ -2156,7 +2202,7 @@
                                          via the row's own context menu instead (Task #24, already ships
                                          this item). -->
                                     <DataTemplate DataType="vm:ImageElementViewModel">
-                                        <Grid ColumnDefinitions="26,*,Auto,20,20,20" Margin="0,0,0,2"
+                                        <Grid ColumnDefinitions="26,*,Auto,20,20,20,20,20" Margin="0,0,0,2"
                                               Classes.elementRowSelected="{Binding IsSelected}"
                                               PointerPressed="OnElementRowPointerPressed">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxImageEditor.TypeBadgeImage}" />
@@ -2165,6 +2211,50 @@
                                             <ToggleButton Grid.Column="3" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniToggleTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0"
                                                           IsChecked="{Binding Locked}" Content="{loc:Translate Panes.TxImageEditor.LockGlyph}" HorizontalContentAlignment="Center"
                                                           ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Lock}" />
+                                            <!-- User-reported gap (2026-09-15): a LOCKED backdrop element has
+                                                 IsHitTestVisible="{Binding !BlocksHitTesting}" = False on the
+                                                 canvas's own Border for it (pre-existing, documented limitation,
+                                                 see that Border's own comment) — right-click on a backdrop
+                                                 falls through to whatever's underneath (the crop rect / canvas
+                                                 empty-area menu) instead of reaching the backdrop's own
+                                                 SetAsBackdrop/DemoteToBackground/Remove menu. This row is NOT
+                                                 gated by canvas hit-testing at all, so it's the reliable place
+                                                 to reach them — same Phase 8 "layers-list/context-menu parity"
+                                                 precedent Duplicate/Remove above already established, applied
+                                                 to the promote/demote pair specifically because THIS pair is
+                                                 the one the canvas menu can silently lose access to. Two
+                                                 mutually-exclusive buttons (not a converter), same glyph — a
+                                                 raw IsChecked TwoWay bind to IsBackground itself would skip
+                                                 the geometry/invariant side effects only SetAsBackdropCommand/
+                                                 DemoteToBackgroundCommand perform. Each gets its OWN column,
+                                                 not a shared one — an earlier draft had these two buttons
+                                                 share one column instead; see the dedicated comment on the
+                                                 demote button below for why that changed (the real cause was
+                                                 a stale test reference, not Grid.Column overlap itself). -->
+                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.BackdropRowGlyph}"
+                                                    Command="{Binding SetAsBackdropCommand}" CommandParameter="{Binding}"
+                                                    IsVisible="{Binding IsNotBackground}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.SetAsBackdrop.Help}" />
+                                            <!-- Real-window test finding (2026-09-15, ImageElementLayersRow_BackdropToggleButtons...):
+                                                 an earlier draft had this button share ONE Grid.Column
+                                                 with the promote button above via complementary IsVisible
+                                                 bindings. auditor correction: Grid.Column overlap was NOT
+                                                 the actual cause of the reactivity failure that draft hit
+                                                 (Grid attached properties don't affect binding reactivity)
+                                                 — the real cause was the TEST holding a Button reference
+                                                 captured BEFORE SetAsBackdropCommand's own
+                                                 OverlayElements.Move(index, 0) call, which detaches/rebuilds
+                                                 the row's container even for a same-index move; a FRESH
+                                                 query after the move saw the correct state all along (see
+                                                 that test's own doc comment). Kept on its own dedicated
+                                                 column anyway — no correctness reason to revert, and it
+                                                 reads more clearly than two controls sharing one cell. -->
+                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
+                                                    Content="{loc:Translate Panes.TxImageEditor.BackdropRowGlyph}"
+                                                    Command="{Binding DemoteToBackgroundCommand}" CommandParameter="{Binding}"
+                                                    IsVisible="{Binding IsBackground}"
+                                                    ToolTip.Tip="{loc:Translate Panes.TxImageEditor.DemoteBackdropToBackground.Help}" />
                                             <!-- TX workflow modernization plan, Phase 8: layers-list/
                                                  context-menu parity, so the two surfaces don't drift
                                                  apart again — that drift is exactly how the old Font-
@@ -2177,7 +2267,7 @@
                                                  button's Click fires, same "any button in the row
                                                  selects first" precedent RemoveCommand's own comment
                                                  below already documents. -->
-                                            <Button Grid.Column="4" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
+                                            <Button Grid.Column="6" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.DuplicateRowGlyph}"
                                                     Command="{Binding DuplicateCommand}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Duplicate}" />
@@ -2187,8 +2277,11 @@
                                                  already binds — CommandParameter="{Binding}" resolves
                                                  against this row's own DataContext (the element itself,
                                                  not SelectedOverlayElement), matching that item's own
-                                                 precedent exactly. -->
-                                            <Button Grid.Column="5" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
+                                                 precedent exactly. Reachable here regardless of Locked/
+                                                 IsBackground — unlike the canvas's own context menu, this
+                                                 row is never gated by canvas hit-testing, so it's the
+                                                 reliable way to remove a backdrop element (2026-09-15). -->
+                                            <Button Grid.Column="7" Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Width="{DynamicResource IndustryMiniIconButtonSize}" Height="{DynamicResource IndustryMiniIconButtonSize}" Padding="0" Margin="2,0,0,0"
                                                     Content="{loc:Translate Panes.TxImageEditor.RemoveRowGlyph}"
                                                     Command="{Binding RemoveCommand}" CommandParameter="{Binding}"
                                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Remove}" />
@@ -2842,18 +2935,15 @@
                         <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
                             <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                                 <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
-                                     discards all edits with no confirmation." Arm/confirm — see
-                                     IsCancelArmed's own doc comment. Classes.IndustryBtnDanger dynamically
-                                     toggled on top of the normal Secondary look, same visual language a
-                                     destructive action already uses elsewhere in this design system. -->
-                                <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding IsCancelArmed}"
+                                     discards all edits with no confirmation." User-reported feedback
+                                     (2026-09-15): the original arm/confirm (a second click on this SAME
+                                     button, swapping its own label to "DISCARD?") is gone — Cancel now
+                                     shows a real Yes/No dialog via CancelAsync/ConfirmRequested instead,
+                                     same shape as template recall's own dialog. This button is a plain,
+                                     always-"CANCEL" button again. -->
+                                <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary"
                                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                        Command="{Binding CancelCommand}">
-                                    <Panel>
-                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.Cancel}" IsVisible="{Binding !IsCancelArmed}" />
-                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmCancelDiscardShort}" IsVisible="{Binding IsCancelArmed}" />
-                                    </Panel>
-                                </Button>
+                                        Content="{loc:Translate Panes.TxImageEditor.Cancel}" Command="{Binding CancelCommand}" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                         Content="{loc:Translate Panes.TxImageEditor.Apply}"
                                         ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Apply.Help}"
