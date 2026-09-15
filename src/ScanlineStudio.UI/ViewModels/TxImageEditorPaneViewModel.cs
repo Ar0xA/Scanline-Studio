@@ -2624,8 +2624,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// Read fresh by the View's own canvas-context-menu <c>Opened</c> handler (same
     /// "no live bound bool today, View computes a View-owned check right before the menu shows"
     /// pattern the Save Template item there already established), not an <c>[ObservableProperty]</c>
-    /// -- nothing needs a live-updating notification for this one. <see cref="HasNoBackgroundOrOverlayElements"/>
-    /// below DOES need one, since it feeds a live cross-VM bind.</summary>
+    /// -- its own PropertyChanged is instead raised manually from <see cref="NotifyWorkingCopyGeometryChanged"/>
+    /// (2026-09-15: <c>TxControlsPaneViewModel.CanLoadBackground</c> now reads this LIVE, to
+    /// re-disable Browse/Stock the instant <see cref="LoadBackground"/> installs a real photo).
+    /// <see cref="HasNoBackgroundOrOverlayElements"/> below needs the identical treatment, same
+    /// reasoning.</summary>
     public bool HasRealBackground => _sourceBaseline is not BlankImageSource;
 
     /// <summary>User-reported bug (2026-09-15): "once i removed the background however stock browse
@@ -2749,6 +2752,49 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             _sourceBaseline = placeholder;
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(placeholder);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
+
+    /// <summary>User-requested (2026-09-15): "even if there are elements on the canvas, if no
+    /// background has been picked before, i should be able to load one later also, not only as first
+    /// canvas element." Before this, Browse/Stock ALWAYS discarded the whole editor and opened a
+    /// brand-new one (<c>TxControlsPaneViewModel.OpenEditorWithLoadedSourceAsync</c>) -- correct when
+    /// replacing an EXISTING real background (a genuinely disruptive "start over" action), but wrong
+    /// when there was never a real background to begin with: <see cref="OverlayElements"/>/adjustments/
+    /// crop are already completely independent of the background (RemoveBackground/
+    /// PromoteBackgroundToBackdrop/DemoteBackdropToBackground above all prove this by leaving
+    /// OverlayElements untouched on every background swap), so there was never anything for the
+    /// wholesale editor-replace to actually protect in this specific case.
+    /// <para>Public (not a <c>[RelayCommand]</c>) since this is called programmatically by
+    /// <c>TxControlsPaneViewModel.OpenEditorForSourceAsync</c> on the ALREADY-open editor instance --
+    /// no XAML control binds to it directly, same shape as <see cref="NotifyTransmitAvailabilityChanged"/>.
+    /// Refuses (silent no-op) when a real background already exists -- the caller's own gate
+    /// (<see cref="HasRealBackground"/>) is the intended guard, this is the same defensive body-level
+    /// backstop every other geometry/background command in this class already documents.</para>
+    /// <para><see cref="CropRect"/> is deliberately left UNTOUCHED, same reasoning
+    /// <see cref="RemoveBackground"/>/<see cref="PromoteBackgroundToBackdrop"/>'s own doc comments
+    /// give: resetting it here would reproject every OTHER overlay element's bounds too, not just
+    /// install a background.</para></summary>
+    public void LoadBackground(IImageSource source)
+    {
+        if (HasRealBackground)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            _sourceBaseline = source;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(source);
         }
         finally
         {
@@ -6050,10 +6096,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
         OnPropertyChanged(nameof(WorkingCopyFooterText));
-        // HasRealBackground reads _sourceBaseline, which every caller of this method (RemoveBackground/
-        // PromoteBackgroundToBackdrop/DemoteBackdropToBackground/FlattenElementAsync/ApplyState) always
-        // reassigns right before calling ReplaceSourceAndWorkingCopy -- see HasNoBackgroundOrOverlayElements's
-        // own doc comment.
+        // HasRealBackground/HasNoBackgroundOrOverlayElements both read _sourceBaseline, which every
+        // caller of this method (RemoveBackground/PromoteBackgroundToBackdrop/
+        // DemoteBackdropToBackground/FlattenElementAsync/ApplyState/LoadBackground) always reassigns
+        // right before calling ReplaceSourceAndWorkingCopy -- see HasNoBackgroundOrOverlayElements's
+        // own doc comment. HasRealBackground's own doc comment used to claim nothing needed a live
+        // notification for it -- true until TxControlsPaneViewModel.CanLoadBackground started reading
+        // it live (2026-09-15) to re-enable Browse/Stock the instant LoadBackground installs a real
+        // photo.
+        OnPropertyChanged(nameof(HasRealBackground));
         OnPropertyChanged(nameof(HasNoBackgroundOrOverlayElements));
         // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
         // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path.

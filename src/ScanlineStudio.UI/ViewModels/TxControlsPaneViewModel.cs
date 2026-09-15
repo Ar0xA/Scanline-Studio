@@ -879,6 +879,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// false and nothing else overrides it.</summary>
     public bool CanChangeSourceOrMode => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
 
+    /// <summary>User-requested (2026-09-15): "even if there are elements on the canvas, if no
+    /// background has been picked before, i should be able to load one later also, not only as first
+    /// canvas element." <see cref="CanChangeSourceOrMode"/> above stays scoped to genuinely SAFE
+    /// cases for changing MODE too (a mode change reflows dimensions/crop, disruptive regardless of
+    /// whether a background exists) -- widening it broadly would have also relaxed the mode ComboBox
+    /// and Copy-to-TX for a case that's only actually safe for loading a BACKGROUND specifically.
+    /// This is the wider, background-loading-only gate: Browse/Stock/File&gt;Open now stay reachable
+    /// whenever the currently open editor has no real background yet, REGARDLESS of overlay elements
+    /// or other unsaved edits -- <see cref="TxImageEditorPaneViewModel.LoadBackground"/> installs the
+    /// picked photo directly into that SAME editor instance instead of discarding it for a new one
+    /// (<see cref="OpenEditorForSourceAsync"/>'s own new branch), so there is nothing left for the
+    /// old wholesale-replace gate to protect in this specific case. Not used by the mode ComboBox or
+    /// Copy-to-TX -- both keep binding to <see cref="CanChangeSourceOrMode"/>, unchanged.</summary>
+    public bool CanLoadBackground => !IsEditorOpen || IsCurrentEditorBlankAndUntouched() || _currentEditor is { HasRealBackground: false };
+
     private bool CanQuickSelectMode() => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
 
     /// <summary>Backs the 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7).
@@ -1253,6 +1268,36 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// surface a refusal on my own caller's error surface instead."</para></summary>
     private async Task<bool> OpenEditorForSourceAsync(object source, string fileName, IReadOnlyDictionary<string, string>? contactVariables, bool seedLiveContact)
     {
+        // User-requested (2026-09-15): "even if there are elements on the canvas, if no background
+        // has been picked before, i should be able to load one later also, not only as first canvas
+        // element." When the currently open editor has no real background yet, install the picked
+        // photo directly into THAT editor instead of discarding it for a brand-new one below --
+        // OverlayElements/adjustments/crop are already completely independent of the background (see
+        // TxImageEditorPaneViewModel.LoadBackground's own doc comment), so there is nothing to lose.
+        // contactVariables/seedLiveContact are deliberately NOT reapplied here -- the already-open
+        // editor's own contact-variable seeding (from however it was originally opened) stays as-is;
+        // reseeding on a background swap alone isn't what this fixes.
+        if (IsEditorOpen && _currentEditor is { HasRealBackground: false } editor)
+        {
+            IImageSource inPlaceSource;
+            try
+            {
+                inPlaceSource = await LoadOriginalSourceAsync(source);
+            }
+            catch (Exception ex)
+            {
+                // Unlike the wholesale-replace failure path below, a failed in-place background load
+                // must NOT touch the editor at all -- there's a real, otherwise-untouched session
+                // (elements, adjustments, crop) still sitting there the operator hasn't lost yet.
+                Log.LoadTxSourceImageFailed(_logger, fileName, ex);
+                ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+                return true;
+            }
+
+            editor.LoadBackground(inPlaceSource);
+            return true;
+        }
+
         if (!TryClaimEditorSlotForNewSource())
         {
             return false;
@@ -1261,12 +1306,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         IImageSource original;
         try
         {
-            original = source switch
-            {
-                StockImageEntry stockEntry => await _stockLibrary.LoadOriginalAsync(stockEntry),
-                string path => await _imageFileLoader.LoadOriginalAsync(path),
-                _ => throw new InvalidOperationException($"Unrecognized TX source type: {source.GetType()}"),
-            };
+            original = await LoadOriginalSourceAsync(source);
         }
         catch (Exception ex)
         {
@@ -1288,6 +1328,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables, seedLiveContact);
         return true;
     }
+
+    /// <summary><paramref name="source"/> is either a <see cref="StockImageEntry"/> or a
+    /// <see cref="string"/> file path -- extracted so <see cref="OpenEditorForSourceAsync"/>'s own
+    /// in-place-load branch and its ordinary wholesale-replace path share the exact same loading
+    /// logic instead of two independently-maintained copies.</summary>
+    private Task<IImageSource> LoadOriginalSourceAsync(object source) => source switch
+    {
+        StockImageEntry stockEntry => _stockLibrary.LoadOriginalAsync(stockEntry),
+        string path => _imageFileLoader.LoadOriginalAsync(path),
+        _ => throw new InvalidOperationException($"Unrecognized TX source type: {source.GetType()}"),
+    };
 
     /// <summary>RX/TX pipeline fix plan (2026-09-01), item 3: public entry point for the RX Gallery's
     /// "Send to TX" -- the only other caller of <see cref="OpenEditorForSourceAsync"/> outside this
@@ -1563,7 +1614,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements"/> (user-reported bug,
     /// 2026-09-15: Browse/Stock/Open Editor staying greyed out after Remove Background) -- same
     /// reasoning, a DIFFERENT finer-grained transition <see cref="IsCurrentEditorBlankAndUntouched"/>
-    /// now also depends on.</summary>
+    /// now also depends on. <see cref="TxImageEditorPaneViewModel.HasRealBackground"/> gets its own
+    /// separate re-raise (only <see cref="CanLoadBackground"/>, not <see cref="CanChangeSourceOrMode"/>
+    /// or <see cref="QuickSelectModeCommand"/> -- see that property's own doc comment for why mode
+    /// selection stays on the narrower gate) the instant <see cref="TxImageEditorPaneViewModel.LoadBackground"/>
+    /// installs a real photo, so Browse/Stock re-lock immediately rather than staying visibly
+    /// enabled-but-now-inert until some unrelated later notification happens to fire.</summary>
     private void OnCurrentEditorPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasUnsavedEdits)
@@ -1571,6 +1627,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         {
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
+            OnPropertyChanged(nameof(CanLoadBackground));
+        }
+        else if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasRealBackground))
+        {
+            OnPropertyChanged(nameof(CanLoadBackground));
         }
     }
 
