@@ -395,22 +395,49 @@
                                  above uses). OnTemplateRenameKeyDown commits on Enter, reverts on Esc.
                                  IsEnabled gated on IsLoadInFlight too (yoniq-auditor finding: only the
                                  ListBox itself was gated before, so these stayed clickable mid-load). -->
-                            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}"
-                                  IsVisible="{Binding ReadyRack.SelectedSlot.Template, Converter={x:Static ObjectConverters.IsNotNull}}"
-                                  IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
+                            <!-- User-reported gap (2026-09-15), two separate bugs in one row:
+                                 (1) TextBox + 4 buttons (LOAD/UNPIN/EXPORT/DELETE) on one
+                                 Auto/*/Auto/Auto/Auto row never fit the rail's fixed 212px column —
+                                 same class of overflow as the TEMPLATE LIBRARY header row fixed
+                                 earlier this session. Rename box gets its own row; the 4 buttons go
+                                 in a WrapPanel (not another fixed-column Grid) so they degrade to two
+                                 rows instead of clipping if the column is ever narrower than their
+                                 combined width, rather than assuming a specific pixel budget will
+                                 always fit.
+                                 (2) This whole row rendered VISIBLE on every app launch with nothing
+                                 selected (verified permanent, not a startup flash — a fresh window sat
+                                 for 12+ real seconds with zero interaction and never self-corrected;
+                                 yoniq-auditor caught an earlier, wrong "async DataContext timing"
+                                 framing of this same fix). Real cause: ReadyRack.SelectedSlot.Template
+                                 is a TWO-STEP path, and the FIRST step (SelectedSlot) is null the
+                                 entire time nothing's selected — a null intermediate makes Avalonia's
+                                 binding engine yield UnsetValue for the whole path (the converter
+                                 never even runs), and IsVisible falls back to ITS OWN property default,
+                                 which is true, not false. (The Library strip below has no such gap —
+                                 SelectedLibraryItem is a single-level path, so null there is a real
+                                 value the converter sees and correctly turns into false; confirmed by
+                                 testing that its own FallbackValue is a no-op.) FallbackValue=False is
+                                 Avalonia's own mechanism for "this path can't be evaluated," same fix
+                                 shape as this codebase's own ComboBox placeholder/FallbackValue gotcha
+                                 elsewhere. -->
+                            <StackPanel x:Name="RackActionStrip" Spacing="{StaticResource IndustrySpacingTight}"
+                                        IsVisible="{Binding ReadyRack.SelectedSlot.Template, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}"
+                                        IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
                                 <TextBox x:Name="TemplateRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedSlot.Template.EditingName}"
                                          Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
                                          KeyDown="OnTemplateRenameKeyDown" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
-                                <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.UnpinTemplate}" Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
-                                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        IsEnabled="{Binding !ReadyRack.SelectedSlot.Template.IsExporting}"
-                                        Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
-                                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding ReadyRack.DeleteFromRackCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
-                            </Grid>
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            Content="{loc:Translate Panes.TxImageEditor.UnpinTemplate}" Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            IsEnabled="{Binding !ReadyRack.SelectedSlot.Template.IsExporting}"
+                                            Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            Content="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" Command="{Binding ReadyRack.DeleteFromRackCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
+                                </WrapPanel>
+                            </StackPanel>
                         </StackPanel>
                     </HeaderedContentControl>
 
@@ -587,28 +614,38 @@
                                  item is selected. OnLibraryRenameKeyDown commits on Enter, reverts on
                                  Esc. Delete's own IsPendingDelete arm/confirm still renders here
                                  (unchanged), just relocated off the always-visible row. -->
-                            <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}"
-                                  IsVisible="{Binding ReadyRack.SelectedLibraryItem, Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <!-- User-reported gap (2026-09-15): same 212px overflow the rack's own
+                                 action row had (see that row's own comment, above in this file), same
+                                 WrapPanel fix. Does NOT share the rack row's other bug: SelectedLibraryItem
+                                 is a single-level path (unlike SelectedSlot.Template's two-step one), so
+                                 a null value here is a REAL null the converter correctly sees and turns
+                                 into false — confirmed by testing that removing FallbackValue from just
+                                 this binding changes nothing. Kept anyway as harmless defense-in-depth,
+                                 matching the rack row's own shape. -->
+                            <StackPanel x:Name="LibraryActionStrip" Grid.Row="3" Spacing="{StaticResource IndustrySpacingTight}"
+                                        IsVisible="{Binding ReadyRack.SelectedLibraryItem, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}">
                                 <TextBox x:Name="LibraryRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedLibraryItem.EditingName}"
                                          Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
                                          KeyDown="OnLibraryRenameKeyDown" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
-                                <ToggleButton Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                              IsChecked="{Binding ReadyRack.SelectedLibraryItem.IsPinned, Mode=OneWay}" IsEnabled="{Binding ReadyRack.SelectedLibraryItem.CanPin}"
-                                              Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}"
-                                              Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
-                                <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
-                                        IsEnabled="{Binding !ReadyRack.SelectedLibraryItem.IsExporting}"
-                                        Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
-                                <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}"
-                                        Padding="6,0" Command="{Binding ReadyRack.DeleteCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}">
-                                    <Panel>
-                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
-                                        <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
-                                    </Panel>
-                                </Button>
-                            </Grid>
+                                <WrapPanel>
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
+                                    <ToggleButton Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                                  IsChecked="{Binding ReadyRack.SelectedLibraryItem.IsPinned, Mode=OneWay}" IsEnabled="{Binding ReadyRack.SelectedLibraryItem.CanPin}"
+                                                  Command="{Binding ReadyRack.TogglePinCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}"
+                                                  Content="{loc:Translate Panes.TxImageEditor.PinTemplate}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
+                                            IsEnabled="{Binding !ReadyRack.SelectedLibraryItem.IsExporting}"
+                                            Content="{loc:Translate Panes.TxImageEditor.ExportTemplate}" Command="{Binding ReadyRack.ExportCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
+                                    <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Classes.IndustryBtnDanger="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}"
+                                            Padding="6,0" Margin="0,0,3,3" Command="{Binding ReadyRack.DeleteCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}">
+                                        <Panel>
+                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.DeleteTemplate}" IsVisible="{Binding !ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
+                                            <TextBlock Text="{loc:Translate Panes.TxImageEditor.ConfirmDeleteTemplate}" IsVisible="{Binding ReadyRack.SelectedLibraryItem.IsPendingDelete}" />
+                                        </Panel>
+                                    </Button>
+                                </WrapPanel>
+                            </StackPanel>
 
                             <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="4">
                                 <TextBox x:Name="NewTemplateNameTextBox" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
