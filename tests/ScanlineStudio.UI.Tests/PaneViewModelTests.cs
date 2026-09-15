@@ -5154,6 +5154,46 @@ public sealed class PaneViewModelTests
         Assert.False(vm.CanChangeSourceOrMode, "a real photo pick must re-lock mode-select/Browse/STOCK, same as before this fix.");
     }
 
+    // User-reported bug (2026-09-15): "once i removed the background however stock browse and open
+    // editor are still greyed out." RemoveBackgroundCommand pushes a real undo step (HasUnsavedEdits
+    // flips true), and _currentEditorIsBlank is a one-shot snapshot from editor-open time that never
+    // retroactively flips true just because the editor's CURRENT state went blank mid-session -- so
+    // the OLD gate stayed locked forever after, even though there was nothing left to protect. Fixed
+    // via TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements, a live check OR'd into
+    // IsCurrentEditorBlankAndUntouched alongside the existing snapshot check.
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RemoveBackgroundOnARealPhotoWithNoOtherElements_ReEnablesBrowseStockAndOpenEditor()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        Assert.False(vm.CanChangeSourceOrMode, "sanity: a real photo pick starts locked, same as the existing coverage above.");
+
+        editor.RemoveBackgroundCommand.Execute(null);
+
+        Assert.True(vm.CanChangeSourceOrMode, "removing the background left nothing to protect, so Browse/Stock/Open Editor must re-enable.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_RemoveBackgroundWithAnOtherOverlayElementStillPresent_StaysLocked()
+    {
+        // Must NOT relax when OTHER real work (an added element) would still be silently discarded --
+        // only the specific "genuinely nothing left" case.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+
+        editor.RemoveBackgroundCommand.Execute(null);
+
+        Assert.False(vm.CanChangeSourceOrMode, "an added text element is still real work a Browse/Stock click would silently discard.");
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_SelectImageCommand_StillDisallowedWhileARealEditIsInProgress()
     {

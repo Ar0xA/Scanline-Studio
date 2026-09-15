@@ -851,8 +851,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// opens a fresh one at the new mode's size. Deliberately does NOT relax for a manually-picked
     /// REAL photo (Browse/Stock) that just hasn't been edited yet, a re-edit-of-an-already-applied-
     /// image session, or a genuinely in-progress edit (<see cref="TxImageEditorPaneViewModel.HasUnsavedEdits"/>
-    /// true) -- real work (or a deliberate photo pick) is never silently made switchable-away-from.</summary>
-    private bool IsCurrentEditorBlankAndUntouched() => _currentEditorIsBlank && _currentEditor is { HasUnsavedEdits: false };
+    /// true) -- real work (or a deliberate photo pick) is never silently made switchable-away-from.
+    /// <para>User-reported bug (2026-09-15): "once i removed the background however stock browse and
+    /// open editor are still greyed out." <c>_currentEditorIsBlank</c> is a ONE-SHOT snapshot from
+    /// editor-open time -- it never flips true just because the operator later cleared the background
+    /// mid-session, and Remove Background's own Undo step flips <c>HasUnsavedEdits</c> true, so the
+    /// snapshot check above stayed locked forever after. OR'd with the editor's own LIVE
+    /// <see cref="TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements"/> instead of replacing
+    /// the snapshot check -- see that property's own doc comment: a genuinely empty editor (no
+    /// background, no elements, however it got that way) is always safe to switch away from, while
+    /// one with OTHER real work still correctly stays locked either way.</para></summary>
+    private bool IsCurrentEditorBlankAndUntouched() =>
+        (_currentEditorIsBlank && _currentEditor is { HasUnsavedEdits: false })
+        || _currentEditor is { HasNoBackgroundOrOverlayElements: true };
 
     /// <summary>Auditor-found regression (2026-08-17, usability-gap review): the mode ComboBox and
     /// Browse/STOCK were still hard-gated on a plain <c>!IsEditorOpen</c> binding in AXAML, which
@@ -1548,10 +1559,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// own <c>CanExecute</c> the moment the currently-open editor's <see cref="TxImageEditorPaneViewModel.HasUnsavedEdits"/>
     /// flips (typically false-&gt;true, the first real edit) -- <see cref="OnIsEditorOpenChanged"/>
     /// alone only re-evaluates on open/close, not on this finer-grained transition
-    /// <see cref="IsCurrentEditorBlankAndUntouched"/> now also depends on.</summary>
+    /// <see cref="IsCurrentEditorBlankAndUntouched"/> now also depends on. Also reacts to
+    /// <see cref="TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements"/> (user-reported bug,
+    /// 2026-09-15: Browse/Stock/Open Editor staying greyed out after Remove Background) -- same
+    /// reasoning, a DIFFERENT finer-grained transition <see cref="IsCurrentEditorBlankAndUntouched"/>
+    /// now also depends on.</summary>
     private void OnCurrentEditorPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasUnsavedEdits))
+        if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasUnsavedEdits)
+            || e.PropertyName == nameof(TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements))
         {
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
