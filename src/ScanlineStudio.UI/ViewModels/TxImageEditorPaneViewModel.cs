@@ -4466,8 +4466,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RecomputePreview();
     }
 
+    // User-reported bug (2026-09-15): "when i set an image as backdrop and i pick the option 'reset
+    // to original size' it gives an error but does not return as a non-backdropped image of the
+    // previous size." Root cause: this had no Locked check at all, unlike every other
+    // geometry-changing operation in this class (NudgeSelectedElements' own "if (element.Locked)
+    // continue" is the established convention) -- a locked backdrop is defined as covering the whole
+    // frame (X=0.5,Y=0.5,W=1,H=1, see SetAsBackdrop's own doc comment), so shrinking it to its
+    // natural size left it in a broken, self-contradictory state: still Locked and IsBackground=true
+    // (so still unreachable by normal drag, still treated as the frame's backdrop) but no longer
+    // actually covering the frame. "Gives an error" was the (accurate but confusingly-worded, given
+    // what actually happened) ResetToOriginalSizeFitted/ResetToOriginalSizeUnavailable status message
+    // -- the real problem is this command running at all on a locked element, not its message text.
     private bool CanResetImageElementToOriginalSize(ImageElementViewModel? element) =>
-        element is not null && element.NaturalPixelWidth > 0 && element.NaturalPixelHeight > 0 && OverlayElements.Contains(element);
+        element is not null && !element.Locked && element.NaturalPixelWidth > 0 && element.NaturalPixelHeight > 0 && OverlayElements.Contains(element);
 
     /// <summary>TX workflow modernization plan, Phase 7. "Original size" means the element renders
     /// at its own NATURAL pixel count IN THE TRANSMITTED FRAME, which is not a division by the
@@ -4488,7 +4499,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [RelayCommand(CanExecute = nameof(CanResetImageElementToOriginalSize))]
     private void ResetImageElementToOriginalSize(ImageElementViewModel? element)
     {
-        if (element is null || !OverlayElements.Contains(element) || element.NaturalPixelWidth <= 0 || element.NaturalPixelHeight <= 0)
+        // Body-level backstop, same "CanExecute alone isn't a hard gate for a direct Execute() call"
+        // reasoning this class's other commands already document (e.g. QuickSelectMode).
+        if (element is null || element.Locked || !OverlayElements.Contains(element) || element.NaturalPixelWidth <= 0 || element.NaturalPixelHeight <= 0)
         {
             return;
         }
