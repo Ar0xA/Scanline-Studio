@@ -6463,6 +6463,55 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Same(originalSource, vm.CurrentSource);
     }
 
+    // User-requested (2026-09-15): "even if there are elements on the canvas, if no background has
+    // been picked before, i should be able to load one later also, not only as first canvas
+    // element." LoadBackground is TxControlsPaneViewModel.OpenEditorForSourceAsync's own new
+    // in-place path -- these pin the VM-layer contract directly (refusal, undo, element preservation)
+    // independent of the parent VM's own wiring, which PaneViewModelTests.cs covers separately.
+
+    [AvaloniaFact]
+    public void LoadBackground_WithNoRealBackgroundYet_InstallsItAndPreservesOverlayElements()
+    {
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = Assert.Single(vm.OverlayElements);
+        Assert.False(vm.HasRealBackground);
+        var newSource = CreateSource(4, 4);
+
+        vm.LoadBackground(newSource);
+
+        Assert.True(vm.HasRealBackground);
+        Assert.Same(newSource, vm.CurrentSource);
+        Assert.Same(element, Assert.Single(vm.OverlayElements));
+    }
+
+    [AvaloniaFact]
+    public void LoadBackground_WithARealBackgroundAlreadyLoaded_IsRefusedAsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var originalSource = vm.CurrentSource;
+        Assert.True(vm.HasRealBackground);
+
+        vm.LoadBackground(CreateSource(6, 6));
+
+        Assert.Same(originalSource, vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public void LoadBackground_UndoRestoresTheBlankPlaceholder()
+    {
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer());
+        var blankSource = vm.CurrentSource;
+
+        vm.LoadBackground(CreateSource(4, 4));
+        Assert.True(vm.HasRealBackground);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.HasRealBackground);
+        Assert.Same(blankSource, vm.CurrentSource);
+    }
+
     [AvaloniaFact]
     public void RemoveBackgroundCommand_DoesNotTouchExistingBackdropElements()
     {

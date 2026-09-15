@@ -5022,18 +5022,95 @@ public sealed class PaneViewModelTests
         // Same Dispose()-wiring follow-up, for the CloseBlankEditorForReplacement discard site -- a
         // DIFFERENT code path from Cancel/Apply above (no EditorClosed-triggered auto-reopen; the
         // caller immediately opens a replacement editor instead).
+        // Moved from SelectImageCommand to CopyReceivedImageToTxCommand (2026-09-15): Browse/Stock no
+        // longer discard a blank editor at all -- they now load the picked photo directly into the
+        // SAME instance (TxImageEditorPaneViewModel.LoadBackground, see OpenEditorForSourceAsync's
+        // own new branch), so CloseBlankEditorForReplacement is unreachable from that path anymore.
+        // Copy-to-TX still goes through TryClaimEditorSlotForNewSource/CloseBlankEditorForReplacement
+        // directly (CopyReceivedImageToTxAsync doesn't route through OpenEditorForSourceAsync at
+        // all), so it's still the real, reachable exerciser of this exact dispose site.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var receivedImage = new FakeReceivedImageBuffer { Current = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, receivedImage, new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
         var blankEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
         var discardedBitmap = blankEditor.WorkingCopyBitmap;
         Assert.NotNull(discardedBitmap);
 
-        var realEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var realEditor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
 
         Assert.NotSame(blankEditor, realEditor);
         Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+    }
+
+    // User-requested (2026-09-15): "even if there are elements on the canvas, if no background has
+    // been picked before, i should be able to load one later also, not only as first canvas element."
+    // The core scenario this whole feature is for: elements/edits already exist, no real background
+    // yet -- Browse/Stock must stay reachable AND must not discard any of that existing work.
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_WithOverlayElementsButNoBackground_LoadsInPlacePreservingTheElements()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = Assert.Single(editor.OverlayElements);
+        Assert.True(vm.CanLoadBackground, "no real background yet, so Browse/Stock must stay reachable even with an element already on the canvas.");
+        Assert.False(vm.CanChangeSourceOrMode, "mode-select stays locked regardless -- a mode change is disruptive independent of background state.");
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(element, Assert.Single(editor.OverlayElements));
+        Assert.True(editor.HasRealBackground);
+        Assert.Equal(9, editor.CurrentSource.Width);
+        Assert.False(vm.CanLoadBackground, "a real background now exists, so Browse/Stock must re-lock.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectStockImageCommand_WithOverlayElementsButNoBackground_LoadsInPlacePreservingTheElements()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var stockEntry = new StockImageEntry("s1", "stock.jpg", "/tmp/stock.jpg");
+        var stockLibrary = new FakeStockImageLibrary { FullImageToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = Assert.Single(editor.OverlayElements);
+
+        await vm.SelectStockImageCommand.ExecuteAsync(stockEntry);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(element, Assert.Single(editor.OverlayElements));
+        Assert.True(editor.HasRealBackground);
+        Assert.Equal(9, editor.CurrentSource.Width);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_LoadFailsWithOverlayElementsButNoBackground_LeavesTheEditorUntouched()
+    {
+        // Unlike the wholesale-replace failure path (which used to nuke the whole editor even for a
+        // Browse failure), a failed IN-PLACE background load must not touch anything -- there's real,
+        // otherwise-untouched work (the element) still sitting there the operator hasn't lost yet.
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader();
+        imageFileLoader.FailForPath["/tmp/broken.png"] = new InvalidOperationException("boom");
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/broken.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var element = Assert.Single(editor.OverlayElements);
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Same(element, Assert.Single(editor.OverlayElements));
+        Assert.False(editor.HasRealBackground);
+        Assert.True(vm.IsEditorOpen);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
+        Assert.NotNull(vm.ErrorMessage);
     }
 
     [AvaloniaFact]
@@ -5137,21 +5214,32 @@ public sealed class PaneViewModelTests
     // was: relaxed while the currently-open editor is blank/untouched.
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_SelectImageCommand_AllowedWhileTheBlankPlaceholderEditorIsOpen_ReplacesItWithTheRealPhoto()
+    public async Task TxControlsPaneViewModel_SelectImageCommand_AllowedWhileTheBlankPlaceholderEditorIsOpen_LoadsItIntoTheSameEditor()
     {
+        // User-requested (2026-09-15): "even if there are elements on the canvas, if no background
+        // has been picked before, i should be able to load one later also, not only as first canvas
+        // element." Superseded this test's own original premise (Browse REPLACED the blank editor
+        // with a brand-new instance) -- it now loads the picked photo directly into the SAME editor
+        // via TxImageEditorPaneViewModel.LoadBackground, so OverlayElements/adjustments/crop survive
+        // too, not just the blank-editor case this test happens to cover. No EditorOpened fires (same
+        // instance stays open), so this drives SelectImageCommand directly instead of through
+        // OpenEditorAsync's own "wait for EditorOpened" choreography.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
         var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
         var blankEditor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
         Assert.True(vm.CanChangeSourceOrMode);
+        Assert.False(blankEditor.HasRealBackground);
 
-        var realEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
 
-        Assert.NotSame(blankEditor, realEditor);
-        Assert.Equal(9, realEditor.CurrentSource.Width);
         Assert.True(vm.IsEditorOpen);
-        Assert.False(vm.CanChangeSourceOrMode, "a real photo pick must re-lock mode-select/Browse/STOCK, same as before this fix.");
+        Assert.True(blankEditor.HasRealBackground);
+        Assert.Equal(9, blankEditor.CurrentSource.Width);
+        Assert.False(vm.CanChangeSourceOrMode, "a real photo pick must re-lock mode-select, same as before this fix.");
+        Assert.False(vm.CanLoadBackground, "and re-lock Browse/Background too, now that a real background exists.");
     }
 
     // User-reported bug (2026-09-15): "once i removed the background however stock browse and open
