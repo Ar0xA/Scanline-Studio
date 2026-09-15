@@ -641,6 +641,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         ReadyRack = readyRack;
         ReadyRack.TemplateSelected += OnReadyRackTemplateSelected;
         ReadyRack.TemplateDirectFireRequested += OnReadyRackDirectFireRequested;
+        // User-reported bug (2026-09-15): after Remove Background, Browse/Stock/Open Editor in the
+        // sidebar stayed greyed out -- see HasNoBackgroundOrOverlayElements's own doc comment. Every
+        // element add/remove (AddOverlayElement, RemoveOverlayElement, FlattenElementAsync,
+        // DemoteBackdropToBackgroundAsync, ApplyState's wholesale Undo/Redo restore, and every other
+        // OverlayElements mutation) funnels through this ONE collection, so a single subscription
+        // here covers all of them instead of patching each call site individually.
+        OverlayElements.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoBackgroundOrOverlayElements));
 
         _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
         WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
@@ -2617,8 +2624,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// Read fresh by the View's own canvas-context-menu <c>Opened</c> handler (same
     /// "no live bound bool today, View computes a View-owned check right before the menu shows"
     /// pattern the Save Template item there already established), not an <c>[ObservableProperty]</c>
-    /// -- nothing needs a live-updating notification for this one.</summary>
+    /// -- nothing needs a live-updating notification for this one. <see cref="HasNoBackgroundOrOverlayElements"/>
+    /// below DOES need one, since it feeds a live cross-VM bind.</summary>
     public bool HasRealBackground => _sourceBaseline is not BlankImageSource;
+
+    /// <summary>User-reported bug (2026-09-15): "once i removed the background however stock browse
+    /// and open editor are still greyed out." <c>TxControlsPaneViewModel.CanChangeSourceOrMode</c>
+    /// gates Browse/Stock/Open Editor on <c>_currentEditorIsBlank</c> (a one-shot snapshot from
+    /// editor-OPEN time) plus <see cref="HasUnsavedEdits"/> being false -- <see cref="RemoveBackground"/>
+    /// pushes a real undo step, so <see cref="HasUnsavedEdits"/> flips true and that gate stays
+    /// locked even though the operator just deliberately cleared everything there was to protect.
+    /// This is the live, CURRENT-state equivalent of that snapshot: true when there is genuinely
+    /// nothing left that a Browse/Stock click would silently discard -- no real background AND no
+    /// overlay elements (text/box/line/image; a backdrop counts, since it's an <see cref="OverlayElements"/>
+    /// member like any other). <see cref="TxControlsPaneViewModel.IsCurrentEditorBlankAndUntouched"/>
+    /// OR's this in alongside its existing snapshot check, so a genuinely blank-and-empty editor stays
+    /// switchable-away-from regardless of how it got that way, while an editor with OTHER real work
+    /// (added text, an inserted image) still correctly stays locked. Raised from
+    /// <see cref="NotifyWorkingCopyGeometryChanged"/> (the shared choke point every
+    /// <c>_sourceBaseline</c>-affecting command already funnels through) and from the
+    /// <see cref="OverlayElements"/>.<c>CollectionChanged</c> subscription wired in the
+    /// constructor.</summary>
+    public bool HasNoBackgroundOrOverlayElements => !HasRealBackground && OverlayElements.Count == 0;
 
     /// <summary>User-requested (2026-09-15, background/backdrop naming work): the reverse of
     /// <see cref="SetAsBackdrop"/>. Bakes the CURRENT background photo -- crop and adjustments
@@ -5912,6 +5939,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(WorkingCopyWidth));
         OnPropertyChanged(nameof(WorkingCopyHeight));
         OnPropertyChanged(nameof(WorkingCopyFooterText));
+        // HasRealBackground reads _sourceBaseline, which every caller of this method (RemoveBackground/
+        // PromoteBackgroundToBackdrop/DemoteBackdropToBackground/FlattenElementAsync/ApplyState) always
+        // reassigns right before calling ReplaceSourceAndWorkingCopy -- see HasNoBackgroundOrOverlayElements's
+        // own doc comment.
+        OnPropertyChanged(nameof(HasNoBackgroundOrOverlayElements));
         // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
         // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path.
         // User-reported bug (2026-09-15): "remove background... the 'safe area'-blue lines dont match
