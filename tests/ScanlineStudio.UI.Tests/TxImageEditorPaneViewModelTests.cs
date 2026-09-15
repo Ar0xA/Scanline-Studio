@@ -6630,6 +6630,76 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Null(vm.StatusMessage);
     }
 
+    // User-reported bug (2026-09-15): "if i do 'remove background' i end up with a white background
+    // but the 'safe area'-blue lines dont match up." Root cause: NotifyWorkingCopyGeometryChanged
+    // (shared by RemoveBackground/Promote/Demote/Flatten) never re-raised CropLeftPixels/CropTopPixels/
+    // CropWidthPixels/CropHeightPixels/CropRightPixels/CropBottomPixels -- its own comment claimed they
+    // "get their own re-notify from the CropRect reassignment in the Rotate() caller," true for Rotate
+    // but wrong for these three commands, which deliberately leave CropRect untouched (see each one's
+    // own doc comment) while still swapping in a working copy of a DIFFERENT pixel size. The crop-rect
+    // Border in the View (same accent-blue as the safe-area guide, easy to conflate) kept rendering at
+    // whatever pixel rect it last computed against the OLD CanvasDisplayWidth/Height. A background
+    // LARGER than the budget-capped blank placeholder makes WorkingCopyWidth/Height genuinely change
+    // across each call, so these tests actually exercise the gap instead of passing vacuously.
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_WhenWorkingCopyDimensionsChange_RaisesCropPixelPropertiesSoTheGuideStaysInSync()
+    {
+        var vm = CreateEditor(CreateSource(20, 20), SmallMode, new FakeTransmitImagePreparer());
+        var widthBefore = vm.CanvasDisplayWidth;
+        var raised = new HashSet<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.RemoveBackgroundCommand.Execute(null);
+
+        Assert.NotEqual(widthBefore, vm.CanvasDisplayWidth);
+        Assert.Contains(nameof(vm.CropLeftPixels), raised);
+        Assert.Contains(nameof(vm.CropTopPixels), raised);
+        Assert.Contains(nameof(vm.CropWidthPixels), raised);
+        Assert.Contains(nameof(vm.CropHeightPixels), raised);
+        Assert.Contains(nameof(vm.CropRightPixels), raised);
+        Assert.Contains(nameof(vm.CropBottomPixels), raised);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_WhenWorkingCopyDimensionsChange_RaisesCropPixelPropertiesSoTheGuideStaysInSync()
+    {
+        var vm = CreateEditor(CreateSource(20, 20), SmallMode, new FakeTransmitImagePreparer());
+        var widthBefore = vm.CanvasDisplayWidth;
+        var raised = new HashSet<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+
+        Assert.NotEqual(widthBefore, vm.CanvasDisplayWidth);
+        Assert.Contains(nameof(vm.CropWidthPixels), raised);
+        Assert.Contains(nameof(vm.CropHeightPixels), raised);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_RaisesCropPixelPropertiesSoTheGuideStaysInSync()
+    {
+        // Unlike RemoveBackground/Promote's fixed-size blank placeholder, DemoteBackdropToBackground's
+        // baked result tracks the ORIGINAL source's own proportional resolution (BakeElementIntoSource,
+        // same as FlattenElementAsync), so it doesn't reliably produce a DIFFERENT working-copy size in
+        // a small fixture like this one to assert against directly. What this test pins instead: the
+        // fix made NotifyWorkingCopyGeometryChanged raise Crop*Pixels UNCONDITIONALLY on every working
+        // copy swap (matching OnZoomFactorChanged's own unconditional style) -- before the fix, this
+        // command's ReplaceSourceAndWorkingCopy call never raised these AT ALL, dimension change or
+        // not, which is what actually left the crop-rect guide stale for this command too.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+        var raised = new HashSet<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Contains(nameof(vm.CropWidthPixels), raised);
+        Assert.Contains(nameof(vm.CropHeightPixels), raised);
+    }
+
     // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
     // finding: this logic shipped with zero test coverage since it lived entirely in code-behind;
     // splitting it into a public static method makes it testable without simulating real Avalonia
