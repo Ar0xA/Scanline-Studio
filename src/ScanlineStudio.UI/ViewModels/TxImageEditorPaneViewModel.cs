@@ -5913,15 +5913,32 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(WorkingCopyHeight));
         OnPropertyChanged(nameof(WorkingCopyFooterText));
         // Phase 7 rearchitecture: WorkingCopyWidth/Height changing also changes CanvasDisplayWidth/
-        // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path
-        // (Crop*Pixels get their own re-notify from the CropRect reassignment in the Rotate() caller;
-        // SafeAreaInsetPixels is zoom-only, unaffected by a working-copy dimension change --
-        // SafeAreaWidthPixels/HeightPixels DO depend on CanvasDisplayWidth/Height though, same as
-        // any other CanvasDisplay-derived pixel property, so they need the same re-raise here).
+        // Height even though ZoomFactor itself didn't move, and nothing else notifies it on this path.
+        // User-reported bug (2026-09-15): "remove background... the 'safe area'-blue lines dont match
+        // up" -- this comment used to claim Crop*Pixels didn't need re-raising here because they "get
+        // their own re-notify from the CropRect reassignment in the Rotate() caller." True for Rotate,
+        // but wrong for RemoveBackground/PromoteBackgroundToBackdrop/DemoteBackdropToBackground, which
+        // deliberately leave CropRect untouched (see each one's own doc comment) while still swapping
+        // in a working copy of a DIFFERENT pixel size -- CanvasDisplayWidth/Height changed, but
+        // CropRect.X/Y/Width/Height (the actual VALUES) didn't, so CommunityToolkit's generated
+        // OnCropRectChanged hook never fired and the crop-rect Border in the View kept whatever pixel
+        // rect it last computed against the OLD CanvasDisplayWidth/Height. SafeAreaInsetPixels is
+        // zoom-only, unaffected by a working-copy dimension change -- SafeAreaWidthPixels/HeightPixels
+        // DO depend on CanvasDisplayWidth/Height though, same as any other CanvasDisplay-derived pixel
+        // property, so they need the same re-raise here. This is now the SAME full list
+        // OnZoomFactorChanged re-raises for the identical "CanvasDisplayWidth/Height moved" reason,
+        // minus SafeAreaInsetPixels/ZoomPercentText (those two are ZoomFactor-only, not
+        // WorkingCopyWidth/Height-derived, so a working-copy swap alone never invalidates them).
         OnPropertyChanged(nameof(CanvasDisplayWidth));
         OnPropertyChanged(nameof(CanvasDisplayHeight));
         OnPropertyChanged(nameof(SafeAreaWidthPixels));
         OnPropertyChanged(nameof(SafeAreaHeightPixels));
+        OnPropertyChanged(nameof(CropLeftPixels));
+        OnPropertyChanged(nameof(CropTopPixels));
+        OnPropertyChanged(nameof(CropWidthPixels));
+        OnPropertyChanged(nameof(CropHeightPixels));
+        OnPropertyChanged(nameof(CropRightPixels));
+        OnPropertyChanged(nameof(CropBottomPixels));
         // Same reasoning as OnZoomFactorChanged's own identical addition -- see that method's comment.
         OnPropertyChanged(nameof(PlacementPreviewLeftPixels));
         OnPropertyChanged(nameof(PlacementPreviewTopPixels));
@@ -5937,6 +5954,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             element.ImageWidth = CanvasDisplayWidth;
             element.ImageHeight = CanvasDisplayHeight;
         }
+
+        // Same gap as the Crop*Pixels one above: font size/stroke thickness for text elements are
+        // ALSO CanvasDisplayWidth/Height-derived (ComputeCanvasFontSize et al.) and OnZoomFactorChanged
+        // already refreshes them on every zoom change -- a working-copy dimension swap needs the same
+        // refresh, not just the element X/Y/W/H push the loop above already does.
+        RefreshOverlayElementCanvasStyles();
     }
 
     /// <summary>(x,y,w,h) -&gt; (1-y-h, x, h, w) -- exact for 90°-multiple rotations (bounding box
