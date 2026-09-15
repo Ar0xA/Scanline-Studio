@@ -1654,7 +1654,16 @@
                                                                   ToolTip.Tip="{loc:Translate Panes.TxImageEditor.DemoteBackdropToBackground.Help}"
                                                                   Command="{Binding DemoteToBackgroundCommand}" CommandParameter="{Binding}"
                                                                   IsEnabled="{Binding IsBackground}" />
-                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ResetToOriginalSize}" Command="{Binding ResetToOriginalSizeCommand}" CommandParameter="{Binding}" />
+                                                        <!-- User-reported bug (2026-09-15): resetting a LOCKED backdrop to its
+                                                             natural size left it in a broken, self-contradictory state —
+                                                             still Locked+IsBackground=true (still the frame's backdrop by every
+                                                             other check) but no longer covering the frame. IsEnabled binds
+                                                             directly to !Locked, same "command's own CanExecute would refuse
+                                                             anyway, this just stops the menu item rendering enabled-but-inert"
+                                                             reasoning as DemoteBackdropToBackground's own IsEnabled bind above. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.ResetToOriginalSize}"
+                                                                  Command="{Binding ResetToOriginalSizeCommand}" CommandParameter="{Binding}"
+                                                                  IsEnabled="{Binding !Locked}" />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitStretch}" Command="{Binding FitCommand}" CommandParameter="Stretch" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitContain}" Command="{Binding FitCommand}" CommandParameter="Contain" />
