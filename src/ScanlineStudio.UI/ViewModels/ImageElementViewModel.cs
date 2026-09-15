@@ -163,6 +163,12 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// (the fit mode name) same shape as <see cref="AlignSelectedElementToCropCommand"/>.</summary>
     public IRelayCommand? FitCommand { get; init; }
 
+    /// <summary>User-requested (2026-09-15): "fit safe area"/"fit width"/"fit height" -- a DIFFERENT
+    /// concept from <see cref="FitCommand"/> right above (that one changes how the image's own pixels
+    /// fill its EXISTING bounds; this one resizes the bounds themselves to match the safe-area guide).
+    /// Same selection-implicit/string-parameter shape as <see cref="FitCommand"/>.</summary>
+    public IRelayCommand? FitToSafeAreaCommand { get; init; }
+
     /// <summary>TX workflow modernization plan, Phase 7 -- image-only, element-parameterized (NOT
     /// selection-implicit) same shape as <see cref="RemoveCommand"/>/<see cref="SetAsBackdropCommand"/>
     /// -- bound with <c>CommandParameter="{Binding}"</c>, never a <c>$parent[ItemsControl]</c>

@@ -6743,6 +6743,140 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(vm.ResetImageElementToOriginalSizeCommand.CanExecute(image));
     }
 
+    // User-requested (2026-09-15): "right click menu 'fit'... should have an option of 'fit safe
+    // area', fit width, fit height. Those options should resize the image area and image to the safe
+    // area size (or width or height)." A DIFFERENT concept from FitCommand/SetSelectedImageFit
+    // (Stretch/Contain/Cover, how the pixels fill the EXISTING bounds) -- this resizes the bounds
+    // themselves. FlattenTestMode (80x60) is used instead of SmallMode (4x4) because the safe-area
+    // inset (14 working-copy units) exceeds SmallMode's own canvas entirely, which would make every
+    // one of these tests exercise the "Unavailable" refusal path instead of the real math.
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_SafeArea_SetsExactSizeAndCentersTheElement()
+    {
+        var vm = CreateEditor(CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight), FlattenTestMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(10, 10) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+
+        Assert.True(vm.FitSelectedImageToSafeAreaCommand.CanExecute("SafeArea"));
+        vm.FitSelectedImageToSafeAreaCommand.Execute("SafeArea");
+
+        // 1 - 2*14/80 and 1 - 2*14/60 -- SafeAreaInsetWorkingCopyUnits's own value against
+        // FlattenTestMode's working-copy dimensions, same math SafeAreaWidthPixels/HeightPixels use
+        // in pixel space.
+        AssertClose(0.5, image.X);
+        AssertClose(0.5, image.Y);
+        AssertClose(1 - (28.0 / 80), image.Width);
+        AssertClose(1 - (28.0 / 60), image.Height);
+    }
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_Width_OnlyTouchesWidthAndX()
+    {
+        var vm = CreateEditor(CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight), FlattenTestMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(10, 10) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+        var heightBefore = image.Height;
+        var yBefore = image.Y;
+
+        vm.FitSelectedImageToSafeAreaCommand.Execute("Width");
+
+        AssertClose(0.5, image.X);
+        AssertClose(1 - (28.0 / 80), image.Width);
+        Assert.Equal(heightBefore, image.Height);
+        Assert.Equal(yBefore, image.Y);
+    }
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_Height_OnlyTouchesHeightAndY()
+    {
+        var vm = CreateEditor(CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight), FlattenTestMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(10, 10) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+        var widthBefore = image.Width;
+        var xBefore = image.X;
+
+        vm.FitSelectedImageToSafeAreaCommand.Execute("Height");
+
+        AssertClose(0.5, image.Y);
+        AssertClose(1 - (28.0 / 60), image.Height);
+        Assert.Equal(widthBefore, image.Width);
+        Assert.Equal(xBefore, image.X);
+    }
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_ForALockedElement_IsRefusedAsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight), FlattenTestMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(10, 10) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+        image.Locked = true;
+        var widthBefore = image.Width;
+        var heightBefore = image.Height;
+
+        Assert.False(vm.FitSelectedImageToSafeAreaCommand.CanExecute("SafeArea"));
+        // Direct Execute bypasses CanExecute -- must still be a safe no-op, same "body-level check is
+        // the real backstop" reasoning this class's other commands already document.
+        vm.FitSelectedImageToSafeAreaCommand.Execute("SafeArea");
+
+        Assert.Equal(widthBefore, image.Width);
+        Assert.Equal(heightBefore, image.Height);
+    }
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_WhenTheWorkingCopyIsTooSmallForTheInset_ShowsUnavailable()
+    {
+        // SmallMode (4x4) is narrower than twice SafeAreaInsetWorkingCopyUnits (14) -- the exact
+        // degenerate case TryGetSafeAreaNormalizedSize's own doc comment guards against.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+        var widthBefore = image.Width;
+
+        vm.FitSelectedImageToSafeAreaCommand.Execute("SafeArea");
+
+        Assert.Equal(widthBefore, image.Width);
+        Assert.Equal("Panes.TxImageEditor.FitToSafeAreaUnavailable", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public void FitSelectedImageToSafeAreaCommand_UndoRestoresTheOriginalBoundsInOneStep()
+    {
+        var vm = CreateEditor(CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight), FlattenTestMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(10, 10) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SelectedOverlayElement = image;
+        var xBefore = image.X;
+        var yBefore = image.Y;
+        var widthBefore = image.Width;
+        var heightBefore = image.Height;
+
+        vm.FitSelectedImageToSafeAreaCommand.Execute("SafeArea");
+        Assert.NotEqual(widthBefore, image.Width);
+
+        vm.UndoCommand.Execute(null);
+
+        // Re-fetched, not the captured `image` reference -- ApplyState's own restore path replaces
+        // every element wholesale from the snapshot (same reasoning SetAsBackdrop's own doc comment
+        // gives for why a stale element reference is a real, previously-hit bug class here).
+        var restored = Assert.Single(vm.OverlayElements);
+        Assert.Equal(xBefore, restored.X);
+        Assert.Equal(yBefore, restored.Y);
+        Assert.Equal(widthBefore, restored.Width);
+        Assert.Equal(heightBefore, restored.Height);
+    }
+
     // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
     // finding: this logic shipped with zero test coverage since it lived entirely in code-behind;
     // splitting it into a public static method makes it testable without simulating real Avalonia
