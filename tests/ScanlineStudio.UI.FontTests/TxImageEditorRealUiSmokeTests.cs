@@ -260,7 +260,11 @@ public sealed class TxImageEditorRealUiSmokeTests
             var cancelButton = view.FindControl<Button>("CancelButton")
                 ?? throw new InvalidOperationException("CancelButton not found in the real View's visual tree.");
 
-            Assert.Equal("Panes.TxImageEditor.Cancel", Assert.IsType<string>(cancelButton.Content));
+            // User-requested (2026-09-15): relabeled "CANCEL" -> "NEW TEMPLATE" -- "Cancel" read as
+            // odd wording for what this button actually does (discard the current card, start a
+            // fresh blank editor). x:Name="CancelButton" and CancelCommand/CancelAsync are unchanged
+            // internally, only the loc key/displayed text moved.
+            Assert.Equal("Panes.TxImageEditor.NewTemplate", Assert.IsType<string>(cancelButton.Content));
             Assert.DoesNotContain("IndustryBtnDanger", cancelButton.Classes);
         }
         finally

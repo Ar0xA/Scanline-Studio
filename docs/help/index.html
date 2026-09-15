@@ -331,8 +331,6 @@
           <li>Crop, adjust, and add template elements.</li>
           <li>Confirm the output device, duration, identification, Pwr level, and radio state; then select the big <strong>TRANSMIT</strong> button to apply your edits and start sending in one step. With the CAT backend set to <strong>None</strong>, Scanline Studio sends no keying command — see <a href="#requirements">What you need</a> for keying the radio yourself.</li>
         </ol>
-        <p>Select <strong>Apply</strong> instead of <strong>TRANSMIT</strong> to save the edit without sending it yet — useful for staging a card ahead of time. Apply closes the editor; reopen it with <strong>Edit…</strong> and select <strong>TRANSMIT</strong> when you're ready to send.</p>
-
         <p>During transmission, progress shows percentage and remaining time. Select the header's <strong>Stop TX</strong> button, next to <strong>Receiving</strong>, to abort — see <a href="#workspace">Tour of the workspace</a>.</p>
 
         <div class="safety"><strong>Before the first RF transmission.</strong> Use <a href="#radio-tune-safety">Tune and TX safety</a> to establish a clean drive level. Excess audio can cause ALC action, splatter, poor SSTV quality, or automatic SWR cutoff.</div>
@@ -346,7 +344,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="image-editor" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="image editor crop move scale rotate preview aspect letterbox safe area snap grid brightness contrast saturation gamma sharpen denoise apply cancel undo redo zoom multi select shift click lock duplicate copy paste style flatten">
+      <article id="image-editor" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="image editor crop move scale rotate preview aspect letterbox safe area snap grid brightness contrast saturation gamma sharpen denoise new template cancel undo redo zoom multi select shift click lock duplicate copy paste style flatten">
         <p class="topic-category">Transmitting</p>
         <h2>Edit the outgoing image</h2>
         <p>The TX image editor is the main pane of the Transmit tab — there is no separate editor window to open. It combines non-destructive framing, image adjustments, and overlay composition (text, boxes, lines, and extra pictures on top of your base photo, also called the <strong>background</strong> — see <a href="#background-vs-backdrop">Background vs. backdrop</a>). Its mode-exact preview shows the pixels prepared for transmission.</p>
@@ -388,9 +386,8 @@
         <h3>Finish or discard</h3>
         <ul>
           <li><strong>TRANSMIT</strong> — the large, distinctly-colored button — applies the editor state into the prepared TX frame and immediately begins transmission. This is the only way to send a picture; there is no separate Transmit button elsewhere.</li>
-          <li><strong>Apply</strong> saves the editor state into the prepared TX frame without transmitting, and closes the editor — for staging a card ahead of time. Reopen with <strong>Edit…</strong> and select <strong>TRANSMIT</strong> when you're ready to send.</li>
           <li><strong>Revert</strong> returns to the last applied state.</li>
-          <li><strong>Cancel</strong> closes/discards as prompted; a confirmation dialog appears when unsaved edits would be lost.</li>
+          <li><strong>New template</strong> discards the current card and starts a fresh blank editor; a confirmation dialog appears when unsaved edits would be lost. (Cancelling a re-edit of an already-sent card just closes the editor back out instead, with no new blank one to replace it.)</li>
         </ul>
 
         <div class="warning"><strong>Preview limit.</strong> The preview is accurate for crop, scale, adjustments, and overlay placement. It does not simulate the chroma loss or other color effects introduced by a complete transmit-and-receive path for every SSTV mode.</div>
