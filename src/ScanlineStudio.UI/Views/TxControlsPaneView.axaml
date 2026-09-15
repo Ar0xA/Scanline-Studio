@@ -313,14 +313,23 @@
                      MainWindow.axaml) reaches this same SelectImageCommand and needs the identical
                      gate, fixed there too.
                      Auditor-found regression (2026-08-17): a bare !IsEditorOpen here made Browse/
-                     STOCK permanently unreachable once the editor started opening by default —
+                     Background permanently unreachable once the editor started opening by default —
                      see TxControlsPaneViewModel.CanChangeSourceOrMode's own doc comment for the
                      fix (relaxed the same way mode-select already was, while a genuinely
                      in-progress edit still refuses). The quick-mode-grid buttons needed no
                      equivalent XAML change — their own redundant !IsEditorOpen IsEnabled override
                      was simply removed, letting the already-correct QuickSelectModeCommand
-                     CanExecute drive them directly. -->
-                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120" IsEnabled="{Binding CanChangeSourceOrMode}">
+                     CanExecute drive them directly.
+                     User-requested (2026-09-15): this ListBox, the Browse button below, and the
+                     File > Open menu item above all moved from CanChangeSourceOrMode to the wider
+                     CanLoadBackground — background-loading specifically is safe whenever the open
+                     editor has no real background yet, regardless of overlay elements/other unsaved
+                     edits (LoadBackground installs the photo into the SAME editor instance instead
+                     of discarding it, see that method's own doc comment). Mode-select stays on
+                     CanChangeSourceOrMode, unchanged — a mode change is disruptive regardless of
+                     background state, see CanLoadBackground's own doc comment for why the two
+                     diverge. -->
+                <ListBox ItemsSource="{Binding StockEntries}" MaxHeight="120" IsEnabled="{Binding CanLoadBackground}">
                     <ListBox.ItemsPanel>
                         <ItemsPanelTemplate>
                             <WrapPanel />
@@ -344,7 +353,7 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
                 <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.SelectImage}"
-                        Command="{Binding SelectImageCommand}" IsEnabled="{Binding CanChangeSourceOrMode}"
+                        Command="{Binding SelectImageCommand}" IsEnabled="{Binding CanLoadBackground}"
                         HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
                 <!-- User-requested (2026-09-15): this card's own "Open editor" button removed —
                      redundant with the editor's own "NEW TEMPLATE" button (TxImageEditorPaneView.axaml,

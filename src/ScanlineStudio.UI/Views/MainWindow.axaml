@@ -86,7 +86,7 @@
                 <!-- spec/18-path-to-1.0.md Medium item 5: same SelectImageCommand as the Transmit
                      pane's own "Browse..." button. A disabled MenuItem also suppresses its own
                      InputGesture, so this closes the Ctrl+O accelerator too, not just the click. -->
-                <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" IsEnabled="{Binding TxControls.CanChangeSourceOrMode}" />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.File.OpenImage}" InputGesture="Ctrl+O" Command="{Binding TxControls.SelectImageCommand}" IsEnabled="{Binding TxControls.CanLoadBackground}" />
                 <!-- Stub survey Tier 1 (2026-08-26): same RxImagePaneViewModel.SaveFrameCommand the
                      Receive tab's own "Export frame…" button uses (action bar below) — one feature,
                      two entry points, matching Tools > Decode WAV's own pattern above.
