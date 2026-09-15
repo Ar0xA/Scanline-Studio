@@ -1,6 +1,5 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:loc="using:ScanlineStudio.UI.Localization"
         xmlns:vm="using:ScanlineStudio.UI.ViewModels"
         x:Class="ScanlineStudio.UI.Views.ConfirmActionDialogView"
         x:DataType="vm:ConfirmActionDialogViewModel"
@@ -25,10 +24,17 @@
             <TextBlock Grid.Row="0" Classes="IndustryRowValue" TextWrapping="Wrap" Text="{Binding Message}" />
 
             <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                <!-- Templates rack rework: CancelLabel/ConfirmLabel are now REQUIRED constructor
+                     args (yoniq-auditor finding — {loc:Translate ...} can't be used as a
+                     TargetNullValue since it returns a Binding object, not a string; every caller
+                     passes its own already-localized text explicitly instead). Cancel stays
+                     IsDefault/IsCancel regardless of which label it shows — Enter/Esc must always
+                     decline, never the destructive/replacing action, matching this dialog's whole
+                     "prevent accidental resets/deletes" purpose stated above. -->
                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
-                        Content="{loc:Translate Configurations.ConfirmNo}" Command="{Binding CancelCommand}" IsDefault="True" IsCancel="True" />
+                        Content="{Binding CancelLabel}" Command="{Binding CancelCommand}" IsDefault="True" IsCancel="True" />
                 <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
-                        Content="{loc:Translate Configurations.ConfirmYes}" Command="{Binding ConfirmCommand}" />
+                        Content="{Binding ConfirmLabel}" Command="{Binding ConfirmCommand}" />
             </Grid>
         </Grid>
     </Border>

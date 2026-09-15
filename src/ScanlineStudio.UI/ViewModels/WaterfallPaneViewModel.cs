@@ -1,10 +1,13 @@
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Controls;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -24,7 +27,9 @@ namespace ScanlineStudio.UI.ViewModels;
 /// NOT match a conventional -100..0 dBFS convention -- see <c>ScanlineStudio.Core.Sstv.WaterfallSource</c>'s
 /// own magnitude computation). Default <see cref="ZeroDb"/>=0 sits above the real noise floor (so ambient
 /// noise stays near-black rather than painting the whole display); default <see cref="GainDb"/>=50
-/// gives a 0-50dB window comfortably covering the measured 38-46dB real-signal peak range.</summary>
+/// gives a 0-50dB window comfortably covering the measured 38-46dB real-signal peak range. Both are
+/// persisted into the shared <see cref="RxPaneUiSettings"/> section (loaded once at construction,
+/// saved on every change) so a user's chosen levels survive an app restart.</summary>
 public sealed partial class WaterfallPaneViewModel : ViewModelBase
 {
     private readonly object _gate = new();
@@ -99,16 +104,106 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(NotchStatusDisplay))]
     private double _notchFrequencyHz = 2400.0;
 
+    private static readonly TimeSpan GainZeroPersistDebounce = TimeSpan.FromMilliseconds(400);
+
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
+    private readonly ISettingsStore _settingsStore;
+    private readonly ILogger<WaterfallPaneViewModel> _logger;
+    private bool _suppressGainZeroPersist;
+    private CancellationTokenSource? _gainZeroPersistCts;
 
-    public WaterfallPaneViewModel(ISstvSessionService sstvSession, ILocalizationService localization)
+    public WaterfallPaneViewModel(
+        ISstvSessionService sstvSession,
+        ILocalizationService localization,
+        ISettingsStore settingsStore,
+        ILogger<WaterfallPaneViewModel> logger)
     {
         _sstvSession = sstvSession;
         _localization = localization;
+        _settingsStore = settingsStore;
+        _logger = logger;
         sstvSession.Waterfall.Frames.Subscribe(OnFrame);
         sstvSession.ModeDetected += OnModeDetected;
+
+        _ = LoadGainZeroSettingsAsync();
     }
+
+    /// <summary>Read-modify-write against whatever is currently persisted for
+    /// <see cref="RxPaneUiSettings.SectionKey"/> -- <see cref="RxImagePaneViewModel"/> also writes
+    /// this same section (<c>QuickModeGridIds</c>), so a from-scratch write here would silently
+    /// clobber that field.</summary>
+    private async Task LoadGainZeroSettingsAsync()
+    {
+        try
+        {
+            var settings = await _settingsStore.LoadAsync();
+            var rxPaneUi = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
+
+            _suppressGainZeroPersist = true;
+            try
+            {
+                ZeroDb = rxPaneUi.ZeroDb;
+                GainDb = rxPaneUi.GainDb;
+            }
+            finally
+            {
+                _suppressGainZeroPersist = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.LoadGainZeroSettingsFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Debounced, same reasoning as <see cref="RadioStatusViewModel.OnTxVolumePercentChanged"/>
+    /// -- a slider drag can fire dozens of change notifications a second, and a full-document settings
+    /// write (read+parse+serialize+temp-file+rename) per tick is real per-drag I/O cost, not just a
+    /// theoretical race.</summary>
+    private async Task PersistGainZeroSettingsAsync(double zeroDb, double gainDb, CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(GainZeroPersistDebounce, ct).ConfigureAwait(false);
+        }
+        catch (TaskCanceledException)
+        {
+            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
+            return;
+        }
+
+        try
+        {
+            await _settingsStore.UpdateAsync(settings =>
+            {
+                var current = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
+                var updated = current with { ZeroDb = zeroDb, GainDb = gainDb };
+                return settings.WithSection(RxPaneUiSettings.SectionKey, updated, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
+            }, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.PersistGainZeroSettingsFailed(_logger, ex);
+        }
+    }
+
+    private void RequestPersistGainZero()
+    {
+        if (_suppressGainZeroPersist)
+        {
+            return;
+        }
+
+        _gainZeroPersistCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _gainZeroPersistCts = cts;
+        _ = PersistGainZeroSettingsAsync(ZeroDb, GainDb, cts.Token);
+    }
+
+    partial void OnZeroDbChanged(double value) => RequestPersistGainZero();
+
+    partial void OnGainDbChanged(double value) => RequestPersistGainZero();
 
     /// <summary>Input Chain card's "Notch" row value -- real frequency in Hz while enabled, "Off"
     /// otherwise. Replaces the placeholder <c>Panes.RxInput.NotchValue</c> literal "—" this row
@@ -236,5 +331,14 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
 
             LatestFrame = frameToShow;
         });
+    }
+
+    private static partial class Log
+    {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading RxPaneUi Zero/Gain settings failed")]
+        public static partial void LoadGainZeroSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting RxPaneUi Zero/Gain settings failed")]
+        public static partial void PersistGainZeroSettingsFailed(ILogger logger, Exception ex);
     }
 }

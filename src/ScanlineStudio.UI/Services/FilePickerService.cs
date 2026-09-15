@@ -215,11 +215,14 @@ public sealed partial class FilePickerService : IFilePickerService
 
         return await ResolveConfirmedDestinationAsync(path, result.SelectedFileType, async destination =>
         {
+            // yoniq-auditor finding: labels are now required, not defaulted -- same generic Yes/No
+            // text this dialog always showed.
             var dialog = new ConfirmActionDialogView
             {
                 DataContext = new ConfirmActionDialogViewModel(
                     _localization.GetString("FilePicker.OverwriteTitle"),
-                    _localization.GetString("FilePicker.OverwriteMessage", destination)),
+                    _localization.GetString("FilePicker.OverwriteMessage", destination),
+                    _localization.GetString("Configurations.ConfirmYes"), _localization.GetString("Configurations.ConfirmNo")),
             };
             return await dialog.ShowDialog<bool>(mainWindow);
         });

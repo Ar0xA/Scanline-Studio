@@ -7,6 +7,7 @@ using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -23,6 +24,7 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
         SavedAt = metadata.SavedAt;
         Thumbnail = TryLoadThumbnail(metadata.ThumbnailPath);
         _isPinned = isPinned;
+        _editingName = metadata.Name;
     }
 
     public string Id { get; }
@@ -30,6 +32,15 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
     public string Name { get; }
 
     public DateTimeOffset SavedAt { get; }
+
+    /// <summary>Templates rack rework -- the rack action strip's inline-rename `TextBox` binds to
+    /// THIS, not <see cref="Name"/>, so an in-progress edit never touches the real display name
+    /// until <see cref="ReadyRackViewModel.RenameAsync"/> actually commits it (and
+    /// <see cref="ReadyRackViewModel.RefreshAsync"/> rebuilds this row from the store's own fresh
+    /// data either way). Defaults to <see cref="Name"/>; a revert (empty input, or Esc in the code-
+    /// behind key handler) just resets this back to <see cref="Name"/>, no store call.</summary>
+    [ObservableProperty]
+    private string _editingName;
 
     public Bitmap? Thumbnail { get; }
 
@@ -72,6 +83,16 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
     /// parent's command" wiring as the three above.</summary>
     public IRelayCommand<TemplateListRowViewModel>? ExportCommand { get; set; }
 
+    /// <summary>Templates rack rework -- same wiring convention as the four above.
+    /// <see cref="ReadyRackViewModel.DeleteFromRackAsync"/>, deliberately NOT the same command as
+    /// <see cref="DeleteCommand"/> above: the rack's Delete shows a real confirm dialog, the Library
+    /// list's own Delete keeps its existing inline arm/confirm -- two different UX for the same
+    /// underlying store call, so two different commands.</summary>
+    public IRelayCommand<TemplateListRowViewModel>? DeleteFromRackCommand { get; set; }
+
+    /// <summary>Templates rack rework -- same wiring convention. <see cref="ReadyRackViewModel.RenameAsync"/>.</summary>
+    public IRelayCommand<TemplateListRowViewModel>? RenameCommand { get; set; }
+
     /// <summary>Disabled while an export for THIS row is in flight -- an export is a real disk write
     /// (a file-save dialog await plus a zip write), unlike Load/TogglePin/Delete's own near-instant
     /// operations, so a double-click has a real window to land in without this.</summary>
@@ -110,6 +131,32 @@ public sealed partial class ReadyRackSlotViewModel : ObservableObject
 
     [ObservableProperty]
     private TemplateListRowViewModel? _template;
+
+    /// <summary>Templates rack rework -- true when this slot's own template is the one the live
+    /// editor canvas was last loaded from. Pushed by <see cref="ReadyRackViewModel.SetLoadedTemplate"/>,
+    /// not a live binding (see that method's own doc comment) -- survives
+    /// <see cref="ReadyRackViewModel.RefreshAsync"/> rebuilding <see cref="Template"/> with a fresh
+    /// instance, since this property lives on the SLOT, not the row.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLoadedOnly))]
+    private bool _isLoaded;
+
+    /// <summary>True only when <see cref="IsLoaded"/> AND the canvas has been edited since this
+    /// specific template was loaded (not merely "since the editor opened" -- see
+    /// <see cref="ReadyRackViewModel.SetCanvasDirty"/>'s own doc comment) -- backs the "Loaded •
+    /// edited" badge text distinct from the plain "Loaded" one.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLoadedOnly))]
+    private bool _isLoadedAndEdited;
+
+    /// <summary>yoniq-auditor finding: the view had TWO independently-visible sibling `TextBlock`s
+    /// (one per bool above), so an edited slot rendered "Loaded" AND "Loaded • edited" stacked on
+    /// top of each other -- <see cref="IsLoadedAndEdited"/> is only ever true when
+    /// <see cref="IsLoaded"/> already is, so the two badges were never actually mutually exclusive
+    /// in the view even though the underlying booleans always agreed on that relationship. This
+    /// property makes the exclusivity explicit for the view to bind against, instead of the view
+    /// trying to express "IsLoaded AND NOT IsLoadedAndEdited" itself.</summary>
+    public bool IsLoadedOnly => IsLoaded && !IsLoadedAndEdited;
 }
 
 /// <summary>The TX template editor's Templates panel: full saved-template list + the pinned,
@@ -137,6 +184,86 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         _logger = logger;
         Slots = new ObservableCollection<ReadyRackSlotViewModel>(Enumerable.Range(1, SlotCount).Select(n => new ReadyRackSlotViewModel(n, RecallSlotCommand)));
     }
+
+    /// <summary>Guards the one-time <see cref="TemplateLibraryUiSettings"/> load inside
+    /// <see cref="RefreshAsync"/> below -- deliberately NOT a fire-and-forget task started from the
+    /// constructor (an earlier draft did this, matching `TxControlsPaneViewModel`'s own
+    /// `TxPaneUiSettings` load shape, but that pattern assumes ONE long-lived VM instance; this VM
+    /// is constructed FRESH per editor AND per test, and a test suite constructing hundreds of them
+    /// left hundreds of abandoned, never-pumped async chains piling up, degrading the whole test
+    /// class to a near-hang. Folded into `RefreshAsync` instead -- the SAME already-awaited
+    /// initialization path every real caller and every test already uses, so there's no second,
+    /// unawaited async entry point to abandon.</summary>
+    private bool _templateLibraryUiSettingsLoaded;
+
+    /// <summary>Templates rack rework, expanded template selector -- the Library panel's own List/
+    /// Grid toggle. Persisted separately from <see cref="ReadyRackSettings.PinnedTemplateIds"/> (a
+    /// domain concept -- what's pinned) since this is a pure display preference, same layering
+    /// `AppearanceSettings`/`TxPaneUiSettings` already established.
+    /// <para>The view binds this ONE-WAY only (see <see cref="SelectListView"/>/<see cref="SelectGridView"/>
+    /// below) -- a real bug caught during testing, yoniq-auditor-refined root cause: a TwoWay-bound
+    /// negated pair (<c>!IsGridView</c>/<c>IsGridView</c>) on two `RadioButton`s sharing one
+    /// `GroupName` is SAFE for a single live view instance (this exact negated-pair shape already
+    /// ships elsewhere in this codebase, e.g. `ImageViewerWindowView`'s `IsFitToWindow`,
+    /// `MainWindow`'s `IsAutoDetectPaused`/`ShowTodayOnly` -- do not treat those as latent bugs). The
+    /// real trigger is negated pair + TwoWay + MULTIPLE LIVE INSTANCES sharing one GroupName
+    /// registry (this VM/view is constructed fresh per editor AND per test, unlike those
+    /// single-instance cases) -- one instance's own check unchecks every OTHER instance's button via
+    /// GroupName, and because the pair is NEGATED, "unchecked" flips that instance's own bound value
+    /// and re-fires the group, an N-squared avalanche across instances with no click needed. Two
+    /// explicit, parameterless commands avoid any TwoWay write path on `IsChecked` at all, which
+    /// closes this regardless of instance count.</para></summary>
+    [ObservableProperty]
+    private bool _isGridView;
+
+    /// <summary>yoniq-auditor finding: without this guard, the one-time settings load in
+    /// <see cref="RefreshAsync"/> setting <c>IsGridView = true</c> (a stored "grid" preference) fires
+    /// THIS handler, which immediately re-persists the value it just read -- redundant I/O on every
+    /// editor open, and reintroduces a milder version of the fire-and-forget-task problem
+    /// <see cref="_templateLibraryUiSettingsLoaded"/>'s own doc comment describes. Suppressed during
+    /// the load itself; real operator toggles still persist normally.</summary>
+    private bool _suppressPersistDuringLoad;
+
+    partial void OnIsGridViewChanged(bool value)
+    {
+        if (!_suppressPersistDuringLoad)
+        {
+            _ = PersistTemplateLibraryUiSettingsAsync();
+        }
+    }
+
+    [RelayCommand]
+    private void SelectListView() => IsGridView = false;
+
+    [RelayCommand]
+    private void SelectGridView() => IsGridView = true;
+
+    private async Task PersistTemplateLibraryUiSettingsAsync()
+    {
+        try
+        {
+            var isGridView = IsGridView;
+            await _settingsStore.UpdateAsync(settings =>
+            {
+                var current = settings.GetSection(TemplateLibraryUiSettings.SectionKey, TemplateLibraryUiSettingsJsonContext.Default.TemplateLibraryUiSettings) ?? new TemplateLibraryUiSettings();
+                var updated = current with { IsGridView = isGridView };
+                return settings.WithSection(TemplateLibraryUiSettings.SectionKey, updated, TemplateLibraryUiSettingsJsonContext.Default.TemplateLibraryUiSettings);
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.PersistTemplateLibraryUiSettingsFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>The Template Library panel's own `SelectedItem` -- independent of <see cref="SelectedSlot"/>
+    /// (a different collection, a different UI region). Unlike the rack's slots (a stable wrapper
+    /// whose own `.Template` swaps), <see cref="AllTemplates"/>/<see cref="FilteredTemplates"/> are
+    /// rebuilt with FRESH row instances on every <see cref="RefreshAsync"/> -- see that method's own
+    /// re-resolve-by-id tail for why this can't just be left alone across a refresh the way
+    /// <see cref="SelectedSlot"/> can.</summary>
+    [ObservableProperty]
+    private TemplateListRowViewModel? _selectedLibraryItem;
 
     public ObservableCollection<ReadyRackSlotViewModel> Slots { get; }
 
@@ -168,7 +295,90 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     /// doc comment.</summary>
     private string? _pendingDeleteId;
 
+    /// <summary>Templates rack rework -- which template id the live editor canvas was last loaded
+    /// from, or <see langword="null"/> if none (a blank/new editor, or the loaded template was
+    /// since deleted/unpinned). Drives <see cref="ReadyRackSlotViewModel.IsLoaded"/> via
+    /// <see cref="ApplyLoadedState"/> -- never the other way around, so a rack refresh (rename/pin/
+    /// delete elsewhere) can never silently change WHICH template the canvas actually holds.</summary>
+    private string? _loadedTemplateId;
+
+    /// <summary>Mirrors <c>TxImageEditorPaneViewModel.HasUnsavedEdits</c>, pushed via
+    /// <see cref="SetCanvasDirty"/> -- this VM has no reference to the editor VM (constructed
+    /// before it, per <c>TxControlsPaneViewModel</c>'s own construction order), so it can't read
+    /// that property directly.</summary>
+    private bool _isCanvasDirty;
+
+    /// <summary>Templates rack rework -- the rack `ListBox`'s own `SelectedItem`, backing the
+    /// single-click action strip (Load/Unpin/Export/Delete/Rename). Native `ListBox` selection, not
+    /// a Tapped-handler-set field -- same "no code-behind needed for selection" precedent as the RX
+    /// History gallery's own `SelectedEntry` (`RxHistoryPaneViewModel`).</summary>
+    [ObservableProperty]
+    private ReadyRackSlotViewModel? _selectedSlot;
+
+    /// <summary>Templates rack rework -- true while <see cref="TxImageEditorPaneViewModel.OnReadyRackTemplateSelected"/>
+    /// is awaiting a load (including any confirm-dialog await before it). Dims/disables the rack so
+    /// a confused extra click during that window can't land mid-load -- same "disable rather than
+    /// debounce" idiom this file already uses for <see cref="TemplateListRowViewModel.IsExporting"/>.</summary>
+    [ObservableProperty]
+    private bool _isLoadInFlight;
+
+    /// <summary>Templates rack rework -- same delegate-property shape as
+    /// <c>RxHistoryPaneViewModel.ConfirmRequested</c>/<c>LogbookPaneViewModel.ConfirmRequested</c>.
+    /// Backs <see cref="DeleteFromRackAsync"/>'s own real confirm dialog (the rack's Delete,
+    /// deliberately NOT the Library list's existing inline arm/confirm -- see
+    /// <see cref="TemplateListRowViewModel.DeleteFromRackCommand"/>'s own doc comment). Set once per
+    /// editor instance by <c>MainWindow.axaml.cs</c>'s <c>EditorOpened</c> subscription (this VM is
+    /// constructed fresh per editor, unlike RxHistory/Logbook). Returns <see langword="false"/>
+    /// (decline) when unwired -- the safe default for a destructive action.</summary>
+    public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
+
     partial void OnLibraryFilterTextChanged(string value) => RefreshFilteredTemplates();
+
+    /// <summary>Templates rack rework -- called by <c>TxImageEditorPaneViewModel</c> after a
+    /// successful load (and cleared on delete/unpin of the loaded template) to update
+    /// <see cref="ReadyRackSlotViewModel.IsLoaded"/>. Push-based, not a live cross-VM subscription --
+    /// same "parent pushes on its own state changes" convention <see cref="WireRowCommands"/>
+    /// already establishes for commands, applied here to a second kind of cross-VM state.</summary>
+    public void SetLoadedTemplate(string? templateId)
+    {
+        _loadedTemplateId = templateId;
+        ApplyLoadedState();
+    }
+
+    /// <summary>Templates rack rework -- <paramref name="isDirty"/> is
+    /// <c>TxImageEditorPaneViewModel.IsDirtySinceLastTemplateLoad</c>, NOT its plain
+    /// <c>HasUnsavedEdits</c> (yoniq-auditor finding: reusing the raw undo-stack-non-empty flag made
+    /// the badge read "edited" the instant ANY template loaded, since a load itself pushes its own
+    /// undo snapshot -- see that property's own doc comment). Called at every point the caller
+    /// already raises <c>OnPropertyChanged(nameof(HasUnsavedEdits))</c>, so the "Loaded • edited"
+    /// badge never lags the real dirty-since-load state.</summary>
+    public void SetCanvasDirty(bool isDirty)
+    {
+        _isCanvasDirty = isDirty;
+        ApplyLoadedState();
+    }
+
+    public void SetLoadInFlight(bool inFlight) => IsLoadInFlight = inFlight;
+
+    private void ApplyLoadedState()
+    {
+        foreach (var slot in Slots)
+        {
+            var isLoaded = slot.Template is { } template && template.Id == _loadedTemplateId;
+            slot.IsLoaded = isLoaded;
+            slot.IsLoadedAndEdited = isLoaded && _isCanvasDirty;
+        }
+    }
+
+    /// <summary>Templates rack rework -- small lookup for the discard-changes confirm dialog's own
+    /// body text, which only has a template id (<c>OnReadyRackTemplateSelected</c>'s own parameter)
+    /// and needs the display name. Checks <see cref="Slots"/> first (the common case -- a rack
+    /// recall/double-click already has the row right there) before falling back to
+    /// <see cref="AllTemplates"/> (the Template Library's own Load button).</summary>
+    public string GetTemplateName(string templateId) =>
+        Slots.FirstOrDefault(s => s.Template?.Id == templateId)?.Template?.Name
+        ?? AllTemplates.FirstOrDefault(t => t.Id == templateId)?.Name
+        ?? templateId;
 
     /// <summary>Backs the Templates panel's empty-state text -- explicitly re-raised at the end of
     /// <see cref="RefreshAsync"/> (a plain computed property over <see cref="AllTemplates"/>.Count
@@ -197,6 +407,16 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             {
                 FilteredTemplates.Add(row);
             }
+        }
+
+        // yoniq-auditor finding: if the just-typed filter now excludes the selected row, keep the
+        // VM's own SelectedLibraryItem consistent with what FilteredTemplates (what the ListBox can
+        // actually select) contains -- explicit here rather than relying on however Avalonia's own
+        // SelectedItem binding happens to behave on a collection reset, so the action strip always
+        // hides cleanly instead of risking a VM/view disagreement.
+        if (SelectedLibraryItem is not null && !FilteredTemplates.Contains(SelectedLibraryItem))
+        {
+            SelectedLibraryItem = null;
         }
 
         OnPropertyChanged(nameof(HasNoFilteredTemplates));
@@ -231,6 +451,32 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         // never throw into the caller" doctrine ListAsync's own catch already established.
         try
         {
+            // Expanded template selector: one-time settings load, see _templateLibraryUiSettingsLoaded's
+            // own doc comment for why this lives here and not a constructor-fired task. yoniq-auditor
+            // finding: this is its OWN try/catch, separate from the outer one below -- a corrupt/
+            // hand-edited TemplateLibraryUi section must not blank the entire rack/Library (it used
+            // to be the first statement inside the outer try, so a throw here skipped ListAsync
+            // entirely). _templateLibraryUiSettingsLoaded is only set AFTER success, so a transient
+            // failure (e.g. a momentarily locked settings file) retries on the NEXT refresh instead
+            // of being permanently stuck at the List-view default for this editor session.
+            if (!_templateLibraryUiSettingsLoaded)
+            {
+                try
+                {
+                    var libraryUiSettings = await _settingsStore.LoadAsync();
+                    var librarySection = libraryUiSettings.GetSection(TemplateLibraryUiSettings.SectionKey, TemplateLibraryUiSettingsJsonContext.Default.TemplateLibraryUiSettings) ?? new TemplateLibraryUiSettings();
+                    _suppressPersistDuringLoad = true;
+                    IsGridView = librarySection.IsGridView;
+                    _suppressPersistDuringLoad = false;
+                    _templateLibraryUiSettingsLoaded = true;
+                }
+                catch (Exception ex)
+                {
+                    _suppressPersistDuringLoad = false;
+                    Log.LoadTemplateLibraryUiSettingsFailed(_logger, ex);
+                }
+            }
+
             var metadataList = await _templateStore.ListAsync();
             var metadataById = metadataList.ToDictionary(m => m.Id);
             var (validPinnedIds, _) = await UpdatePinnedIdsAsync(current =>
@@ -238,6 +484,12 @@ public sealed partial class ReadyRackViewModel : ObservableObject
                 var valid = current.Where(metadataById.ContainsKey).ToList();
                 return valid.Count == current.Count ? current : valid;
             });
+
+            // Expanded template selector: captured BEFORE AllTemplates is rebuilt below -- unlike
+            // Slots (a stable wrapper), AllTemplates/FilteredTemplates get entirely FRESH row
+            // instances every refresh, so SelectedLibraryItem must be re-resolved by id afterward or
+            // it would point at a discarded instance no ListBox could ever show as selected again.
+            var selectedLibraryItemId = SelectedLibraryItem?.Id;
 
             AllTemplates.Clear();
             foreach (var metadata in metadataList)
@@ -261,6 +513,27 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             OnPropertyChanged(nameof(HasNoTemplates));
             OnPropertyChanged(nameof(TemplateCount));
 
+            // Templates rack rework: Slots[i].Template is a FRESH instance every refresh (see the
+            // loop above), so IsLoaded/IsLoadedAndEdited must be reapplied here or a rename/pin/
+            // delete elsewhere would silently clear the "Loaded" badge on an otherwise-unrelated
+            // refresh. SelectedSlot itself is a stable ReadyRackSlotViewModel instance (Slots isn't
+            // rebuilt, only each slot's own Template swaps) -- but its Template can now be null (its
+            // template got deleted/unpinned by this same refresh), which would leave the action
+            // strip bound to a null Template; clearing the selection in that case hides the strip
+            // instead of rendering blank.
+            ApplyLoadedState();
+            if (SelectedSlot?.Template is null)
+            {
+                SelectedSlot = null;
+            }
+
+            // Expanded template selector: re-resolve to the NEW instance with the same id (a
+            // rename/pin-elsewhere refresh must not collapse the action strip the operator is
+            // actively looking at), or clear it if that template no longer exists (deleted).
+            SelectedLibraryItem = selectedLibraryItemId is null
+                ? null
+                : AllTemplates.FirstOrDefault(t => t.Id == selectedLibraryItemId);
+
             // Tier B audit finding: only DeleteAsync's own success path used to clear this -- a
             // transient failure here (e.g. a locked settings file) left the error banner up forever
             // afterward, even once a later refresh succeeded cleanly.
@@ -279,6 +552,8 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         row.TogglePinCommand = TogglePinCommand;
         row.DeleteCommand = DeleteCommand;
         row.ExportCommand = ExportCommand;
+        row.DeleteFromRackCommand = DeleteFromRackCommand;
+        row.RenameCommand = RenameCommand;
         return row;
     }
 
@@ -332,7 +607,10 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
     /// <summary>Pin/unpin toggle -- appends to the first empty slot (up to <see cref="SlotCount"/>);
     /// a full rack is a no-op (no eviction policy -- the operator unpins something first, same as
-    /// this project's own "no silent surprising side effect" doctrine elsewhere).</summary>
+    /// this project's own "no silent surprising side effect" doctrine elsewhere). Templates rack
+    /// rework: also backs the rack's own "Unpin" action strip button/context-menu item -- a rack
+    /// slot's row is by definition already pinned, so it's the SAME toggle command with a different
+    /// label at that call site, not a separate command.</summary>
     [RelayCommand]
     private async Task TogglePinAsync(TemplateListRowViewModel? row)
     {
@@ -362,8 +640,117 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
         if (changed)
         {
+            // Templates rack rework: unpinning the currently-loaded template clears its own "Loaded"
+            // badge -- the canvas itself is untouched, only the rack's own indicator of what it came
+            // from, since that template is no longer even IN the rack to point at.
+            if (row.Id == _loadedTemplateId)
+            {
+                SetLoadedTemplate(null);
+            }
+
             await RefreshAsync();
         }
+    }
+
+    /// <summary>Templates rack rework -- the rack's own Delete, a REAL confirm dialog via
+    /// <see cref="ConfirmRequested"/> (deliberately not the Library list's inline arm/confirm -- see
+    /// <see cref="TemplateListRowViewModel.DeleteFromRackCommand"/>'s own doc comment). Declining
+    /// (or <see cref="ConfirmRequested"/> being unwired) leaves everything untouched.</summary>
+    [RelayCommand]
+    private async Task DeleteFromRackAsync(TemplateListRowViewModel? row)
+    {
+        if (row is null || ConfirmRequested is null)
+        {
+            return;
+        }
+
+        // yoniq-auditor finding: the confirm-dialog await now lives inside the same try as the
+        // delete itself -- a throw from ConfirmRequested (e.g. the owner window closing mid-await)
+        // used to be outside it. [RelayCommand]'s AsyncRelayCommand happens to swallow an unhandled
+        // exception into the command's own faulted Task rather than crashing the process the way an
+        // async void handler would, but that's an accident of the command type, not a deliberate
+        // choice -- treated the same as a real delete failure here instead.
+        try
+        {
+            var slotNumber = Slots.FirstOrDefault(s => s.Template?.Id == row.Id)?.SlotNumber ?? 0;
+            var confirmVm = new ConfirmActionDialogViewModel(
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteRackTitle", row.Name),
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteRackBody", slotNumber),
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteRackButton"),
+                _localization.GetString("Panes.TxImageEditor.DialogCancel"));
+            if (!await ConfirmRequested(confirmVm).ConfigureAwait(true))
+            {
+                return;
+            }
+
+            await _templateStore.DeleteAsync(row.Id);
+            if (row.Id == _loadedTemplateId)
+            {
+                SetLoadedTemplate(null);
+            }
+
+            StatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Log.DeleteFailed(_logger, row.Id, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DeleteTemplateFailed");
+            return;
+        }
+
+        await RefreshAsync();
+    }
+
+    /// <summary>Templates rack rework -- commits the rack action strip's inline-rename `TextBox`
+    /// (<see cref="TemplateListRowViewModel.EditingName"/>). An empty/whitespace-only name reverts
+    /// (no store call, per the approved design's own "empty name reverts" rule) rather than erroring
+    /// -- <see cref="RefreshAsync"/> would overwrite <see cref="TemplateListRowViewModel.EditingName"/>
+    /// with the unchanged real name anyway, this just avoids the round-trip.</summary>
+    [RelayCommand]
+    private async Task RenameAsync(TemplateListRowViewModel? row)
+    {
+        if (row is null)
+        {
+            return;
+        }
+
+        var trimmed = row.EditingName.Trim();
+        if (trimmed.Length == 0)
+        {
+            row.EditingName = row.Name;
+            return;
+        }
+
+        if (trimmed == row.Name)
+        {
+            return;
+        }
+
+        // yoniq-auditor finding: renaming to an already-used name used to go straight to the store
+        // with no check -- SaveTemplateAsync's own overwrite-by-matching-name lookup
+        // (case-insensitive) would then silently repoint a LATER save at whichever of the two
+        // same-named templates ListAsync happens to enumerate first. Rejected up front instead,
+        // same case-insensitive comparison SaveTemplateAsync itself already uses.
+        if (AllTemplates.Any(t => t.Id != row.Id && string.Equals(t.Name, trimmed, StringComparison.OrdinalIgnoreCase)))
+        {
+            row.EditingName = row.Name;
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.RenameTemplateNameInUse");
+            return;
+        }
+
+        try
+        {
+            await _templateStore.RenameAsync(row.Id, trimmed);
+            StatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Log.RenameFailed(_logger, row.Id, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.RenameTemplateFailed");
+            return;
+        }
+
+        await RefreshAsync();
     }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
@@ -580,8 +967,17 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack refresh failed")]
         public static partial void RefreshFailed(ILogger logger, Exception exception);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Template Library UI settings load failed")]
+        public static partial void LoadTemplateLibraryUiSettingsFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Template Library UI settings persist failed")]
+        public static partial void PersistTemplateLibraryUiSettingsFailed(ILogger logger, Exception exception);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack delete failed: templateId={TemplateId}")]
         public static partial void DeleteFailed(ILogger logger, string templateId, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack rename failed: templateId={TemplateId}")]
+        public static partial void RenameFailed(ILogger logger, string templateId, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack export failed: templateId={TemplateId}")]
         public static partial void ExportFailed(ILogger logger, string templateId, Exception exception);

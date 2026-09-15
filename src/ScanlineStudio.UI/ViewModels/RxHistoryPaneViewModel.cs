@@ -970,7 +970,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return false;
         }
 
-        var confirmVm = new ConfirmActionDialogViewModel(title, message);
+        // yoniq-auditor finding: ConfirmActionDialogViewModel's labels are now required, not
+        // defaulted (TargetNullValue can't resolve a nested {loc:Translate ...}) -- passes the
+        // same generic Yes/No text this dialog always showed here.
+        var confirmVm = new ConfirmActionDialogViewModel(
+            title, message, _localization.GetString("Configurations.ConfirmYes"), _localization.GetString("Configurations.ConfirmNo"));
         return await ConfirmRequested(confirmVm).ConfigureAwait(true);
     }
 

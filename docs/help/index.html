@@ -328,11 +328,12 @@
         <ol class="workflow">
           <li>On <strong>Transmit</strong>, select a mode (see <a href="#sstv-modes">Supported SSTV modes</a> for the full list) or leave mode following on Auto to reply in the last received mode.</li>
           <li>Use <strong>Browse…</strong>, a stock image, a received image, or the blank editor as your source.</li>
-          <li>Crop, adjust, and add template elements. Select <strong>Apply</strong> when the outgoing frame is ready.</li>
-          <li>Confirm the output device, duration, identification, Pwr level, and radio state; then select <strong>Transmit</strong>. With the CAT backend set to <strong>None</strong>, Scanline Studio sends no keying command — see <a href="#requirements">What you need</a> for keying the radio yourself.</li>
+          <li>Crop, adjust, and add template elements.</li>
+          <li>Confirm the output device, duration, identification, Pwr level, and radio state; then select the big <strong>TRANSMIT</strong> button to apply your edits and start sending in one step. With the CAT backend set to <strong>None</strong>, Scanline Studio sends no keying command — see <a href="#requirements">What you need</a> for keying the radio yourself.</li>
         </ol>
+        <p>Select <strong>Apply</strong> instead of <strong>TRANSMIT</strong> to save the edit without sending it yet — useful for staging a card ahead of time. Apply closes the editor; reopen it with <strong>Edit…</strong> and select <strong>TRANSMIT</strong> when you're ready to send.</p>
 
-        <p>During transmission, the button becomes <strong>Stop TX</strong> and progress shows percentage and remaining time. Select <strong>Stop TX</strong> to abort. The header's <strong>Halt</strong> button stops receiving, not transmitting — see <a href="#workspace">Tour of the workspace</a>.</p>
+        <p>During transmission, progress shows percentage and remaining time. Select <strong>Stop TX</strong> to abort. The header's <strong>Halt</strong> button stops receiving, not transmitting — see <a href="#workspace">Tour of the workspace</a>.</p>
 
         <div class="safety"><strong>Before the first RF transmission.</strong> Use <a href="#radio-tune-safety">Tune and TX safety</a> to establish a clean drive level. Excess audio can cause ALC action, splatter, poor SSTV quality, or automatic SWR cutoff.</div>
         <div class="note"><strong>Auto mode following.</strong> Auto normally matches the last received mode for a reply. It will not make an unsafe mid-transmit change, and it can decline a change when the already loaded image width is incompatible.</div>
@@ -375,8 +376,8 @@
 
         <h3>Finish or discard</h3>
         <ul>
-          <li><strong>Apply</strong> saves the editor state into the prepared TX frame without transmitting.</li>
-          <li><strong>Apply &amp; Transmit</strong> prepares the frame and immediately begins transmission.</li>
+          <li><strong>TRANSMIT</strong> — the large, distinctly-colored button — applies the editor state into the prepared TX frame and immediately begins transmission. This is the only way to send a picture; there is no separate Transmit button elsewhere.</li>
+          <li><strong>Apply</strong> saves the editor state into the prepared TX frame without transmitting, and closes the editor — for staging a card ahead of time. Reopen with <strong>Edit…</strong> and select <strong>TRANSMIT</strong> when you're ready to send.</li>
           <li><strong>Revert</strong> returns to the last applied state.</li>
           <li><strong>Cancel</strong> closes/discards as prompted; a second confirmation is required when unsaved edits would be lost.</li>
         </ul>
@@ -385,7 +386,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="templates-overlays" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="template templates overlay overlays text box image line layer element inspector geometry font bold italic color fill outline shadow stack gradient picture fill rotation corner radius perspective macros qso fields insert ready rack library save load pin import export">
+      <article id="templates-overlays" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="template templates overlay overlays text box image line layer element inspector geometry font bold italic color fill outline shadow stack gradient picture fill rotation corner radius perspective macros qso fields insert ready rack library grid list view save load pin unpin rename delete import export">
         <p class="topic-category">Transmitting</p>
         <h2>Templates, text, boxes, images, and lines</h2>
         <p>Template elements let you build reusable QSL-style layouts on top of the base image, then save and instantly recall them for future contacts.</p>
@@ -399,6 +400,7 @@
 
         <h3>Text styling</h3>
         <p>Text elements can use any bundled font, at a chosen size, bold and/or italic. Beyond plain fill color, you can add an outline (stroke) with its own color and thickness, a drop shadow with an adjustable offset, a "3D stack" repeated-copy effect (its own step-offset controls), a gradient fill, or a picture as the fill instead of a flat color (from a file or the clipboard) — pick whichever combination keeps the text legible over your particular background photo.</p>
+        <p>Resizing a text element's box shrinks the font to keep it fitting by default; growing the box back does not grow the font past its set size. Right-click a text element and turn on <strong>Grow to fill box</strong> to let the font also grow larger when there's room. It's off by default and per element — turning it on for one text element does not affect any other — and it is not remembered between edits; it resets to off whenever a template reloads.</p>
 
         <h3>Box and line styling</h3>
         <p>Boxes support a fill color or gradient, an optional border with its own thickness, rounded corners, and opacity. Lines support their own stroke color and thickness. Both are plain geometry, not photos, so they composite cleanly over any background.</p>
@@ -417,11 +419,11 @@
 
         <h3>Save and recall templates</h3>
         <ol class="steps">
-          <li>Enter a template name and select <strong>SAVE</strong>.</li>
-          <li>Use the Template Library filter to find saved layouts.</li>
-          <li>Select <strong>LOAD</strong> to recall one. If the current layout has unsaved work, repeat the selection to confirm replacement.</li>
-          <li>Select <strong>PIN</strong> to place a favourite template in the <strong>READY RACK</strong>, the strip of nine slots elsewhere in the TX editor. Rack slots can be recalled with number keys 1–9 when the editor owns keyboard focus — the fastest way to reply mid-QSO without touching the Template Library at all.</li>
-          <li>Select <strong>DELETE</strong> to remove a saved template; it asks <strong>SURE?</strong> and you select again to confirm.</li>
+          <li>Enter a template name and select <strong>SAVE</strong>. Right-clicking the canvas also offers <strong>Save Template</strong> — it focuses the name field if none is entered yet, or saves immediately if one is; it's disabled when the canvas has no elements to save.</li>
+          <li>Use the Template Library filter to find saved layouts. Switch between <strong>LIST</strong> and <strong>GRID</strong> view with the toggle at the top of the panel (your choice is remembered). Click a row or tile once to select it and reveal its own Load/Pin/Export/Delete buttons plus an editable name field; double-click — or right-click for the same actions as a menu — to load it. A pinned template shows a <strong>PINNED</strong> badge; select <strong>Pin</strong> on it to place it in the <strong>TEMPLATES</strong> rack, the strip of nine slots elsewhere in the TX editor.</li>
+          <li>In the Templates rack: click a slot once to select it and reveal its own Load/Unpin/Export/Delete buttons plus an editable name field (Enter commits a rename, Esc reverts). Double-click a slot — or right-click it for the same actions as a menu — to load it. Number keys 1–9 still recall a slot directly when the editor owns keyboard focus, the fastest way to reply mid-QSO without touching the mouse at all.</li>
+          <li>Loading over unsaved work asks first: <strong>Discard unsaved changes?</strong>, naming the template that would replace them. A slot showing <strong>Loaded</strong> is the one the canvas currently came from; it reads <strong>Loaded • edited</strong> once you've changed anything since.</li>
+          <li>Deleting from the Templates rack also asks for confirmation, naming the template and its slot number. Deleting from the Template Library list itself still uses its own <strong>SURE?</strong> two-click confirm instead.</li>
           <li>Use <strong>EXPORT</strong> to save a single-file bundle you can share with another operator, and <strong>IMPORT</strong> to load one someone shared with you.</li>
           <li>Select <strong>IMPORT LEGACY</strong> to load a <code>.mtm</code> or <code>.mti</code> template file from a legacy YONIQ/MMSSTV install. Most content (text, position, color, images, boxes) carries over; a few legacy-only effects (multi-stop gradients, dash/decorative line styles, underline/strikethrough, most macro tokens other than the sender's own callsign) have no equivalent here and are approximated or dropped — a status message tells you if anything needed adjustment, and the full detail is in the log.</li>
         </ol>
