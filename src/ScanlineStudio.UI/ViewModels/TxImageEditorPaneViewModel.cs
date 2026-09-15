@@ -3382,6 +3382,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             PasteCommand = PasteElementCommand,
             FlattenCommand = FlattenElementCommand,
             FitCommand = SetSelectedImageFitCommand,
+            FitToSafeAreaCommand = FitSelectedImageToSafeAreaCommand,
             ResetToOriginalSizeCommand = ResetImageElementToOriginalSizeCommand,
             TogglePerspectiveCommand = TogglePerspectiveCommand,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
@@ -4463,6 +4464,103 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         PushUndoSnapshot();
         element.Fit = fit;
+        RecomputePreview();
+    }
+
+    /// <summary>User-requested (2026-09-15): the safe-area guide's own normalized size, in the SAME
+    /// canvas-normalized coordinate space <see cref="CropRect"/> and every element's own X/Y/Width/
+    /// Height already live in (confirmed via <see cref="NudgeSelectedElements"/>'s own
+    /// <c>dxPixels / WorkingCopyWidth</c> math and <see cref="AlignSelectedElementToCrop"/>'s own
+    /// <c>CropRect.X + ...</c> formulas -- both only make sense if CropRect and element geometry share
+    /// one space). <see cref="SafeAreaInsetPixels"/>/<see cref="SafeAreaWidthPixels"/> are the SAME
+    /// computation in on-screen pixels; dividing by <see cref="WorkingCopyWidth"/>/
+    /// <see cref="WorkingCopyHeight"/> instead of <see cref="CanvasDisplayWidth"/>/
+    /// <see cref="CanvasDisplayHeight"/> cancels <see cref="ZoomFactor"/> out algebraically, same
+    /// zoom-invariance reasoning <see cref="ProjectRectToCropRelative"/>'s own doc comment gives.
+    /// Returns <see langword="false"/> for a degenerate result (working copy narrower/shorter than
+    /// twice the inset) rather than a negative/zero size -- same guard
+    /// <see cref="SafeAreaWidthPixels"/>'s own <c>Math.Max(0, ...)</c> represents in pixel space.</summary>
+    private bool TryGetSafeAreaNormalizedSize(out double width, out double height)
+    {
+        width = height = 0;
+        if (WorkingCopyWidth <= 0 || WorkingCopyHeight <= 0)
+        {
+            return false;
+        }
+
+        width = 1 - (2 * SafeAreaInsetWorkingCopyUnits / WorkingCopyWidth);
+        height = 1 - (2 * SafeAreaInsetWorkingCopyUnits / WorkingCopyHeight);
+        return width > 0 && height > 0;
+    }
+
+    private bool CanFitSelectedImageToSafeArea(string target) =>
+        SelectedOverlayElement is ImageElementViewModel { Locked: false };
+
+    /// <summary>User-requested (2026-09-15): "right click menu 'fit'... should have an option of
+    /// 'fit safe area', fit width, fit height. Those options should resize the image area and image
+    /// to the safe area size (or width or height)." A DIFFERENT concept from
+    /// <see cref="SetSelectedImageFit"/> right above -- that changes how the image's own PIXELS fill
+    /// its EXISTING bounds (Stretch/Contain/Cover); this changes the bounds (Width/Height/X/Y)
+    /// themselves to match the safe-area guide's own size, centered, same
+    /// "X=0.5,Y=0.5 full-frame convention" <see cref="SetAsBackdrop"/> already uses for its own
+    /// exact-size assignment (no aspect-preserving scale here either -- <see cref="ImageElementViewModel.Fit"/>,
+    /// set independently via the sibling submenu items, already owns how the pixels handle an
+    /// arbitrary box). <paramref name="target"/> mirrors exactly which axis/axes the operator asked
+    /// for -- "SafeArea" sets both Width/Height (and both X/Y); "Width"/"Height" touch only that one
+    /// axis (size AND its own centering), leaving the other axis' current position/size untouched, a
+    /// literal reading of "the safe area size (or width or height)."
+    /// <para>Same Locked gate as <see cref="ResetImageElementToOriginalSize"/> -- a locked element's
+    /// bounds are frozen by definition (see that command's own doc comment for the exact bug this
+    /// prevents), in CanExecute, the body backstop below, and the MenuItem's own AXAML IsEnabled
+    /// bind.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanFitSelectedImageToSafeArea))]
+    private void FitSelectedImageToSafeArea(string target)
+    {
+        if (SelectedOverlayElement is not ImageElementViewModel { Locked: false } element)
+        {
+            return;
+        }
+
+        if (!TryGetSafeAreaNormalizedSize(out var safeWidth, out var safeHeight))
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FitToSafeAreaUnavailable");
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            // Same "turn perspective off first, inside this same suspend window" reasoning as
+            // ResetImageElementToOriginalSize/SetAsBackdrop's own identical fix.
+            if (element.PerspectiveEnabled)
+            {
+                DisablePerspective(element);
+            }
+
+            switch (target)
+            {
+                case "SafeArea":
+                    element.X = 0.5;
+                    element.Y = 0.5;
+                    element.Width = safeWidth;
+                    element.Height = safeHeight;
+                    break;
+                case "Width":
+                    element.X = 0.5;
+                    element.Width = safeWidth;
+                    break;
+                case "Height":
+                    element.Y = 0.5;
+                    element.Height = safeHeight;
+                    break;
+            }
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
         RecomputePreview();
     }
 

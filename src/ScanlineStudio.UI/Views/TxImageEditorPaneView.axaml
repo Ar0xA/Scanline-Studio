@@ -1668,6 +1668,23 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitStretch}" Command="{Binding FitCommand}" CommandParameter="Stretch" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitContain}" Command="{Binding FitCommand}" CommandParameter="Contain" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitCover}" Command="{Binding FitCommand}" CommandParameter="Cover" />
+                                                            <Separator />
+                                                            <!-- User-requested (2026-09-15): "fit safe area"/"fit width"/"fit
+                                                                 height" — a DIFFERENT concept from the 3 items above (those
+                                                                 change how the image's own pixels fill its EXISTING bounds;
+                                                                 these resize the bounds themselves to match the safe-area
+                                                                 guide's own size, centered). IsEnabled binds directly to
+                                                                 !Locked, same reasoning as ResetToOriginalSize's own bind
+                                                                 right above this submenu. -->
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitToSafeArea}"
+                                                                      Command="{Binding FitToSafeAreaCommand}" CommandParameter="SafeArea"
+                                                                      IsEnabled="{Binding !Locked}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitToSafeAreaWidth}"
+                                                                      Command="{Binding FitToSafeAreaCommand}" CommandParameter="Width"
+                                                                      IsEnabled="{Binding !Locked}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitToSafeAreaHeight}"
+                                                                      Command="{Binding FitToSafeAreaCommand}" CommandParameter="Height"
+                                                                      IsEnabled="{Binding !Locked}" />
                                                         </MenuItem>
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.ArrangeMenu}">
