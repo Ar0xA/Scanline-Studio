@@ -349,7 +349,7 @@
       <article id="image-editor" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="image editor crop move scale rotate preview aspect letterbox safe area snap grid brightness contrast saturation gamma sharpen denoise apply cancel undo redo zoom multi select shift click lock duplicate copy paste style flatten">
         <p class="topic-category">Transmitting</p>
         <h2>Edit the outgoing image</h2>
-        <p>The TX image editor is the main pane of the Transmit tab — there is no separate editor window to open. It combines non-destructive framing, image adjustments, and overlay composition (text, boxes, lines, and extra pictures on top of your base photo). Its mode-exact preview shows the pixels prepared for transmission.</p>
+        <p>The TX image editor is the main pane of the Transmit tab — there is no separate editor window to open. It combines non-destructive framing, image adjustments, and overlay composition (text, boxes, lines, and extra pictures on top of your base photo, also called the <strong>background</strong> — see <a href="#background-vs-backdrop">Background vs. backdrop</a>). Its mode-exact preview shows the pixels prepared for transmission.</p>
 
         <h3>Frame the base image</h3>
         <ul>
@@ -367,8 +367,19 @@
           <li>Click an element to select it; <strong>Shift-click</strong> additional elements on the canvas to select several at once. A multi-selection can be dragged, nudged, duplicated, or deleted together, but not resized, aligned, or restyled as a group — style and geometry changes still apply to one element at a time.</li>
           <li><strong>Lock</strong> an element to stop it from being dragged by accident; <strong>Duplicate</strong> makes a copy to build a related element quickly.</li>
           <li><strong>Copy</strong>/<strong>Cut</strong>/<strong>Paste</strong> move or duplicate elements through the clipboard; <strong>Copy Style</strong>/<strong>Paste Style</strong> carry over a text, box, or line element's appearance (color, outline, font, and similar) onto another element of the <em>same type</em>, without touching its position or content — it's greyed out for image elements and when the copied and target types don't match.</li>
-          <li>The right-click menu's <strong>Arrange</strong> submenu reorders layers — <strong>Bring to front</strong>, <strong>Bring forward</strong>, <strong>Send backward</strong>, <strong>Send to back</strong>. A separate item on that same right-click menu, <strong>Flatten into image</strong>, permanently merges one element into the base picture, after which it can no longer be moved or restyled on its own.</li>
+          <li>The right-click menu's <strong>Arrange</strong> submenu reorders layers — <strong>Bring to front</strong>, <strong>Bring forward</strong>, <strong>Send backward</strong>, <strong>Send to back</strong>. A separate item on that same right-click menu, <strong>Flatten into image</strong>, permanently merges one element into the background photo, after which it can no longer be moved or restyled on its own.</li>
           <li><strong>Undo</strong>/<strong>Redo</strong> cover the editing session.</li>
+        </ul>
+
+        <h3 id="background-vs-backdrop">Background vs. backdrop</h3>
+        <p>These sound similar but are not saved the same way:</p>
+        <ul>
+          <li>The <strong>background</strong> is the one photo the whole frame is built on — loaded via <strong>Browse</strong> or <strong>STOCK</strong> on the Transmit tab's sidebar. There is always exactly one; loading a new one replaces it. <strong>The background is never saved with a template</strong> — a template only stores its overlay elements, so the same template can be reused with a different photo for every contact.</li>
+          <li>A <strong>backdrop</strong> is an inserted picture element (<strong>+ Image</strong>) that has been sent to the very back of the layer stack and stretched to fill the frame — the right-click menu's <strong>Set as backdrop</strong> item does this. Unlike the background, <strong>a backdrop IS saved with the template</strong>, so it's the way to build a template with a fixed, reusable photo baked into its design (a logo card, a fixed QSL background, and similar).</li>
+          <li>Right-click the empty canvas and select <strong>Turn into backdrop</strong> to convert the current background into a backdrop element — useful right before saving a template you want to always include a specific photo. This bakes in the current crop and adjustments, then leaves the background blank.</li>
+          <li>Right-click a backdrop element and select <strong>Turn into background</strong> to convert it back — it replaces whatever is currently loaded as the background and removes the element, immediately, on one click. <strong>Undo</strong> restores the previous background and the removed element together if you didn't mean to. A backdrop element is locked by design, which can block the canvas's own right-click menu — use the same-named button on its row in the <strong>ELEMENTS</strong> list (in the docked sidebar) if right-clicking the canvas doesn't show the menu.</li>
+          <li>Right-click the empty canvas and select <strong>Remove background</strong> to clear the current background photo outright, without keeping it as a backdrop element. Unlike Turn into backdrop, the photo is discarded, immediately, on one click — use <strong>Undo</strong> to bring it back.</li>
+          <li>At most one backdrop can exist at a time — setting or promoting a new one replaces any previous backdrop automatically.</li>
         </ul>
 
         <h3>Adjust the picture</h3>
@@ -379,7 +390,7 @@
           <li><strong>TRANSMIT</strong> — the large, distinctly-colored button — applies the editor state into the prepared TX frame and immediately begins transmission. This is the only way to send a picture; there is no separate Transmit button elsewhere.</li>
           <li><strong>Apply</strong> saves the editor state into the prepared TX frame without transmitting, and closes the editor — for staging a card ahead of time. Reopen with <strong>Edit…</strong> and select <strong>TRANSMIT</strong> when you're ready to send.</li>
           <li><strong>Revert</strong> returns to the last applied state.</li>
-          <li><strong>Cancel</strong> closes/discards as prompted; a second confirmation is required when unsaved edits would be lost.</li>
+          <li><strong>Cancel</strong> closes/discards as prompted; a confirmation dialog appears when unsaved edits would be lost.</li>
         </ul>
 
         <div class="warning"><strong>Preview limit.</strong> The preview is accurate for crop, scale, adjustments, and overlay placement. It does not simulate the chroma loss or other color effects introduced by a complete transmit-and-receive path for every SSTV mode.</div>
@@ -389,7 +400,7 @@
       <article id="templates-overlays" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="template templates overlay overlays text box image line layer element inspector geometry font bold italic color fill outline shadow stack gradient picture fill rotation corner radius perspective macros qso fields insert ready rack library grid list view save load pin unpin rename delete import export">
         <p class="topic-category">Transmitting</p>
         <h2>Templates, text, boxes, images, and lines</h2>
-        <p>Template elements let you build reusable QSL-style layouts on top of the base image, then save and instantly recall them for future contacts.</p>
+        <p>Template elements let you build reusable QSL-style layouts on top of the background photo, then save and instantly recall them for future contacts — see <a href="#background-vs-backdrop">Background vs. backdrop</a> for what does and doesn't get saved.</p>
 
         <h3>Build a layout</h3>
         <ul>
@@ -399,7 +410,7 @@
         </ul>
 
         <h3>Text styling</h3>
-        <p>Text elements can use any bundled font, at a chosen size, bold and/or italic. Beyond plain fill color, you can add an outline (stroke) with its own color and thickness, a drop shadow with an adjustable offset, a "3D stack" repeated-copy effect (its own step-offset controls), a gradient fill, or a picture as the fill instead of a flat color (from a file or the clipboard) — pick whichever combination keeps the text legible over your particular background photo.</p>
+        <p>Text elements can use any bundled font, at a chosen size, bold and/or italic. Beyond plain fill color, you can add an outline (stroke) with its own color and thickness, a drop shadow with an adjustable offset, a "3D stack" repeated-copy effect (its own step-offset controls), a gradient fill, or a picture as the fill instead of a flat color (from a file or the clipboard) — pick whichever combination keeps the text legible over your particular background photo. Select <strong>Clear picture fill</strong> from the right-click menu, or use the <strong>CLEAR</strong> button next to the picture fill controls, to remove a picture fill and go back to a flat color.</p>
         <p>Resizing a text element's box shrinks the font to keep it fitting by default; growing the box back does not grow the font past its set size. Right-click a text element and turn on <strong>Grow to fill box</strong> to let the font also grow larger when there's room. It's off by default and per element — turning it on for one text element does not affect any other. The toggle itself is not remembered between edits — it resets to off whenever a template reloads — but saving a template captures the actual grown font size, so a reloaded template still shows text at the size it last grew to, not its original set size.</p>
 
         <h3>Box and line styling</h3>
@@ -423,7 +434,7 @@
           <li>Use the Template Library filter to find saved layouts. Switch between <strong>LIST</strong> and <strong>GRID</strong> view with the toggle at the top of the panel (your choice is remembered). Click a row or tile once to select it and reveal its own Load/Pin/Export/Delete buttons plus an editable name field; double-click — or right-click for the same actions as a menu — to load it. A pinned template shows a <strong>PINNED</strong> badge; select <strong>Pin</strong> on it to place it in the <strong>TEMPLATES</strong> rack, the strip of nine slots elsewhere in the TX editor.</li>
           <li>In the Templates rack: click a slot once to select it and reveal its own Load/Unpin/Export/Delete buttons plus an editable name field (Enter commits a rename, Esc reverts). Double-click a slot — or right-click it for the same actions as a menu — to load it. Number keys 1–9 still recall a slot directly when the editor owns keyboard focus, the fastest way to reply mid-QSO without touching the mouse at all.</li>
           <li>Loading over unsaved work asks first: <strong>Discard unsaved changes?</strong>, naming the template that would replace them. A slot showing <strong>Loaded</strong> is the one the canvas currently came from; it reads <strong>Loaded • edited</strong> once you've changed anything since.</li>
-          <li>Deleting from the Templates rack also asks for confirmation, naming the template and its slot number. Deleting from the Template Library list itself still uses its own <strong>SURE?</strong> two-click confirm instead.</li>
+          <li>Deleting from the Templates rack asks for confirmation, naming the template and its slot number. Deleting from the Template Library list asks for confirmation too, naming the template.</li>
           <li>Use <strong>EXPORT</strong> to save a single-file bundle you can share with another operator, and <strong>IMPORT</strong> to load one someone shared with you.</li>
           <li>Select <strong>IMPORT LEGACY</strong> to load a <code>.mtm</code> or <code>.mti</code> template file from a legacy YONIQ/MMSSTV install. Most content (text, position, color, images, boxes) carries over; a few legacy-only effects (multi-stop gradients, dash/decorative line styles, underline/strikethrough, most macro tokens other than the sender's own callsign) have no equivalent here and are approximated or dropped — a status message tells you if anything needed adjustment, and the full detail is in the log.</li>
         </ol>

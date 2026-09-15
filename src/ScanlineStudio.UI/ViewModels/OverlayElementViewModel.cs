@@ -339,13 +339,24 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     public IRelayCommand? PasteStyleCommand { get; init; }
 
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
-    /// <see cref="ImageElementViewModel.SetAsBackgroundCommand"/>'s own image-only precedent for
+    /// <see cref="ImageElementViewModel.SetAsBackdropCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>
     /// interface since box/image elements have no text to plate). Same parent-pushed pattern as
     /// <see cref="DuplicateCommand"/> -- parent-pushed the SAME parameterless
     /// <c>TxImageEditorPaneViewModel.AddPlateBehindTextCommand</c> instance the toolbar already uses,
     /// bound with no <c>CommandParameter</c>.</summary>
     public IRelayCommand? AddPlateCommand { get; init; }
+
+    /// <summary>User-reported gap (2026-09-15): setting a picture fill (<see cref="BitmapFillEnabled"/>)
+    /// had no way to unset it except the docked Inspector's own PICTURE FILL row (TEXT STYLE tab) --
+    /// the right-click context menu, where an operator would naturally look first (it's also the ONLY
+    /// place BitmapFillEnabled itself can be checked/read at a glance, via a new menu item's own
+    /// IsEnabled), had no entry for it at all. Text-only, same parent-pushed precedent as
+    /// <see cref="AddPlateCommand"/> above -- parent-pushed the SAME
+    /// <c>TxImageEditorPaneViewModel.ClearTextBitmapFillCommand</c> instance the Inspector's own CLEAR
+    /// button already uses, bound with no <c>CommandParameter</c> (that command reads
+    /// <c>SelectedTextElement</c> itself, same as the Inspector button already relies on).</summary>
+    public IRelayCommand? ClearTextBitmapFillCommand { get; init; }
 
     /// <summary>EditWindow redesign Phase 6 (mockups/Editwindow) -- text-only (matches
     /// <see cref="AddPlateCommand"/>'s own image/box-excluded precedent: only text elements have a

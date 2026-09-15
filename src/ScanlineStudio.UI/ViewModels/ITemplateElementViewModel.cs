@@ -84,10 +84,10 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
     /// pattern as <see cref="MoveUpCommand"/>/<see cref="MoveDownCommand"/>, generalized the same way
     /// rather than adding element-type-specific variants. <c>BringToFrontCommand</c> reuses
     /// <c>NextZ()</c>'s own max+1 top-insert convention; <c>SendToBackCommand</c> reuses
-    /// <c>SetAsBackground</c>'s own bottom-insert convention, with a floor at
-    /// <c>background.Z + 1</c> when a locked background image element exists (see
+    /// <c>SetAsBackdrop</c>'s own bottom-insert convention, with a floor at
+    /// <c>backdrop.Z + 1</c> when a locked backdrop image element exists (see
     /// <c>TxImageEditorPaneViewModel.SendToBack</c>'s own doc comment) so an element can never be
-    /// sent behind -- and made invisible under -- an opaque full-frame background.</summary>
+    /// sent behind -- and made invisible under -- an opaque full-frame backdrop.</summary>
     IRelayCommand? BringToFrontCommand { get; init; }
 
     IRelayCommand? SendToBackCommand { get; init; }

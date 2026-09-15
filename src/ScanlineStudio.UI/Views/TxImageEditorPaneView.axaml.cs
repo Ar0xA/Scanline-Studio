@@ -233,9 +233,17 @@ public partial class TxImageEditorPaneView : UserControl
     /// save -- <see cref="TxImageEditorPaneViewModel.OverlayElements"/> has no live-bound bool for
     /// this today (no <c>CollectionChanged</c> subscription anywhere in the VM), so this is computed
     /// fresh right before the menu shows, same "View computes a View-owned check" pattern as
-    /// <see cref="OnFitSafeAreaClick"/> reading <c>EditorScrollViewer.Bounds</c>.</summary>
-    private void OnCanvasContextMenuOpened(object? sender, RoutedEventArgs e) =>
+    /// <see cref="OnFitSafeAreaClick"/> reading <c>EditorScrollViewer.Bounds</c>. "Turn into backdrop"/
+    /// "Remove background" (background/backdrop naming work, 2026-09-15) reuse the identical pattern
+    /// against <see cref="TxImageEditorPaneViewModel.HasRealBackground"/>, same "no live-bound bool"
+    /// reason -- both are refused as a no-op when there's nothing real loaded.</summary>
+    private void OnCanvasContextMenuOpened(object? sender, RoutedEventArgs e)
+    {
         SaveTemplateMenuItem.IsEnabled = ViewModel?.OverlayElements.Count > 0;
+        var hasRealBackground = ViewModel?.HasRealBackground == true;
+        PromoteBackgroundMenuItem.IsEnabled = hasRealBackground;
+        RemoveBackgroundMenuItem.IsEnabled = hasRealBackground;
+    }
 
     /// <summary>User-reported gap (2026-09-15): used to just focus the empty name field instead of
     /// saving, requiring the operator to type something first -- see
@@ -867,6 +875,23 @@ public partial class TxImageEditorPaneView : UserControl
 
         if (!isLeft)
         {
+            return;
+        }
+
+        // User-reported bug (2026-09-15): a locked backdrop's own canvas Border used to have
+        // IsHitTestVisible="{Binding !BlocksHitTesting}" = False, so ALL pointer events -- including
+        // right-click -- fell through to the crop rect underneath, showing the WRONG context menu
+        // (the canvas's own empty-area one, not the backdrop's) even with the mouse directly over
+        // the backdrop. That Border is now unconditionally hit-testable (see its own AXAML comment),
+        // so right-click correctly reaches this element's own menu -- but a LEFT-press here would
+        // otherwise reach StartElementMoveDrag below, which itself already refuses a Locked element
+        // (a backdrop always is), silently doing nothing and making the crop rect underneath
+        // unreachable by drag again. Redirected explicitly to the SAME crop-move drag
+        // OnCropBodyPointerPressed itself starts, preserving the original Phase 6 "the crop rect
+        // stays reachable under a locked backdrop" intent without reintroducing the right-click bug.
+        if (element is ImageElementViewModel { BlocksHitTesting: true })
+        {
+            StartDrag(DragMode.CropMove, e);
             return;
         }
 

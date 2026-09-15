@@ -286,7 +286,16 @@
              deliberate addition as the Receive tab's Mode-override ComboBox). -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
-                <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                <!-- Background/backdrop naming work (2026-09-15): a real, previously-reported source
+                     of confusion is that STOCK/Browse loads what this app calls the "background" —
+                     not saved with templates — while a DIFFERENT command elsewhere (the image
+                     element's own "Set as backdrop") IS saved. Same shared IndustryHelpGlyph pattern
+                     already used throughout OptionsWindowView.axaml, ToolTip.Tip carries the real
+                     explanation rather than growing the header text itself. -->
+                <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                    <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.StockLabel}" />
+                    <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.TxControls.StockHelp}" />
+                </StackPanel>
             </HeaderedContentControl.Header>
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                 <!-- spec/18-path-to-1.0.md Medium item 5: OpenEditorForSourceAsync already guards

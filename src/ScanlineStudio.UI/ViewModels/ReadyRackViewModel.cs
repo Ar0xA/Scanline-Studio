@@ -60,13 +60,6 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
     [ObservableProperty]
     private bool _canPin = true;
 
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
-    /// unconfirmed click ... in a dense row." Arm/confirm (see <see cref="ReadyRackViewModel.DeleteAsync"/>'s
-    /// own doc comment) -- no dialog-service precedent exists anywhere in this codebase, same
-    /// reasoning as <c>TxImageEditorPaneViewModel.IsCancelArmed</c>'s own doc comment.</summary>
-    [ObservableProperty]
-    private bool _isPendingDelete;
-
     // Assigned by ReadyRackViewModel right after construction -- same "child VM holds a direct
     // reference to the parent's command" wiring TxImageEditorPaneViewModel's own CreateOverlayElement
     // already establishes for RemoveCommand/MoveUpCommand/MoveDownCommand (this codebase's own
@@ -84,10 +77,12 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
     public IRelayCommand<TemplateListRowViewModel>? ExportCommand { get; set; }
 
     /// <summary>Templates rack rework -- same wiring convention as the four above.
-    /// <see cref="ReadyRackViewModel.DeleteFromRackAsync"/>, deliberately NOT the same command as
-    /// <see cref="DeleteCommand"/> above: the rack's Delete shows a real confirm dialog, the Library
-    /// list's own Delete keeps its existing inline arm/confirm -- two different UX for the same
-    /// underlying store call, so two different commands.</summary>
+    /// <see cref="ReadyRackViewModel.DeleteFromRackAsync"/>, a SEPARATE command from
+    /// <see cref="DeleteCommand"/> above only because their confirm dialogs word the consequence
+    /// differently (naming the rack slot vs. not) -- both now go through the same real
+    /// <see cref="ReadyRackViewModel.ConfirmRequested"/> dialog (user-reported feedback, 2026-09-15:
+    /// the Library list's own Delete used to keep an inline two-click arm/confirm here, the one
+    /// remaining "click twice" holdout in this class -- migrated to match).</summary>
     public IRelayCommand<TemplateListRowViewModel>? DeleteFromRackCommand { get; set; }
 
     /// <summary>Templates rack rework -- same wiring convention. <see cref="ReadyRackViewModel.RenameAsync"/>.</summary>
@@ -289,11 +284,6 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     /// convention, e.g. RadioStatusViewModel/LogbookPaneViewModel).</summary>
     [ObservableProperty]
     private string? _statusMessage;
-
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): arm/confirm target for
-    /// <see cref="DeleteAsync"/> -- see <see cref="TemplateListRowViewModel.IsPendingDelete"/>'s own
-    /// doc comment.</summary>
-    private string? _pendingDeleteId;
 
     /// <summary>Templates rack rework -- which template id the live editor canvas was last loaded
     /// from, or <see langword="null"/> if none (a blank/new editor, or the loaded template was
@@ -497,7 +487,6 @@ public sealed partial class ReadyRackViewModel : ObservableObject
                 var isPinned = validPinnedIds.Contains(metadata.Id);
                 var row = WireRowCommands(new TemplateListRowViewModel(metadata, isPinned));
                 row.CanPin = isPinned || validPinnedIds.Count < SlotCount;
-                row.IsPendingDelete = metadata.Id == _pendingDeleteId;
                 AllTemplates.Add(row);
             }
 
@@ -754,47 +743,42 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     }
 
     /// <summary>Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single
-    /// unconfirmed click ... in a dense row." Arm/confirm, not a modal dialog (no precedent anywhere
-    /// in this codebase -- same reasoning as <c>TxImageEditorPaneViewModel.IsCancelArmed</c>'s own
-    /// doc comment): the first click on a row arms it (<see cref="TemplateListRowViewModel.IsPendingDelete"/>
-    /// flips true for THAT row only, false for every other -- clicking a different row's Delete re-arms
-    /// for the new target rather than confirming an unrelated one), the second click on the SAME
-    /// already-armed row actually deletes. <see cref="RefreshAsync"/>'s own re-populate naturally
-    /// clears the pending state on success (fresh rows default <c>IsPendingDelete</c> false unless
-    /// <see cref="_pendingDeleteId"/> still matches).</summary>
+    /// unconfirmed click ... in a dense row." Real confirm dialog via <see cref="ConfirmRequested"/>,
+    /// same shape as <see cref="DeleteFromRackAsync"/> -- user-reported feedback (2026-09-15): this
+    /// command used to arm/confirm inline instead (a second click on the SAME row's Delete button),
+    /// the one remaining "click twice" holdout in this class once the rack got its own dialog.
+    /// Migrated to match; declining (or <see cref="ConfirmRequested"/> being unwired) leaves
+    /// everything untouched, same safe-default reasoning as the rack's own version.</summary>
     [RelayCommand]
     private async Task DeleteAsync(TemplateListRowViewModel? row)
     {
-        if (row is null)
+        if (row is null || ConfirmRequested is null)
         {
-            return;
-        }
-
-        if (_pendingDeleteId != row.Id)
-        {
-            _pendingDeleteId = row.Id;
-            foreach (var candidate in AllTemplates)
-            {
-                candidate.IsPendingDelete = candidate.Id == row.Id;
-            }
-
             return;
         }
 
         try
         {
+            var confirmVm = new ConfirmActionDialogViewModel(
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteTitle", row.Name),
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteBody"),
+                _localization.GetString("Panes.TxImageEditor.ConfirmDeleteButton"),
+                _localization.GetString("Panes.TxImageEditor.DialogCancel"));
+            if (!await ConfirmRequested(confirmVm).ConfigureAwait(true))
+            {
+                return;
+            }
+
             await _templateStore.DeleteAsync(row.Id);
-            _pendingDeleteId = null;
+            if (row.Id == _loadedTemplateId)
+            {
+                SetLoadedTemplate(null);
+            }
+
             StatusMessage = null;
         }
         catch (Exception ex)
         {
-            // Tier B audit finding: this used to clear _pendingDeleteId unconditionally BEFORE the
-            // try, so a failed delete left the row's own IsPendingDelete=true (still rendering
-            // "confirm delete") while _pendingDeleteId was already null -- the next click on that
-            // SAME row read as a fresh arm (no visible change, since it was already showing armed)
-            // instead of a confirm, taking three clicks to actually retry. Stays armed on failure
-            // instead, so the very next click on this row retries the delete directly.
             Log.DeleteFailed(_logger, row.Id, ex);
             StatusMessage = _localization.GetString("Panes.TxImageEditor.DeleteTemplateFailed");
             return;

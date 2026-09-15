@@ -5056,10 +5056,10 @@ public sealed class PaneViewModelTests
         var element = (ImageElementViewModel)Assert.Single(editor.OverlayElements);
         var elementBitmap = element.CanvasBitmap;
 
-        // Adding an image element sets HasUnsavedEdits, so Cancel's own arm/confirm gate
-        // (IsCancelArmed) needs 2 clicks here, unlike the untouched-blank-editor Cancel tests above.
-        editor.CancelCommand.Execute(null);
-        editor.CancelCommand.Execute(null);
+        // Adding an image element sets HasUnsavedEdits, so Cancel's own confirm dialog gate needs
+        // ConfirmRequested wired here, unlike the untouched-blank-editor Cancel tests above.
+        editor.ConfirmRequested = _ => Task.FromResult(true);
+        await editor.CancelCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Throws<NullReferenceException>(() => elementBitmap.Lock());

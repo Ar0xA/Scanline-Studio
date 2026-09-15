@@ -211,54 +211,92 @@ public sealed class ReadyRackViewModelTests
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "Template DELETE is a single unconfirmed
-    // click in a dense row." Arm/confirm -- see DeleteAsync's own doc comment.
+    // click in a dense row." User-reported feedback (2026-09-15): the original arm/confirm (a
+    // second click on the SAME row's Delete) went stale once DeleteFromRackAsync got a real confirm
+    // dialog -- migrated to match, same shape as DeleteFromRackAsync's own tests below.
 
     [Fact]
-    public async Task DeleteAsync_ClickingADifferentRow_ReArmsForTheNewTargetInsteadOfConfirmingTheOldOne()
+    public async Task DeleteAsync_ConfirmRequestedUnwired_DoesNotDelete()
     {
         var templateStore = new FakeTemplateStore();
         var readyRack = CreateReadyRack(templateStore);
-        await SaveTemplateAsync(templateStore, "First");
-        await SaveTemplateAsync(templateStore, "Second");
+        var id = await SaveTemplateAsync(templateStore, "A");
         await readyRack.RefreshAsync();
-        var first = readyRack.AllTemplates[0];
-        var second = readyRack.AllTemplates[1];
+        var row = Assert.Single(readyRack.AllTemplates);
 
-        await readyRack.DeleteCommand.ExecuteAsync(first);
-        Assert.True(first.IsPendingDelete);
+        await readyRack.DeleteCommand.ExecuteAsync(row);
 
-        await readyRack.DeleteCommand.ExecuteAsync(second);
-
-        Assert.False(first.IsPendingDelete);
-        Assert.True(second.IsPendingDelete);
-        Assert.Equal(2, (await templateStore.ListAsync()).Count); // neither actually deleted yet
+        Assert.Contains(id, templateStore.Templates.Keys);
     }
 
     [Fact]
-    public async Task DeleteAsync_ConfirmClickThrows_StaysArmedSoTheNextClickRetriesInsteadOfReArming()
+    public async Task DeleteAsync_Declined_DoesNotDelete()
     {
-        // Tier B audit finding: _pendingDeleteId used to be cleared unconditionally BEFORE the
-        // delete attempt, so a failed delete left the row's own IsPendingDelete still true (still
-        // rendering "confirm delete") while _pendingDeleteId was already null -- the next click on
-        // that SAME row then read as a fresh arm (no visible change, since it was already showing
-        // armed), taking three clicks total to actually retry. Fixed to stay armed on failure.
         var templateStore = new FakeTemplateStore();
         var readyRack = CreateReadyRack(templateStore);
+        readyRack.ConfirmRequested = _ => Task.FromResult(false);
+        var id = await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        await readyRack.DeleteCommand.ExecuteAsync(row);
+
+        Assert.Contains(id, templateStore.Templates.Keys);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_RequestsARealConfirmDialogWithTheRightText()
+    {
+        // Auditor nit: DeleteAsync's dialog and DeleteFromRackAsync's own differ ONLY in wording
+        // (the rack's own names a slot number, the list's own doesn't) -- pinning the exact text is
+        // the one thing that actually distinguishes them.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        ConfirmActionDialogViewModel? seenConfirmVm = null;
+        readyRack.ConfirmRequested = confirmVm =>
+        {
+            seenConfirmVm = confirmVm;
+            return Task.FromResult(false);
+        };
+        await SaveTemplateAsync(templateStore, "A");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        await readyRack.DeleteCommand.ExecuteAsync(row);
+
+        Assert.NotNull(seenConfirmVm);
+        // FakeLocalizationService.GetString returns the raw key -- asserting the exact keys proves
+        // title/body/both button labels all reach the dialog, not just "some text was set."
+        Assert.Equal("Panes.TxImageEditor.ConfirmDeleteTitle", seenConfirmVm!.Title);
+        Assert.Equal("Panes.TxImageEditor.ConfirmDeleteBody", seenConfirmVm.Message);
+        Assert.Equal("Panes.TxImageEditor.ConfirmDeleteButton", seenConfirmVm.ConfirmLabel);
+        Assert.Equal("Panes.TxImageEditor.DialogCancel", seenConfirmVm.CancelLabel);
+    }
+
+    [Fact]
+    public async Task DeleteAsync_ConfirmedButStoreThrows_SurfacesErrorAndDoesNotDelete_ThenRetrySucceeds()
+    {
+        // Tier B audit finding, ported from the old arm/confirm's own equivalent test: a failed
+        // delete must not silently disappear the error, and a later retry must still be able to
+        // succeed. No more "stays armed" special case to test -- every click, retry or not, now
+        // goes through the SAME real confirm dialog (ConfirmRequested stays wired the same way
+        // across both calls here, exactly like an operator re-clicking Delete after reading the
+        // error would).
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        readyRack.ConfirmRequested = _ => Task.FromResult(true);
         await SaveTemplateAsync(templateStore, "First");
         await readyRack.RefreshAsync();
         var row = readyRack.AllTemplates[0];
-        await readyRack.DeleteCommand.ExecuteAsync(row); // arm
-        Assert.True(row.IsPendingDelete);
 
         templateStore.DeleteExceptionToThrow = new InvalidOperationException("simulated delete failure");
-        await readyRack.DeleteCommand.ExecuteAsync(row); // confirm click -- fails
+        await readyRack.DeleteCommand.ExecuteAsync(row);
 
-        Assert.True(row.IsPendingDelete);
         Assert.NotNull(readyRack.StatusMessage);
         Assert.Empty(templateStore.DeletedIds);
 
         templateStore.DeleteExceptionToThrow = null;
-        await readyRack.DeleteCommand.ExecuteAsync(row); // retry, single click, no re-arm needed
+        await readyRack.DeleteCommand.ExecuteAsync(row);
 
         Assert.Contains(row.Id, templateStore.DeletedIds);
     }
@@ -269,19 +307,16 @@ public sealed class ReadyRackViewModelTests
         var templateStore = new FakeTemplateStore();
         var settingsStore = new FakeSettingsStore();
         var readyRack = CreateReadyRack(templateStore, settingsStore);
+        readyRack.ConfirmRequested = _ => Task.FromResult(true);
         var templateId = await SaveTemplateAsync(templateStore, "ToDelete");
         await readyRack.RefreshAsync();
         var row = Assert.Single(readyRack.AllTemplates);
         await readyRack.TogglePinCommand.ExecuteAsync(row);
         Assert.NotNull(readyRack.Slots[0].Template);
 
-        // Backlog item (auditor usability review, 2026-08-17): DeleteAsync is now arm/confirm --
-        // see its own doc comment. The FIRST call only arms (IsPendingDelete flips true, nothing
-        // deleted yet); the SECOND call on the same row actually deletes.
-        await readyRack.DeleteCommand.ExecuteAsync(readyRack.AllTemplates[0]);
-        Assert.True(readyRack.AllTemplates[0].IsPendingDelete);
-        Assert.Empty(templateStore.DeletedIds);
-        await readyRack.DeleteCommand.ExecuteAsync(readyRack.AllTemplates[0]);
+        // Re-fetch the row: TogglePinCommand's own RefreshAsync rebuilt AllTemplates with a fresh
+        // instance.
+        await readyRack.DeleteCommand.ExecuteAsync(readyRack.AllTemplates.Single(t => t.Id == templateId));
 
         Assert.Contains(templateId, templateStore.DeletedIds);
         Assert.Empty(readyRack.AllTemplates);

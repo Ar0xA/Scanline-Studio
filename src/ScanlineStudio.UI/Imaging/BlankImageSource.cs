@@ -11,6 +11,15 @@ namespace ScanlineStudio.UI.Imaging;
 /// shared row buffer for every y, since nothing ever mutates it.</summary>
 public sealed class BlankImageSource : IImageSource
 {
+    /// <summary>Light neutral gray (matches this app's own Industry design system's neutral-surface
+    /// family, e.g. AtomsTokens.axaml's IndustrySurfaceColor #E9E9EA) -- reads clearly as "no real
+    /// photo loaded yet" without being visually jarring against the rest of the chrome. Single source
+    /// of truth -- previously a private constant on <c>TxControlsPaneViewModel</c> alone; the
+    /// background/backdrop promote/demote feature needed the same color at a second call site
+    /// (<c>TxImageEditorPaneViewModel</c>'s own Promote), which would have made a third independently
+    /// maintained copy instead of reusing one.</summary>
+    public static readonly Rgb24 DefaultColor = new(0xE9, 0xE9, 0xEA);
+
     private readonly Rgb24[] _row;
 
     public BlankImageSource(int width, int height, Rgb24 color)
