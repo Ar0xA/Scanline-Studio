@@ -116,8 +116,11 @@ public sealed record PersistedLineElement(
 /// UI-layer nested type this project cannot reference from here) — informational only, recording
 /// WHERE an image element's pixels originally came from. Never used to re-resolve pixels on load
 /// (see <see cref="PersistedImageElement.AssetFileName"/>'s own doc comment for why); kept only so a
-/// possible future "re-resolve from RX history" feature has something to read.</summary>
-public enum PersistedImageSourceKind { File, RxHistory, LastRx, Clipboard }
+/// possible future "re-resolve from RX history" feature has something to read.
+/// <see cref="Promoted"/> (background/backdrop naming work, 2026-09-15): the editor's own background
+/// photo, baked and turned into a backdrop element via "Turn into backdrop" — same "ephemeral, never
+/// re-resolved" tier as <see cref="Clipboard"/>/<see cref="LastRx"/>.</summary>
+public enum PersistedImageSourceKind { File, RxHistory, LastRx, Clipboard, Promoted }
 
 /// <summary><paramref name="AssetFileName"/> is a generated GUID-based name (e.g.
 /// <c>"3f9c2b1a....png"</c>), relative to the template's own <c>assets/</c> folder — deliberately
@@ -129,7 +132,8 @@ public enum PersistedImageSourceKind { File, RxHistory, LastRx, Clipboard }
 /// <paramref name="AssetFileName"/>, embedded at save time regardless of origin (a <c>File</c> path
 /// can move, an RX-history entry can be pruned, <c>LastRx</c> is inherently ephemeral — none of the
 /// three origins are safe to re-resolve from days/weeks later). <see cref="PersistedImageSourceKind.Clipboard"/>
-/// (auditor usability review follow-up, 2026-08-18) is the fourth, same "ephemeral, never
+/// (auditor usability review follow-up, 2026-08-18) and <see cref="PersistedImageSourceKind.Promoted"/>
+/// (background/backdrop naming work, 2026-09-15) are the fourth and fifth, same "ephemeral, never
 /// re-resolved" tier as <c>LastRx</c>.</summary>
 public sealed record PersistedImageElement(
     double X, double Y, double Width, double Height, int Z, bool Locked,

@@ -1342,15 +1342,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         IsEditorOpen = true;
         _currentEditorIsBlank = true;
-        var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankPlaceholderColor);
+        var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankImageSource.DefaultColor);
         await OpenEditorWithLoadedSourceAsync(
             placeholder, _localization.GetString("Panes.TxControls.BlankImageName"), BuildCurrentContactVariables(), seedLiveContact: true);
     }
-
-    /// <summary>Light neutral gray (matches this app's own Industry design system's neutral-surface
-    /// family, e.g. AtomsTokens.axaml's IndustrySurfaceColor #E9E9EA) -- reads clearly as "no real
-    /// photo loaded yet" without being visually jarring against the rest of the chrome.</summary>
-    private static readonly Rgb24 BlankPlaceholderColor = new(0xE9, 0xE9, 0xEA);
 
     private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables, bool seedLiveContact)
     {

@@ -1,3 +1,4 @@
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -79,16 +80,30 @@ internal static class RealWindowTestSupport
 
     public static ArrayImageSource CreateSource(int width, int height) => new(width, height, new Rgb24[width * height]);
 
-    public static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode)
+    // User-reported bug (2026-09-15): "if i set as backdrop an image...the preview window no longer
+    // displays the background image information" -- verifying it needs a background and an inserted
+    // image the test can tell apart by ACTUAL pixel color, which the plain black CreateSource above
+    // can't do (background and every AddImageFromFileCommand-inserted image are otherwise both
+    // black).
+    public static ArrayImageSource CreateSolidSource(int width, int height, Rgb24 color) =>
+        new(width, height, Enumerable.Repeat(color, width * height).ToArray());
+
+    public static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode) =>
+        CreateEditor(original, mode, new FakeImageFileLoader { ResultToReturn = CreateSource(mode.ImageWidth, mode.ImageHeight) });
+
+    /// <summary>Overload exposing <paramref name="imageFileLoader"/> so a test can hand
+    /// <see cref="AddImageFromFileCommand"/> a specific, distinguishable-by-color image instead of
+    /// the default overload's plain black one -- see <see cref="CreateSolidSource"/>'s own doc
+    /// comment for why that matters.</summary>
+    public static TxImageEditorPaneViewModel CreateEditor(IImageSource original, SstvModeDefinition mode, IImageFileLoader imageFileLoader)
     {
-        // ResultToReturn/PathToReturn: AddImageFromFileCommand needs a real, non-null image to hand
-        // to InsertImageElement -- FakeImageFileLoader's own default (ResultToReturn = null) would
-        // NRE inside AddImageFromPathAsync.
+        // PathToReturn: AddImageFromFileCommand needs a real, non-null path/image to hand to
+        // InsertImageElement -- FakeFilePickerService's own default is already non-null, but this
+        // pins it explicitly rather than relying on that default silently staying non-null.
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/real-window-test-source.png" };
-        var imageLoader = new FakeImageFileLoader { ResultToReturn = CreateSource(mode.ImageWidth, mode.ImageHeight) };
         return new(original, mode, new TransmitImagePreparer(FontPath), new MacroTextResolver(), new OperatorSettings(),
             new FakeRadioSessionService(), new FakeLocalizationService(), NullLogger<TxImageEditorPaneViewModel>.Instance,
-            filePicker, imageLoader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
+            filePicker, imageFileLoader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             new FakeTemplateStore(), new FakeImageSourceWriter(),
             new ReadyRackViewModel(new FakeTemplateStore(), new FakeSettingsStore(), new FakeLocalizationService(), new FakeFilePickerService(), NullLogger<ReadyRackViewModel>.Instance));
     }
@@ -100,11 +115,18 @@ internal static class RealWindowTestSupport
     /// <c>CanvasDisplayWidth/Height</c>) isn't at the mercy of window-size-dependent Fit math (auditor
     /// plan-review finding, perspective-corner-drag round).</summary>
     public static (Window Window, TxImageEditorPaneViewModel Vm, Canvas EditorCanvas) BuildRealWindow(
-        IImageSource original, SstvModeDefinition? mode = null, int windowWidth = 1920, int windowHeight = 1200)
+        IImageSource original, SstvModeDefinition? mode = null, int windowWidth = 1920, int windowHeight = 1200) =>
+        BuildRealWindowForVm(CreateEditor(original, mode ?? TestMode), windowWidth, windowHeight);
+
+    /// <summary>Same real Window + real View wiring as <see cref="BuildRealWindow"/>, for a caller
+    /// that needs a non-default <see cref="CreateEditor(IImageSource,SstvModeDefinition,IImageFileLoader)"/>
+    /// overload (e.g. a custom <c>IImageFileLoader</c>) instead of that method's own plain-black
+    /// default.</summary>
+    public static (Window Window, TxImageEditorPaneViewModel Vm, Canvas EditorCanvas) BuildRealWindowForVm(
+        TxImageEditorPaneViewModel vm, int windowWidth = 1920, int windowHeight = 1200)
     {
         EnsureAppServices();
 
-        var vm = CreateEditor(original, mode ?? TestMode);
         var view = new TxImageEditorPaneView { DataContext = vm };
         var window = new Window { Content = view, Width = windowWidth, Height = windowHeight };
         window.Show();

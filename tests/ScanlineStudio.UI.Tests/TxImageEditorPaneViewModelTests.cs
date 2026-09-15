@@ -401,7 +401,7 @@ public sealed class TxImageEditorPaneViewModelTests
     {
         // Tier B audit finding: null-checked, but not checked for being a stale reference no longer
         // in OverlayElements (e.g. a queued click racing an Undo, which replaces every element
-        // wholesale) -- same guard SetAsBackground/MoveElementUp/MoveElementDown/BringToFront/
+        // wholesale) -- same guard SetAsBackdrop/MoveElementUp/MoveElementDown/BringToFront/
         // SendToBack all already have. ObservableCollection.Remove itself already no-ops silently on
         // an absent element, so without this guard the only visible effect used to be a bogus undo
         // step.
@@ -693,7 +693,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void Cancel_FiresCancelledEventWithoutInvokingThePipelineAgain()
+    public async Task Cancel_FiresCancelledEventWithoutInvokingThePipelineAgain()
     {
         var preparer = new FakeTransmitImagePreparer();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
@@ -703,7 +703,7 @@ public sealed class TxImageEditorPaneViewModelTests
         var cancelled = false;
         vm.Cancelled += () => cancelled = true;
 
-        vm.CancelCommand.Execute(null);
+        await vm.CancelCommand.ExecuteAsync(null);
 
         Assert.True(cancelled);
         Assert.Equal(cropCountBefore, preparer.CropCallCount);
@@ -712,72 +712,68 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "Cancel discards all edits with no
-    // confirmation, even though HasUnsavedEdits already exists." Arm/confirm -- see IsCancelArmed's
-    // own doc comment.
+    // confirmation, even though HasUnsavedEdits already exists." User-reported feedback
+    // (2026-09-15): the original arm/confirm (a second click on the SAME Cancel button) shape went
+    // stale the moment ConfirmRequested/RequestConfirmAsync were added for template recall --
+    // migrated to that same real dialog. See LoadTemplate_WithUnsavedEdits_RequestsARealConfirmDialogWithTheRightText
+    // above for the sibling test this one mirrors.
 
     [AvaloniaFact]
-    public void Cancel_WithUnsavedEdits_FirstClickArmsWithoutCancelling_SecondClickCancels()
+    public async Task Cancel_WithUnsavedEdits_RequestsARealConfirmDialogWithTheRightText()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        ConfirmActionDialogViewModel? seenConfirmVm = null;
+        vm.ConfirmRequested = confirmVm =>
+        {
+            seenConfirmVm = confirmVm;
+            return Task.FromResult(false); // decline
+        };
         vm.AddOverlayElementCommand.Execute(null);
         Assert.True(vm.HasUnsavedEdits);
         var cancelled = false;
         vm.Cancelled += () => cancelled = true;
 
-        vm.CancelCommand.Execute(null);
-        Assert.False(cancelled);
-        Assert.True(vm.IsCancelArmed);
+        await vm.CancelCommand.ExecuteAsync(null);
 
-        vm.CancelCommand.Execute(null);
-        Assert.True(cancelled);
+        Assert.NotNull(seenConfirmVm);
+        // FakeLocalizationService.GetString returns the raw key -- asserting the exact keys proves
+        // title/body/both button labels all reach the dialog, not just "some text was set."
+        Assert.Equal("Panes.TxImageEditor.ConfirmCancelTitle", seenConfirmVm!.Title);
+        Assert.Equal("Panes.TxImageEditor.ConfirmCancelBody", seenConfirmVm.Message);
+        Assert.Equal("Panes.TxImageEditor.ConfirmCancelButton", seenConfirmVm.ConfirmLabel);
+        Assert.Equal("Panes.TxImageEditor.DialogCancel", seenConfirmVm.CancelLabel);
+        // Declining leaves the editor open.
+        Assert.False(cancelled);
     }
 
     [AvaloniaFact]
-    public void Cancel_WithoutUnsavedEdits_CancelsImmediatelyWithNoArmStep()
+    public async Task Cancel_WithUnsavedEdits_ConfirmingTheDialogCancels()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
-        Assert.False(vm.HasUnsavedEdits);
+        vm.ConfirmRequested = _ => Task.FromResult(true);
+        vm.AddOverlayElementCommand.Execute(null);
         var cancelled = false;
         vm.Cancelled += () => cancelled = true;
 
-        vm.CancelCommand.Execute(null);
+        await vm.CancelCommand.ExecuteAsync(null);
 
         Assert.True(cancelled);
-        Assert.False(vm.IsCancelArmed);
     }
 
     [AvaloniaFact]
-    public void Cancel_ArmedThenARealEditHappens_DisarmsTheConfirm()
+    public async Task Cancel_WithoutUnsavedEdits_CancelsImmediatelyWithNoDialog()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
-        vm.AddOverlayElementCommand.Execute(null);
-        vm.CancelCommand.Execute(null);
-        Assert.True(vm.IsCancelArmed);
+        Assert.False(vm.HasUnsavedEdits);
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
 
-        // Any real edit (another undo-pushing action) disarms a stale confirm -- otherwise a Cancel
-        // click long before an unrelated later Cancel click would silently skip its own warning.
-        vm.AddBoxElementCommand.Execute(null);
+        await vm.CancelCommand.ExecuteAsync(null);
 
-        Assert.False(vm.IsCancelArmed);
-    }
-
-    [AvaloniaFact]
-    public void Cancel_ArmedThenUndoHappens_DisarmsTheConfirm()
-    {
-        // Tier B audit finding: Undo/Redo (both funnel through ApplyState) never disarmed
-        // IsCancelArmed/_pendingRecallTemplateId, unlike every other real-edit path
-        // (PushUndoSnapshot/PushUndoSnapshotCoalesced both do) -- an Undo is a real state change
-        // too, same reasoning Cancel_ArmedThenARealEditHappens_DisarmsTheConfirm above already pins
-        // for a normal edit. Without the fix, a stale arm from long before an unrelated LATER
-        // Cancel click would silently skip its own warning.
-        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
-        vm.AddOverlayElementCommand.Execute(null);
-        vm.CancelCommand.Execute(null);
-        Assert.True(vm.IsCancelArmed);
-
-        vm.UndoCommand.Execute(null);
-
-        Assert.False(vm.IsCancelArmed);
+        Assert.True(cancelled);
+        Assert.False(confirmRequested);
     }
 
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
@@ -2962,7 +2958,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_MovesElementToFullFrameBottomZAndCollectionIndexZero()
+    public void SetAsBackdrop_MovesElementToFullFrameBottomZAndCollectionIndexZero()
     {
         // Round-2-class finding, applied proactively here (Phase 1's own MoveElementUp/Down bug):
         // setting Z alone is NOT enough -- the interactive canvas draws in OverlayElements' own
@@ -2975,7 +2971,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddLastRxImageCommand.Execute(null);
         var image = (ImageElementViewModel)vm.OverlayElements[1];
 
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
 
         AssertClose(0.5, image.X);
         AssertClose(0.5, image.Y);
@@ -2987,7 +2983,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_PushesExactlyOneUndoStep()
+    public void SetAsBackdrop_PushesExactlyOneUndoStep()
     {
         // Code-review-class finding, applied proactively (mirrors Rotate()'s own multi-element
         // geometry loop): setting X/Y/Width/Height individually on an already-wired element would
@@ -2999,7 +2995,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // onward within one call, not the first), so a single-Undo value-based assertion can't tell
         // "1 push" from "2 identical pushes" apart -- mutation-tested by removing the
         // _suspendPreview wrap and confirming this exact test still passed, which is why this counts
-        // total undo depth instead: push AddLastRxImage (1 action) then SetAsBackground (should be
+        // total undo depth instead: push AddLastRxImage (1 action) then SetAsBackdrop (should be
         // exactly 1 more), then Undo exactly twice and assert NOTHING is left. A stray extra push
         // would leave one more Undo available after these two clicks.
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
@@ -3007,7 +3003,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.AddLastRxImageCommand.Execute(null);
         var image = (ImageElementViewModel)vm.OverlayElements[0];
 
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
 
         vm.UndoCommand.Execute(null);
         vm.UndoCommand.Execute(null);
@@ -3017,11 +3013,11 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_OnNullElement_IsANoOp()
+    public void SetAsBackdrop_OnNullElement_IsANoOp()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
 
-        vm.SetAsBackgroundCommand.Execute(null);
+        vm.SetAsBackdropCommand.Execute(null);
 
         Assert.Empty(vm.OverlayElements);
         Assert.False(vm.UndoCommand.CanExecute(null));
@@ -3029,7 +3025,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
     // TX editor gap-items plan, item 3 (perspective transform) -- these tests target the exact
     // failure classes 3 rounds of adversarial plan-review found in the design: undo-step double-
-    // counting (TogglePerspective/SetAsBackground/ResetToOriginalSize all mutate perspective state
+    // counting (TogglePerspective/SetAsBackdrop/ResetToOriginalSize all mutate perspective state
     // inside an existing _suspendPreview window), the corner-cascade notification chain actually
     // reaching what AXAML binds, and the "independent per-corner clamp shears the quad" trap
     // InsertClonedSnapshot's own Line-element precedent already hit once.
@@ -3059,7 +3055,7 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(w, box.Width);
         AssertClose(h, box.Height);
 
-        // Same "count total undo depth" idiom as SetAsBackground_PushesExactlyOneUndoStep above --
+        // Same "count total undo depth" idiom as SetAsBackdrop_PushesExactlyOneUndoStep above --
         // AddBoxElement (1) then TogglePerspective (should be exactly 1 more); 2 Undos must leave
         // nothing.
         vm.UndoCommand.Execute(null);
@@ -3093,7 +3089,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_OnAWarpedImageElement_TurnsPerspectiveOffWithExactlyOneUndoStep()
+    public void SetAsBackdrop_OnAWarpedImageElement_TurnsPerspectiveOffWithExactlyOneUndoStep()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
@@ -3102,7 +3098,7 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.TogglePerspectiveCommand.Execute(image);
         Assert.True(image.PerspectiveEnabled);
 
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
 
         Assert.False(image.PerspectiveEnabled);
         AssertClose(0.5, image.X);
@@ -3110,7 +3106,7 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(1, image.Width);
         AssertClose(1, image.Height);
 
-        // AddLastRxImage (1) + TogglePerspective (1) + SetAsBackground (should be exactly 1 more) = 3.
+        // AddLastRxImage (1) + TogglePerspective (1) + SetAsBackdrop (should be exactly 1 more) = 3.
         vm.UndoCommand.Execute(null);
         vm.UndoCommand.Execute(null);
         vm.UndoCommand.Execute(null);
@@ -3195,7 +3191,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_OnAnElementNoLongerInOverlayElements_DoesNotThrowAndIsANoOp()
+    public void SetAsBackdrop_OnAnElementNoLongerInOverlayElements_DoesNotThrowAndIsANoOp()
     {
         // Code-review finding: a stale element reference (e.g. a queued click racing an Undo,
         // which replaces every element wholesale via ApplyState) must not reach
@@ -3214,7 +3210,7 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotEmpty(vm.OverlayElements);
         var undoDepthBefore = vm.UndoCommand.CanExecute(null);
 
-        var exception = Record.Exception(() => vm.SetAsBackgroundCommand.Execute(element));
+        var exception = Record.Exception(() => vm.SetAsBackdropCommand.Execute(element));
 
         Assert.Null(exception);
         // No bogus undo step left behind by the guarded-out call.
@@ -3222,7 +3218,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SetAsBackground_SetsIsBackgroundAndAutoLocks()
+    public void SetAsBackdrop_SetsIsBackgroundAndAutoLocks()
     {
         // Phase 6 (spec/15-template-designer.md): both together are what let the crop rect
         // underneath become click-reachable again (BlocksHitTesting = Locked && IsBackground).
@@ -3233,7 +3229,7 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(image.IsBackground);
         Assert.False(image.Locked);
 
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
 
         Assert.True(image.IsBackground);
         Assert.True(image.Locked);
@@ -3276,7 +3272,7 @@ public sealed class TxImageEditorPaneViewModelTests
             templateStore, imageSourceWriter, readyRack);
         await vm.AddImageFromFileCommand.ExecuteAsync(null);
         var image = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
         vm.NewTemplateName = "Background Template";
 
         await vm.SaveTemplateCommand.ExecuteAsync(null);
@@ -4151,6 +4147,22 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotNull(text.InsertFieldCommand);
     }
 
+    // User-reported gap (2026-09-15): the right-click "Clear picture fill" menu item binds
+    // {Binding ClearTextBitmapFillCommand} against the element's own DataContext, same inline-per-
+    // DataTemplate resolution as AddPlateCommand/InsertFieldCommand above -- same wiring-test
+    // precedent for the same failure mode.
+
+    [AvaloniaFact]
+    public void ClearTextBitmapFillCommand_IsWiredOnTextElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.AddOverlayElementCommand.Execute(null);
+
+        var text = (OverlayElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(text.ClearTextBitmapFillCommand);
+    }
+
     // Backlog item (user request, 2026-08-17): context-menu font size/text color quick-pick
     // submenus, same wiring precedent/regression risk as InsertFieldCommand/
     // AlignSelectedElementToCropCommand above -- a forgotten parent-pushed assignment renders the
@@ -4315,7 +4327,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // this command's own explicit PushUndoSnapshot, unguarded by _suspendPreview). A redundant
         // second push captures the SAME pre-align state as the first, so a single-Undo value-based
         // assertion can't tell "1 push" from "2 identical pushes" apart either (same reasoning
-        // SetAsBackground_PushesExactlyOneUndoStep's own comment documents) -- counts total undo
+        // SetAsBackdrop_PushesExactlyOneUndoStep's own comment documents) -- counts total undo
         // depth instead: Add (1 action) then Align (should be exactly 1 more), then Undo exactly
         // twice and assert NOTHING is left. A stray extra push would leave one more Undo available.
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
@@ -5649,7 +5661,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var image = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
         Assert.True(image.IsBackground);
         Assert.True(image.Locked);
 
@@ -5800,7 +5812,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var image = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(image);
+        vm.SetAsBackdropCommand.Execute(image);
         vm.SelectedOverlayElement = image;
 
         vm.CopySelectedElementCommand.Execute(null);
@@ -6097,7 +6109,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var background = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(background);
+        vm.SetAsBackdropCommand.Execute(background);
         vm.AddOverlayElementCommand.Execute(null);
         var middle = vm.OverlayElements[1];
         vm.AddOverlayElementCommand.Execute(null);
@@ -6123,7 +6135,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var background = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(background);
+        vm.SetAsBackdropCommand.Execute(background);
         vm.AddOverlayElementCommand.Execute(null);
         var other = vm.OverlayElements[1];
         var zBefore = background.Z;
@@ -6173,7 +6185,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var background = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(background);
+        vm.SetAsBackdropCommand.Execute(background);
         vm.AddOverlayElementCommand.Execute(null);
         var justAboveBackground = vm.OverlayElements[1];
         var zBefore = justAboveBackground.Z;
@@ -6203,7 +6215,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var background = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(background);
+        vm.SetAsBackdropCommand.Execute(background);
         vm.AddOverlayElementCommand.Execute(null);
         var other = vm.OverlayElements[1];
         vm.BringToFrontCommand.Execute(background);
@@ -6220,9 +6232,16 @@ public sealed class TxImageEditorPaneViewModelTests
     [AvaloniaFact]
     public void SendToBack_WithMultipleBackgroundElements_FloorsAboveTheNearestOneBelowIt()
     {
-        // Auditor code-review finding: SetAsBackground never clears a PREVIOUS element's own
-        // IsBackground flag, so multiple backgrounds are reachable (two clicks). A second
-        // SetAsBackground call moves ITS OWN element to the new collection-wide minimum (Min(Z) - 1
+        // Auditor code-review finding, ORIGINALLY reachable via two SetAsBackdrop clicks (that gap
+        // is now closed -- background/backdrop naming work, 2026-09-15, added a single-backdrop
+        // invariant: SetAsBackdrop clears any OTHER element's own IsBackground flag first). Still
+        // worth testing directly: SendToBack's own defensive "scan backwards from element's
+        // position" logic must stay correct even if two IsBackground elements exist for some OTHER
+        // reason (e.g. a template saved by a pre-invariant build of the app). Constructed here by
+        // setting IsBackground back to true directly on firstBackground AFTER the second
+        // SetAsBackdrop call already cleared it via the new invariant, rather than by exploiting a
+        // live command path -- everything else (Z/collection-order setup) is unchanged: a second
+        // SetAsBackdrop call moves ITS OWN element to the new collection-wide minimum (Min(Z) - 1
         // over a set that already contains the first background's Z), displacing the first background
         // from index 0 to index 1 -- so "nearest background below `top`" (firstBackground, correct)
         // and "lowest-Z background" (secondBackground, what a naive
@@ -6234,10 +6253,11 @@ public sealed class TxImageEditorPaneViewModelTests
             new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
         vm.AddLastRxImageCommand.Execute(null);
         var firstBackground = (ImageElementViewModel)vm.OverlayElements[0];
-        vm.SetAsBackgroundCommand.Execute(firstBackground);
+        vm.SetAsBackdropCommand.Execute(firstBackground);
         vm.AddLastRxImageCommand.Execute(null);
         var secondBackground = (ImageElementViewModel)vm.OverlayElements[1];
-        vm.SetAsBackgroundCommand.Execute(secondBackground);
+        vm.SetAsBackdropCommand.Execute(secondBackground);
+        firstBackground.IsBackground = true;
         Assert.Equal([secondBackground, firstBackground], vm.OverlayElements);
         vm.AddOverlayElementCommand.Execute(null);
         var top = vm.OverlayElements[2];
@@ -6246,6 +6266,368 @@ public sealed class TxImageEditorPaneViewModelTests
 
         Assert.True(top.Z > firstBackground.Z);
         Assert.True(vm.OverlayElements.IndexOf(top) > vm.OverlayElements.IndexOf(firstBackground));
+    }
+
+    [AvaloniaFact]
+    public void SetAsBackdrop_WithAnExistingBackdrop_ClearsTheOldOnesFlag()
+    {
+        // Background/backdrop naming work (2026-09-15): the single-backdrop invariant this feature
+        // added -- SetAsBackdrop must clear IsBackground on any OTHER image element before marking
+        // the new one, so at most one backdrop exists at a time (see that method's own doc comment
+        // for why: SendToBack's own "nearest backdrop below" scan otherwise picks the wrong one once
+        // two exist).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var first = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(first);
+        vm.AddLastRxImageCommand.Execute(null);
+        var second = (ImageElementViewModel)vm.OverlayElements[1];
+
+        vm.SetAsBackdropCommand.Execute(second);
+
+        Assert.False(first.IsBackground);
+        Assert.True(second.IsBackground);
+        Assert.Single(vm.OverlayElements.OfType<ImageElementViewModel>(), e => e.IsBackground);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_CreatesOneBackdropAndResetsBackgroundToBlank()
+    {
+        // Background/backdrop naming work (2026-09-15): the promote direction -- see that method's
+        // own doc comment.
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, preparer);
+        var originalSource = vm.CurrentSource;
+        Assert.True(vm.HasRealBackground);
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+
+        var backdrop = Assert.Single(vm.OverlayElements.OfType<ImageElementViewModel>(), e => e.IsBackground);
+        Assert.Same(backdrop, vm.OverlayElements[0]);
+        Assert.True(backdrop.Locked);
+        Assert.Equal(0.5, backdrop.X);
+        Assert.Equal(0.5, backdrop.Y);
+        Assert.Equal(1, backdrop.Width);
+        Assert.Equal(1, backdrop.Height);
+        Assert.False(vm.HasRealBackground);
+        Assert.IsType<BlankImageSource>(vm.CurrentSource);
+
+        // Auditor-found gap: the fake's own Crop is an identity pass-through and none of the
+        // prior Promote tests asserted on CropSources/ResizeCalls/AdjustmentsSources, so a
+        // Resize<->Crop reorder or a dropped Crop call would have passed silently. Pin the actual
+        // pipeline sources of Promote's OWN bake call -- not exact call counts, since
+        // RecomputePreview (called both at construction and at the end of Promote) legitimately
+        // calls this same preparer for its own, separate preview pass. The bake's OWN call is the
+        // one whose result actually became the backdrop's Source, which is unique per call --
+        // finding it by that result, not by array index, is what actually isolates it from the
+        // preview passes.
+        var bakeIndex = preparer.AdjustmentsResults.IndexOf(backdrop.Source);
+        Assert.True(bakeIndex >= 0);
+        Assert.Same(preparer.ResizeResults[bakeIndex], preparer.AdjustmentsSources[bakeIndex]);
+        Assert.Contains(originalSource, preparer.CropSources);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_WithNoRealBackgroundYet_IsRefusedAsANoOp()
+    {
+        // Background/backdrop naming work (2026-09-15): refused (StatusMessage, not silent), same
+        // "no real photo" shape OnReadyRackDirectFireRequested already uses for the identical check.
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.HasRealBackground);
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.NotNull(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_WithAnExistingBackdrop_ClearsTheOldOnesFlag()
+    {
+        // Background/backdrop naming work (2026-09-15): Promote is a SECOND path (besides
+        // SetAsBackdrop) that creates a backdrop element, so it enforces the same single-backdrop
+        // invariant -- see PromoteBackgroundToBackdrop's own doc comment.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var existingBackdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(existingBackdrop);
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+
+        Assert.False(existingBackdrop.IsBackground);
+        Assert.Single(vm.OverlayElements.OfType<ImageElementViewModel>(), e => e.IsBackground);
+    }
+
+    [AvaloniaFact]
+    public void DemoteToBackgroundCommand_IsWiredOnImageElements()
+    {
+        // Background/backdrop naming work (2026-09-15): DemoteToBackgroundCommand binds against the
+        // image element's own DataContext in the context menu (same inline-per-DataTemplate
+        // resolution as SetAsBackdropCommand/AddPlateCommand elsewhere in this file) -- a forgotten
+        // parent-pushed assignment renders the menu item permanently disabled without throwing
+        // anywhere, so a wiring test is the only thing that catches it.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+
+        vm.AddLastRxImageCommand.Execute(null);
+
+        var image = (ImageElementViewModel)vm.OverlayElements[0];
+        Assert.NotNull(image.DemoteToBackgroundCommand);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_RestoresBackgroundAndRemovesTheElement()
+    {
+        // Background/backdrop naming work (2026-09-15): the demote direction -- see that method's
+        // own doc comment. Starting background is blank (OpenBlankEditorAsync's own placeholder), so
+        // no arm/confirm step is needed -- that path is covered separately below. Async since the fix
+        // for the auditor-found Fit/perspective blocker routes this through the same Task.Run-offloaded
+        // bake FlattenElementAsync uses -- ExecuteAsync, not the bare synchronous Execute, is required
+        // to observe the mutation (same convention every existing Flatten test already uses).
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.True(vm.HasRealBackground);
+        Assert.IsNotType<BlankImageSource>(vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_WithARealBackgroundAlreadyLoaded_ReplacesItOnOneClick()
+    {
+        // User-reported feedback (2026-09-15): an earlier draft armed/required a second click to
+        // confirm before replacing a real background -- removed, see
+        // DemoteBackdropToBackgroundAsync's own doc comment. One click now replaces it outright;
+        // DemoteBackdropToBackgroundCommand_UndoRestoresTheBackdropElement covers the actual safety
+        // net (Undo), which is what replaces the old confirm step.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.True(vm.HasRealBackground);
+    }
+
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_WithNoRealBackgroundYet_IsANoOp()
+    {
+        // Background/backdrop naming work (2026-09-15): the plain destructive clear -- see that
+        // method's own doc comment for how it differs from PromoteBackgroundToBackdrop.
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer());
+
+        vm.RemoveBackgroundCommand.Execute(null);
+
+        Assert.Null(vm.StatusMessage);
+        Assert.IsType<BlankImageSource>(vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_WithARealBackgroundLoaded_ClearsItOnOneClick()
+    {
+        // User-reported feedback (2026-09-15): an earlier draft armed/required a second click to
+        // confirm before clearing a real background -- removed, see RemoveBackground's own doc
+        // comment. One click now clears it outright; the safety net is Undo
+        // (RemoveBackgroundCommand_UndoRestoresTheOriginalBackground), not a confirm step.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.True(vm.HasRealBackground);
+
+        vm.RemoveBackgroundCommand.Execute(null);
+
+        Assert.False(vm.HasRealBackground);
+        Assert.IsType<BlankImageSource>(vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_UndoRestoresTheOriginalBackground()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var originalSource = vm.CurrentSource;
+
+        vm.RemoveBackgroundCommand.Execute(null);
+        Assert.False(vm.HasRealBackground);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.True(vm.HasRealBackground);
+        Assert.Same(originalSource, vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_DoesNotTouchExistingBackdropElements()
+    {
+        // Background/backdrop naming work (2026-09-15): distinct from Demote/Promote, RemoveBackground
+        // never touches OverlayElements at all -- only the base photo (_originalSource).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+
+        vm.RemoveBackgroundCommand.Execute(null);
+
+        Assert.Contains(backdrop, vm.OverlayElements);
+        Assert.True(backdrop.IsBackground);
+        Assert.False(vm.HasRealBackground);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_DoesNotResetCropRectOrReprojectOtherElements()
+    {
+        // Auditor-found blocker (2026-09-15): BuildTemplateElement/ProjectRectToCropRelative project
+        // every OTHER overlay element's bounds relative to CropRect and its own letterbox padding --
+        // resetting CropRect here would silently resize/reposition every other element in the
+        // transmitted frame, not just reframe the promoted backdrop. FlattenElementAsync's own doc
+        // comment states the identical reasoning for why IT never resets CropRect either.
+        var vm = CreateEditor(CreateSource(8, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.5, 0.5);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = vm.OverlayElements[0];
+        var (x, y, width, height) = (text.X, text.Y, text.Width, text.Height);
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+
+        Assert.Equal(new NormalizedRect(0.1, 0.2, 0.5, 0.5), vm.CropRect);
+        Assert.Equal(x, text.X);
+        Assert.Equal(y, text.Y);
+        Assert.Equal(width, text.Width);
+        Assert.Equal(height, text.Height);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_DoesNotResetCropRectOrReprojectOtherElements()
+    {
+        // Same auditor-found blocker as PromoteBackgroundToBackdropCommand's own identical test --
+        // see that test's own doc comment.
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.5, 0.5);
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = vm.OverlayElements[1];
+        var (x, y, width, height) = (text.X, text.Y, text.Width, text.Height);
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Equal(new NormalizedRect(0.1, 0.2, 0.5, 0.5), vm.CropRect);
+        Assert.Equal(x, text.X);
+        Assert.Equal(y, text.Y);
+        Assert.Equal(width, text.Width);
+        Assert.Equal(height, text.Height);
+    }
+
+    [AvaloniaFact]
+    public void RemoveBackgroundCommand_DoesNotResetCropRect()
+    {
+        // Same auditor-found blocker as PromoteBackgroundToBackdropCommand's own identical test --
+        // see that test's own doc comment. RemoveBackground has no elements of its own to reproject,
+        // but CropRect feeds every OTHER element's projection regardless of which command touched it.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.CropRect = new NormalizedRect(0.1, 0.2, 0.5, 0.5);
+
+        vm.RemoveBackgroundCommand.Execute(null);
+
+        Assert.Equal(new NormalizedRect(0.1, 0.2, 0.5, 0.5), vm.CropRect);
+    }
+
+    [AvaloniaFact]
+    public void PromoteBackgroundToBackdropCommand_UndoRestoresTheOriginalBackgroundAndRemovesTheBackdrop()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        var originalSource = vm.CurrentSource;
+
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+        Assert.Single(vm.OverlayElements);
+        Assert.False(vm.HasRealBackground);
+
+        vm.UndoCommand.Execute(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.True(vm.HasRealBackground);
+        Assert.Same(originalSource, vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_UndoRestoresTheBackdropElement()
+    {
+        var vm = CreateEditor(new BlankImageSource(SmallMode.ImageWidth, SmallMode.ImageHeight, BlankImageSource.DefaultColor), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+        Assert.Empty(vm.OverlayElements);
+        Assert.True(vm.HasRealBackground);
+
+        vm.UndoCommand.Execute(null);
+
+        var restored = Assert.Single(vm.OverlayElements.OfType<ImageElementViewModel>(), e => e.IsBackground);
+        Assert.True(restored.Locked);
+        Assert.False(vm.HasRealBackground);
+        Assert.IsType<BlankImageSource>(vm.CurrentSource);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_ForAPromotedBackdropWithNonIdentityAdjustments_WarnsAboutReapplication()
+    {
+        // Auditor-found blocker (2026-09-15): a backdrop created by PromoteBackgroundToBackdrop
+        // already has the CURRENT adjustment sliders baked into its own pixels -- if those sliders
+        // are still non-identity when demoted back, the live pipeline applies them a SECOND time on
+        // every subsequent render. Warned, same "surfaced via StatusMessage, not silently" shape
+        // FlattenElementAsync's own identical case (FlattenAdjustmentsNowApply) already uses.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.Brightness = 0.5;
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        // FakeLocalizationService.GetString returns the raw key, not a translation.
+        Assert.Equal("Panes.TxImageEditor.DemotePromotedAdjustmentsNowReapply", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_ForAPromotedBackdropWithIdentityAdjustments_DoesNotWarn()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.PromoteBackgroundToBackdropCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Null(vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task DemoteBackdropToBackgroundCommand_ForANonPromotedBackdropWithNonIdentityAdjustments_DoesNotWarn()
+    {
+        // A backdrop created via the OTHER path (+Image, then Set as backdrop directly, never
+        // promoted) has raw, never-baked pixels -- continuing to apply the current sliders to it on
+        // every render is the SAME "sliders apply live to whatever's currently loaded" behavior
+        // Browse/Stock already have, not a double-application. Warning here would be a false alarm.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(),
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)vm.OverlayElements[0];
+        vm.SetAsBackdropCommand.Execute(backdrop);
+        vm.Brightness = 0.5;
+
+        await vm.DemoteBackdropToBackgroundCommand.ExecuteAsync(backdrop);
+
+        Assert.Null(vm.StatusMessage);
     }
 
     // Pure math extracted from TxImageEditorPaneView.axaml.cs's OnCanvasPointerMoved (code-review
@@ -6756,7 +7138,7 @@ public sealed class TxImageEditorPaneViewModelTests
         // directly would need TWO Undos to revert a snapped drag (X/Y coalesced separately from
         // Width/Height, or similar). ApplySnappedElementBounds wraps all 4 in one explicit push
         // instead, matching this editor's own "one gesture, one undo step" convention (see
-        // SetAsBackground's own single-push test for the established pattern). If this regressed
+        // SetAsBackdrop's own single-push test for the established pattern). If this regressed
         // back to 2 steps, a SINGLE Undo below would leave some of X/Y/Width/Height still at their
         // post-snap values instead of reverting all four together.
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
@@ -7455,7 +7837,7 @@ public sealed class TxImageEditorPaneViewModelTests
     [AvaloniaFact]
     public void AddPlateBehindText_RenumbersZToMatchCollectionOrder_NoDuplicateOrOutOfOrderZ()
     {
-        // Code-review-class regression guard: a plain `text.Z - 1` (mirroring SetAsBackground's own
+        // Code-review-class regression guard: a plain `text.Z - 1` (mirroring SetAsBackdrop's own
         // Min(Z)-1) could collide with an existing element's Z when the plate ISN'T going to the
         // absolute bottom -- this test adds a 3rd element BEHIND the text first, so a naive Z-1
         // assignment would collide with it.
@@ -8259,10 +8641,10 @@ public sealed class TxImageEditorPaneViewModelTests
         var fires = 0;
         vm.DirectFireRequested += _ => fires++;
         vm.Cancelled += vm.Dispose;
+        vm.ConfirmRequested = _ => Task.FromResult(true);
 
         rack.DirectFireSlotCommand.Execute(1);
-        vm.CancelCommand.Execute(null);
-        if (vm.IsCancelArmed) vm.CancelCommand.Execute(null);
+        await vm.CancelCommand.ExecuteAsync(null);
         if (metadataStage)
         {
             if (failMetadata) metadataGate.SetException(new IOException("metadata unavailable"));
@@ -9077,7 +9459,7 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertCommandReachable(element.CutCommand, found);
         AssertCommandReachable(element.PasteCommand, found);
         AssertCommandReachable(element.FlattenCommand, found);
-        AssertCommandReachable(element.SetAsBackgroundCommand, found);
+        AssertCommandReachable(element.SetAsBackdropCommand, found);
         AssertCommandReachable(element.ResetToOriginalSizeCommand, found);
         AssertCommandReachable(element.FitCommand, found);
     }

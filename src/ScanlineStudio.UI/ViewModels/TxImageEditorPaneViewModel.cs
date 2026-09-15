@@ -127,11 +127,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// instead of silently designing it out).
     /// <see cref="Payload"/> is the file path for <see cref="ImageSourceKind.File"/>, the
     /// <see cref="ReceiveHistoryEntry.Id"/> for <see cref="ImageSourceKind.RxHistory"/>, and unused
-    /// (null) for <see cref="ImageSourceKind.LastRx"/>/<see cref="ImageSourceKind.Clipboard"/> --
-    /// both are inherently ephemeral, one-time snapshots with nothing stable to re-fetch later.
+    /// (null) for <see cref="ImageSourceKind.LastRx"/>/<see cref="ImageSourceKind.Clipboard"/>/
+    /// <see cref="ImageSourceKind.Promoted"/> -- all three are inherently ephemeral, one-time
+    /// snapshots with nothing stable to re-fetch later.
     /// <see cref="ImageSourceKind.Clipboard"/> (auditor usability review follow-up, 2026-08-18,
-    /// Phase 2's own logged scope cut, picked back up) is the 4th source.</summary>
-    public enum ImageSourceKind { File, RxHistory, LastRx, Clipboard }
+    /// Phase 2's own logged scope cut, picked back up) is the 4th source;
+    /// <see cref="ImageSourceKind.Promoted"/> (background/backdrop naming work, 2026-09-15 --
+    /// <see cref="PromoteBackgroundToBackdrop"/>) is the 5th.</summary>
+    public enum ImageSourceKind { File, RxHistory, LastRx, Clipboard, Promoted }
 
     public sealed record ImageSourceOrigin(ImageSourceKind Kind, string? Payload);
 
@@ -512,17 +515,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// "the editor needs to tell the operator something transient," the same real UI need.</summary>
     [ObservableProperty]
     private string? _statusMessage;
-
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): "Cancel discards all edits with
-    /// no confirmation, even though HasUnsavedEdits already exists." Arm/confirm, not a modal dialog
-    /// (no dialog-service precedent exists anywhere in this codebase -- see <see cref="Cancel"/>'s own
-    /// doc comment) -- the first click with unsaved edits pending arms (shows a warning in
-    /// <see cref="StatusMessage"/>, changes nothing else), the second click actually cancels. Reset by
-    /// any real edit (<see cref="PushUndoSnapshot"/>/<see cref="PushUndoSnapshotCoalesced"/>), not just
-    /// consumed by Cancel itself -- otherwise a stale arm from long before would silently skip the
-    /// warning on a LATER, unrelated Cancel click.</summary>
-    [ObservableProperty]
-    private bool _isCancelArmed;
 
     /// <summary>Templates rack rework -- replaces the old arm/confirm status-bar warning
     /// (<c>_pendingRecallTemplateId</c>) with a real confirm dialog, same delegate-property shape as
@@ -1618,7 +1610,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// here, well after the drag gesture's own last pointer-move. Left as 4 separate coalesced
     /// pushes, a snapped drag would need TWO Undos to get back to the pre-drag state (one for the
     /// unsnapped drag, one for the snap) -- not the "one gesture, one undo step" convention every
-    /// other structural mutation in this editor follows (see <see cref="SetAsBackground"/> for the
+    /// other structural mutation in this editor follows (see <see cref="SetAsBackdrop"/> for the
     /// same <c>_suspendPreview</c> + single explicit push pattern this mirrors).</summary>
     public void ApplySnappedElementBounds(ITemplateElementViewModel element, double x, double y, double width, double height)
     {
@@ -2524,7 +2516,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         StatusMessage = _localization.GetString("Panes.TxImageEditor.DroppedFilesUnreadable");
     }
 
-    /// <summary>Phase 2 (spec/15-template-designer.md) "set as background" -- moves an existing
+    /// <summary>Phase 2 (spec/15-template-designer.md) "set as backdrop" -- moves an existing
     /// element to full-frame (X=0.5,Y=0.5,Width=1,Height=1, covering the whole canvas under the
     /// CENTER-anchored convention) and to the very BOTTOM of the z-order
     /// (<c>Min(Z) - 1</c>, mirrors <see cref="NextZ"/>'s own max+1-for-top pattern, just for the
@@ -2542,9 +2534,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// multi-element geometry loop) so the 4 geometry-property assignments below don't ALSO each
     /// trigger their own <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/>
     /// coalesced push on top of this method's own explicit <see cref="PushUndoSnapshot"/> -- without
-    /// it, one click would push 2 undo steps instead of 1.</para></summary>
+    /// it, one click would push 2 undo steps instead of 1.</para>
+    /// <para>Background/backdrop naming work (2026-09-15): clears <c>IsBackground</c> on any OTHER
+    /// image element first -- a real pre-existing gap (this method never did so) that let two
+    /// backdrops coexist, silently confusing <see cref="SendToBack"/>'s own "floor above the nearest
+    /// backdrop" logic (picks the wrong one via <c>FirstOrDefault</c>). Fixed here rather than
+    /// separately because <see cref="PromoteBackgroundToBackdrop"/>, added in the same change, is a
+    /// second path that creates a backdrop and would otherwise double the odds of hitting it.</para></summary>
     [RelayCommand]
-    private void SetAsBackground(ITemplateElementViewModel? element)
+    private void SetAsBackdrop(ITemplateElementViewModel? element)
     {
         // Code-review finding: element could be a stale reference no longer in OverlayElements
         // (e.g. a queued click racing an Undo, which replaces every element wholesale -- see
@@ -2572,6 +2570,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 DisablePerspective(warpedImage);
             }
 
+            // Single-backdrop invariant (see this method's own doc comment): at most one image
+            // element is ever the backdrop at a time.
+            foreach (var other in OverlayElements.OfType<ImageElementViewModel>())
+            {
+                if (!ReferenceEquals(other, element) && other.IsBackground)
+                {
+                    other.IsBackground = false;
+                }
+            }
+
             element!.X = 0.5;
             element.Y = 0.5;
             element.Width = 1;
@@ -2583,11 +2591,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             element.Locked = true;
             // Phase 6 (spec/15-template-designer.md): IsBackground + the auto-lock above together
             // let the crop rect underneath become reachable again (see
-            // ImageElementViewModel.BlocksHitTesting) -- SetAsBackgroundCommand is only ever bound
+            // ImageElementViewModel.BlocksHitTesting) -- SetAsBackdropCommand is only ever bound
             // from the image element's own DataTemplate (see this method's own doc comment), so
             // `element` is always really an ImageElementViewModel in practice; IsBackground simply
             // isn't part of the shared ITemplateElementViewModel interface (text/box elements have
-            // no such concept), same reasoning as SetAsBackgroundCommand itself living only on
+            // no such concept), same reasoning as SetAsBackdropCommand itself living only on
             // ImageElementViewModel.
             if (element is ImageElementViewModel image)
             {
@@ -2602,13 +2610,284 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RecomputePreview();
     }
 
+    /// <summary>Background/backdrop naming work (2026-09-15): true once the editor has a REAL
+    /// background photo loaded (Browse/Stock/Copy-to-TX), as opposed to the still-blank placeholder
+    /// <see cref="OpenBlankEditorAsync"/> seeds every editor with -- same check
+    /// <see cref="OnReadyRackDirectFireRequested"/> already uses for its own "no photo" refusal.
+    /// Read fresh by the View's own canvas-context-menu <c>Opened</c> handler (same
+    /// "no live bound bool today, View computes a View-owned check right before the menu shows"
+    /// pattern the Save Template item there already established), not an <c>[ObservableProperty]</c>
+    /// -- nothing needs a live-updating notification for this one.</summary>
+    public bool HasRealBackground => _sourceBaseline is not BlankImageSource;
+
+    /// <summary>User-requested (2026-09-15, background/backdrop naming work): the reverse of
+    /// <see cref="SetAsBackdrop"/>. Bakes the CURRENT background photo -- crop and adjustments
+    /// already applied, since a backdrop element gets no adjustment sliders of its own (adjustments
+    /// stay scoped to the background being edited, same reasoning
+    /// <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s own doc comment gives for why an
+    /// already-full-frame image element never gets adjustments reapplied either) -- into a new,
+    /// full-frame, locked image element at the bottom of the stack, using the exact
+    /// Crop -&gt; Resize -&gt; ApplyAdjustments pipeline order <see cref="ITransmitImagePreparer"/>'s own
+    /// interface doc comments require. Then resets the background to blank, so the operator sees
+    /// immediately that the photo moved, not duplicated. Reachable from the canvas's own empty-area
+    /// right-click menu; refused with a status message (not a silent no-op) if invoked with nothing
+    /// real loaded yet, mirroring <see cref="OnReadyRackDirectFireRequested"/>'s own identical
+    /// refusal shape for the same underlying check.
+    /// <para><see cref="CropRect"/>/<see cref="PreserveAspect"/> are deliberately left UNTOUCHED --
+    /// auditor-found blocker: <see cref="BuildTemplateElement"/>/<c>ProjectRectToCropRelative</c>
+    /// projects every OTHER overlay element's bounds relative to <see cref="CropRect"/> and the
+    /// letterbox padding <see cref="TryGetCropContentMetrics"/> derives from it, so resetting
+    /// <see cref="CropRect"/> here silently resizes/repositions every text/box/line/other-image
+    /// element in the transmitted frame -- not just the backdrop's own crop framing. Same reasoning
+    /// <see cref="FlattenElementAsync"/>'s own doc comment states for why IT never resets
+    /// <see cref="CropRect"/> either. The fresh blank background is shown through whatever crop
+    /// window is currently set, exactly as Flatten leaves it -- the operator can re-crop afterward if
+    /// they want a different framing on the new blank canvas.</para></summary>
+    [RelayCommand]
+    private void PromoteBackgroundToBackdrop()
+    {
+        if (_sourceBaseline is BlankImageSource)
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.PromoteNoBackground");
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            // Single-backdrop invariant (see SetAsBackdrop's own doc comment): at most one image
+            // element is ever the backdrop at a time.
+            foreach (var other in OverlayElements.OfType<ImageElementViewModel>())
+            {
+                if (other.IsBackground)
+                {
+                    other.IsBackground = false;
+                }
+            }
+
+            var cropped = _preparer.Crop(_originalSource, CropRect);
+            var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
+            var baked = _preparer.ApplyAdjustments(resized, Adjustments);
+
+            var z = OverlayElements.Count == 0 ? 0 : OverlayElements.Min(e => e.Z) - 1;
+            var element = CreateImageElement(
+                x: 0.5, y: 0.5, width: 1, height: 1, source: baked, fit: ImageFitMode.Contain,
+                origin: new ImageSourceOrigin(ImageSourceKind.Promoted, null), z: z, locked: true,
+                isBackground: true, naturalPixelWidth: _targetMode.ImageWidth, naturalPixelHeight: _targetMode.ImageHeight);
+            OverlayElements.Insert(0, element);
+
+            var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
+            // New generation, same reasoning as FlattenElementAsync's own identical assignment: this
+            // source can never be reached from the old baseline by rotation, so ApplyState must
+            // restore it by instance.
+            _sourceBaseline = placeholder;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(placeholder);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
+
+    /// <summary>User-requested (2026-09-15): a plain destructive clear, distinct from
+    /// <see cref="PromoteBackgroundToBackdrop"/> -- that one PRESERVES the current photo (as a new
+    /// backdrop element); this one discards it outright. Reachable from the canvas's own empty-area
+    /// right-click menu, next to Promote.
+    /// <para>User-reported feedback (2026-09-15): an earlier draft armed/required a second click to
+    /// confirm before actually clearing -- removed. This command already pushes a real, working undo step (see
+    /// <c>RemoveBackgroundCommand_UndoRestoresTheOriginalBackground</c>), so a second confirming click
+    /// is redundant friction, not a safety net -- Undo already IS the safety net. One click, done;
+    /// refused as a silent no-op only when the background is already blank (nothing real to discard,
+    /// so nothing to undo either).</para>
+    /// <para><see cref="CropRect"/> is deliberately left UNTOUCHED -- same auditor-found blocker
+    /// <see cref="PromoteBackgroundToBackdrop"/>'s own doc comment explains: resetting it here would
+    /// reproject every OTHER overlay element's bounds, not just clear the background.</para></summary>
+    [RelayCommand]
+    private void RemoveBackground()
+    {
+        if (_sourceBaseline is BlankImageSource)
+        {
+            return;
+        }
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
+            _sourceBaseline = placeholder;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(placeholder);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        RecomputePreview();
+    }
+
+    private bool _isDemoting;
+
+    private bool CanDemoteBackdropToBackground(ITemplateElementViewModel? element) =>
+        !_isDemoting && element is ImageElementViewModel { IsBackground: true } && OverlayElements.Contains(element);
+
+    /// <summary>User-requested (2026-09-15, background/backdrop naming work): the reverse of
+    /// <see cref="PromoteBackgroundToBackdrop"/>. Replaces the background WITHIN the current crop
+    /// window with this backdrop element's own pixels, respecting its
+    /// <see cref="ImageElementViewModel.Fit"/> and perspective warp (if any) -- same "only the crop
+    /// region, not the whole underlying source" scope <see cref="BakeElementIntoSource"/> already has
+    /// for Flatten (nit: an earlier doc comment here overstated this as replacing the background
+    /// "outright" -- widening the crop afterward can reveal pixels from the photo that was there
+    /// before, matching Flatten's own established, documented behavior for the same reason).
+    /// <para>[Auditor-found blocker, fixed here] An earlier draft called
+    /// <c>_preparer.Resize(backdrop.Source, ..., preserveAspect: false)</c> directly -- that ignores
+    /// <see cref="ImageElementViewModel.Fit"/> entirely (a <c>Contain</c>-fit backdrop, the element's
+    /// own default, got silently stretched instead of letterboxed) and drops any perspective warp
+    /// (the PERSPECTIVE checkbox is gated only on element type, not <c>Locked</c>/<c>IsBackground</c>,
+    /// so a locked backdrop CAN still be warped). Fixed by reusing <see cref="BakeElementIntoSource"/>
+    /// -- the SAME async, <c>Task.Run</c>-offloaded bake <see cref="FlattenElementAsync"/> already
+    /// uses, which renders through the real <c>ComposePreview</c>/<c>ApplyTemplate</c> pipeline (Fit
+    /// and perspective both correctly resolved there) rather than a bare resize. A full-frame element
+    /// (X=0.5,Y=0.5,W=1,H=1 -- always true for a backdrop, by construction) makes that bake's own
+    /// write-back rect exactly the whole crop-content area, so "patch this element into the source"
+    /// and "replace the background with it" are the same operation here -- no separate replace-path
+    /// needed. Same "stale-result discarded, not silently applied" re-validation
+    /// <see cref="FlattenElementAsync"/>'s own doc comment explains, for the same reason (an offloaded
+    /// compute means the operator can edit while it runs).</para>
+    /// <para><see cref="CropRect"/> is deliberately left UNTOUCHED -- same auditor-found blocker
+    /// <see cref="PromoteBackgroundToBackdrop"/>'s own doc comment explains: resetting it would
+    /// reproject every OTHER overlay element's bounds, not just this one's framing. Reusing the bake
+    /// (which already renders AT the current crop) makes this automatic, not something to remember.</para>
+    /// <para>User-reported feedback (2026-09-15): an earlier draft armed/required a second click to
+    /// confirm before actually replacing the background -- removed. This command already pushes a
+    /// real, working undo step (see
+    /// <c>DemoteBackdropToBackgroundCommand_UndoRestoresTheBackdropElement</c>), so a second confirming
+    /// click is redundant friction, not a safety net -- Undo already IS the safety net. One click,
+    /// done.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanDemoteBackdropToBackground))]
+    private async Task DemoteBackdropToBackgroundAsync(ITemplateElementViewModel? element)
+    {
+        if (element is not ImageElementViewModel { IsBackground: true } backdrop || !OverlayElements.Contains(backdrop))
+        {
+            return;
+        }
+
+        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenUnavailable");
+            return;
+        }
+
+        var request = new FlattenBakeRequest(
+            _originalSource, CropRect, PreserveAspect, BuildTemplateElement(backdrop),
+            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
+        var preparer = _preparer;
+
+        IImageSource? demoted;
+        _isDemoting = true;
+        DemoteBackdropToBackgroundCommand.NotifyCanExecuteChanged();
+        try
+        {
+            demoted = await Task.Run(() => BakeElementIntoSource(preparer, request));
+        }
+        catch (Exception ex)
+        {
+            Log.DemoteBackdropToBackgroundFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteFailed");
+            return;
+        }
+        finally
+        {
+            _isDemoting = false;
+            DemoteBackdropToBackgroundCommand.NotifyCanExecuteChanged();
+        }
+
+        if (demoted is null)
+        {
+            // A full-frame backdrop's write-back rect is always the whole crop-content area, so this
+            // should be unreachable in practice -- handled anyway, same defensive shape
+            // FlattenElementAsync's own identical case uses.
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteOutsideFrame");
+            return;
+        }
+
+        // Stale-result guard, same shape and reasoning as FlattenElementAsync's own.
+        if (!ReferenceEquals(_originalSource, request.Source)
+            || !CropRect.Equals(request.CropRect)
+            || PreserveAspect != request.PreserveAspect
+            || !OverlayElements.Contains(backdrop)
+            || !BuildTemplateElement(backdrop).Equals(request.Element))
+        {
+            Log.DemoteBackdropToBackgroundDiscardedAsStale(_logger);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteDiscardedStale");
+            return;
+        }
+
+        // Captured before Dispose() below -- reading it off a disposed element afterward is safe
+        // today (Dispose only releases bitmaps, never touches Origin), but there's no reason to rely
+        // on that once a plain local does the same job for free.
+        var wasPromoted = backdrop.Origin.Kind == ImageSourceKind.Promoted;
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            backdrop.PropertyChanged -= OnOverlayElementPropertyChanged;
+            OverlayElements.Remove(backdrop);
+            if (SelectedOverlayElements.Contains(backdrop))
+            {
+                SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, backdrop)));
+            }
+
+            backdrop.Dispose();
+
+            _sourceBaseline = demoted;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(demoted);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        // Auditor-found blocker: a backdrop created by PromoteBackgroundToBackdrop already has the
+        // CURRENT adjustment sliders baked into its own pixels (Promote's own doc comment). If those
+        // sliders are still non-identity when demoted back, the live pipeline applies them a SECOND
+        // time to the now-restored background on every subsequent render -- the image visibly changes
+        // on this click with no notice. Narrower than Flatten's own identical-shaped warning
+        // (BuildAdjustments().IsIdentity check, Panes.TxImageEditor.FlattenAdjustmentsNowApply): a
+        // backdrop created via the OTHER path (+Image, then Set as backdrop directly, never promoted)
+        // has raw, never-baked pixels, so continuing to apply the current sliders to it is the SAME
+        // "sliders apply live to whatever's currently loaded" behavior Browse/Stock already have --
+        // warning there would be a false alarm. ImageSourceKind.Promoted (added alongside Promote
+        // itself) is exactly the signal that distinguishes the two origins.
+        // Auditor nit: this reads the sliders' CURRENT value, not what was actually baked at promote
+        // time -- a promoted backdrop with sliders moved back to identity since correctly stays quiet,
+        // but sliders moved to a DIFFERENT non-identity value after promote also warn even though
+        // nothing was technically "already baked in" at that exact value. Accepted as conservative
+        // (an extra warning, never a missed one); the loc string below is worded to stay true either
+        // way rather than assert a specific baked-in history. Also clears any stale prior message on
+        // the no-warn path, matching Flatten's own IsIdentity ? null : key shape -- a leftover message
+        // from an earlier action must not survive a successful, nothing-to-report demote.
+        StatusMessage = wasPromoted && !BuildAdjustments().IsIdentity
+            ? _localization.GetString("Panes.TxImageEditor.DemotePromotedAdjustmentsNowReapply")
+            : null;
+
+        RecomputePreview();
+    }
+
     /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- toggles
     /// <see cref="ImageElementViewModel.PerspectiveEnabled"/>/<see cref="BoxElementViewModel.PerspectiveEnabled"/>.
     /// Uses this method's OWN non-coalesced <see cref="PushUndoSnapshot"/> (not the coalesced
     /// per-property push every ordinary geometry edit uses) -- a coalesced push from a toggle click
     /// landing inside an open coalescing window from a preceding drag would be silently swallowed,
     /// making the toggle un-undoable (round-3 plan-review nit). Wrapped in
-    /// <see cref="_suspendPreview"/>, same shape as <see cref="SetAsBackground"/>/
+    /// <see cref="_suspendPreview"/>, same shape as <see cref="SetAsBackdrop"/>/
     /// <see cref="Rotate"/>, so the corner-seed/writeback mutations below don't ALSO each push their
     /// own coalesced step on top of this one explicit push.
     /// <para>Enabling seeds the 4 corners from the CURRENT X/Y/Width/Height bbox; disabling writes
@@ -2824,6 +3103,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
             AddPlateCommand = AddPlateBehindTextCommand,
+            ClearTextBitmapFillCommand = ClearTextBitmapFillCommand,
             InsertFieldCommand = InsertFieldCommand,
             SetFontSizePresetCommand = SetFontSizePresetCommand,
             SetTextColorPresetCommand = SetTextColorPresetCommand,
@@ -3068,7 +3348,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             SendToBackCommand = SendToBackCommand,
             DuplicateCommand = DuplicateCommand,
             AlignSelectedElementToCropCommand = AlignSelectedElementToCropCommand,
-            SetAsBackgroundCommand = SetAsBackgroundCommand,
+            SetAsBackdropCommand = SetAsBackdropCommand,
+            DemoteToBackgroundCommand = DemoteBackdropToBackgroundCommand,
             CopyCommand = CopySelectedElementCommand,
             CutCommand = CutSelectedElementCommand,
             PasteCommand = PasteElementCommand,
@@ -3321,6 +3602,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     ImageSourceKind.RxHistory => (PersistedImageSourceKind.RxHistory, image.Origin.Payload),
                     ImageSourceKind.LastRx => (PersistedImageSourceKind.LastRx, image.Origin.Payload),
                     ImageSourceKind.Clipboard => (PersistedImageSourceKind.Clipboard, image.Origin.Payload),
+                    ImageSourceKind.Promoted => (PersistedImageSourceKind.Promoted, image.Origin.Payload),
                     _ => throw new NotSupportedException($"Unrecognized {nameof(ImageSourceKind)}: {image.Origin.Kind}."),
                 };
                 return new PersistedImageElement(
@@ -4088,7 +4370,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// avoid a second push, but each element type's own <c>OnXChanging</c>/<c>OnYChanging</c> hook
     /// calls <see cref="ITemplateElementViewModel.PushUndoSnapshotForGeometryChange"/> regardless of
     /// property count -- <c>_suspendPreview</c> is what actually blocks the second push, same
-    /// pattern <see cref="SetAsBackground"/> already established.</summary>
+    /// pattern <see cref="SetAsBackdrop"/> already established.</summary>
     [RelayCommand]
     private void AlignSelectedElementToCrop(string alignment)
     {
@@ -4104,7 +4386,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // job is clearing _pendingCoalesceProperty, not preventing a second push), so a single Align
         // click pushed TWO undo steps for what visibly is one action -- the first Undo silently did
         // nothing, only the second actually moved the element back. _suspendPreview (same pattern
-        // SetAsBackground/ApplySnappedElementBounds already use) blocks the per-property hook from
+        // SetAsBackdrop/ApplySnappedElementBounds already use) blocks the per-property hook from
         // pushing its own step.
         _suspendPreview = true;
         try
@@ -4206,13 +4488,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         // One click, one undo step: each assignment below would otherwise push its own coalesced
         // step via OnWidthChanging/OnHeightChanging -- same _suspendPreview pattern
-        // AlignSelectedElementToCrop/SetAsBackground already use for exactly this.
+        // AlignSelectedElementToCrop/SetAsBackdrop already use for exactly this.
         PushUndoSnapshot();
         _suspendPreview = true;
         try
         {
             // TX editor gap-items plan, item 3 -- same "turn perspective off first, inside this same
-            // suspend window" reasoning as SetAsBackground's own identical fix.
+            // suspend window" reasoning as SetAsBackdrop's own identical fix.
             if (element.PerspectiveEnabled)
             {
                 DisablePerspective(element);
@@ -4487,7 +4769,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// draw order), then EVERY element's <c>Z</c> is renumbered to match the collection's own order
     /// exactly (<c>0, 1, 2, ...</c>) -- avoids any Z-collision with an existing element (a plain
     /// <c>text.Z - 1</c> could collide with whatever's already there, unlike
-    /// <see cref="SetAsBackground"/>'s own <c>Min(Z) - 1</c>, which is collision-free BY
+    /// <see cref="SetAsBackdrop"/>'s own <c>Min(Z) - 1</c>, which is collision-free BY
     /// CONSTRUCTION only because it always targets the absolute bottom). A full renumber keeps
     /// everyone else's RELATIVE order untouched, is simple, and Undo already restores the pre-
     /// renumber Z values for free via the existing whole-state snapshot mechanism.</para></summary>
@@ -4513,7 +4795,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             fillColor: new Rgb24(0, 0, 0), borderColor: null, borderThickness: 0, opacity: 0.6,
             z: text.Z, locked: false);
 
-        // _suspendPreview-guarded (same pattern as SetAsBackground/Rotate's own multi-element
+        // _suspendPreview-guarded (same pattern as SetAsBackdrop/Rotate's own multi-element
         // loops) so the up-to-N Z reassignments below don't each independently trigger their own
         // RecomputePreview() pass -- one full pipeline run at the end instead.
         _suspendPreview = true;
@@ -5135,7 +5417,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     {
         // Tier B audit finding: null-checked, but not checked for being a stale reference no longer
         // in OverlayElements (e.g. a queued click racing an Undo, which replaces every element
-        // wholesale -- see ApplyState's own doc comment) -- same guard SetAsBackground/
+        // wholesale -- see ApplyState's own doc comment) -- same guard SetAsBackdrop/
         // MoveElementUp/MoveElementDown/BringToFront/SendToBack all already have, checked BEFORE
         // PushUndoSnapshot so a stale click doesn't leave a bogus undo step behind either.
         // Collection.Remove itself already no-ops silently on an absent element, so without this
@@ -5286,7 +5568,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     }
 
     /// <summary>See <see cref="BringToFront"/>'s own doc comment for the general shape.
-    /// <c>SendToBack</c> reuses <see cref="SetAsBackground"/>'s own bottom-insert convention
+    /// <c>SendToBack</c> reuses <see cref="SetAsBackdrop"/>'s own bottom-insert convention
     /// (<c>Min(Z) - 1</c> / move to collection index 0) -- EXCEPT it floors above the nearest <see
     /// cref="ImageElementViewModel.IsBackground"/> element BELOW <c>element</c> in the collection, if
     /// any (explicit user constraint: "obviously can't hide behind the actual background picture" --
@@ -5307,7 +5589,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// ungated, then <see cref="SendToBack"/> on anything else). (2) The same stale-position case also
     /// INVERTS the floor: a background sitting above the element raises it instead of sending it back.
     /// (3) Nothing clears a previous element's <c>IsBackground</c> flag on a second
-    /// <see cref="SetAsBackground"/> call, so multiple backgrounds are reachable, and
+    /// <see cref="SetAsBackdrop"/> call, so multiple backgrounds are reachable, and
     /// <c>FirstOrDefault</c> picks the lowest one rather than the one actually adjacent to
     /// <c>element</c>.</para>
     /// <para>Fix: scan BACKWARDS from <c>element</c>'s own position for the nearest background at a
@@ -5408,24 +5690,46 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         return _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
     }
 
-    /// <summary>Backlog item (auditor usability review, 2026-08-17): arm/confirm before discarding
-    /// unsaved edits -- see <see cref="IsCancelArmed"/>'s own doc comment for why this isn't a modal
-    /// dialog. A Cancel with nothing unsaved still cancels immediately (no confirmation needed for a
-    /// no-op discard).</summary>
+    /// <summary>Backlog item (auditor usability review, 2026-08-17): confirm before discarding
+    /// unsaved edits. User-reported feedback (2026-09-15): the original arm/confirm shape (a second
+    /// click on the SAME Cancel button) went stale the moment <see cref="ConfirmRequested"/>/
+    /// <see cref="RequestConfirmAsync"/> were added for template recall -- migrated to the same real
+    /// dialog rather than left as the one remaining "click twice" holdout in this class. A Cancel with
+    /// nothing unsaved still cancels immediately (no confirmation needed for a no-op discard).</summary>
     [RelayCommand]
-    private void Cancel()
+    private async Task CancelAsync()
     {
-        if (HasUnsavedEdits && !IsCancelArmed)
+        // Auditor finding: the confirm-dialog await must live inside a try -- ShowDialog itself can
+        // throw (e.g. the owner window closing mid-await), same reasoning
+        // OnReadyRackTemplateSelected's own identical try/catch already documents. An earlier draft
+        // of this migration left it unguarded, the one call site among the three real-dialog
+        // migrations this session shipped that didn't match the other two.
+        try
         {
-            IsCancelArmed = true;
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.ConfirmCancelDiscard");
-            return;
-        }
+            if (HasUnsavedEdits)
+            {
+                var confirmed = await RequestConfirmAsync(
+                    _localization.GetString("Panes.TxImageEditor.ConfirmCancelTitle"),
+                    _localization.GetString("Panes.TxImageEditor.ConfirmCancelBody"),
+                    _localization.GetString("Panes.TxImageEditor.ConfirmCancelButton"));
+                if (_disposed || !confirmed)
+                {
+                    return;
+                }
+            }
 
-        IsCancelArmed = false;
-        StatusMessage = null;
-        Log.CancelInvoked(_logger);
-        Cancelled?.Invoke();
+            StatusMessage = null;
+            Log.CancelInvoked(_logger);
+            Cancelled?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            Log.CancelConfirmFailed(_logger, ex);
+            if (!_disposed)
+            {
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.CancelFailed");
+            }
+        }
     }
 
     /// <summary>Rotates the source 90° clockwise (always -- no direction parameter, matching the
@@ -6306,7 +6610,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // during an Undo/Redo would themselves push MORE undo snapshots via the On*Changing hooks
         // below, corrupting the stacks on every single Undo/Redo call. Safe to reuse: every
         // _suspendPreview=true site (Rotate, ApplyState, the constructor's own EditorInitialState
-        // seeding, PreserveAspect's own crop-relock block, SetAsBackground, AddPlateBehindText) is
+        // seeding, PreserveAspect's own crop-relock block, SetAsBackdrop, AddPlateBehindText) is
         // exactly a case where pushing would be wrong, and every REAL push site calls this BEFORE
         // entering its own _suspendPreview block, never from inside one.
         if (_suspendPreview)
@@ -6315,9 +6619,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         // Backlog item (auditor usability review, 2026-08-17): any real edit disarms a pending
-        // Cancel/Recall confirmation -- see IsCancelArmed's own doc comment for why a stale arm from
-        // long before a later, unrelated Cancel click would otherwise silently skip its warning.
-        IsCancelArmed = false;
+        // direct-fire overwrite confirmation -- see _pendingDirectFireTemplateId's own doc comment
+        // for why a stale arm from long before a later, unrelated direct-fire would otherwise
+        // silently skip its warning. Cancel itself has no arm state to disarm anymore -- it confirms
+        // via a real dialog now, resolved synchronously in the operator's own click, not tracked
+        // across later edits.
         _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
@@ -6364,7 +6670,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         // Same disarm reasoning as PushUndoSnapshot's own -- see that method's own comment.
-        IsCancelArmed = false;
         _pendingDirectFireTemplateId = null;
 
         _undoStack.Add(CaptureSnapshot());
@@ -6418,18 +6723,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// rect.</summary>
     private void ApplyState(EditorSnapshot snapshot)
     {
-        // Tier B audit finding: Undo/Redo (both funnel through here) never reset these three, unlike
+        // Tier B audit finding: Undo/Redo (both funnel through here) never reset these two, unlike
         // PushUndoSnapshot/PushUndoSnapshotCoalesced, which both do -- an Undo/Redo IS a real state
-        // change, same as any other edit, so it must disarm a pending Cancel/Recall confirmation
-        // (IsCancelArmed's own doc comment: "a stale arm from long before would silently skip the
-        // warning on a LATER, unrelated Cancel click") and reset any in-progress property-coalescing
-        // window. Without the latter reset specifically: Undo landing inside an open coalescing
-        // window (e.g. Undo right after a slider drag, before that drag's own coalesce window would
-        // naturally close) left _pendingCoalesceProperty pointing at the now-reverted property, so
-        // the VERY NEXT edit to that same property silently coalesced into the Undo's own restored
-        // snapshot instead of pushing a fresh step -- the edit became invisibly non-undoable, with
-        // HasUnsavedEdits reading false while the document was actually dirty.
-        IsCancelArmed = false;
+        // change, same as any other edit, so it must disarm a pending direct-fire overwrite
+        // confirmation (_pendingDirectFireTemplateId's own doc comment: "a stale arm from long
+        // before would silently skip the warning on a LATER, unrelated direct-fire") and reset any
+        // in-progress property-coalescing window. Without the latter reset specifically: Undo
+        // landing inside an open coalescing window (e.g. Undo right after a slider drag, before that
+        // drag's own coalesce window would naturally close) left _pendingCoalesceProperty pointing
+        // at the now-reverted property, so the VERY NEXT edit to that same property silently
+        // coalesced into the Undo's own restored snapshot instead of pushing a fresh step -- the
+        // edit became invisibly non-undoable, with HasUnsavedEdits reading false while the document
+        // was actually dirty.
         _pendingDirectFireTemplateId = null;
         _pendingCoalesceProperty = null;
 
@@ -6995,6 +7300,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         [LoggerMessage(Level = LogLevel.Debug, Message = "Cancel invoked")]
         public static partial void CancelInvoked(ILogger logger);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Cancel's own confirm dialog failed")]
+        public static partial void CancelConfirmFailed(ILogger logger, Exception exception);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Rotate invoked")]
         public static partial void RotateInvoked(ILogger logger);
 
@@ -7048,6 +7356,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Flatten element result discarded as stale (editor state changed while baking)")]
         public static partial void FlattenElementDiscardedAsStale(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Demote backdrop to background failed")]
+        public static partial void DemoteBackdropToBackgroundFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Demote backdrop to background result discarded as stale (editor state changed while baking)")]
+        public static partial void DemoteBackdropToBackgroundDiscardedAsStale(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Reset image element to original size: natural={NaturalWidth}x{NaturalHeight} clampedToFrame={Clamped}")]
         public static partial void ResetImageElementToOriginalSize(ILogger logger, int naturalWidth, int naturalHeight, bool clamped);
