@@ -236,8 +236,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// <summary>Same thumbnail size as <c>RxHistoryPaneViewModel.ThumbnailMaxDimension</c> -- kept as
     /// its own constant rather than a shared one since the two view-models have no common base to
     /// hang it on and this strip's thumbnails are a genuinely separate render (different card,
-    /// different collection).</summary>
-    private const int PreviousFramesThumbnailMaxDimension = 96;
+    /// different collection). See that constant's own doc comment (2026-09-15) for the shared
+    /// upscale-blur root cause and why 240, not 96 or 512. The memory tradeoff that constrains the
+    /// Gallery's own choice does NOT apply here the same way (yoniq-auditor correction) -- this strip
+    /// is capped at <see cref="PreviousFramesCapacity"/> (6) and session-only, one thumbnail loaded
+    /// per arriving frame, so raising this constant costs at most a few hundred KB total, not a
+    /// memory footprint that scales with the operator's full receive history.</summary>
+    private const int PreviousFramesThumbnailMaxDimension = 240;
 
     private CancellationTokenSource? _notePersistCts;
 

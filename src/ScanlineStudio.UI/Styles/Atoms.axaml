@@ -1120,11 +1120,12 @@
         <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryDisabledText}" />
     </Style>
     <!-- spec §7 fixed exception 1: "HALT TX is solid red in every state, including idle, hover and
-         disabled. It is the only action allowed to be red while nothing is wrong." Applied ONLY to
-         TxControlsPaneView's StopTransmit and RadioHeaderView's matching button (the two genuine
-         "kill an active transmission" actions) via this additional class, declared AFTER the plain
-         :disabled rule above so it wins on the two buttons that carry it — every other
-         IndustryBtnDanger consumer gets the normal fade above. -->
+         disabled. It is the only action allowed to be red while nothing is wrong." Applied via this
+         additional class, declared AFTER the plain :disabled rule above so it wins on the button
+         that carries it — every other IndustryBtnDanger consumer gets the normal fade above.
+         User-requested (2026-09-15): the sidebar's own TxControlsPaneView StopTransmit button (the
+         other of this class's original two consumers) is gone — RadioHeaderView's "Stop TX" button,
+         now wired to the real TxControlsPaneViewModel.StopTransmitCommand, is the sole consumer. -->
     <Style Selector="Button.IndustryBtnDanger.IndustryBtnDangerAlwaysOn:disabled /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource IndustryDanger}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryDangerSolidBorder}" />

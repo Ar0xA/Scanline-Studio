@@ -654,8 +654,23 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     {
         var fontFamily = ResolveFontFamily(element.Font.Family);
         var startingSizePx = MathF.Max((float)(element.Font.Size * imageHeightPx), MinFontSizePx);
-        var boundsWidthPx = Math.Max(1, (int)MathF.Round(bounds.Width));
-        var boundsHeightPx = Math.Max(1, (int)MathF.Round(bounds.Height));
+        // User-reported gap (2026-09-15): Floor, not Round -- this integer box feeds the font-FIT
+        // SEARCH below (ShrinkFitBoxForEffects/ComputeFittedFontSizePx) and a few other downstream
+        // uses (gradientBounds' rotated-path fallback, the bitmap-fill resize target, the rotation
+        // sub-bitmap size), while the actual UNROTATED draw clip a few lines down (`clip`) uses the
+        // RAW, unrounded bounds.Width/Height. Rounding UP here let the fit search assume up to ~0.5px
+        // more room than that real clip has -- normally invisible, but GrowToFillEnabled's search
+        // deliberately minimizes headroom (stops once the gap is <= 0.5px, see
+        // ComputeFittedFontSizePx's own loop), turning that slop into a real, visible sliver of ink
+        // sitting right at (and clipped hard against) the box's bottom-right edge -- only ever
+        // bottom/right, never top/left, since X/Y themselves aren't rounded here, only the far edge
+        // (X+Width/Y+Height) is sensitive to Width/Height's rounding direction. Floor guarantees this
+        // box is never larger than the true (float) clip, so the fit search can only undershoot,
+        // never overshoot, the real drawable area; the other downstream uses stay safe under Floor
+        // too (yoniq-auditor-verified) -- worst case is a rotation/bitmap-fill texture staying
+        // ≤1px smaller than before, never larger.
+        var boundsWidthPx = Math.Max(1, (int)MathF.Floor(bounds.Width));
+        var boundsHeightPx = Math.Max(1, (int)MathF.Floor(bounds.Height));
 
         var strokeThicknessPx = element.StrokeColor is { } ? (float)(element.StrokeThickness * imageHeightPx) : 0f;
         var shadowOffsetXPx = element.ShadowColor is { } ? (float)(element.ShadowOffsetX * imageHeightPx) : 0f;

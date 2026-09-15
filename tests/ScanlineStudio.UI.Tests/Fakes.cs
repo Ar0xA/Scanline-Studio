@@ -1243,6 +1243,16 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     /// (e.g. to prove a subscriber picks up the change without a settings-file round trip involved).</summary>
     public void RaiseSafetySettingsChanged(RadioSafetySpec spec) => SafetySettingsChanged?.Invoke(spec);
 
+    public bool SsbAsPktPreference { get; set; }
+
+    public Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default) => Task.FromResult(SsbAsPktPreference);
+
+    public Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default)
+    {
+        SsbAsPktPreference = value;
+        return Task.CompletedTask;
+    }
+
     public void Push(RadioState state) => _stateChanges.OnNext(state);
 
     public void PushConnectionEvent(RadioConnectionEvent evt) => _connectionEvents.OnNext(evt);

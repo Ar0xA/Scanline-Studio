@@ -847,6 +847,9 @@ public sealed class PaneViewModelTests
         var frame = Assert.Single(vm.PreviousFrames);
         Assert.Equal("entry1", frame.Entry.Id);
         Assert.NotNull(frame.Thumbnail);
+        // yoniq-auditor nit (2026-09-15): pins the 96->240 thumbnail-resolution bump for this strip
+        // too, not just the Gallery's own (RefreshAsync_LoadsGalleryThumbnails_AtThe240pxCap).
+        Assert.Contains(historyStore.ThumbnailLoadCalls, c => c.EntryId == "entry1" && c.MaxDimension == 240);
     }
 
     /// <summary>ui_transition_plan.md step 6 (T2-4) -- the exact regression shape the plan item
@@ -5976,6 +5979,26 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.NotNull(vm.PreviewImage);
+    }
+
+    [AvaloniaFact]
+    public async Task RefreshAsync_LoadsGalleryThumbnails_AtThe240pxCap()
+    {
+        // yoniq-auditor nit (2026-09-15): the 96->240 thumbnail-resolution bump itself was
+        // previously untested -- only the separate 512px PreviewImage cap had a pinning test
+        // (RxHistoryPaneViewModel_SelectingAnEntry_LoadsFullPreview... above uses MaxDimension == 512).
+        var entry = new ReceiveHistoryEntry("e1", DateTimeOffset.Now, "robot36", "/tmp/e1.png", null, ReceiveDecodeState.Completed);
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [entry],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains(historyStore.ThumbnailLoadCalls, c => c.EntryId == "e1" && c.MaxDimension == 240);
     }
 
     [AvaloniaFact]

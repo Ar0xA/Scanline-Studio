@@ -145,13 +145,20 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <c>HamlibRadioProtocol</c>, <c>RigctldClientProtocol</c>, and <c>FlrigModeTokens</c>, which
     /// already round-trip PKTUSB/PKTLSB ↔ USB-D/DATA-U/DATA-L for exactly this "digital mode on an
     /// SSB-family sideband" concept -- this feature needed no new CAT-layer plumbing, only a UI
-    /// mapping choice). Session-only, not persisted -- matches an operator flipping between voice and
-    /// digital-mode operating within one sitting, not a one-time rig-setup preference like the
-    /// Options dialog's own Radio/CAT tab fields (placement confirmed with the user: main header, not
-    /// Options, specifically because it's touched mid-session).</summary>
+    /// mapping choice). Placement confirmed with the user: main header, not Options, since it's
+    /// touched mid-session, not a one-time rig-setup preference.
+    /// User-reported gap, fixed 2026-09-15: this used to be session-only (reset to
+    /// <see langword="false"/> on every restart) -- persisted now via
+    /// <see cref="IRadioSessionService.GetSsbAsPktPreferenceAsync"/>/
+    /// <see cref="IRadioSessionService.SaveSsbAsPktPreferenceAsync"/>, same
+    /// <see cref="_suppressSsbAsPktPersist"/>-guarded restore-then-write shape
+    /// <see cref="TxVolumePercent"/> already established (see that property's own
+    /// <c>LoadTxStateSafeAsync</c>/<c>OnTxVolumePercentChanged</c> for the pattern this mirrors).</summary>
     [NotifyPropertyChangedFor(nameof(IsSidebandUsb), nameof(IsSidebandLsb))]
     [ObservableProperty]
     private bool _ssbAsPkt;
+
+    private bool _suppressSsbAsPktPersist;
 
     /// <summary>Stub survey Tier 4 (2026-08-26): the VFO card's sideband segment
     /// (<c>RadioHeaderView.axaml</c>) was a fully-clickable but entirely unwired literal group --
@@ -219,6 +226,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// segment display even though this switch itself is a no-op.</summary>
     partial void OnSsbAsPktChanged(bool value)
     {
+        // Restore-time set (LoadSsbAsPktPreferenceSafeAsync) must do NEITHER of the two things
+        // below: the mode-conversion switch would silently issue a real CAT mode-set to the rig on
+        // every app startup before the operator asked for one, and the save is a pointless (though
+        // harmless) rewrite of the exact value just read back.
+        if (_suppressSsbAsPktPersist)
+        {
+            return;
+        }
+
         SelectedRadioMode = (value, SelectedRadioMode) switch
         {
             (true, RadioMode.Usb) => RadioMode.Data,
@@ -227,6 +243,50 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             (false, RadioMode.DataR) => RadioMode.Lsb,
             _ => SelectedRadioMode,
         };
+
+        _ = SaveSsbAsPktPreferenceSafeAsync(value);
+    }
+
+    private async Task SaveSsbAsPktPreferenceSafeAsync(bool value)
+    {
+        try
+        {
+            await _radioSession.SaveSsbAsPktPreferenceAsync(value).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Log.SaveSsbAsPktPreferenceFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Called once from the constructor -- restores the persisted checkbox state before the
+    /// operator ever touches it, same "constructor-time restore" shape as
+    /// <see cref="LoadTxStateSafeAsync"/>. Guarded the same way: the restore-time write must not
+    /// re-trigger <see cref="OnSsbAsPktChanged"/>'s own save (a pointless but harmless extra disk
+    /// write) or its CAT mode-conversion side effect (NOT harmless -- it would silently issue a real
+    /// mode-set command to the rig on every app startup, before the operator asked for one).</summary>
+    private async Task LoadSsbAsPktPreferenceSafeAsync()
+    {
+        try
+        {
+            var value = await _radioSession.GetSsbAsPktPreferenceAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                try
+                {
+                    _suppressSsbAsPktPersist = true;
+                    SsbAsPkt = value;
+                }
+                finally
+                {
+                    _suppressSsbAsPktPersist = false;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.LoadSsbAsPktPreferenceFailed(_logger, ex);
+        }
     }
 
     private bool _suppressModeCommand;
@@ -330,11 +390,18 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private CancellationTokenSource? _tuneCts;
 
-    /// <summary>Backs the Transceiver card's Receiving/Halt toggle -- real state, mirrors
+    /// <summary>Backs the Transceiver card's Receiving/Stop TX toggle -- real state, mirrors
     /// <see cref="ISstvSessionService.IsReceiving"/> exactly (including the case where a startup
     /// auto-start silently failed for lack of an audio device).</summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel))]
     private bool _isReceiving;
+
+    /// <summary>User-reported gap (2026-09-15): the Receiving toggle's Content was a static loc
+    /// string regardless of state, so unchecking it (which really does stop RX capture, see
+    /// <see cref="OnIsReceivingChanged"/>) produced no visible feedback at all -- same
+    /// bool-driven-label pattern as <see cref="TuneButtonLabel"/>.</summary>
+    public string ReceivingButtonLabel => _localization.GetString(IsReceiving ? "RadioStatus.Receiving" : "RadioStatus.ReceivingMuted");
 
     private bool _suppressReceivingCommand;
 
@@ -488,6 +555,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <c>RIG_PASSBAND_NORMAL</c> sentinel.</summary>
     private int? _currentBandwidthHz;
 
+    /// <summary>Set once by <see cref="MainViewModel"/>'s own constructor, right after both VMs
+    /// exist, mirroring the existing reverse reference (<see cref="TxControlsPaneViewModel.RadioStatus"/>,
+    /// see that property's own doc comment for why a plain reference is this codebase's established
+    /// pattern here rather than DI or an XAML ancestor lookup). Lets the Transceiver card's "Stop TX"
+    /// button (<see cref="RadioHeaderView"/>) bind straight to <see cref="TxControlsPaneViewModel.StopTransmitCommand"/>
+    /// -- the actual transmit-cancel logic stays owned by the pane that started the transmission,
+    /// this VM just needs a way to reach it.</summary>
+    public TxControlsPaneViewModel? TxControls { get; set; }
+
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
@@ -522,6 +598,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxStateSafeAsync();
+        _ = LoadSsbAsPktPreferenceSafeAsync();
 
         UpdateUtcClock();
         _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, (_, _) => UpdateUtcClock());
@@ -1367,39 +1444,6 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Separate from unchecking the Receiving toggle -- mirrors mock2's own explicit
-    /// Receiving/Halt button pair, not just a single two-state toggle.</summary>
-    [RelayCommand]
-    private async Task HaltReceivingAsync()
-    {
-        Log.HaltReceivingInvoked(_logger);
-        try
-        {
-            await _sstvSession.StopReceivingAsync().ConfigureAwait(false);
-            Dispatcher.UIThread.Post(() =>
-            {
-                // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
-                // fix for _suppressModeCommand.
-                try
-                {
-                    _suppressReceivingCommand = true;
-                    IsReceiving = false;
-                }
-                finally
-                {
-                    _suppressReceivingCommand = false;
-                }
-
-                ErrorMessage = null;
-            });
-        }
-        catch (Exception ex)
-        {
-            Log.HaltReceivingFailed(_logger, ex);
-            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.ReceivingFailed"));
-        }
-    }
-
     partial void OnTxVolumePercentChanged(int value)
     {
         if (_suppressVolumePersist)
@@ -1452,8 +1496,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private async Task SetModeSafeAsync(RadioMode value)
     {
         // Tier B audit finding: every sibling command (SetFrequencyAsync/ApplyPresetAsync/
-        // SavePresetsAsync/TuneAsync null ErrorMessage on entry; SetReceivingSafeAsync/
-        // HaltReceivingAsync null it on success) manages ErrorMessage around its own outcome -- this
+        // SavePresetsAsync/TuneAsync null ErrorMessage on entry; SetReceivingSafeAsync nulls it on
+        // success) manages ErrorMessage around its own outcome -- this
         // one didn't, so a stale "No radio connected" from an earlier failed action could survive a
         // later, genuinely successful mode change with nothing to clear it.
         ErrorMessage = null;
@@ -1478,6 +1522,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX device mute state failed")]
         public static partial void LoadTxMuteFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading SSB as PKT preference failed")]
+        public static partial void LoadSsbAsPktPreferenceFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Saving SSB as PKT preference failed")]
+        public static partial void SaveSsbAsPktPreferenceFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SetFrequency invoked: {Mhz} MHz")]
         public static partial void SetFrequencyInvoked(ILogger logger, double mhz);
@@ -1532,12 +1582,6 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetReceiving({Value}) failed")]
         public static partial void SetReceivingFailed(ILogger logger, bool value, Exception ex);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "HaltReceiving invoked")]
-        public static partial void HaltReceivingInvoked(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Warning, Message = "HaltReceiving failed")]
-        public static partial void HaltReceivingFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX Pwr ({Value}%) failed")]
         public static partial void PersistTxVolumeFailed(ILogger logger, int value, Exception ex);

@@ -1018,6 +1018,29 @@ correctly carries the direct-fired template's content, but no rack slot shows th
 it. Cosmetic, one call site. Direct-fire was deliberately out of scope for the Templates rack rework
 itself.
 
+### UX-THUMB1. Gallery: thumbnails never disposed, unbounded query, no virtualization
+
+Found by `yoniq-auditor`'s review of the 2026-09-15 thumbnail-sharpness fix (`ThumbnailMaxDimension`
+96→240, `RxHistoryPaneViewModel.cs`/`RxImagePaneViewModel.cs`), pre-existing but amplified by that
+fix, explicitly scoped out as non-blocking there. Three compounding gaps:
+
+1. Gallery thumbnails are never disposed (already tracked as `production_audit.md` T0-11,
+   `RxHistoryPaneViewModel.cs:204-207`) — `Entries.Clear()` just drops references to the finalizer.
+2. `SqliteReceiveHistoryStore.QueryAsync` (`:49-78`) emits no SQL `LIMIT` — `ReceiveHistoryFilter`
+   has no limit field (`IReceiveHistoryStore.cs:121`) — so the "ALL" filter chip loads every history
+   entry that ever existed.
+3. No Gallery grid virtualization — the `UniformGrid`-based `ListBox` (`MainWindow.axaml`) renders
+   every loaded entry's `Image`, not just the visible ones.
+
+Combined effect: `RxHistoryPaneViewModel.RefreshAsync` re-runs the whole query + re-thumbnails EVERY
+entry on EVERY completed reception (`historyStore.Recorded += OnRecorded`), not just on user action.
+At the default `ShowTodayOnly = true` filter this is bounded, but an operator on "ALL" with a
+multi-year history goes from ~29 KB/entry (the old 96px cap) to ~180 KB/entry (the new 240px cap,
+`Bgra8888` = 4 B/px) of undisposed, unmanaged bitmaps churned on every single received frame — at
+1000 entries, ~180 MB resident, re-allocated per frame. Fix shape (from the auditor, not yet
+designed in detail): dispose the previous thumbnail set on refresh, add a real `LIMIT`/pagination to
+`ReceiveHistoryFilter`/`QueryAsync`, and virtualize the Gallery grid.
+
 ---
 
 ## 4. Measure before building

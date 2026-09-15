@@ -78,7 +78,14 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <c>TxImageEditorPaneViewModel.RawTextElementSnapshot</c> (yoniq-auditor-flagged: without that,
     /// Undo/Redo would silently reset it on every text element, not just the one edit being undone) --
     /// so it survives Undo/Redo/Duplicate/Copy-Paste within one editor session, just not a
-    /// save/reload.</summary>
+    /// save/reload.
+    /// User-reported gap, fixed 2026-09-15: the flag resetting to false used to also mean the
+    /// visual RESULT reset -- a template saved with a grown font reloaded back at its small, pre-grow
+    /// <see cref="FontSizeRelative"/>, since that field only ever held the "set" size, never the
+    /// grown one. <see cref="TxImageEditorPaneViewModel.BuildPersistedElementAsync"/> now bakes the
+    /// live fitted/grown size (via <c>ComputeFittedFontSizeRelative</c>) into
+    /// <see cref="FontSizeRelative"/> itself at save time -- this flag still doesn't need to survive
+    /// the round trip for the SIZE it produced to.</summary>
     [ObservableProperty]
     private bool _growToFillEnabled;
 

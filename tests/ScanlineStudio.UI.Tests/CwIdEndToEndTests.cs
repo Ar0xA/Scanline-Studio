@@ -149,6 +149,10 @@ public sealed class CwIdEndToEndTests
         public Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default) => Task.CompletedTask;
 
         public event Action<RadioSafetySpec>? SafetySettingsChanged { add { } remove { } }
+
+        public Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default) => Task.FromResult(false);
+
+        public Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     /// <summary>Minimal <see cref="ISstvEncoder"/> stand-in for the session's own TX slot -- this

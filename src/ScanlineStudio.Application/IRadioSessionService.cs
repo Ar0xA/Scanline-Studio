@@ -131,4 +131,13 @@ public interface IRadioSessionService
     /// thread access must marshal itself (<c>Dispatcher.UIThread.Post</c>), the same "subscriber's own
     /// responsibility" contract <see cref="StateChanges"/> already establishes.</summary>
     event Action<RadioSafetySpec>? SafetySettingsChanged;
+
+    /// <summary>User-reported gap (2026-09-15): "SSB as PKT" used to reset to
+    /// <see langword="false"/> on every restart -- see
+    /// <c>ScanlineStudio.Core.Radio.RadioOperatingPreferencesSettings</c>'s own doc comment for why
+    /// this has its own settings section rather than living in <see cref="RadioConnectionSettings"/>
+    /// or the safety-spec shape above.</summary>
+    Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default);
+
+    Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default);
 }
