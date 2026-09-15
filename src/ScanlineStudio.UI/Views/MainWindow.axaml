@@ -1173,6 +1173,16 @@
                          Mode-timing-reference card sat in the third, 312px column) until that card
                          was removed 2026-08-25 (user decision), so the editor gets that space
                          instead of leaving it empty. -->
+                    <!-- yoniq-auditor caught a real regression here (2026-09-16): raising this to
+                         1050 to give TEMPLATE LIBRARY's item list real height pushed the editor's
+                         own SEND bar (root Grid.Row="3", TxImageEditorPaneView.axaml) below the
+                         fold at this app's DEFAULT (non-maximized) window size — 834 is exactly
+                         "fills the viewport, no scroll" at that size, so ANY increase here moves
+                         TRANSMIT into scroll-to-reach territory, undoing the whole point of the
+                         obvious-TRANSMIT-button work. 834 stays; TEMPLATE LIBRARY's own visible-
+                         list-height fix instead lives entirely inside the rail column (see
+                         TxImageEditorPaneView.axaml's own rail-Grid comment) so it can't touch
+                         where SEND lands. -->
                     <ScrollViewer Grid.Column="1">
                     <ContentControl Height="834" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
                     </ScrollViewer>

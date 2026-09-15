@@ -243,12 +243,25 @@
                 <!-- RECALL rail (EditWindow redesign Phase 1, reshaped by design-fidelity Phase D,
                      mockups/Editwindow lines 42-73): two independent bordered panels, not one —
                      fixed READY RACK (9 numbered rows) on top, flex TEMPLATE LIBRARY (filter +
-                     scrolling name list + save footer) filling the rest of the column. The rail's
-                     own root is a plain Grid now, not an outer ScrollViewer — RACK has a fixed,
-                     bounded height (always exactly 9 rows) and LIBRARY owns its own internal scroll
-                     region instead (below), matching the mock's own two-block layout rather than one
-                     scrolled stack. -->
-                <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
+                     scrolling name list + save footer) filling the rest of the column.
+
+                     yoniq-auditor-caught regression fix (2026-09-16): this rail used to be a plain
+                     Grid RowDefinitions="Auto,*" with no outer ScrollViewer, matching the mock's own
+                     two-block layout — but that gave LIBRARY's "*" row whatever was left of the
+                     editor's fixed 834px total after RACK's own 9 fixed rows, which in practice was
+                     ~0 visible height (RACK alone claims most of it) with no way to grow it without
+                     ALSO growing 834 — and 834 is exactly this window's "no-scroll" viewport height
+                     (MainWindow.axaml's own comment on the ContentControl above), so growing it
+                     pushed the editor's own SEND bar below the fold instead. Fixed the other way:
+                     the rail now gets its OWN ScrollViewer, decoupled from the shared 834 budget —
+                     RACK and LIBRARY both keep a real, non-star (Auto+MinHeight/MaxHeight) desired
+                     size (a "*" row would still collapse to 0 under this ScrollViewer's own infinite
+                     offered height, same underlying mechanism as the original bug), and if the two
+                     combined don't fit whatever height this column actually gets, THIS column alone
+                     scrolls — same "internal scroll" intent as the original comment, just moved one
+                     level up so 834/SEND's position are never touched by how many templates exist. -->
+                <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+                <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,4,0">
 
                     <!-- TEMPLATES (renamed from READY RACK, user request 2026-09-14): vertical list of
                          9 rows (design-fidelity Phase D reshape of the old 3x3 button grid, mock
@@ -417,7 +430,16 @@
                         </HeaderedContentControl.Header>
                         <!-- Count badge moved from the header tab into row 0 of the content Grid —
                              same title-tab-doesn't-stretch finding as the READY RACK panel above. -->
-                        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
+                        <!-- Row 2 (the item list) is Auto, not "*" — this whole rail column now
+                             lives inside its own ScrollViewer (see the rail Grid's own comment
+                             above), and a "*" row measured under an ancestor ScrollViewer's infinite
+                             offered height sizes to its own content instead of sharing leftover
+                             space (same real-window finding this file already notes below, "the
+                             star column collapses to its content's own size"). Auto avoids the row
+                             stretching past its content when the ListBox arranges taller than its
+                             own desired size. Row 2's own MinHeight/MaxHeight (below) is what
+                             actually keeps this a real, bounded visible size. -->
+                        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
                             <!-- ui_transition_plan.md step 13: Import is panel-level (no row target,
                                  unlike Export below), so it lives in this header row rather than the
                                  per-row action grid further down. Expanded template selector: List/
@@ -426,14 +448,22 @@
                                  selector (RadioHeaderView.axaml), not a new control shape. Bound with
                                  this codebase's own `!`-negation-in-binding-path convention (already
                                  used e.g. IsEnabled="{Binding !ReadyRack.IsLoadInFlight}") rather than
-                                 a second computed property. -->
-                            <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto,Auto">
-                                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                 a second computed property.
+
+                                 Two rows, not one (user-reported bug fix): the rail column is a fixed
+                                 212px (line ~241) — Import + Import Legacy + the List/Grid toggle +
+                                 the count badge don't fit on one Auto/*/Auto/Auto row at that width,
+                                 so GRID rendered past the panel's own right edge into the canvas next
+                                 to it. Import stays on row 0 with the count badge; List/Grid moves to
+                                 its own row 1, both well inside 212px on their own. -->
+                            <Grid Grid.Row="0" RowDefinitions="Auto,Auto" ColumnDefinitions="Auto,*,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
+                                <StackPanel Grid.Row="0" Grid.Column="0" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                             Content="{loc:Translate Panes.TxImageEditor.ImportTemplate}" Command="{Binding ReadyRack.ImportCommand}" />
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                             Content="{loc:Translate Panes.TxImageEditor.ImportLegacyMtmTemplate}" Command="{Binding ReadyRack.ImportLegacyMtmCommand}" />
                                 </StackPanel>
+                                <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
                                 <!-- Debugging finding, yoniq-auditor-refined: a TwoWay-bound negated
                                      pair on IsChecked (!IsGridView / IsGridView) across two
                                      RadioButtons sharing one GroupName is SAFE for a single live
@@ -447,7 +477,7 @@
                                      through two explicit, parameterless commands instead — no TwoWay
                                      write path on IsChecked at all, which closes this regardless of
                                      instance count. -->
-                                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="0" Margin="6,0">
+                                <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" Spacing="0">
                                     <RadioButton Classes="Industry IndustrySeg" Theme="{StaticResource IndustrySegTheme}"
                                                  GroupName="TemplateLibraryViewMode" IsChecked="{Binding !ReadyRack.IsGridView, Mode=OneWay}"
                                                  Command="{Binding ReadyRack.SelectListViewCommand}"
@@ -457,7 +487,6 @@
                                                  Command="{Binding ReadyRack.SelectGridViewCommand}"
                                                  Content="{loc:Translate Panes.TxImageEditor.LibraryViewModeGrid}" />
                                 </StackPanel>
-                                <TextBlock Grid.Column="3" Classes="IndustryKicker" VerticalAlignment="Center" Text="{Binding ReadyRack.TemplateCount}" />
                             </Grid>
                             <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
 
@@ -472,7 +501,12 @@
                                  IsPendingDelete arm/confirm, unchanged) — NOT the rack's
                                  DeleteFromRackCommand modal, since this flow already worked and
                                  wasn't broken; only its visibility moves off an always-on button. -->
-                            <Grid Grid.Row="2">
+                            <!-- MinHeight guarantees a few real visible rows (and makes the two
+                                 "no templates" placeholders below actually legible) regardless of
+                                 how much of the rail's shared height RACK above has already spent.
+                                 MaxHeight caps it so a large library doesn't dominate the rail —
+                                 each ListBox already scrolls its own content past that. -->
+                            <Grid Grid.Row="2" MinHeight="150" MaxHeight="260">
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
 
@@ -582,6 +616,7 @@
                         </Grid>
                     </HeaderedContentControl>
                 </Grid>
+                </ScrollViewer>
 
                 <!-- Interactive canvas: crop rectangle (drag body to move, drag the corner handle to
                      resize; legacy's own real precedent has resize on the bottom-right corner only,

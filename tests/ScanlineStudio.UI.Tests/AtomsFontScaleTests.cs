@@ -207,7 +207,7 @@ public sealed partial class AtomsFontScaleTests
         ["TextPromptWindowView.axaml"] = 3,
         ["ToneGeneratorWindowView.axaml"] = 4,
         ["TxControlsPaneView.axaml"] = 6,
-        ["TxImageEditorPaneView.axaml"] = 108,
+        ["TxImageEditorPaneView.axaml"] = 109,
         ["Atoms.axaml"] = 30,
     };
 
