@@ -2931,33 +2931,44 @@
                         <!-- ui_transition_plan.md step 2 (T1-2): SEND used to mean apply-only, with
                              the real Transmit button off in TxControlsPaneView's own sidebar column
                              (potentially below its scroll position) — a human finishing a card
-                             expects the large action HERE to send it. The primary action here demotes
-                             plain Apply (still real, still needed for a card the operator wants staged
-                             but not sent yet) to Secondary.
+                             expects the large action HERE to send it.
                              User-requested (2026-09-16): the sidebar's own Transmit button is gone now
                              (removed entirely, not just deprioritized) — this button is the ONLY way
                              to send a picture, so it gets its own dedicated color (IndustryBtnTransmit,
                              Atoms.axaml) instead of the generic IndustryBtnPrimary accent shared by
                              ~16 other OK/Save/Confirm buttons across the app, and a plain "TRANSMIT"
                              label instead of the combined "Apply & Transmit" verb phrase — the command
-                             itself is unchanged, it still applies pending edits before sending. -->
+                             itself is unchanged, it still applies pending edits before sending.
+                             User-requested (2026-09-15): the plain Apply button (stage the bake
+                             without sending) is gone — since the sidebar's own Transmit button was
+                             removed above, ApplyCommand's own "Applied" event had no remaining
+                             production listener that could ever actually SEND the staged result; the
+                             only reachable way to transmit is this row's own TRANSMIT button, which
+                             already applies before sending. Edit/Save/Delete/Send already cover
+                             everything an operator needs. ApplyCommand/the Applied event stay on
+                             TxImageEditorPaneViewModel itself (OnEditorAppliedAndTransmit's own
+                             close+stage step reuses that same code path internally, and this project's
+                             test suite exercises it directly) — only this now-unreachable BUTTON is
+                             removed. -->
                         <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
-                            <Grid ColumnDefinitions="110,*" ColumnSpacing="{StaticResource IndustrySpacingTight}">
-                                <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
-                                     discards all edits with no confirmation." User-reported feedback
-                                     (2026-09-15): the original arm/confirm (a second click on this SAME
-                                     button, swapping its own label to "DISCARD?") is gone — Cancel now
-                                     shows a real Yes/No dialog via CancelAsync/ConfirmRequested instead,
-                                     same shape as template recall's own dialog. This button is a plain,
-                                     always-"CANCEL" button again. -->
-                                <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                        Content="{loc:Translate Panes.TxImageEditor.Cancel}" Command="{Binding CancelCommand}" />
-                                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                        Content="{loc:Translate Panes.TxImageEditor.Apply}"
-                                        ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Apply.Help}"
-                                        Command="{Binding ApplyCommand}" />
-                            </Grid>
+                            <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
+                                 discards all edits with no confirmation." User-reported feedback
+                                 (2026-09-15): the original arm/confirm (a second click on this SAME
+                                 button, swapping its own label to "DISCARD?") is gone — this button
+                                 shows a real Yes/No dialog via CancelAsync/ConfirmRequested instead,
+                                 same shape as template recall's own dialog.
+                                 User-requested (2026-09-15): relabeled "NEW TEMPLATE" — "CANCEL" read
+                                 as odd/unclear wording for what this button actually does (discard the
+                                 current card and start a fresh blank editor, see CancelAsync's own doc
+                                 comment for the one exception: cancelling a re-edit of an
+                                 already-applied image just closes back out instead). Now the row's
+                                 own full-width secondary action, directly above TRANSMIT, now that
+                                 Apply's removal freed up the space it used to share a column with —
+                                 CancelCommand/CancelAsync/the CancelButton name/the Cancelled event
+                                 are unchanged internally, only the user-facing label moved. -->
+                            <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                    Content="{loc:Translate Panes.TxImageEditor.NewTemplate}" Command="{Binding CancelCommand}" />
                             <Button Grid.Row="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                                     Content="{loc:Translate Panes.TxImageEditor.Transmit}"
                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Transmit.Help}"
