@@ -3120,6 +3120,44 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     private bool CanSaveTemplate() => !string.IsNullOrWhiteSpace(NewTemplateName) && !IsSavingTemplate;
 
+    /// <summary>Canvas right-click "Save Template" entry point (called from
+    /// <c>OnSaveTemplateContextMenuClick</c>) -- user-reported gap (2026-09-15): the old behavior
+    /// just focused an empty name field instead of saving, requiring the operator to type something
+    /// first before the shortcut did anything. Now auto-fills the next free "tmp{N}" name (N starting
+    /// at 1, case-insensitive against every existing template's real <see cref="ITemplateStore.ListAsync"/>
+    /// name -- same source of truth and same case-insensitive match <see cref="SaveTemplateAsync"/>
+    /// itself already uses for its overwrite-by-matching-name check) and saves immediately with that
+    /// name. If a name was already typed, this is identical to the ordinary Save button -- the typed
+    /// name always wins, auto-naming only fills a genuinely empty field.</summary>
+    public async Task SaveTemplateWithAutoNameAsync()
+    {
+        if (string.IsNullOrWhiteSpace(NewTemplateName))
+        {
+            try
+            {
+                var existingNames = (await _templateStore.ListAsync()).Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var n = 1;
+                while (existingNames.Contains($"tmp{n}"))
+                {
+                    n++;
+                }
+
+                NewTemplateName = $"tmp{n}";
+            }
+            catch (Exception ex)
+            {
+                Log.SaveTemplateFailed(_logger, "tmp<auto>", ex);
+                StatusMessage = _localization.GetString("Panes.TxImageEditor.SaveTemplateFailed");
+                return;
+            }
+        }
+
+        if (SaveTemplateCommand.CanExecute(null))
+        {
+            await SaveTemplateCommand.ExecuteAsync(null);
+        }
+    }
+
     /// <summary>Phase 5 (spec/15-template-designer.md) -- builds <see cref="PersistedTemplateElement"/>s
     /// from the CURRENT live <see cref="OverlayElements"/> (via <see cref="RawOverlayElements"/>,
     /// already exists), writing any image element's live <see cref="IImageSource"/> pixels to a real
@@ -3241,7 +3279,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
                 return new PersistedTextElement(
                     text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
-                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
+                    // User-reported gap (2026-09-15): FontSizeRelative here used to be the pre-grow
+                    // "set" size verbatim -- see ComputeFittedFontSizeRelative's own doc comment for
+                    // why GrowToFillEnabled's actual visual RESULT needs to be baked in here instead,
+                    // since the flag itself is deliberately not persisted below.
+                    text.Text, ComputeFittedFontSizeRelative(text), text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
                     text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
                     text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
                     text.Bold, text.Italic,
@@ -6823,6 +6865,49 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // by code-review, not by the one manual test that happened to run at exactly 1.0 zoom (where
         // Z^2 == Z == 1 hides the error completely).
         return fittedFinalSizePx / scaleY;
+    }
+
+    /// <summary>Save-time counterpart to <see cref="ComputeCanvasFontSize"/> above -- user-reported
+    /// gap (2026-09-15): <see cref="OverlayElementViewModel.GrowToFillEnabled"/> is deliberately NOT
+    /// persisted (see that property's own doc comment), so a template saved with a grown font
+    /// reloaded back at its original, small, pre-grow <see cref="OverlayElementViewModel.FontSizeRelative"/>
+    /// -- the grow was always recomputed live (here and in <c>TransmitImagePreparer.ApplyTemplate</c>),
+    /// never baked into the one field that actually survives a save. Runs the identical fit search
+    /// <see cref="ComputeCanvasFontSize"/> does, but against the TARGET mode's real image height (the
+    /// same unit <see cref="OverlayElementViewModel.FontSizeRelative"/> is itself relative to), not
+    /// canvas-display pixels -- so the persisted value already reflects wherever GrowToFillEnabled
+    /// left it, whether that call site itself survives the round trip or not. Also correct when
+    /// GrowToFillEnabled is false: the search is then shrink-only, so the result is never larger than
+    /// <see cref="RawTextElementSnapshot.FontSizeRelative"/> -- calling this unconditionally for
+    /// every text element at save time is safe, not just for grown ones. Takes the RAW (unresolved,
+    /// e.g. still containing "%m") snapshot text, matching what <see cref="RawTextElementSnapshot.Text"/>/
+    /// <see cref="ScanlineStudio.Application.PersistedTextElement.Text"/> both already store and what
+    /// a future load will re-measure against -- using today's live <c>ResolvedText</c> (e.g. today's
+    /// specific callsign) would bake in a size fitted to a string length a future QSO's callsign
+    /// won't match.</summary>
+    private double ComputeFittedFontSizeRelative(RawTextElementSnapshot text)
+    {
+        var targetHeight = (double)_targetMode.ImageHeight;
+        if (targetHeight <= 0)
+        {
+            return text.FontSizeRelative;
+        }
+
+        var bounds = ProjectRectToCropRelative(text.X, text.Y, text.Width, text.Height);
+        var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * _targetMode.ImageWidth));
+        var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
+        var strokeThicknessRelative = text.StrokeColor is { } ? text.StrokeThickness : 0;
+        var shadowOffsetXRelative = text.ShadowColor is { } ? text.ShadowOffsetX : 0;
+        var shadowOffsetYRelative = text.ShadowColor is { } ? text.ShadowOffsetY : 0;
+        var stackStepXRelative = text.StackColor is { } ? text.StackStepX : 0;
+        var stackStepYRelative = text.StackColor is { } ? text.StackStepY : 0;
+        var fittedFinalSizePx = _preparer.MeasureFittedFontSize(
+            text.Text, new FontSpec(text.FontFamily, text.FontSizeRelative, text.Bold, text.Italic), (int)Math.Round(targetHeight),
+            boundsWidthPx, boundsHeightPx, strokeThicknessRelative,
+            shadowOffsetXRelative, shadowOffsetYRelative, text.RotationDegrees,
+            stackStepXRelative, stackStepYRelative, text.GrowToFillEnabled);
+
+        return fittedFinalSizePx / targetHeight;
     }
 
     /// <summary>Backlog item (user request, 2026-08-17) -- canvas-preview outline fix. Real-pixel

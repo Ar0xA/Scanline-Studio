@@ -268,6 +268,48 @@ public sealed class RadioStatusViewModelTests
         Assert.False(vm.IsSidebandLsb);
     }
 
+    // User-reported gap (2026-09-15): SsbAsPkt used to reset to false on every restart.
+
+    [AvaloniaFact]
+    public void SettingSsbAsPkt_PersistsToRadioSession()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SsbAsPkt = true;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(radioSession.SsbAsPktPreference);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_RestoresSsbAsPktFromSettings()
+    {
+        var radioSession = new FakeRadioSessionService { SsbAsPktPreference = true };
+
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+    }
+
+    [AvaloniaFact]
+    public void Constructor_RestoringSsbAsPkt_DoesNotIssueAModeChangeOrResave()
+    {
+        // The restore-time set must be suppressed both ways: it must not silently key a real CAT
+        // mode-set on the rig (the mode-conversion switch in OnSsbAsPktChanged) and must not re-save
+        // the exact value it just read back.
+        var radioSession = new FakeRadioSessionService { SsbAsPktPreference = true };
+
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+        Assert.Equal(RadioMode.Usb, vm.SelectedRadioMode); // unchanged from the VM's own default
+        Assert.DoesNotContain(RadioMode.Data, radioSession.SetModeCalls);
+    }
+
     [AvaloniaFact]
     public void TxVolumeDisplay_ShowsMutedGlyphInsteadOfPercent_WhenDeviceIsMuted()
     {
@@ -944,18 +986,21 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
-    public void HaltReceivingCommand_StopsReceivingAndUnchecksTheToggle()
+    public void ReceivingButtonLabel_TracksIsReceiving()
     {
+        // User-reported gap (2026-09-15): the Receiving toggle's Content used to be a static loc
+        // string regardless of checked state -- proves the label actually flips both ways, same
+        // shape as the TuneButtonLabel tests above.
         var sstvSession = new FakeSstvSessionService { IsReceiving = true };
         var vm = CreateViewModel(sstvSession: sstvSession);
         Dispatcher.UIThread.RunJobs();
-        vm.IsReceiving = true;
+
+        Assert.Equal("RadioStatus.Receiving", vm.ReceivingButtonLabel);
+
+        vm.IsReceiving = false;
         Dispatcher.UIThread.RunJobs();
 
-        vm.HaltReceivingCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.False(vm.IsReceiving);
+        Assert.Equal("RadioStatus.ReceivingMuted", vm.ReceivingButtonLabel);
         Assert.False(sstvSession.IsReceiving);
     }
 

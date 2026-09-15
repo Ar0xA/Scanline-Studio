@@ -14,7 +14,10 @@
          XAML load once Tokens/Cards/ChromeOverrides were deleted) to a real IndustryTxToggle atom
          (Atoms.axaml). User-requested (2026-09-16): that toggle button (and the IndustryTxToggle
          atom backing it) is gone now — the TX image editor's own TRANSMIT button
-         (IndustryBtnTransmit, Atoms.axaml) is the sole send action; this row keeps only Stop TX. -->
+         (IndustryBtnTransmit, Atoms.axaml) is the sole send action. User-requested (2026-09-15):
+         this row's own StopTransmit button is gone too now — the Transceiver card's "Stop TX"
+         button (RadioHeaderView.axaml) is the sole stop-an-active-transmission action, wired
+         straight to this pane's own StopTransmitCommand (see RadioStatusViewModel.TxControls). -->
     <!-- Margin top=6 (real-window-caught fix, same reasoning as the Receive tab's own left
          column): the ScrollViewer wrapping this UserControl in MainWindow.axaml necessarily clips
          its content to its own viewport, so the FIRST card's title notch here needs literal
@@ -367,13 +370,14 @@
         <!-- User-requested (2026-09-16): the sidebar's own Transmit button was removed — the TX
              image editor's own big "TRANSMIT" button (TxImageEditorPaneView.axaml, IndustryBtnTransmit)
              is now the single, unambiguous send action; this sidebar previously had a SECOND, smaller,
-             easily-missed one. StopTransmit stays — it's still needed to halt an in-progress transmit
-             started via the editor, and TransmitCommand itself is still reachable from
-             OnEditorAppliedAndTransmit/ResendSentFrame (TxControlsPaneViewModel.cs), so nothing else
-             depended on this specific button existing. -->
-        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-            <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnDanger IndustryBtnDangerAlwaysOn" Padding="7,0" Content="{loc:Translate Panes.TxControls.StopTransmit}" Command="{Binding StopTransmitCommand}" />
-        </StackPanel>
+             easily-missed one.
+             User-requested (2026-09-15): this row's own StopTransmit button is gone too now — the
+             Transceiver card's "Stop TX" button (RadioHeaderView.axaml, always visible regardless of
+             tab) is now bound straight to this VM's own StopTransmitCommand (RadioStatusViewModel.TxControls),
+             so a second copy here was redundant. TransmitCommand itself is still reachable from
+             OnEditorAppliedAndTransmit/ResendSentFrame (TxControlsPaneViewModel.cs), and
+             StopTransmitCommand is unchanged/still owned by this VM — only this row's own local
+             button is gone. -->
 
         <!-- spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
              A multi-minute send used to show only the toggle button above, no percentage/time-

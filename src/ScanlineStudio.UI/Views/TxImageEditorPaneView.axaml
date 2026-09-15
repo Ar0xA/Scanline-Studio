@@ -399,6 +399,7 @@
                                   IsVisible="{Binding ReadyRack.SelectedSlot.Template, Converter={x:Static ObjectConverters.IsNotNull}}"
                                   IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
                                 <TextBox x:Name="TemplateRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedSlot.Template.EditingName}"
+                                         Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
                                          KeyDown="OnTemplateRenameKeyDown" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
@@ -589,6 +590,7 @@
                             <Grid Grid.Row="3" ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}"
                                   IsVisible="{Binding ReadyRack.SelectedLibraryItem, Converter={x:Static ObjectConverters.IsNotNull}}">
                                 <TextBox x:Name="LibraryRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedLibraryItem.EditingName}"
+                                         Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
                                          KeyDown="OnLibraryRenameKeyDown" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0"
                                         Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />

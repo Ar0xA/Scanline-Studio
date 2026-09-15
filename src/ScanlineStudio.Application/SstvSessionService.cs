@@ -523,8 +523,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// `_isReceiving` check-then-act (read at entry, published only after several awaits) had no gate
     /// between them, unlike <see cref="_pttLockGate"/>'s identical shape for <see cref="SetPttLockAsync"/>.
     /// A real UI repro: <c>RadioStatusViewModel.SetReceivingSafeAsync</c> is a fire-and-forget command
-    /// with no busy guard, and <c>HaltReceivingAsync</c> is a SEPARATE command hitting
-    /// <see cref="StopReceivingAsync"/> concurrently -- a Start parked mid-flight (e.g. in device
+    /// with no busy guard, and the same class's own startup maintenance-retry path is a SEPARATE
+    /// caller hitting <see cref="StopReceivingAsync"/>/<see cref="StartReceivingAsync"/> concurrently
+    /// -- a Start parked mid-flight (e.g. in device
     /// enumeration) let a concurrent Stop read `_isReceiving == false` and silently no-op, leaving
     /// capture live with the UI reporting "not receiving" and no error surfaced; the mirror ordering
     /// dropped a Start instead. <see cref="StopReceivingAsync"/> takes no <see cref="CancellationToken"/>

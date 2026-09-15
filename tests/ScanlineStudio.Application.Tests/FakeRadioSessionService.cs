@@ -261,4 +261,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// lets a test simulate a live Options-side edit WITHOUT going through the fake's own save path
     /// (e.g. to prove a subscriber picks up the change without a settings-file round trip involved).</summary>
     public void RaiseSafetySettingsChanged(RadioSafetySpec spec) => SafetySettingsChanged?.Invoke(spec);
+
+    public bool SsbAsPktPreference { get; set; }
+
+    public Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default) => Task.FromResult(SsbAsPktPreference);
+
+    public Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default)
+    {
+        SsbAsPktPreference = value;
+        return Task.CompletedTask;
+    }
 }

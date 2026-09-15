@@ -4924,6 +4924,40 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(persistedText.Italic);
     }
 
+    [AvaloniaFact]
+    public async Task SaveThenLoadTemplate_GrowToFillEnabled_PersistsTheGrownFontSizeNotTheOriginal()
+    {
+        // User-reported gap (2026-09-15): GrowToFillEnabled is deliberately NOT persisted (see
+        // OverlayElementViewModel.GrowToFillEnabled's own doc comment) -- a save used to write the
+        // small pre-grow FontSizeRelative verbatim, so reloading rendered small again even though
+        // GrowToFillEnabled had visibly grown the font on screen right before saving. Proves
+        // ComputeFittedFontSizeRelative bakes the grown RESULT into the persisted value instead. Uses
+        // the REAL TransmitImagePreparer, same reasoning as GrowToFillEnabled_Toggling_
+        // GrowsCanvasFontSizePastNominal above -- a fake's MeasureFittedFontSize ignores growToFill
+        // entirely, which would make this test vacuous.
+        var preparer = new TransmitImagePreparer(FlattenTestFontPath);
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(80, 60), FlattenTestMode, preparer, templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Width = 0.95;
+        element.Height = 0.95;
+        var originalFontSizeRelative = element.FontSizeRelative;
+
+        element.GrowToFillEnabled = true;
+        Assert.True(element.CanvasFontSize > 0); // sanity: grow-to-fill actually did something
+        vm.NewTemplateName = "Grown text";
+
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        var saved = Assert.Single(await templateStore.ListAsync());
+        var document = await templateStore.LoadAsync(saved.Id);
+        var persistedText = Assert.IsType<PersistedTextElement>(Assert.Single(document.Elements));
+
+        Assert.True(persistedText.FontSizeRelative > originalFontSizeRelative,
+            $"Expected the persisted size ({persistedText.FontSizeRelative}) to reflect the grown result, not the original set size ({originalFontSizeRelative}).");
+    }
+
     // Auditor usability review follow-up (2026-08-18): the "3D"/Stack text effect (legacy YONIQ's
     // CBStack/m_StackPara -- a stepped stack of offset solid-color copies, NOT a real 3D transform),
     // the other item never started from the user's original 2026-08-16 checklist.
@@ -7621,6 +7655,52 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal(2, document.Elements.Count);
         Assert.Empty(imageSourceWriter.Calls); // no image elements -- nothing to write
         Assert.Equal(string.Empty, vm.NewTemplateName);
+    }
+
+    // User-reported gap (2026-09-15): the canvas right-click "Save Template" entry used to just
+    // focus an empty name field instead of saving. Now auto-fills the next free "tmp{N}" name.
+
+    [AvaloniaFact]
+    public async Task SaveTemplateWithAutoNameAsync_NameEmpty_UsesTmp1()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.Equal(string.Empty, vm.NewTemplateName);
+
+        await vm.SaveTemplateWithAutoNameAsync();
+
+        var saved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal("tmp1", saved.Name);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateWithAutoNameAsync_Tmp1AlreadyTaken_UsesNextFreeNumber()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        await vm.SaveTemplateWithAutoNameAsync(); // "tmp1"
+
+        vm.AddOverlayElementCommand.Execute(null);
+        await vm.SaveTemplateWithAutoNameAsync();
+
+        var names = (await templateStore.ListAsync()).Select(t => t.Name).OrderBy(n => n).ToList();
+        Assert.Equal(["tmp1", "tmp2"], names);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplateWithAutoNameAsync_NameAlreadyTyped_UsesTypedNameNotAuto()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "My Template";
+
+        await vm.SaveTemplateWithAutoNameAsync();
+
+        var saved = Assert.Single(await templateStore.ListAsync());
+        Assert.Equal("My Template", saved.Name);
     }
 
     // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an existing name

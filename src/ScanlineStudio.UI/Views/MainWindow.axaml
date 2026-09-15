@@ -850,7 +850,7 @@
                                                                         <TextBlock Classes="IndustryThumbnailMeta" HorizontalAlignment="Right" Text="{Binding Entry.ReceivedAt, StringFormat=HH:mm:ss}" />
                                                                     </Border>
                                                                     <Panel>
-                                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="HighQuality" />
                                                                         <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}"
                                                                                 HorizontalAlignment="Left" VerticalAlignment="Top" Margin="3" IsHitTestVisible="False">
                                                                             <TextBlock Text="{Binding Entry.ModeId}" />
@@ -1290,7 +1290,7 @@
                                             <Border Classes="IndustryThumbnail" Margin="0,0,7,7"
                                                     DoubleTapped="OnGalleryThumbnailDoubleTapped">
                                                 <Panel>
-                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                                    <Image Source="{Binding Thumbnail}" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="HighQuality" />
                                                     <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">
                                                         <TextBlock Text="{Binding Entry.ModeId}" />
                                                     </Border>
