@@ -1148,6 +1148,22 @@
         <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn26MinHeight}" />
         <Setter Property="FontSize" Value="{DynamicResource IndustryBtn26FontSize}" />
     </Style>
+    <!-- yoniq-auditor finding (2026-09-15): the TEMPLATE LIBRARY row's own Pin ToggleButton
+         (TxImageEditorPaneView.axaml) carried IndustryBtn22 same as its 3 plain-Button siblings
+         (Load/Export/Delete) on the assumption the Button-typed IndustryBtn22 rule above would apply
+         — same "ToggleButton is a separate type" gap IndustryBtn26's own comment above already
+         documents, just never hit for THIS size variant before. Left unstyled, Pin rendered at
+         Fluent's own default ToggleButton metrics (taller/wider) instead of matching its row's other
+         3 buttons — now load-bearing inside that row's WrapPanel (fixed this same session), since it
+         drives the row's own height and wrap point. -->
+    <Style Selector="ToggleButton.Industry.IndustryBtn22">
+        <Setter Property="FontFamily" Value="{StaticResource IndustryHeadingFontFamily}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="CornerRadius" Value="0" />
+        <Setter Property="Height" Value="{DynamicResource IndustryBtn22Height}" />
+        <Setter Property="MinHeight" Value="{DynamicResource IndustryBtn22MinHeight}" />
+        <Setter Property="FontSize" Value="{DynamicResource IndustryBtn22FontSize}" />
+    </Style>
     <Style Selector="ToggleButton.IndustryBtnPrimary /template/ ContentPresenter">
         <Setter Property="Background" Value="{DynamicResource IndustryAccent}" />
         <Setter Property="BorderBrush" Value="{DynamicResource IndustryAccent}" />

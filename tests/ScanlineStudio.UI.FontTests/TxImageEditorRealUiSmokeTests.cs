@@ -7,6 +7,7 @@ using Avalonia.Headless.XUnit;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using CommunityToolkit.Mvvm.Input;
+using ScanlineStudio.Application;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.ViewModels;
 using ScanlineStudio.UI.Views;
@@ -510,6 +511,56 @@ public sealed class TxImageEditorRealUiSmokeTests
         // shape (e.g. every item becomes a submenu header) -- a vacuously-passing "every item is fine"
         // result would be worse than no test at all.
         Assert.True(checkedCount > 0, "Expected at least one Command-bound leaf menu item to check.");
+    }
+
+    [AvaloniaFact]
+    public void RackAndLibraryActionStrips_NoSelectionMade_AreNotVisible()
+    {
+        // User-reported gap (2026-09-15): both action strips (rename box + Load/Unpin/Export/Delete)
+        // rendered VISIBLE on every app launch with nothing selected -- verified permanent, not a
+        // startup flash (a fresh window sat 12+ real seconds untouched and never self-corrected).
+        // Real cause: ReadyRack.SelectedSlot.Template is a TWO-STEP path, and SelectedSlot is null the
+        // entire time nothing's selected -- a null intermediate makes Avalonia yield UnsetValue for
+        // the whole path (the converter never runs), and IsVisible falls back to ITS OWN property
+        // default, true. Fixed with FallbackValue=False on that binding (TxImageEditorPaneView.axaml).
+        // SelectedLibraryItem is single-level, so it was never actually broken -- null there is a real
+        // value the converter correctly turns into false; its own FallbackValue is harmless
+        // defense-in-depth, not a fix (confirmed: removing it changes nothing, still checked below for
+        // regression coverage). A VM-level test can't catch either shape -- SelectedSlot/
+        // SelectedLibraryItem are null in the buggy and fixed versions alike; only a real rendered
+        // window proves the CONTROL itself starts hidden, not just the bound VALUE.
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            Assert.Null(vm.ReadyRack.SelectedSlot);
+            Assert.Null(vm.ReadyRack.SelectedLibraryItem);
+
+            var rackStrip = window.GetVisualDescendants().OfType<StackPanel>().FirstOrDefault(p => p.Name == "RackActionStrip")
+                ?? throw new InvalidOperationException("RackActionStrip not found in the real View's visual tree.");
+            var libraryStrip = window.GetVisualDescendants().OfType<StackPanel>().FirstOrDefault(p => p.Name == "LibraryActionStrip")
+                ?? throw new InvalidOperationException("LibraryActionStrip not found in the real View's visual tree.");
+
+            Assert.False(rackStrip.IsVisible);
+            Assert.False(libraryStrip.IsVisible);
+
+            // yoniq-auditor finding: the negative case alone lets FallbackValue=False regress into
+            // "the strip silently never appears" (e.g. a future rename of SelectedSlot/Template) with
+            // no binding error and nothing else failing -- exactly the silent-failure class this whole
+            // test file exists to catch (see its own class doc comment). Prove both strips still show
+            // for a REAL selection too.
+            var metadata = new TemplateMetadata("t1", "Test Template", DateTimeOffset.UnixEpoch, ThumbnailPath: "");
+            vm.ReadyRack.Slots[0].Template = new TemplateListRowViewModel(metadata, isPinned: true);
+            vm.ReadyRack.SelectedSlot = vm.ReadyRack.Slots[0];
+            vm.ReadyRack.SelectedLibraryItem = new TemplateListRowViewModel(metadata, isPinned: true);
+            PumpDispatcher();
+
+            Assert.True(rackStrip.IsVisible);
+            Assert.True(libraryStrip.IsVisible);
+        }
+        finally
+        {
+            window.Close();
+        }
     }
 
     private static void AssertClose(double expected, double actual)
