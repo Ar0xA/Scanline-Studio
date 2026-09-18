@@ -213,7 +213,14 @@ public sealed class StrokedTextBlock : Control
 
         if (Stroke is not null && StrokeThickness > 0)
         {
-            context.DrawGeometry(null, new Pen(Stroke, StrokeThickness), geometry);
+            // User-reported 2026-09-19: Avalonia's Pen defaults to a MITER join (limit 10), which at
+            // any glyph vertex sharper than ~11.5 degrees (the apex of "A", the diagonal junction in
+            // "N", etc.) shoots the outer corner out to up to 10x the stroke width -- a long spike,
+            // worse at wider outline widths. The real render pipeline this control mirrors
+            // (TransmitImagePreparer.DrawGlyphs, confirmed via SixLabors.ImageSharp.Drawing's own
+            // PenOptions source) uses JointStyle.Square instead, which never produces this spike --
+            // Bevel is Avalonia's closest equivalent (a flat-cut corner, no unbounded point).
+            context.DrawGeometry(null, new Pen(Stroke, StrokeThickness, lineJoin: PenLineJoin.Bevel), geometry);
         }
 
         if (Fill is IGradientBrush or DrawingBrush && FillWidth > 0 && FillHeight > 0)
