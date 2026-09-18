@@ -396,6 +396,7 @@
                              deliberately unchanged (see RadioStatusViewModel.IsCapturePausedForTx's
                              own doc comment for why this is scoped as a visual-only fix). -->
                         <ToggleButton Classes="Industry IndustryBtn26 IndustryBtnRxStatus"
+                                      Classes.decodingIdle="{Binding IsDecodingImage}" Classes.decoding="{Binding IsDecodingBlinkOn}"
                                       IsChecked="{Binding IsReceiving}" Content="{Binding ReceivingButtonLabel}"
                                       Opacity="{Binding IsCapturePausedForTx, Converter={x:Static conv:BoolToOpacityConverter.Instance}}"
                                       ToolTip.Tip="{loc:Translate RadioStatus.ReceivingPausedForTx.Help}"

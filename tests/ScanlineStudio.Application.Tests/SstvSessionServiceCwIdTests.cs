@@ -86,7 +86,13 @@ public sealed class SstvSessionServiceCwIdTests
     public async Task Disabled_NeverArmsOrDecodes()
     {
         var (service, audioEngine, decoder, cwIdDecoder, settingsStore) = CreateService();
-        // CwIdRxEnabled defaults to false -- never explicitly enabled in this test.
+        // User-directed override (2026-09-18): StationIdSettings.CwIdRxEnabled now defaults to
+        // true (was false), so this "disabled" case must set it explicitly rather than relying on
+        // the record's own default.
+        settingsStore.Settings = settingsStore.Settings.WithSection(
+            StationIdSettings.SectionKey,
+            new StationIdSettings { CwIdRxEnabled = false },
+            StationIdSettingsJsonContext.Default.StationIdSettings);
         await service.StartReceivingAsync();
 
         ArmAtImageStartZero(audioEngine, decoder);

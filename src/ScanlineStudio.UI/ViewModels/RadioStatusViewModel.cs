@@ -7,6 +7,8 @@ using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Application;
+using ScanlineStudio.UI.Services;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -32,6 +34,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private readonly IRadioSessionService _radioSession;
     private readonly ISstvSessionService _sstvSession;
     private readonly ILocalizationService _localization;
+    private readonly IAppearanceSettingsService _appearanceSettings;
     private readonly ILogger<RadioStatusViewModel> _logger;
     private readonly DispatcherTimer _utcClockTimer;
     private readonly DispatcherTimer _rxAudioLevelTimer;
@@ -391,6 +394,82 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(RxLevelInGoodRange))]
     private double _rxAudioPeakLevel;
 
+    /// <summary>The single <see cref="_rxAudioLevelTimer"/> tick handler (2026-09-18) -- folds
+    /// <see cref="IsDecodingImage"/>/<see cref="IsDecodingBlinkOn"/> into the same 250ms poll that
+    /// already refreshes <see cref="RxAudioPeakLevel"/>, rather than a second timer. Blink toggles
+    /// every OTHER tick (~500ms) via <see cref="_decodingBlinkTickCounter"/>, reset to a known
+    /// false/0 state the instant a decode isn't in progress so it always starts a fresh cycle (not
+    /// mid-phase) the next time one begins.</summary>
+    private void OnRxAudioLevelTick()
+    {
+        RxAudioPeakLevel = _sstvSession.SignalPeakLevel;
+
+        IsDecodingImage = _sstvSession.ReceivedImage.Progress is { } progress && progress < 1.0;
+
+        if (!IsDecodingImage)
+        {
+            _decodingBlinkTickCounter = 0;
+            IsDecodingBlinkOn = false;
+            return;
+        }
+
+        // User-requested (2026-09-18): the blink itself can be turned off in Options > Appearance,
+        // default on. Disabled means steady amber for the whole decode (IsDecodingBlinkOn just
+        // mirrors IsDecodingImage, true the entire time), not "never light up at all" -- the
+        // Decoding state itself is not what this setting controls.
+        if (!_decodingIndicatorBlinksEnabled)
+        {
+            _decodingBlinkTickCounter = 0;
+            IsDecodingBlinkOn = true;
+            return;
+        }
+
+        _decodingBlinkTickCounter++;
+        IsDecodingBlinkOn = _decodingBlinkTickCounter % 2 == 0;
+    }
+
+    /// <summary>Constructor-time initial read of the Appearance checkbox (mirrors
+    /// <see cref="LoadSsbAsPktPreferenceSafeAsync"/>'s own shape) -- <see cref="_appearanceSettings"/>'s
+    /// own <see cref="IAppearanceSettingsService.DecodingIndicatorBlinksChanged"/> subscription
+    /// (constructor, above) covers every change AFTER this instance exists; this covers the value as
+    /// it already was when this instance was constructed. Re-runs <see cref="OnRxAudioLevelTick"/>
+    /// immediately once the real value lands (auditor-class finding, applied proactively this time --
+    /// see <see cref="RadioStatusViewModel"/>'s own SsbAsPkt startup-ordering fix from the same
+    /// session): this constructor's own synchronous initial <c>OnRxAudioLevelTick()</c> call runs
+    /// BEFORE this async load resolves, so without the re-run, a decode already active at construction
+    /// would blink for up to one 250ms poll interval using the field-initializer default instead of
+    /// the real persisted preference.</summary>
+    private async Task LoadDecodingIndicatorBlinksPreferenceSafeAsync()
+    {
+        try
+        {
+            var value = await _appearanceSettings.GetDecodingIndicatorBlinksAsync().ConfigureAwait(false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                _decodingIndicatorBlinksEnabled = value;
+                OnRxAudioLevelTick();
+            });
+        }
+        catch (Exception ex)
+        {
+            Log.LoadDecodingIndicatorBlinksPreferenceFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Live-update handler for <see cref="IAppearanceSettingsService.DecodingIndicatorBlinksChanged"/>
+    /// -- fired by <c>OptionsWindowViewModel</c> on the UI thread already (a plain post-save
+    /// in-process event raise, not a background-thread signal like <see cref="OnStateChanged"/>'s own
+    /// poll-loop origin), but posted through <see cref="Dispatcher.UIThread"/> regardless for
+    /// consistency with every other cross-component write to this instance's own fields. Re-runs
+    /// <see cref="OnRxAudioLevelTick"/> immediately for the same reason
+    /// <see cref="LoadDecodingIndicatorBlinksPreferenceSafeAsync"/> does -- an operator toggling this
+    /// mid-decode should see the effect instantly, not up to 250ms later.</summary>
+    private void OnDecodingIndicatorBlinksChanged(bool value) => Dispatcher.UIThread.Post(() =>
+    {
+        _decodingIndicatorBlinksEnabled = value;
+        OnRxAudioLevelTick();
+    });
+
     /// <summary>0-100 fill fraction for the meter bar -- a direct percentage of
     /// <see cref="RxAudioPeakLevel"/>'s <c>[0.0, 1.0]</c> range, clamped defensively (that range
     /// should already be a hard guarantee for <c>SignalPeakLevel</c>).</summary>
@@ -452,14 +531,70 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="ISstvSessionService.IsReceiving"/> exactly (including the case where a startup
     /// auto-start silently failed for lack of an audio device).</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel))]
+    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel), nameof(IsReceivingIdle))]
     private bool _isReceiving;
+
+    /// <summary>User-reported gap (2026-09-18): "Receiving" (green) was the only state -- an
+    /// operator in the Transmit/Gallery/Logbook tab had no way to tell an image was actually
+    /// decoding right now versus the app merely listening for one. True while
+    /// <see cref="IReceivedImageBuffer.Progress"/> is a real in-progress fraction (not
+    /// <see langword="null"/>, and strictly less than <c>1.0</c> -- that exact value marks
+    /// completion, not an ongoing decode, per that property's own doc comment). Polled on
+    /// <see cref="_rxAudioLevelTimer"/> (same 250ms cadence as <see cref="RxAudioPeakLevel"/>,
+    /// reusing its own tick rather than a second timer) -- not event-driven off
+    /// <see cref="ISstvSessionService.ModeDetected"/>/<see cref="ISstvSessionService.DecodeRestarted"/>,
+    /// since both fire synchronously on the decoder's own audio-drain thread (that interface's own
+    /// concurrency doc comment) and a plain UI-thread poll of a snapshot value avoids adding a new
+    /// cross-thread marshal path for this.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel), nameof(RxStatusBarText), nameof(IsReceivingIdle))]
+    private bool _isDecodingImage;
+
+    /// <summary>Drives the actual blink: true/false alternating every other <see cref="_rxAudioLevelTimer"/>
+    /// tick (~500ms) while <see cref="IsDecodingImage"/> is true, forced back to
+    /// <see langword="false"/> the instant it isn't (see the poll site in the constructor) -- both
+    /// AXAML call sites (<c>RadioHeaderView.axaml</c>'s Transceiver toggle,
+    /// <c>MainWindow.axaml</c>'s status-bar chip) bind their amber ".decoding"/"attentionTint"
+    /// class to this, not to <see cref="IsDecodingImage"/> directly, so the color itself pulses
+    /// rather than sitting solid.</summary>
+    [ObservableProperty]
+    private bool _isDecodingBlinkOn;
+
+    private int _decodingBlinkTickCounter;
+
+    /// <summary>Backs the Options > Appearance "Decoding indicator blinks" checkbox
+    /// (<see cref="ScanlineStudio.UI.Settings.AppearanceSettings.DecodingIndicatorBlinks"/>, default
+    /// <see langword="true"/>) -- read once at startup via <see cref="LoadDecodingIndicatorBlinksPreferenceSafeAsync"/>
+    /// and kept live via <see cref="IAppearanceSettingsService.DecodingIndicatorBlinksChanged"/>
+    /// (constructor-subscribed), since Options is a separate, independently-alive ViewModel that can
+    /// change this while this instance is already running. Plain field, not an
+    /// <c>[ObservableProperty]</c> -- nothing in AXAML binds to it directly, only
+    /// <see cref="OnRxAudioLevelTick"/> reads it.</summary>
+    private bool _decodingIndicatorBlinksEnabled = AppearanceSettings.DefaultDecodingIndicatorBlinks;
 
     /// <summary>User-reported gap (2026-09-15): the Receiving toggle's Content was a static loc
     /// string regardless of state, so unchecking it (which really does stop RX capture, see
     /// <see cref="OnIsReceivingChanged"/>) produced no visible feedback at all -- same
-    /// bool-driven-label pattern as <see cref="TuneButtonLabel"/>.</summary>
-    public string ReceivingButtonLabel => _localization.GetString(IsReceiving ? "RadioStatus.Receiving" : "RadioStatus.ReceivingMuted");
+    /// bool-driven-label pattern as <see cref="TuneButtonLabel"/>. <see cref="IsDecodingImage"/>
+    /// takes priority over both other states (2026-09-18) -- a decode in progress necessarily
+    /// means <see cref="IsReceiving"/> is also true, so checking it first is both correct and
+    /// sufficient, no three-way ambiguity.</summary>
+    public string ReceivingButtonLabel => _localization.GetString(IsDecodingImage ? "RadioStatus.Decoding" : IsReceiving ? "RadioStatus.Receiving" : "RadioStatus.ReceivingMuted");
+
+    /// <summary>The status-bar RX chip's own label (2026-09-18) -- separate from
+    /// <see cref="ReceivingButtonLabel"/> because that chip's rest/receiving states use a
+    /// DIFFERENT loc key ("MainWindow.StatusBar.Rx") than the Transceiver toggle's own
+    /// ("RadioStatus.Receiving") despite showing the same word today; keeping them as two
+    /// independently-keyed strings preserves that separation instead of silently coupling the two
+    /// surfaces' text.</summary>
+    public string RxStatusBarText => _localization.GetString(IsDecodingImage ? "MainWindow.StatusBar.Decoding" : "MainWindow.StatusBar.Rx");
+
+    /// <summary>True exactly when the plain green "Receiving" look applies -- <see cref="IsReceiving"/>
+    /// with an active decode NOT already claiming the amber "Decoding" look instead. Both AXAML
+    /// call sites bind their green ".healthyTint"/"active" classes to this instead of
+    /// <see cref="IsReceiving"/> directly, so the two looks stay mutually exclusive by construction
+    /// rather than relying on style declaration order to arbitrate a simultaneous true/true.</summary>
+    public bool IsReceivingIdle => IsReceiving && !IsDecodingImage;
 
     private bool _suppressReceivingCommand;
 
@@ -622,11 +757,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// this VM just needs a way to reach it.</summary>
     public TxControlsPaneViewModel? TxControls { get; set; }
 
-    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, ILogger<RadioStatusViewModel> logger)
+    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger)
     {
         _radioSession = radioSession;
         _sstvSession = sstvSession;
         _localization = localization;
+        _appearanceSettings = appearanceSettings;
         _logger = logger;
         _frequencyDisplay = localization.GetString("RadioStatus.NoFrequency");
         // T1-13 (production_audit.md): was a hardcoded "BW —" field initializer -- moved into the
@@ -648,6 +784,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             OnStateChanged(state);
         }
+
+        appearanceSettings.DecodingIndicatorBlinksChanged += OnDecodingIndicatorBlinksChanged;
+        _ = LoadDecodingIndicatorBlinksPreferenceSafeAsync();
 
         sstvSession.MaintenanceWarningRaised += OnMaintenanceWarningRaised;
         sstvSession.MaintenanceWarningCleared += OnMaintenanceWarningCleared;
@@ -671,8 +810,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // SignalPeakLevel has no capture-state awareness of its own -- this comment records WHERE
         // the zeroing actually comes from so a future change to ResetAgc's own call site doesn't
         // silently break this meter's idle-state behavior with nothing here to explain why.
-        RxAudioPeakLevel = _sstvSession.SignalPeakLevel;
-        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => RxAudioPeakLevel = _sstvSession.SignalPeakLevel);
+        // Calls the tick body directly (not just the RxAudioPeakLevel assignment it used to be)
+        // so IsDecodingImage/IsDecodingBlinkOn also read correctly from construction, not just
+        // after the first real 250ms timer tick.
+        OnRxAudioLevelTick();
+        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => OnRxAudioLevelTick());
         _rxAudioLevelTimer.Start();
 
         // spec/18-path-to-1.0.md High item 8: Program.cs's own automatic StartReceivingAsync()
@@ -1588,6 +1730,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Saving SSB as PKT preference failed")]
         public static partial void SaveSsbAsPktPreferenceFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading decoding-indicator-blinks preference failed")]
+        public static partial void LoadDecodingIndicatorBlinksPreferenceFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SetFrequency invoked: {Mhz} MHz")]
         public static partial void SetFrequencyInvoked(ILogger logger, double mhz);

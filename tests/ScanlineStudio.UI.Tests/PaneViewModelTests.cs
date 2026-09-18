@@ -39,7 +39,7 @@ public sealed class PaneViewModelTests
     public void RadioStatusViewModel_PushedState_UpdatesDisplayOnUiThread()
     {
         var radioSession = new FakeRadioSessionService();
-        var vm = new RadioStatusViewModel(radioSession, new FakeSstvSessionService(), new FakeLocalizationService(), NullLogger<RadioStatusViewModel>.Instance);
+        var vm = new RadioStatusViewModel(radioSession, new FakeSstvSessionService(), new FakeLocalizationService(), new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
 
         radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
         Dispatcher.UIThread.RunJobs();
@@ -55,7 +55,7 @@ public sealed class PaneViewModelTests
         // first tick), so this must already be populated without needing Dispatcher.UIThread.RunJobs()
         // or advancing the timer at all.
         var localization = new FakeLocalizationService();
-        var vm = new RadioStatusViewModel(new FakeRadioSessionService(), new FakeSstvSessionService(), localization, NullLogger<RadioStatusViewModel>.Instance);
+        var vm = new RadioStatusViewModel(new FakeRadioSessionService(), new FakeSstvSessionService(), localization, new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
 
         Assert.Equal("RadioStatus.UtcValueFormat", vm.UtcClockDisplay);
         // Regression guard (auditor nit): asserting only the locale KEY would still pass if

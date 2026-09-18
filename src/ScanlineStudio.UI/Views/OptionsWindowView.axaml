@@ -240,6 +240,20 @@
                                 </StackPanel>
                             </ContentControl>
 
+                            <!-- User-requested (2026-09-18): lets the "Decoding" indicator's blink
+                                 be turned off, default on — see RadioStatusViewModel.IsDecodingBlinkOn's
+                                 own doc comment. Applies live on Save (own try/catch-free notify,
+                                 no Avalonia global state to touch unlike Theme/FontScale) — see
+                                 OptionsWindowViewModel.SaveCoreUnguardedAsync's own
+                                 NotifyDecodingIndicatorBlinksChanged call. -->
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Appearance.DecodingIndicator}" />
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Appearance.DecodingIndicatorBlinks}"
+                                              IsChecked="{Binding DecodingIndicatorBlinks}" />
+                                </StackPanel>
+                            </ContentControl>
+
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetAppearanceToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>

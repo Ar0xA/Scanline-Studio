@@ -478,15 +478,18 @@ public sealed class SstvSessionServiceStationIdTests
     }
 
     [Fact]
-    public async Task StartReceivingAsync_FskIdRxEnabledUnset_LeavesDecoderStationIdDecodeDisabled()
+    public async Task StartReceivingAsync_FskIdRxEnabledUnset_LeavesDecoderStationIdDecodeEnabled()
     {
-        // Matches legacy's own m_fskdecode default (sstv.h:708, zero-init) -- an absent/default
-        // section must not accidentally turn RX station-ID decode on.
+        // User-directed override (2026-09-18): StationIdSettings.FskIdRxEnabled now defaults to true
+        // (was false, matching legacy's own m_fskdecode zero-init default, sstv.h:708) -- an
+        // absent/default section now DOES turn RX station-ID decode on, deliberately deviating from
+        // legacy's own default here since this is an off-air RX-decode default, not wire-observable
+        // protocol behavior (CLAUDE.md §0a).
         var (service, _, decoder, _) = CreateService();
 
         await service.StartReceivingAsync();
 
-        Assert.False(decoder.StationIdDecodeEnabled);
+        Assert.True(decoder.StationIdDecodeEnabled);
     }
 
     [Fact]

@@ -198,7 +198,7 @@
           <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
           <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
           <li><strong>Pwr</strong> is the application's TX playback gain—not the operating system's device volume and not the radio's RF power setting.</li>
-          <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. Its label switches to <strong>RX Muted</strong> whenever capture is stopped.</li>
+          <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. Its label switches to <strong>RX Muted</strong> whenever capture is stopped, and blinks amber and reads <strong>Decoding</strong> while an image is actively being decoded (the blink can be turned off in <a href="#appearance-options">Appearance options</a>). The matching status-bar chip does the same, so the decoding state is visible from any tab, not only Receive.</li>
           <li><strong>Stop TX</strong>, next to <strong>Receiving</strong>, cancels an in-progress transmission immediately. It is always visible, regardless of which tab you're on, so it is reachable without switching to the Transmit tab first.</li>
         </ul>
 
@@ -725,7 +725,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="appearance-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="appearance theme dark mode light system font size large normal display eye strain screen brightness night">
+      <article id="appearance-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="appearance theme dark mode light system font size large normal display eye strain screen brightness night decoding indicator blink">
         <p class="topic-category">Options reference</p>
         <h2>Appearance options</h2>
         <p>The Appearance tab changes how the application looks. It has no effect on receiving, transmitting, or your saved data, so it's safe to try and switch back at any time.</p>
@@ -736,11 +736,12 @@
             <tbody>
               <tr><td>Theme</td><td>Light, Dark, System</td><td>Light and Dark switch the whole application's colors as soon as you select Save — no restart needed. System follows your operating system's own light/dark setting and switches automatically if you change that later.</td></tr>
               <tr><td>Font size</td><td>Normal, Large</td><td>Large increases text and control sizes across the whole application — useful on a small screen, a high-resolution display, or simply for easier reading. It is one fixed size, not a slider; there is no in-between setting.</td></tr>
+              <tr><td>Decoding indicator blinks</td><td>On, Off</td><td>On by default. The Transceiver header's <strong>Receiving</strong> toggle and the status bar's RX indicator both turn amber and read <strong>Decoding</strong> while an image is actively decoding, visible from any tab. Turning this off keeps the amber "Decoding" color and text but stops the blink, showing a steady color instead.</td></tr>
             </tbody>
           </table>
         </div>
 
-        <p>Both settings apply immediately once you select <strong>Save</strong>, the same as everything else in the Options dialog. <strong>Reset section to defaults</strong> returns both to Light and Normal, but only takes effect once you save.</p>
+        <p>All three settings apply immediately once you select <strong>Save</strong>, the same as everything else in the Options dialog. <strong>Reset section to defaults</strong> returns all three to Light, Normal, and On, but only takes effect once you save.</p>
         <div class="tip"><strong>Operating in a dim room at night?</strong> Dark keeps the interface from lighting up the room and is easier on your eyes after dark.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -963,7 +964,7 @@
 
         <h3>Stations heard stays empty</h3>
         <ul>
-          <li>Confirm <strong>FSK decode</strong> and/or <strong>CW decode</strong> are turned on in Options → Identification — both are off by default, since decoding is extra work the application only does when asked.</li>
+          <li>Confirm <strong>FSK decode</strong> and/or <strong>CW decode</strong> are turned on in Options → Identification — both are on by default, but either can be turned off there.</li>
           <li>Not every station sends identification the application recognizes: a station may be using FSK/CW at a speed, tone, or format Scanline Studio doesn't decode, or may not be identifying by tone at all.</li>
           <li>The list only fills from stations you actually receive — it isn't a directory of who's active on the band.</li>
         </ul>

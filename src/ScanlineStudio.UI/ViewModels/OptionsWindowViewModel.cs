@@ -50,6 +50,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private readonly IReceiveHistoryStore _historyStore;
     private readonly IAppLocationsService _appLocationsService;
     private readonly IApplicationRestarter _applicationRestarter;
+    private readonly IAppearanceSettingsService _appearanceSettings;
     private readonly ILogger<OptionsWindowViewModel> _logger;
 
     private static readonly TimeSpan TxVolumePersistDebounce = TimeSpan.FromMilliseconds(400);
@@ -155,6 +156,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// (<c>Initialize()</c>'s <c>ApplyFontScale(AppFontScale.Normal)</c> call).</summary>
     [ObservableProperty]
     private AppFontScale _fontScale = AppFontScale.Normal;
+
+    /// <summary>User-requested (2026-09-18): lets the "Decoding" indicator's blink
+    /// (<c>RadioStatusViewModel.IsDecodingBlinkOn</c>) be turned off, default on. Same
+    /// "deliberately NOT part of <see cref="OptionsSnapshot"/>" reasoning as <see cref="AppTheme"/>/
+    /// <see cref="FontScale"/> above, sharing the same <see cref="AppearanceSettings"/> section --
+    /// unlike those two, this one is a plain checkbox with no computed IsXSelected properties to
+    /// drive. Default <see cref="AppearanceSettings.DefaultDecodingIndicatorBlinks"/>
+    /// (<see langword="true"/>).</summary>
+    [ObservableProperty]
+    private bool _decodingIndicatorBlinks = AppearanceSettings.DefaultDecodingIndicatorBlinks;
 
     [ObservableProperty]
     private AudioDeviceInfo? _selectedCaptureDevice;
@@ -731,6 +742,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         IReceiveHistoryStore historyStore,
         IAppLocationsService appLocationsService,
         IApplicationRestarter applicationRestarter,
+        IAppearanceSettingsService appearanceSettings,
         ILogger<OptionsWindowViewModel> logger)
     {
         _optionsSettingsService = optionsSettingsService;
@@ -746,6 +758,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         _historyStore = historyStore;
         _appLocationsService = appLocationsService;
         _applicationRestarter = applicationRestarter;
+        _appearanceSettings = appearanceSettings;
         _logger = logger;
 
         _isRadioConnected = radioSession.RigId != "none";
@@ -2821,6 +2834,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var appearanceSettings = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
             AppTheme = appearanceSettings?.Theme ?? AppTheme.Light;
             FontScale = appearanceSettings?.FontScale ?? AppFontScale.Normal;
+            DecodingIndicatorBlinks = appearanceSettings?.DecodingIndicatorBlinks ?? AppearanceSettings.DefaultDecodingIndicatorBlinks;
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -3689,6 +3703,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             var jpegQuality = JpegQuality;
             var appTheme = AppTheme;
             var fontScale = FontScale;
+            var decodingIndicatorBlinks = DecodingIndicatorBlinks;
             await _settingsStore.UpdateAsync(appSettings =>
             {
                 var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
@@ -3699,8 +3714,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                     ImageExportSettings.SectionKey, currentImageExport with { JpegQuality = jpegQuality }, ImageExportSettingsJsonContext.Default.ImageExportSettings);
                 var currentAppearance = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings) ?? new AppearanceSettings();
                 return updatedAppSettings.WithSection(
-                    AppearanceSettings.SectionKey, currentAppearance with { Theme = appTheme, FontScale = fontScale }, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+                    AppearanceSettings.SectionKey, currentAppearance with { Theme = appTheme, FontScale = fontScale, DecodingIndicatorBlinks = decodingIndicatorBlinks }, AppearanceSettingsJsonContext.Default.AppearanceSettings);
             });
+            // Live-apply, same reasoning as the Theme/FontScale blocks immediately below -- an
+            // already-open RadioStatusViewModel must react to this without an app restart.
+            _appearanceSettings.NotifyDecodingIndicatorBlinksChanged(decodingIndicatorBlinks);
 
             // Phase 1 dark mode: live-apply, own try/catch (same "one field's failure must not
             // abort the other unrelated writes in this Save" reasoning as the sample-rate/capture-
@@ -3800,6 +3818,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         // mutates the in-memory property, matching this command's own established behavior. Live-apply
         // only happens from SaveCoreUnguardedAsync, for both fields, on an actual Save click.
         FontScale = AppFontScale.Normal;
+        DecodingIndicatorBlinks = AppearanceSettings.DefaultDecodingIndicatorBlinks;
     }
 
     [RelayCommand]

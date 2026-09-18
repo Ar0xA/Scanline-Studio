@@ -1615,6 +1615,24 @@ internal sealed class FakeUrlLauncher : IUrlLauncher
     public void Open(string url) => OpenedUrls.Add(url);
 }
 
+internal sealed class FakeAppearanceSettingsService : IAppearanceSettingsService
+{
+    public bool DecodingIndicatorBlinks { get; set; } = ScanlineStudio.UI.Settings.AppearanceSettings.DefaultDecodingIndicatorBlinks;
+
+    public List<bool> NotifyCalls { get; } = [];
+
+    public Task<bool> GetDecodingIndicatorBlinksAsync(CancellationToken ct = default) => Task.FromResult(DecodingIndicatorBlinks);
+
+    public event Action<bool>? DecodingIndicatorBlinksChanged;
+
+    public void NotifyDecodingIndicatorBlinksChanged(bool value)
+    {
+        DecodingIndicatorBlinks = value;
+        NotifyCalls.Add(value);
+        DecodingIndicatorBlinksChanged?.Invoke(value);
+    }
+}
+
 /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio), Step 4: minimal fake for
 /// RxHistoryPaneViewModel's IRxAudioAutoSaver dependency -- only the event is functional, matching
 /// this project's sibling-fake convention.</summary>
