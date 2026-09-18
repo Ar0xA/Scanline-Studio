@@ -114,6 +114,59 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void SelectedRadioMode_ManualChangeToSsbFamilyMode_SendsFallbackBandwidthAfterMode()
+    {
+        // User-reported bug (2026-09-19): a manual mode pick (ComboBox/segment buttons) sent a bare
+        // mode-set with no follow-up bandwidth -- the exact RadioModeFamilies landmine
+        // ApplyPresetAsync's own tests already guard against (see ApplyPreset_SendsBandwidthAfterMode
+        // just below): setting the mode makes the rig fall back to its OWN default passband, which on
+        // some rigs resolves to a destructively narrow width. Order matters here too, same reason.
+        var radioSession = BandwidthCapableSession();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedRadioMode = RadioMode.DataR;
+
+        Assert.Contains(RadioMode.DataR, radioSession.SetModeCalls);
+        Assert.Equal(RadioModeFamilies.SsbFallbackHz, Assert.Single(radioSession.SetBandwidthCalls));
+        Assert.Equal(["mode", "bandwidth"], radioSession.CallOrder);
+    }
+
+    [AvaloniaFact]
+    public void SsbAsPktUnchecked_ConvertingBackToLsb_AlsoSendsFallbackBandwidth()
+    {
+        // Same landmine, reached via the OTHER caller of SelectedRadioMode's own change hook -- the
+        // user's own report hit this through the checkbox, not just the mode picker.
+        var radioSession = BandwidthCapableSession();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        vm.SelectedRadioMode = RadioMode.DataR;
+        radioSession.SetBandwidthCalls.Clear();
+
+        vm.SsbAsPkt = false;
+
+        Assert.Equal(RadioMode.Lsb, vm.SelectedRadioMode);
+        Assert.Equal(RadioModeFamilies.SsbFallbackHz, Assert.Single(radioSession.SetBandwidthCalls));
+    }
+
+    [AvaloniaFact]
+    public void SelectedRadioMode_ManualChangeToModeWithNoFamily_SendsNoBandwidth()
+    {
+        // CW/RTTY/AM/Fm... wait, Fm HAS a family (RadioModeFamily.Fm) -- Cw is the real no-family
+        // case. FallbackFor(Cw) is null, so nothing should be sent -- the operator's own explicit
+        // narrow CW filter must never be silently overwritten by this fix.
+        var radioSession = BandwidthCapableSession();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedRadioMode = RadioMode.Cw;
+
+        Assert.Contains(RadioMode.Cw, radioSession.SetModeCalls);
+        Assert.Empty(radioSession.SetBandwidthCalls);
+    }
+
+    [AvaloniaFact]
     public void SsbAsPktChecked_WhileOnLsb_ConvertsToDataR()
     {
         var vm = CreateViewModel();
