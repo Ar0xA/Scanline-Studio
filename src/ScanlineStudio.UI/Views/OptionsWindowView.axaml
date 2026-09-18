@@ -122,10 +122,6 @@
                                          shape any more. -->
                                     <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Label}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
-                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.CurrentlyUsingLabel}" />
-                                            <TextBlock Classes="IndustryRowLabel" Text="{Binding ConfigDirectory}" TextWrapping="Wrap" />
-                                        </StackPanel>
                                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding ConfigDirectoryInput}"
                                                      Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
@@ -148,10 +144,6 @@
                                          backlog item 3 (2026-08-27). -->
                                     <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Database.Label}" />
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingHairline}">
-                                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.CurrentlyUsingLabel}" />
-                                            <TextBlock Classes="IndustryRowLabel" Text="{Binding DatabaseDirectory}" TextWrapping="Wrap" />
-                                        </StackPanel>
                                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding PendingDatabaseDirectory}"
                                                      Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
