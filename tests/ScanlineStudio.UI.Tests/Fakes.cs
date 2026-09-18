@@ -1245,11 +1245,14 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public bool SsbAsPktPreference { get; set; }
 
+    public List<bool> SaveSsbAsPktPreferenceCalls { get; } = [];
+
     public Task<bool> GetSsbAsPktPreferenceAsync(CancellationToken ct = default) => Task.FromResult(SsbAsPktPreference);
 
     public Task SaveSsbAsPktPreferenceAsync(bool value, CancellationToken ct = default)
     {
         SsbAsPktPreference = value;
+        SaveSsbAsPktPreferenceCalls.Add(value);
         return Task.CompletedTask;
     }
 

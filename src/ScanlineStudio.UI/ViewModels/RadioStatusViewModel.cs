@@ -259,12 +259,24 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Set true the first time <see cref="SyncSsbAsPktFromPolledMode"/> derives a real value
+    /// from the rig -- lets <see cref="LoadSsbAsPktPreferenceSafeAsync"/>'s own restore skip itself if
+    /// a poll already won the race (auditor finding: the constructor subscribes to live state and
+    /// replays <c>LastKnownState</c> synchronously, but the persisted-preference read is an async
+    /// settings-store round trip, so without this flag the restore could land AFTER the first poll and
+    /// clobber the rig-derived value for up to one poll interval -- self-healing on the next poll
+    /// either way, but not deterministic on the very first frame, which is exactly the "at
+    /// connect/startup" moment the user reported).</summary>
+    private bool _ssbAsPktCameFromRig;
+
     /// <summary>Called once from the constructor -- restores the persisted checkbox state before the
     /// operator ever touches it, same "constructor-time restore" shape as
     /// <see cref="LoadTxStateSafeAsync"/>. Guarded the same way: the restore-time write must not
     /// re-trigger <see cref="OnSsbAsPktChanged"/>'s own save (a pointless but harmless extra disk
     /// write) or its CAT mode-conversion side effect (NOT harmless -- it would silently issue a real
-    /// mode-set command to the rig on every app startup, before the operator asked for one).</summary>
+    /// mode-set command to the rig on every app startup, before the operator asked for one). Skips the
+    /// assignment entirely if <see cref="_ssbAsPktCameFromRig"/> is already true -- see that field's
+    /// own doc comment for why a live poll must win this race, not lose it.</summary>
     private async Task LoadSsbAsPktPreferenceSafeAsync()
     {
         try
@@ -272,6 +284,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             var value = await _radioSession.GetSsbAsPktPreferenceAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
+                if (_ssbAsPktCameFromRig)
+                {
+                    return;
+                }
+
                 try
                 {
                     _suppressSsbAsPktPersist = true;
@@ -286,6 +303,47 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.LoadSsbAsPktPreferenceFailed(_logger, ex);
+        }
+    }
+
+    /// <summary>Keeps <see cref="SsbAsPkt"/> live from every poll, mirroring how
+    /// <see cref="SelectedRadioMode"/> itself is refreshed in <see cref="OnStateChanged"/>.
+    /// User-reported gap: CAT-linked startup already populated frequency, bandwidth and
+    /// <see cref="SelectedRadioMode"/> from the rig, but left this checkbox at its last manual/
+    /// persisted value -- a rig sitting in PKTUSB/PKTLSB at connect time then showed neither the
+    /// USB nor the LSB segment button selected (see <see cref="IsSidebandUsb"/>/
+    /// <see cref="IsSidebandLsb"/>, both gated on <see cref="SsbAsPkt"/>). Guarded with
+    /// <see cref="_suppressSsbAsPktPersist"/>, same as <see cref="LoadSsbAsPktPreferenceSafeAsync"/>'s
+    /// own restore-time set: a poll-driven change must not re-trigger <see cref="OnSsbAsPktChanged"/>'s
+    /// CAT mode-set conversion (the mode it would convert TO is the exact mode this poll just reported
+    /// FROM) or a disk write (this mirrors the rig's live state, it isn't the operator's own choice to
+    /// persist). Only a polled USB/LSB/PKTUSB/PKTLSB mode touches this -- any other mode (FM, CW, RTTY,
+    /// ...) leaves it unchanged, matching <see cref="IsSidebandUsb"/>/<see cref="IsSidebandLsb"/>'s own
+    /// scope (USB/LSB only, not FM).</summary>
+    private void SyncSsbAsPktFromPolledMode(RadioMode mode)
+    {
+        bool? derived = mode switch
+        {
+            RadioMode.Data or RadioMode.DataR => true,
+            RadioMode.Usb or RadioMode.Lsb => false,
+            _ => null,
+        };
+
+        if (derived is not { } value)
+        {
+            return;
+        }
+
+        _ssbAsPktCameFromRig = true;
+
+        try
+        {
+            _suppressSsbAsPktPersist = true;
+            SsbAsPkt = value;
+        }
+        finally
+        {
+            _suppressSsbAsPktPersist = false;
         }
     }
 
@@ -745,6 +803,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             {
                 _suppressModeCommand = false;
             }
+
+            SyncSsbAsPktFromPolledMode(state.Mode);
 
             IsKeyed = state.IsTransmitting;
             RigMetersDisplay = FormatRigMeters(state);
