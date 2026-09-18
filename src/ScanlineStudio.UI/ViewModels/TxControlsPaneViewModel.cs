@@ -115,6 +115,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="OpenBlankEditorAsync"/>/<see cref="EditCurrentImageAsync"/>).</summary>
     private bool _currentEditorIsBlank;
 
+    /// <summary>Mode-switch-mid-edit feature: the filename to close over for whichever editor is
+    /// CURRENTLY open, for <see cref="ReplaceEditorForModeSwitch"/>'s own
+    /// Applied/AppliedAndTransmitRequested/DirectFireRequested wiring. <see cref="SelectedFileName"/>
+    /// can't serve this purpose -- it's only ever set by <see cref="OnEditorApplied"/>/
+    /// <see cref="ResendSentFrame"/>, so it's <see langword="null"/> for a blank or
+    /// just-opened-but-not-yet-applied editor, exactly the population a mid-edit mode switch targets.
+    /// Set alongside every editor construction (<see cref="OpenEditorWithLoadedSourceAsync"/>,
+    /// <see cref="ReopenEditorFromCurrentStateAsync"/>), cleared alongside every
+    /// <c>_currentEditor = null</c>.</summary>
+    private string? _currentEditorFileName;
+
     /// <summary>The native-resolution original plus the crop/stretch/overlay/adjustment choices
     /// applied to it -- retained (not just the final mode-sized image) so a later mode change can
     /// re-run Crop→Resize→ApplyAdjustments→ApplyTemplate against the *new* mode's dimensions instead
@@ -255,9 +266,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// strip -- see the recording block's own comment for the plan-review finding this fixes.</summary>
     private bool _anyProgressReported;
 
+    // Mode-switch-mid-edit feature (auditor round-3 blocker): CanChangeMode/CanQuickSelectMode both
+    // read IsTransmitting directly, but neither is an [ObservableProperty] of their own -- without
+    // this attribute + OnIsTransmittingChanged below, the mode ComboBox/quick-mode grid would stay
+    // visibly enabled for the whole transmission (bound/CanExecute-cached at whatever IsTransmitting
+    // was at the last unrelated notify), even though QuickSelectMode's own body-level guard still
+    // correctly refuses the click underneath.
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(TxClockText))]
+    [NotifyPropertyChangedFor(nameof(CanChangeMode))]
     private bool _isTransmitting;
+
+    partial void OnIsTransmittingChanged(bool value) => QuickSelectModeCommand.NotifyCanExecuteChanged();
 
     /// <summary>spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during
     /// transmit." Nullable, mirroring <c>RxImagePaneViewModel.Progress</c>'s own pattern -- null
@@ -876,8 +896,31 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// needed no equivalent fix -- removing their own redundant <c>IsEnabled="{Binding !IsEditorOpen}"</c>
     /// (which was overriding <see cref="CanQuickSelectMode"/>'s already-correct CanExecute) was
     /// enough, since Avalonia's Button already auto-disables when a bound Command's CanExecute is
-    /// false and nothing else overrides it.</summary>
+    /// false and nothing else overrides it.
+    /// <para>Mode-switch-mid-edit feature: still gates Copy-to-TX exactly as before (via
+    /// <see cref="TryClaimEditorSlotForNewSource"/>'s own body-level
+    /// <c>IsCurrentEditorBlankAndUntouched()</c> check, which now DOES refuse a populated editor,
+    /// same as always -- Copy-to-TX still discards whatever is open, so it stays scoped to the
+    /// same genuinely-safe cases it always was). The mode ComboBox no longer binds here -- see
+    /// <see cref="CanChangeMode"/> below for why splitting was necessary rather than just relaxing
+    /// this property in place.</para></summary>
     public bool CanChangeSourceOrMode => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
+
+    /// <summary>Mode-switch-mid-edit feature -- backs ONLY the mode ComboBox's <c>IsEnabled</c>
+    /// (<c>TxControlsPaneView.axaml</c>). Deliberately a SEPARATE property from
+    /// <see cref="CanChangeSourceOrMode"/>, not a relaxation of it in place: that property also
+    /// gates Copy-to-TX, whose actual refusal logic (<see cref="TryClaimEditorSlotForNewSource"/>'s
+    /// own <c>IsCurrentEditorBlankAndUntouched()</c> check) is intentionally NOT relaxed by this
+    /// feature -- Copy-to-TX still discards a populated editor wholesale with no confirmation, so
+    /// its gate must keep refusing whenever one is open. Collapsing <see cref="CanChangeSourceOrMode"/>
+    /// itself would have left Copy-to-TX visibly enabled while silently refusing (auditor-caught
+    /// round-2 regression). A mode switch with a populated editor is now handled by
+    /// <see cref="ReplaceEditorForModeSwitch"/> instead of being refused, so the only remaining
+    /// reason to refuse here is an in-flight transmission -- switching resolution while actively
+    /// sending the current image is confusing UX, not a safety requirement
+    /// (<see cref="TransmitAsync"/> captures its own <c>image</c>/<c>mode</c> locals up front, so
+    /// there is no correctness hazard either way).</summary>
+    public bool CanChangeMode => !IsTransmitting;
 
     /// <summary>User-requested (2026-09-15): "even if there are elements on the canvas, if no
     /// background has been picked before, i should be able to load one later also, not only as first
@@ -890,11 +933,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// or other unsaved edits -- <see cref="TxImageEditorPaneViewModel.LoadBackground"/> installs the
     /// picked photo directly into that SAME editor instance instead of discarding it for a new one
     /// (<see cref="OpenEditorForSourceAsync"/>'s own new branch), so there is nothing left for the
-    /// old wholesale-replace gate to protect in this specific case. Not used by the mode ComboBox or
-    /// Copy-to-TX -- both keep binding to <see cref="CanChangeSourceOrMode"/>, unchanged.</summary>
+    /// old wholesale-replace gate to protect in this specific case. Not used by the mode ComboBox
+    /// (now <see cref="CanChangeMode"/>) or Copy-to-TX (still <see cref="CanChangeSourceOrMode"/>,
+    /// unchanged).</summary>
     public bool CanLoadBackground => !IsEditorOpen || IsCurrentEditorBlankAndUntouched() || _currentEditor is { HasRealBackground: false };
 
-    private bool CanQuickSelectMode() => !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
+    /// <summary>Mode-switch-mid-edit feature: dropped the <c>IsCurrentEditorBlankAndUntouched()</c>
+    /// carve-out -- a populated editor is now handled by <see cref="ReplaceEditorForModeSwitch"/>
+    /// rather than refused. Same <see cref="IsTransmitting"/>-only reasoning as
+    /// <see cref="CanChangeMode"/> above (this backs the quick-mode grid, the ComboBox's sibling
+    /// mode-change control).</summary>
+    private bool CanQuickSelectMode() => !IsTransmitting;
 
     /// <summary>Backs the 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7).
     /// <c>CanExecute</c> alone isn't a hard gate for a direct <c>Execute()</c> call, only
@@ -905,7 +954,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanQuickSelectMode))]
     private void QuickSelectMode(string modeId)
     {
-        if (IsEditorOpen && !IsCurrentEditorBlankAndUntouched())
+        if (IsTransmitting)
         {
             return;
         }
@@ -1320,6 +1369,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
+            _currentEditorFileName = null;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
             return true;
@@ -1455,6 +1505,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
+            _currentEditorFileName = fileName;
             // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
             // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
             // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
@@ -1478,6 +1529,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
+            _currentEditorFileName = null;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
         }
@@ -1503,6 +1555,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
+        _currentEditorFileName = null;
         TransmitCommand.NotifyCanExecuteChanged();
         EditorClosed?.Invoke();
     }
@@ -1580,6 +1633,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
+        _currentEditorFileName = null;
         EditorClosed?.Invoke();
     }
 
@@ -1589,6 +1643,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
+        _currentEditorFileName = null;
         EditorClosed?.Invoke();
 
         // Backlog item (user request, 2026-08-17): "should ALWAYS open the editor by default" --
@@ -1719,6 +1774,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
+            _currentEditorFileName = fileName;
             // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
             // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
             // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
@@ -1742,6 +1798,96 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
+            _currentEditorFileName = null;
+            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+            EditorClosed?.Invoke();
+        }
+    }
+
+    /// <summary>Mode-switch-mid-edit feature -- the populated-editor counterpart to
+    /// <see cref="CloseBlankEditorForReplacement"/>+<see cref="OpenBlankEditorAsync"/> (that pair
+    /// only ever handles a BLANK/untouched editor). Modeled directly on
+    /// <see cref="ReopenEditorFromCurrentStateAsync"/>'s construct-new/discard-old shape, but kept
+    /// fully SYNCHRONOUS -- <see cref="TxImageEditorPaneViewModel.OperatorSettings"/> lets this reuse
+    /// the OLD instance's already-loaded settings instead of an async reload, which would otherwise
+    /// reopen a real re-entrancy window (two fast mode changes racing to construct two editors,
+    /// orphaning one). Every field captured from <paramref name="oldEditor"/>/<c>this</c> before
+    /// <see cref="TxImageEditorPaneViewModel.Dispose"/> is called on it -- captured-then-disposed,
+    /// not disposed-then-read.
+    /// <para>Everything the new instance is seeded with
+    /// (<see cref="TxImageEditorPaneViewModel.CaptureInitialState"/>'s <c>CropRect</c>/
+    /// <c>PreserveAspect</c>/<c>Adjustments</c>/<c>RawOverlayElements</c>/<c>TemplateVariables</c>)
+    /// is normalized 0..1 against the OLD target mode's dimensions, and every consumer of those
+    /// values inside the new instance reads its OWN <c>_targetMode</c> fresh -- so simply
+    /// re-targeting reflows the whole canvas to the new mode's aspect ratio automatically. Known,
+    /// accepted exception: a background/element previously baked to old-mode pixels via Promote
+    /// Background/Remove Background/Flatten will letterbox/resample rather than re-derive cleanly
+    /// (see this feature's plan doc for why that's out of scope).</para>
+    /// <para><paramref name="hadUnsavedEdits"/>/<paramref name="wasBlank"/> are a COUPLED pair, not
+    /// two independent choices -- see <see cref="TxImageEditorPaneViewModel.HasUnsavedEdits"/>'s own
+    /// doc comment for why carrying one without the other would let
+    /// <see cref="IsCurrentEditorBlankAndUntouched"/> misread a genuinely edited canvas as safe to
+    /// silently discard.</para></summary>
+    private void ReplaceEditorForModeSwitch(SstvModeDefinition newMode)
+    {
+        if (_currentEditor is not { } oldEditor)
+        {
+            return;
+        }
+
+        var initialState = oldEditor.CaptureInitialState();
+        var originalSource = oldEditor.CurrentSource;
+        var operatorSettings = oldEditor.OperatorSettings;
+        var hadUnsavedEdits = oldEditor.HasUnsavedEdits;
+        var wasBlank = _currentEditorIsBlank;
+        // Non-null forgiveness is safe: every path that leaves _currentEditor non-null also sets
+        // _currentEditorFileName (OpenEditorWithLoadedSourceAsync's own fileName parameter is
+        // non-nullable; ReopenEditorFromCurrentStateAsync sets it from SelectedFileName!), and this
+        // method's own guard above already confirmed _currentEditor is non-null.
+        var fileName = _currentEditorFileName!;
+        var oldModeId = oldEditor.TargetModeId;
+
+        oldEditor.Dispose();
+        _currentEditor = null;
+
+        try
+        {
+            var editor = new TxImageEditorPaneViewModel(
+                originalSource, newMode, _preparer, _macroTextResolver, operatorSettings, _radioSession,
+                _localization, _imageEditorLogger, _filePickerService, _imageFileLoader,
+                _receivedImageBuffer, _receiveHistoryStore, _templateStore, _imageSourceWriter,
+                new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
+                initialState,
+                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
+                carriedOverUnsavedEdits: hadUnsavedEdits);
+            editor.Applied += final => OnEditorApplied(fileName, editor, final);
+            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
+            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
+            editor.Cancelled += OnEditorCancelled;
+            editor.PropertyChanged += OnCurrentEditorPropertyChanged;
+            _currentEditor = editor;
+            _currentEditorIsBlank = wasBlank;
+            _currentEditorFileName = fileName;
+            Log.ModeSwitchedMidEdit(_logger, oldModeId, newMode.Id);
+            QuickSelectModeCommand.NotifyCanExecuteChanged();
+            OnPropertyChanged(nameof(CanChangeSourceOrMode));
+            OnPropertyChanged(nameof(CanChangeMode));
+            OnPropertyChanged(nameof(CanLoadBackground));
+            EditorOpened?.Invoke(editor);
+            _ = editor.ReadyRack.RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            // Mirrors OpenEditorWithLoadedSourceAsync's/ReopenEditorFromCurrentStateAsync's own
+            // construction-failure catches -- but the OLD editor is ALREADY disposed by this point
+            // (no "leave the old one in place" fallback exists here), so close down fully, same as
+            // any other construction failure.
+            Log.ModeSwitchReconstructionFailed(_logger, newMode.Id, ex);
+            IsEditorOpen = false;
+            _currentEditor = null;
+            _currentEditorIsBlank = false;
+            _currentEditorFileName = null;
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
         }
@@ -1751,15 +1897,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// review, spec/18-path-to-1.0.md High item 2), not just assumed: <see cref="_loadedImage"/> is
     /// only ever written sized to whatever <see cref="SelectedMode"/> was at that moment
     /// (<see cref="OnEditorApplied"/> uses the editor's own target mode; <see cref="OnSelectedModeChanged"/>
-    /// re-flows to the new mode), and <see cref="IsEditorOpen"/> now freezes <see cref="SelectedMode"/>
-    /// for its whole lifetime -- so <c>_loadedImage</c>'s dimensions can never diverge from
-    /// <c>SelectedMode</c>'s while an editor is open, even mid-edit. This invariant is load-bearing:
-    /// don't let <see cref="SelectedMode"/> become mutable again while <see cref="IsEditorOpen"/>
-    /// without re-checking it -- <see cref="ResendSentFrame"/> (TX history plan, 2026-09-01) is the
-    /// one other writer of <see cref="SelectedMode"/> besides the mode picker/quick-grid, and its own
-    /// <see cref="CanResendSentFrame"/> gate does exactly that re-check (2-round plan-review finding:
-    /// the first draft omitted it, which broke this exact invariant the moment a real, non-blank
-    /// editor was open targeting a different mode than the resent entry).</summary>
+    /// re-flows to the new mode).
+    /// <para>Mode-switch-mid-edit feature: <see cref="SelectedMode"/> is NO LONGER frozen for an
+    /// open editor's whole lifetime -- a populated editor now handles a mode change via
+    /// <see cref="ReplaceEditorForModeSwitch"/> instead of refusing it. The invariant above is now
+    /// maintained by EAGER RE-DERIVATION on every <see cref="SelectedMode"/> change
+    /// (<see cref="OnSelectedModeChanged"/>'s tail runs unconditionally, in all three cases: blank
+    /// editor reopened, populated editor replaced, or no editor open) rather than by freezing --
+    /// still load-bearing, just enforced differently. <see cref="TransmitAsync"/> also has a direct
+    /// dimension-mismatch check as a backstop, since the structural guarantee freezing used to
+    /// provide is gone.</para>
+    /// <para><see cref="ResendSentFrame"/> (TX history plan, 2026-09-01) is the one other writer of
+    /// <see cref="SelectedMode"/> besides the mode picker/quick-grid, and its own
+    /// <see cref="CanResendSentFrame"/> gate re-checks <see cref="IsEditorOpen"/> (2-round
+    /// plan-review finding: the first draft omitted it, which broke this exact invariant the moment
+    /// a real, non-blank editor was open targeting a different mode than the resent entry).</para></summary>
     // Code-review round-1 finding: must also check !IsRunningLoopbackSelfTest -- a self-test's
     // encode+decode is real CPU work competing with a live PTT-keyed playback pump, and its own
     // result dialog is MODAL, so letting a transmit start while one is running risked a dialog
@@ -1813,6 +1965,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _transmitCts = new CancellationTokenSource();
         try
         {
+            // Mode-switch-mid-edit feature: real backstop for the invariant CanTransmit's own doc
+            // comment describes ("_loadedImage's dimensions can never diverge from SelectedMode's
+            // while an editor is open") -- that invariant is now maintained by eager re-derivation
+            // on every SelectedMode change (OnSelectedModeChanged's tail) rather than by freezing
+            // SelectedMode outright, so it is worth a cheap direct check rather than trusting it
+            // silently. Should never trigger; if it ever does, this converts a latent invariant
+            // violation into a diagnosable error via the catch below instead of a raw
+            // ArgumentException surfacing out of AnalogFmSstvEncoder (spec/18-path-to-1.0.md High
+            // item 2's original failure mode).
+            if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
+            {
+                throw new InvalidOperationException(
+                    $"Loaded image ({image.Width}x{image.Height}) does not match SelectedMode {mode.Id} ({mode.ImageWidth}x{mode.ImageHeight}).");
+            }
+
             // RX/TX pipeline fix plan (2026-09-01), item 2 -- re-resolve time/frequency macros fresh
             // at the moment of transmission, not the moment of Apply. See the helper's own doc
             // comment for the compare-then-conditionally-rebake gate and its fallback contract; it
@@ -1910,11 +2077,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Plan-review finding: same "not just CanTransmit" gate <see cref="CanTransmit"/>'s
-    /// own doc comment documents -- <see cref="_loadedImage"/>'s dimensions can only ever diverge
-    /// from <see cref="SelectedMode"/>'s while NO editor is open (an open editor freezes
-    /// <see cref="SelectedMode"/> for its own lifetime). <see cref="ResendSentFrame"/> changes
-    /// <see cref="SelectedMode"/> to <paramref name="entry"/>'s own mode, so it needs the identical
-    /// re-check <see cref="QuickSelectMode"/> already uses, not just the busy check.</summary>
+    /// own doc comment documents. <see cref="ResendSentFrame"/> changes <see cref="SelectedMode"/>
+    /// to <paramref name="entry"/>'s own mode, so it needs the identical re-check
+    /// <see cref="QuickSelectMode"/> already uses, not just the busy check.
+    /// <para>Mode-switch-mid-edit feature: still refuses while a genuinely populated editor is
+    /// open, unlike <see cref="QuickSelectMode"/>/the mode ComboBox -- resending a HISTORICAL frame
+    /// is a stronger action than switching the LIVE canvas's mode, and this method has no
+    /// <see cref="ReplaceEditorForModeSwitch"/>-equivalent reflow path, so it keeps refusing rather
+    /// than silently discarding in-progress edits. <see cref="SelectedMode"/> is no longer frozen
+    /// for an open editor's whole lifetime (see <see cref="CanTransmit"/>'s own doc comment) --
+    /// this method's OWN gate is what keeps it safe now, not that structural guarantee.</para></summary>
     private bool CanResendSentFrame() => (!IsEditorOpen || IsCurrentEditorBlankAndUntouched()) && !IsTransmitting && !IsRunningLoopbackSelfTest;
 
     /// <summary>TX history plan (2026-09-01): re-transmits a <see cref="SentFrames"/> entry exactly
@@ -2216,6 +2388,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             CloseBlankEditorForReplacement();
             _ = OpenBlankEditorAsync();
         }
+        // Mode-switch-mid-edit feature: mutually exclusive with the blank-editor branch above (both
+        // are pattern-matched on _currentEditor, so with no editor open neither fires). Must NOT
+        // `return` after this, same reasoning as the Tier B finding above -- falls through to the
+        // same shared reflow tail in all three cases (blank editor reopened, populated editor
+        // replaced, or no editor open).
+        else if (IsEditorOpen && value is { } newMode)
+        {
+            ReplaceEditorForModeSwitch(newMode);
+        }
 
         if (value is null || _editState is not { } edit)
         {
@@ -2293,6 +2474,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Quick-mode grid reassignment rejected: mode {ModeId} is already used by a different slot than {SlotIndex}")]
         public static partial void ReassignQuickModeSlotAlreadyUsedElsewhere(ILogger logger, int slotIndex, string modeId);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Mode switched mid-edit: {OldModeId} -> {NewModeId}")]
+        public static partial void ModeSwitchedMidEdit(ILogger logger, string oldModeId, string newModeId);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Mode switch mid-edit failed to reconstruct the editor for mode {ModeId}")]
+        public static partial void ModeSwitchReconstructionFailed(ILogger logger, string modeId, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "RefreshStockLibrary invoked")]
         public static partial void RefreshStockLibraryInvoked(ILogger logger);

@@ -94,9 +94,14 @@
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
+                <!-- Mode-switch-mid-edit feature: bound to CanChangeMode, NOT CanChangeSourceOrMode
+                     — that property also gates Copy-to-TX (MainWindow.axaml), whose own refusal
+                     logic (TryClaimEditorSlotForNewSource) still discards a populated editor and
+                     was deliberately left unchanged; CanChangeMode is this control's own, separate
+                     gate now that a populated editor's mode can be switched instead of refused. -->
                 <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
                           SelectedItem="{Binding SelectedMode}"
-                          IsEnabled="{Binding CanChangeSourceOrMode}"
+                          IsEnabled="{Binding CanChangeMode}"
                           HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
                         <!-- Duration column added 2026-08-27 (direct user request) — whole seconds,

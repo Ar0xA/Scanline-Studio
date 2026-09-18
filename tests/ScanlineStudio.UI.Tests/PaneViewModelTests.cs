@@ -5311,25 +5311,6 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_QuickSelectMode_DisallowedOnceTheBlankEditorHasARealEdit()
-    {
-        var modeA = TestMode;
-        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
-        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        vm.SelectedMode = modeA;
-        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
-        var canExecuteChangedCount = 0;
-        vm.QuickSelectModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
-
-        editor.AddOverlayElementCommand.Execute(null);
-
-        Assert.True(editor.HasUnsavedEdits);
-        Assert.False(vm.QuickSelectModeCommand.CanExecute(modeB.Id));
-        Assert.True(canExecuteChangedCount > 0, "HasUnsavedEdits flipping must re-notify CanExecute via OnCurrentEditorPropertyChanged, or a bound Button would never actually disable.");
-    }
-
-    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_OpenBlankEditorCommand_AllowedAgainWhileAlreadyBlankAndUntouched_ProducesAFreshEditor()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
@@ -5779,10 +5760,14 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_EditorOpen_DisablesTheQuickSelectModeCommand()
+    public async Task TxControlsPaneViewModel_EditorOpenWithRealContent_QuickSelectModeSwitchesTheEditorToTheNewMode()
     {
-        // High item 2 fix's own regression coverage for QuickSelectMode's CanExecute/body-level
-        // guard (a separate command, not a wrapper around anything else).
+        // Mode-switch-mid-edit feature: this used to be
+        // TxControlsPaneViewModel_EditorOpen_DisablesTheQuickSelectModeCommand, regression coverage
+        // for High item 2's blanket block on any mode change while the editor had real content.
+        // That block is gone -- ReplaceEditorForModeSwitch now handles this case instead of
+        // refusing it, so a populated editor's mode CAN be switched, replacing the editor instance
+        // with one targeting the new mode.
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
         var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
@@ -5791,28 +5776,129 @@ public sealed class PaneViewModelTests
         vm.SelectedMode = modeA;
         Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
 
+        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+
+        Assert.True(vm.IsEditorOpen);
+        Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
+
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute("other");
+            return Task.CompletedTask;
+        });
+
+        Assert.Equal("other", vm.SelectedMode?.Id);
+        Assert.True(vm.IsEditorOpen);
+        Assert.NotSame(firstEditor, reopened);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_QuickSelectMode_AllowedOnceTheBlankEditorHasARealEdit_ReflowsElementsToTheNewMode()
+    {
+        // Mode-switch-mid-edit feature: this used to be
+        // TxControlsPaneViewModel_QuickSelectMode_DisallowedOnceTheBlankEditorHasARealEdit,
+        // asserting the OLD blanket block on any unsaved edit. Also verifies the reflow itself: the
+        // added element's X/Y/Width/Height are 0..1 fractions of the target mode's own
+        // ImageWidth/ImageHeight, so the SAME normalized values are correct unchanged against a
+        // differently-sized new mode -- no rescale math needed, confirmed against a mode with
+        // different ImageWidth/ImageHeight than TestMode's degenerate 1x1.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
         var canExecuteChangedCount = 0;
         vm.QuickSelectModeCommand.CanExecuteChanged += (_, _) => canExecuteChangedCount++;
 
-        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        var original = Assert.Single(editor.OverlayElements);
+        var (originalX, originalY, originalWidth, originalHeight) = (original.X, original.Y, original.Width, original.Height);
 
-        Assert.True(vm.IsEditorOpen);
-        Assert.False(vm.QuickSelectModeCommand.CanExecute("other"));
-        Assert.True(canExecuteChangedCount > 0);
+        Assert.True(editor.HasUnsavedEdits);
+        Assert.True(vm.QuickSelectModeCommand.CanExecute(modeB.Id));
+        Assert.True(canExecuteChangedCount > 0, "HasUnsavedEdits flipping must re-notify CanExecute via OnCurrentEditorPropertyChanged.");
 
-        // Also exercises QuickSelectMode's own body-level IsEditorOpen guard directly
-        // (CanExecute isn't a hard gate -- RelayCommand<T>.Execute doesn't consult it, only
-        // Avalonia's Button.OnClick does).
-        vm.QuickSelectModeCommand.Execute("other");
-        Assert.Equal("test", vm.SelectedMode?.Id);
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
 
-        editor.CancelCommand.Execute(null);
+        Assert.Equal(modeB.Id, vm.SelectedMode?.Id);
+        Assert.NotSame(editor, reopened);
+        var reflowed = Assert.Single(reopened.OverlayElements);
+        Assert.Equal(originalX, reflowed.X);
+        Assert.Equal(originalY, reflowed.Y);
+        Assert.Equal(originalWidth, reflowed.Width);
+        Assert.Equal(originalHeight, reflowed.Height);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeSwitchMidEdit_CarriesForwardHasUnsavedEditsForCancelConfirm()
+    {
+        // Auditor round-1 blocker: a freshly constructed editor has an empty undo stack, so without
+        // carrying HasUnsavedEdits forward, Cancel's confirm dialog would silently skip after a
+        // mode switch and discard a populated canvas with no warning.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.AddOverlayElementCommand.Execute(null);
+        Assert.True(editor.HasUnsavedEdits);
+
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
+
+        Assert.True(reopened.HasUnsavedEdits);
+        var confirmRequested = false;
+        reopened.ConfirmRequested = _ =>
+        {
+            confirmRequested = true;
+            return Task.FromResult(false);
+        };
+        await reopened.CancelCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
-        // Backlog item (user request, 2026-08-17): Cancel now auto-reopens a fresh BLANK editor
-        // rather than leaving the column empty.
-        Assert.True(vm.IsEditorOpen);
-        Assert.True(vm.QuickSelectModeCommand.CanExecute("other"));
+        Assert.True(confirmRequested, "Cancel must still ask for confirmation after a mode switch carried forward unsaved edits.");
+        Assert.True(vm.IsEditorOpen, "Declining the confirm dialog must leave the (reflowed) editor open, same as any other Cancel decline.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_IsTransmitting_BlocksModeSwitch()
+    {
+        // Policy choice, not a safety requirement (TransmitAsync captures its own image/mode
+        // locals) -- switching resolution while actively sending the current image is confusing UX
+        // the user didn't ask for.
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        // Auditor round-3 blocker: asserting the property/CanExecute VALUES alone is false
+        // confidence -- CanChangeMode/CanQuickSelectMode must actually be RE-NOTIFIED when
+        // IsTransmitting flips, or a bound ComboBox/Button would stay visibly enabled for the
+        // whole transmission even though the property itself now reads false underneath.
+        var canChangeModeChanged = false;
+        vm.PropertyChanged += (_, e) => canChangeModeChanged |= e.PropertyName == nameof(vm.CanChangeMode);
+        var quickSelectCanExecuteChangedCount = 0;
+        vm.QuickSelectModeCommand.CanExecuteChanged += (_, _) => quickSelectCanExecuteChangedCount++;
+
+        vm.IsTransmitting = true;
+
+        Assert.True(canChangeModeChanged, "IsTransmitting must raise PropertyChanged for CanChangeMode, or the ComboBox's IsEnabled binding never re-evaluates.");
+        Assert.True(quickSelectCanExecuteChangedCount > 0, "IsTransmitting must re-notify QuickSelectModeCommand's CanExecute.");
+        Assert.False(vm.CanChangeMode);
+        Assert.False(vm.QuickSelectModeCommand.CanExecute(modeB.Id));
+        vm.QuickSelectModeCommand.Execute(modeB.Id);
+        Assert.Equal(modeA.Id, vm.SelectedMode?.Id);
     }
 
     [AvaloniaFact]

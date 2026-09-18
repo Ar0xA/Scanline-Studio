@@ -320,7 +320,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual duration geometry vis output device ptt halt power alc swr">
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr">
         <p class="topic-category">Transmitting</p>
         <h2>Transmit a picture</h2>
         <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode.</p>
@@ -332,6 +332,8 @@
           <li>Confirm the output device, duration, identification, Pwr level, and radio state; then select the big <strong>TRANSMIT</strong> button to apply your edits and start sending in one step. With the CAT backend set to <strong>None</strong>, Scanline Studio sends no keying command — see <a href="#requirements">What you need</a> for keying the radio yourself.</li>
         </ol>
         <p>During transmission, progress shows percentage and remaining time. Select the header's <strong>Stop TX</strong> button, next to <strong>Receiving</strong>, to abort — see <a href="#workspace">Tour of the workspace</a>.</p>
+
+        <div class="note"><strong>Changing mode mid-edit.</strong> You can change the mode while a picture is still being edited — the crop, template elements, and background all resize to fit the new mode's dimensions and aspect ratio automatically. Switching back to the previous mode restores the exact same layout, so a mode change is always reversible this way. The mode selector is only disabled during an active transmission.</div>
 
         <div class="safety"><strong>Before the first RF transmission.</strong> Use <a href="#radio-tune-safety">Tune and TX safety</a> to establish a clean drive level. Excess audio can cause ALC action, splatter, poor SSTV quality, or automatic SWR cutoff.</div>
         <div class="note"><strong>Auto mode following.</strong> Auto normally matches the last received mode for a reply. It will not make an unsafe mid-transmit change, and it can decline a change when the already loaded image width is incompatible.</div>
