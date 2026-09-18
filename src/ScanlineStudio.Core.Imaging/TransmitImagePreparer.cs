@@ -603,8 +603,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     }
 
     /// <summary>Rotation-vs-clip policy (Phase 8 plan-review blocker): shrink the fit box, don't
-    /// widen the clip -- <see cref="DrawTemplateText"/>'s clip stays exactly <c>Bounds</c> for every
-    /// effect, no per-effect exceptions. A box of size (w,h) rotated by <paramref name="rotationDegrees"/>
+    /// widen the clip -- <see cref="DrawTemplateText"/>'s clip stays <c>Bounds</c> (snapped outward to
+    /// whole pixels, see <see cref="BuildPixelSnappedClip"/> -- never smaller than <c>Bounds</c>) for
+    /// every effect, no per-effect exceptions. A box of size (w,h) rotated by <paramref name="rotationDegrees"/>
     /// has an axis-aligned bounding box of <c>(w*c + h*s, w*s + h*c)</c> where <c>c</c>/<c>s</c> are
     /// <c>|cos|</c>/<c>|sin|</c> of the angle. Solving for the largest (w,h) -- constrained to the
     /// SAME aspect ratio as the original <paramref name="boundsWidthPx"/>/<paramref name="boundsHeightPx"/>,
@@ -725,9 +726,11 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             // out at MinFontSizePx and the text STILL not fit Bounds -- clip to Bounds rather than
             // overflow or ellipsize. Clipping unconditionally (not just in the overflow case) is both
             // simpler and correct: when text already fits, nothing is outside the clip region, so it's
-            // a no-op. Deliberately still exactly Bounds (not widened for stroke/shadow) -- the fit-box
-            // shrink above is what keeps their ink inside this same clip rect.
-            var clip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+            // a no-op. Bounds snapped outward to whole pixels (BuildPixelSnappedClip, 2026-09-18 fix
+            // for a fractional-edge seam -- see that method's own doc comment), never widened beyond
+            // that for stroke/shadow -- the fit-box shrink above is what keeps their ink inside this
+            // same clip rect.
+            var clip = BuildPixelSnappedClip(bounds);
             // hintingMode: HintingMode.None -- code-review round-1 finding: must match
             // ComputeFittedFontSizePx's own measurement HintingMode exactly, or the fitted size this
             // method just computed can render slightly larger/smaller than what was actually measured
@@ -762,16 +765,37 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // center. This is also what keeps a later Tier 3 swap from Rotate to the full
         // ProjectiveTransformBuilder.Transform a one-line change instead of a rework (Phase 8 plan's
         // own note). The outer Clip is a belt-and-suspenders safety net, not load-bearing given the
-        // fit-box-shrink math above -- but it's what keeps "Bounds is the one, single clip rect
-        // everywhere in this pipeline" literally true with no per-effect exception, cheap when
-        // already correct, and a real backstop if the math has an edge case this session didn't find.
+        // fit-box-shrink math above -- but it's what keeps "Bounds (snapped outward to whole pixels,
+        // BuildPixelSnappedClip) is the one, single clip rect everywhere in this pipeline" true with
+        // no per-effect exception, cheap when already correct, and a real backstop if the math has an
+        // edge case this session didn't find.
         var centerX = bounds.X + (bounds.Width / 2f);
         var centerY = bounds.Y + (bounds.Height / 2f);
         var compositeLocation = new Point(
             (int)MathF.Round(centerX - (subBitmap.Width / 2f)),
             (int)MathF.Round(centerY - (subBitmap.Height / 2f)));
-        var boundsClip = new SixLabors.ImageSharp.Drawing.RectangularPolygon(bounds.X, bounds.Y, bounds.Width, bounds.Height);
+        var boundsClip = BuildPixelSnappedClip(bounds);
         image.Mutate(ctx => ctx.Clip(boundsClip, innerCtx => innerCtx.DrawImage(subBitmap, compositeLocation, 1f)));
+    }
+
+    // User-reported 2026-09-18: a faint hairline seam along the BOTTOM/RIGHT edge of a text
+    // element's box, visible in the mode-exact PREVIEW panel against certain backgrounds --
+    // distinct from (and not fixed by) the GrowToFillEnabled ink-overflow fix ABOVE
+    // (boundsWidthPx/boundsHeightPx's own Floor). Root cause: DrawTemplateText's two RectangularPolygon
+    // clips were built straight from `bounds`' raw float X/Y/Width/Height, so a clip edge routinely
+    // landed on a fractional pixel coordinate -- ImageSharp's Clip(path, action) anti-aliases a
+    // fractional-coordinate polygon edge, blending the freshly-composited region into the untouched
+    // original at partial coverage right at that boundary, which shows as a seam whenever the two
+    // differ even slightly. Flooring the near edge and ceiling the far edge lands every boundary on a
+    // whole pixel (0% or 100% coverage, no partial blend) without ever shrinking the clip below the
+    // true `bounds` -- so no real ink already proven to stay inside `bounds` can be cut.
+    private static SixLabors.ImageSharp.Drawing.RectangularPolygon BuildPixelSnappedClip(PixelBounds bounds)
+    {
+        var left = MathF.Floor(bounds.X);
+        var top = MathF.Floor(bounds.Y);
+        var right = MathF.Ceiling(bounds.X + bounds.Width);
+        var bottom = MathF.Ceiling(bounds.Y + bounds.Height);
+        return new SixLabors.ImageSharp.Drawing.RectangularPolygon(left, top, right - left, bottom - top);
     }
 
     /// <summary>Phase 8: <paramref name="bounds"/> is destination-image-space when drawing directly
