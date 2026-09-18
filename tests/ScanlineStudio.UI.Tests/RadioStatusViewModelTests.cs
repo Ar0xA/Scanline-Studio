@@ -310,6 +310,103 @@ public sealed class RadioStatusViewModelTests
         Assert.DoesNotContain(RadioMode.Data, radioSession.SetModeCalls);
     }
 
+    // User-reported gap (2026-09-18): a CAT-linked rig reporting PKTUSB/PKTLSB at connect time
+    // correctly moved SelectedRadioMode/ModeDisplay, but left SsbAsPkt at its stale manual/persisted
+    // value, so neither the USB nor the LSB segment button showed selected.
+
+    [AvaloniaFact]
+    public void RigReportsData_SsbAsPktBecomesTrue_WithoutIssuingACatModeSetOrResave()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        var callCountBeforePoll = radioSession.SetModeCalls.Count;
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Data, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+        Assert.True(vm.IsSidebandUsb);
+        Assert.Equal(RadioMode.Data, vm.SelectedRadioMode); // untouched by OnSsbAsPktChanged's own conversion switch
+        Assert.Equal(callCountBeforePoll, radioSession.SetModeCalls.Count);
+        Assert.Empty(radioSession.SaveSsbAsPktPreferenceCalls);
+    }
+
+    [AvaloniaFact]
+    public void RigReportsDataR_SsbAsPktBecomesTrue_AndIsSidebandLsbReadsTrue()
+    {
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.DataR, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+        Assert.True(vm.IsSidebandLsb);
+    }
+
+    [AvaloniaFact]
+    public void RigReportsUsb_AfterSsbAsPktWasTrue_SsbAsPktBecomesFalse()
+    {
+        // The true->false direction is the one where an escaped _suppressSsbAsPktPersist guard would
+        // produce a real disk write (OnSsbAsPktChanged's own save runs unconditionally when
+        // unsuppressed) -- asserted explicitly here, not just the resulting checkbox/segment state.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Data, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.SsbAsPkt);
+        var callCountBeforePoll = radioSession.SetModeCalls.Count;
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.SsbAsPkt);
+        Assert.True(vm.IsSidebandUsb);
+        Assert.Equal(callCountBeforePoll, radioSession.SetModeCalls.Count);
+        Assert.Empty(radioSession.SaveSsbAsPktPreferenceCalls);
+    }
+
+    [AvaloniaFact]
+    public void ConstructorReplaysLastKnownStateAsData_SsbAsPktIsTrue_NotTheStalePersistedFalse()
+    {
+        // The literal reported scenario: "at connect/startup". The constructor replays
+        // LastKnownState synchronously (OnStateChanged), but GetSsbAsPktPreferenceAsync is an async
+        // settings-store round trip that could otherwise complete AFTER that replay and clobber the
+        // rig-derived value with the stale persisted one -- _ssbAsPktCameFromRig exists specifically
+        // to stop that. SsbAsPktPreference is deliberately false here, the opposite of the rig-derived
+        // true, so a race loss would be visible as a false result below.
+        var radioSession = new FakeRadioSessionService
+        {
+            LastKnownState = new RadioState(14_230_000, RadioMode.Data, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow),
+            SsbAsPktPreference = false,
+        };
+
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+        Assert.True(vm.IsSidebandUsb);
+    }
+
+    [AvaloniaFact]
+    public void RigReportsUnrelatedMode_SsbAsPktIsUnaffected()
+    {
+        // FM/CW/RTTY/etc. must leave SsbAsPkt exactly where it was, matching how IsSidebandUsb/
+        // IsSidebandLsb only ever cover the USB/LSB slots (never FM).
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Fm, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SsbAsPkt);
+    }
+
     [AvaloniaFact]
     public void TxVolumeDisplay_ShowsMutedGlyphInsteadOfPercent_WhenDeviceIsMuted()
     {
