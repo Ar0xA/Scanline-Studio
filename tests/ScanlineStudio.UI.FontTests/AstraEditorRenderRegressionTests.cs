@@ -114,6 +114,39 @@ public sealed class AstraEditorRenderRegressionTests
     }
 
     [AvaloniaFact]
+    public void OutlinedText_AcuteGlyphVertex_NoMiterSpikeAboveTheGlyph()
+    {
+        // User-reported 2026-09-19: StrokedTextBlock (the TX editor's live canvas outline renderer)
+        // used a plain Avalonia Pen, whose default MITER join (limit 10) shoots the outer corner out
+        // to up to 10x the stroke width at any glyph vertex sharper than ~11.5 degrees -- exactly
+        // "A"'s apex. The real render pipeline this control mirrors (TransmitImagePreparer.DrawGlyphs)
+        // never showed this, because SixLabors.ImageSharp.Drawing's Pens.Solid defaults to
+        // JointStyle.Square, a bounded corner style -- fixed here by giving this control's own Pen an
+        // explicit Bevel join (Avalonia's closest bounded equivalent). "A" at a large size with a
+        // thick relative outline (20% of font size, matching the reported ratio) into a canvas with
+        // real headroom above the glyph's own cap height -- a spike would land squarely in that
+        // headroom band; a correctly-joined outline never reaches it.
+        const int width = 200, height = 200;
+        var control = new StrokedTextBlock
+        {
+            Text = "A", FontSize = 100,
+            FontFamily = new FontFamily("avares://ScanlineStudio.UI/Assets/Fonts/DejaVuSansMono#DejaVu Sans Mono"),
+            Fill = Brushes.White, Stroke = Brushes.Black, StrokeThickness = 20,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+        };
+        using var image = Render(new Grid { Background = Brushes.Gray, Children = { control } }, width, height);
+
+        for (var y = 0; y < height / 5; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var p = image[x, y];
+                Assert.True(p.R > 100 || p.G > 100 || p.B > 100, $"Unexpected dark pixel (miter spike?) at ({x},{y}): ({p.R},{p.G},{p.B}).");
+            }
+        }
+    }
+
+    [AvaloniaFact]
     public void RotatedTextPattern_UsesLocalPhaseWhenElementMoves()
     {
         using var vm = CreateEditor(CreateSource(320, 240), TestMode);
