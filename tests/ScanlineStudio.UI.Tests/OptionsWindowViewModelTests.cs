@@ -4230,11 +4230,13 @@ public sealed class OptionsWindowViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task ApplyConfigDirectoryCommand_AppliesLiveImmediately_RefreshesConfigDirectory_ClearsTheInput()
+    public async Task ApplyConfigDirectoryCommand_AppliesLiveImmediately_RefreshesConfigDirectory_KeepsTheInputShowingIt()
     {
         // Restart-required-settings backlog item 3 (2026-08-27): applies live now, same
         // immediate-apply-then-refresh shape as ApplyLogDirectoryCommand below -- no more restart
-        // confirm.
+        // confirm. Input keeps showing the applied path rather than going blank (user-reported
+        // 2026-09-18, removed the separate "Currently using" row -- see ConfigDirectoryInput's own
+        // doc comment).
         var appLocationsService = new FakeAppLocationsService();
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
         vm.ConfigDirectoryInput = "/config/new-target";
@@ -4243,7 +4245,7 @@ public sealed class OptionsWindowViewModelTests
 
         Assert.Equal("/config/new-target", appLocationsService.ConfigDirectory);
         Assert.Equal("/config/new-target", vm.ConfigDirectory);
-        Assert.Null(vm.ConfigDirectoryInput);
+        Assert.Equal("/config/new-target", vm.ConfigDirectoryInput);
         Assert.Null(vm.ConfigDirectoryErrorMessage);
     }
 
@@ -4372,10 +4374,11 @@ public sealed class OptionsWindowViewModelTests
     [AvaloniaFact]
     public async Task SaveCommand_ConfigDirectoryInputNeverTouched_DoesNotCallApply_NoSpuriousError()
     {
-        // ConfigDirectoryInput is empty-seeded (unlike ImagesDirectory/LogDirectory, which are
-        // pre-filled with the current value) -- a general Save meant for an unrelated tab must not
-        // call ApplyConfigDirectoryAsync at all here, or its own "blank means error" guard would
-        // paint a spurious "No folder chosen" error on this row every single time.
+        // ConfigDirectoryInput is now pre-filled with the current value too (user-reported
+        // 2026-09-18), so the general-Save gate diffs it against ConfigDirectory rather than just
+        // checking non-blank -- a general Save meant for an unrelated tab must not call
+        // ApplyConfigDirectoryAsync (and re-do a real directory move) just because this row shows its
+        // own unchanged current path.
         var appLocationsService = new FakeAppLocationsService { ConfigDirectory = "/config/unchanged" };
         var vm = CreateViewModelForStorageTests(appLocationsService: appLocationsService);
 

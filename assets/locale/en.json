@@ -829,7 +829,6 @@
   "Options.General.Storage.Header": "Storage",
   "Options.General.Storage.BrowseButton": "Browse...",
   "Options.General.Storage.ApplyButton": "Apply",
-  "Options.General.Storage.CurrentlyUsingLabel": "Currently using:",
   "Options.General.Storage.NewFolderWatermark": "Choose a new folder...",
   "Options.General.Storage.Error.NoFolderChosen": "Choose a folder first.",
   "Options.General.Storage.Images.Label": "RX images folder",
