@@ -453,6 +453,70 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal([14_230_000], radioSession.SetFrequencyCalls);
     }
 
+    /// <summary>User-reported 2026-09-18: a manually-typed frequency that crosses into a new band can
+    /// make the rig itself recall a per-band filter default (e.g. a narrow CW width), entirely on the
+    /// rig's own side -- SetFrequencyCommand never calls SetModeAsync, so nothing else would ever
+    /// correct that. Re-applying the BW pill's own staged BandwidthInputHz after every successful
+    /// frequency set overrides it, same reapply ApplyPresetCommand already does after its own
+    /// SetModeAsync (see ApplyPresetCommand's own tests for that sibling coverage).</summary>
+    [AvaloniaFact]
+    public void SetFrequencyCommand_AlsoReappliesTheStagedBandwidth_WhenTheBackendCanSetIt()
+    {
+        var radioSession = new FakeRadioSessionService { Capabilities = RadioCapabilities.SetBandwidth };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BandwidthInputHz = 2800;
+
+        vm.FrequencyInputMhz = "14.230000";
+        vm.SetFrequencyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([14_230_000], radioSession.SetFrequencyCalls);
+        Assert.Equal([2800], radioSession.SetBandwidthCalls);
+        // The whole premise of the fix: the reapply must land AFTER the retune, not before.
+        Assert.Equal(["frequency", "bandwidth"], radioSession.CallOrder);
+    }
+
+    [AvaloniaFact]
+    public void SetFrequencyCommand_DoesNotTouchBandwidth_WhenTheBackendCannotSetIt()
+    {
+        var radioSession = new FakeRadioSessionService(); // Capabilities defaults to None.
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.FrequencyInputMhz = "14.230000";
+        vm.SetFrequencyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([14_230_000], radioSession.SetFrequencyCalls);
+        Assert.Empty(radioSession.SetBandwidthCalls);
+    }
+
+    /// <summary>yoniq-auditor finding, 2026-09-18: the frequency set already succeeded once
+    /// SetBandwidthAsync is reached, so a bandwidth-only failure must not leave the operator staring
+    /// at a still-open editor and a misleading "No radio connected" for a retune that actually
+    /// worked -- see the Dispatcher.UIThread.Post reorder this test pins.</summary>
+    [AvaloniaFact]
+    public void SetFrequencyCommand_BandwidthReapplyFails_StillExitsEditModeForTheSuccessfulRetune()
+    {
+        var radioSession = new FakeRadioSessionService
+        {
+            Capabilities = RadioCapabilities.SetBandwidth,
+            ThrowOnSetBandwidth = true,
+        };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.BeginEditFrequencyCommand.Execute(null);
+        vm.FrequencyInputMhz = "14.230000";
+
+        vm.SetFrequencyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal([14_230_000], radioSession.SetFrequencyCalls);
+        Assert.False(vm.IsEditingFrequency);
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
     /// <summary>ui_transition_plan.md step 11 (T2-1): SetFrequencyCommand/FrequencyInputMhz were
     /// already fully built and tested (see the two tests above/below this block) -- this batch
     /// covers the NEW inline-edit wiring around them (BeginEditFrequencyCommand/IsEditingFrequency/
