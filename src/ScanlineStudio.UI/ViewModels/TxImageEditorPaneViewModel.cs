@@ -170,6 +170,15 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         NormalizedRect CropRect, bool PreserveAspect, ImageAdjustments Adjustments,
         IReadOnlyList<RawElementSnapshot> OverlayElements, IReadOnlyDictionary<string, string>? TemplateVariables = null);
 
+    /// <summary>Live-capture counterpart to <see cref="EditorInitialState"/> -- for a mid-edit mode
+    /// switch (TxControlsPaneViewModel.ReplaceEditorForModeSwitch), which needs to seed a brand new
+    /// instance from THIS one's current state rather than from a previously-Applied EditState.
+    /// Deliberately mirrors the same field set as the constructor's own <c>initialState</c> seeding
+    /// (see the constructor body), all of which is normalized 0..1 against <c>_targetMode</c> and
+    /// therefore reflows correctly when handed to a differently-sized target mode.</summary>
+    public EditorInitialState CaptureInitialState() =>
+        new(CropRect, PreserveAspect, BuildAdjustments(), RawOverlayElements, TemplateVariables);
+
     /// <summary>One undo/redo step -- the editor's FULL editable state, captured wholesale rather
     /// than as a per-operation command/inverse (spec/18-path-to-1.0.md Medium item, undo/redo
     /// sub-piece; round-1 plan-review confirmed snapshot-over-command as the right call: the
@@ -221,6 +230,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private IImageSource _originalSource;
     private IImageSource _workingCopy;
     private readonly SstvModeDefinition _targetMode;
+    /// <summary>See <see cref="HasUnsavedEdits"/>'s own doc comment.</summary>
+    private readonly bool _carriedOverUnsavedEdits;
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     /// <summary>Reports the PARENT TxControlsPaneViewModel's own live !IsTransmitting &amp;&amp;
@@ -617,12 +628,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // this new parameter). Invoked fresh at each direct-fire, unlike currentContactVariables
         // above (a one-shot constructor snapshot) -- see OnReadyRackDirectFireRequested's own doc
         // comment for why a live re-read is required, not a snapshot.
-        Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null)
+        Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null,
+        // Mode-switch-mid-edit feature: trailing-optional, same "existing test call sites don't
+        // change" reasoning as canTransmitNow/macrosReferenceRequested above. Only
+        // TxControlsPaneViewModel.ReplaceEditorForModeSwitch passes a real (non-default) value --
+        // see HasUnsavedEdits's own doc comment for why this exists.
+        bool carriedOverUnsavedEdits = false)
     {
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
         _sourceBaselineRotation = 0;
         _targetMode = targetMode;
+        _carriedOverUnsavedEdits = carriedOverUnsavedEdits;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);
@@ -1026,6 +1043,22 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public string DimensionsChipText => _localization.GetString(
         "Panes.TxImageEditor.DimensionsChipFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
 
+    /// <summary>Mode-switch-mid-edit feature -- lets a host (<see cref="TxControlsPaneViewModel"/>)
+    /// log which mode a replaced editor instance was targeting, without needing its own copy of
+    /// <see cref="_targetMode"/>. No other reader existed before this feature; every other
+    /// <see cref="_targetMode"/> use stays internal.</summary>
+    public string TargetModeId => _targetMode.Id;
+
+    /// <summary>Mode-switch-mid-edit feature -- lets <see cref="TxControlsPaneViewModel.ReplaceEditorForModeSwitch"/>
+    /// reuse the OLD editor instance's already-loaded <see cref="OperatorSettings"/> when
+    /// constructing the NEW one, instead of an async <c>_settingsStore.LoadAsync()</c> reload. Kept
+    /// fully synchronous on purpose -- a reload would reopen the exact re-entrancy window
+    /// (two fast mode changes racing to construct two editors) that this editor's other
+    /// re-open-with-seeded-state paths don't have to worry about, since those all run from an
+    /// `async Task` already. <see cref="_operatorSettings"/> is read-only and assigned once at
+    /// construction, so reusing it here is exactly as fresh as the editor session already was.</summary>
+    public OperatorSettings OperatorSettings => _operatorSettings;
+
     /// <summary>EditWindow redesign, design-fidelity Phase B (mockups/Editwindow) -- the new context
     /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses
     /// <see cref="TxControlsPaneViewModel.GetFrameSeconds"/>, not a new computation, just applied to
@@ -1043,9 +1076,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// EDITS" chip. A free proxy over the EXISTING undo stack (no new dirty-tracking mechanism):
     /// true the instant any edit has been pushed, false once undone back to the editor's opened (or
     /// last-Applied) state. Raised at the same 4 call sites <see cref="UndoCommand"/>'s own
-    /// <c>NotifyCanExecuteChanged</c> already fires from -- both conditions flip on exactly the same
-    /// <c>_undoStack.Count &gt; 0</c> transition, so they're always in lockstep.</summary>
-    public bool HasUnsavedEdits => _undoStack.Count > 0;
+    /// <c>NotifyCanExecuteChanged</c> already fires from.
+    /// <para>Mode-switch-mid-edit feature: <b>deliberate exception</b> to the "always in lockstep
+    /// with <c>UndoCommand.CanExecute</c>" claim this comment used to make. A freshly constructed
+    /// editor (<see cref="ReplaceEditorForModeSwitch"/>'s replacement instance) always has an empty
+    /// <see cref="_undoStack"/>, so without <see cref="_carriedOverUnsavedEdits"/> this would read
+    /// <see langword="false"/> right after a mode switch and <c>CancelAsync</c>'s confirm dialog
+    /// would silently skip, discarding a populated canvas with no warning. The flag is seeded from
+    /// the OLD editor's own <see cref="HasUnsavedEdits"/> at construction and never pushed as a fake
+    /// undo entry, so it can read <see langword="true"/> while <c>UndoCommand.CanExecute</c> reads
+    /// <see langword="false"/> (nothing to actually undo) -- do not "fix" that back.</para></summary>
+    public bool HasUnsavedEdits => _undoStack.Count > 0 || _carriedOverUnsavedEdits;
 
     /// <summary>Templates rack rework -- see <see cref="_undoStackDepthAtLastTemplateLoad"/>'s own
     /// doc comment for why this is a SEPARATE signal from <see cref="HasUnsavedEdits"/>, not a
