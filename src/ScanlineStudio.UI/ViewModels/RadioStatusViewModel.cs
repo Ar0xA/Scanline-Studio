@@ -1183,6 +1183,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // Captured BEFORE the first await, on the UI thread -- see _frequencyEditSessionId's own
         // doc comment for why a stale completion must not touch a DIFFERENT, later edit session.
         var session = _frequencyEditSessionId;
+        // Also captured before the first await, same reasoning as ApplyPresetAsync's own
+        // canSetBandwidth capture below.
+        var canSetBandwidth = CanSetBandwidth;
         Log.SetFrequencyInvoked(_logger, mhz);
         try
         {
@@ -1195,7 +1198,10 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // Success only -- exits the inline editor back to the plain readout. Posted, not a bare
             // assignment: this continuation can resume off the UI thread (ConfigureAwait(false)
             // above), same reasoning as the catch block's own Dispatcher.UIThread.Post immediately
-            // below.
+            // below. Posted BEFORE the bandwidth reapply below (yoniq-auditor finding, 2026-09-18):
+            // the frequency set already succeeded at this point, so a LATER bandwidth failure must
+            // not leave the editor stuck open with a misleading "No radio connected" -- the rig HAS
+            // retuned, only the filter-width reapply failed.
             Dispatcher.UIThread.Post(() =>
             {
                 if (_frequencyEditSessionId == session)
@@ -1203,6 +1209,17 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
                     IsEditingFrequency = false;
                 }
             });
+            // User-reported 2026-09-18: some rigs recall a per-band filter default (e.g. a narrow CW
+            // width) the moment a manually-typed frequency crosses into a new band, entirely on the
+            // rig's own side -- this app never calls SetModeAsync here, so ApplyPresetAsync's own
+            // "mode set resets the passband" guard doesn't apply, yet the symptom is the same.
+            // Re-applying the BW pill's own staged value overrides whatever the rig just recalled,
+            // same reapply this VM already does for ApplyPresetAsync (gated on the same capability for
+            // the same reason -- flrig/OmniRig throw here rather than no-op).
+            if (canSetBandwidth)
+            {
+                await _radioSession.SetBandwidthAsync((int)Math.Round(BandwidthInputHz)).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
