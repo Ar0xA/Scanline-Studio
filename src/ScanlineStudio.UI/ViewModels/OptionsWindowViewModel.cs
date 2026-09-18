@@ -363,21 +363,24 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _audioDirectoryErrorMessage;
 
-    /// <summary>"Currently using" display value -- refreshed after a successful
+    /// <summary>Last-applied value -- refreshed after a successful
     /// <see cref="ApplyConfigDirectoryAsync"/> (restart-required-settings backlog item 3, 2026-08-27:
     /// Config directory now applies live, same shape as <see cref="LogDirectory"/>'s own
     /// display/refresh, no longer staged-until-restart like <see cref="DatabaseDirectory"/> still
     /// is). NOT the TextBox/Browse binding target -- see <see cref="ConfigDirectoryInput"/> for
-    /// that.</summary>
+    /// that -- but used as its seed value and as the baseline a general Save diffs against (see
+    /// <see cref="SaveCoreUnguardedAsync"/>'s own Config gate).</summary>
     [ObservableProperty]
     private string _configDirectory = string.Empty;
 
-    /// <summary>TextBox/Browse binding target -- deliberately a SEPARATE property from
-    /// <see cref="ConfigDirectory"/> (round-3 plan-review finding), empty-seeded exactly like
-    /// <see cref="DatabaseDirectory"/>'s own equivalent <c>PendingDatabaseDirectory</c> input, so
-    /// <see cref="ApplyConfigDirectoryAsync"/>'s existing blank-means-error guard (a user who clicks
-    /// Apply without typing or browsing anything) keeps working unchanged now that Config no longer
-    /// has a real "pending" concept to double as that same input.</summary>
+    /// <summary>TextBox/Browse binding target -- a SEPARATE property from
+    /// <see cref="ConfigDirectory"/> (round-3 plan-review finding), seeded from
+    /// <see cref="ConfigDirectory"/> on load and after every Apply so the row shows the real current
+    /// path instead of an empty box (user-reported 2026-09-18). <see cref="ApplyConfigDirectoryAsync"/>'s
+    /// blank-means-error guard still applies (a user who clears the box and clicks Apply), but a
+    /// general Save now diffs this against <see cref="ConfigDirectory"/> rather than just checking
+    /// non-blank -- see <see cref="SaveCoreUnguardedAsync"/>'s own Config gate, same reasoning as
+    /// <see cref="DatabaseDirectory"/>'s own equivalent <c>PendingDatabaseDirectory</c> gate.</summary>
     [ObservableProperty]
     private string? _configDirectoryInput;
 
@@ -387,6 +390,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string _databaseDirectory = string.Empty;
 
+    /// <summary>TextBox/Browse binding target. The nullable
+    /// <c>IAppLocationsService.GetPendingDatabaseDirectoryAsync</c> result means "nothing staged," not
+    /// "show an empty box" -- both <see cref="LoadStorageLocationsSafeAsync"/> and
+    /// <see cref="ApplyDatabaseDirectoryAsync"/> fall back to <see cref="DatabaseDirectory"/> before
+    /// assigning here, so the row always shows the real current path (user-reported 2026-09-18).</summary>
     [ObservableProperty]
     private string? _pendingDatabaseDirectory;
 
@@ -2802,6 +2810,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// check against the staged target every time.</summary>
     private string? _lastStagedDatabaseDirectory;
 
+    /// <summary>True only while <c>IAppLocationsService.GetPendingDatabaseDirectoryAsync</c> itself
+    /// returns non-null -- a genuine on-disk staged relocation awaiting a restart, independent of
+    /// <see cref="IsConfirmingDatabaseRestart"/> (which a "Not Now" dismissal clears even though the
+    /// stage itself is still on disk) and of <see cref="PendingDatabaseDirectory"/> (which, since it
+    /// now always shows a real path for display -- user-reported 2026-09-18 -- can no longer double as
+    /// this signal the way its null-ness used to). <see cref="ShowPostSaveWarningsAsync"/>'s own
+    /// restart-warning check reads this, not <see cref="PendingDatabaseDirectory"/>.</summary>
+    private bool _hasPendingDatabaseRelocation;
+
     /// <summary>Code-review finding (step 7): also excludes Save/Apply while Connect's own implicit
     /// save is in flight -- see <see cref="IsConnectingRadio"/>'s own doc comment for why an
     /// interleaved Save/Apply must not resume and clear shared save-result fields before Connect's
@@ -2917,8 +2934,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             AudioSaveEnabled = audioSettings.Enabled;
             AudioDirectory = audioSettings.Directory;
             ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
+            ConfigDirectoryInput = ConfigDirectory;
             DatabaseDirectory = await _appLocationsService.GetDatabaseDirectoryAsync();
-            PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
+            var pendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
+            _hasPendingDatabaseRelocation = pendingDatabaseDirectory is not null;
+            PendingDatabaseDirectory = pendingDatabaseDirectory ?? DatabaseDirectory;
             LogDirectory = await _appLocationsService.GetLogDirectoryAsync();
 
             // Whatever's pending as of THIS load is the baseline "already staged" state -- a general
@@ -3030,7 +3050,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             ConfigDirectoryErrorMessage = null;
             await _appLocationsService.SetConfigDirectoryAsync(ConfigDirectoryInput);
             ConfigDirectory = await _appLocationsService.GetConfigDirectoryAsync();
-            ConfigDirectoryInput = null;
+            ConfigDirectoryInput = ConfigDirectory;
         }
         catch (Exception ex)
         {
@@ -3063,8 +3083,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             DatabaseDirectoryErrorMessage = null;
             await _appLocationsService.SetDatabaseDirectoryAsync(PendingDatabaseDirectory);
-            PendingDatabaseDirectory = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
-            IsConfirmingDatabaseRestart = PendingDatabaseDirectory is not null;
+            var pending = await _appLocationsService.GetPendingDatabaseDirectoryAsync();
+            _hasPendingDatabaseRelocation = pending is not null;
+            IsConfirmingDatabaseRestart = pending is not null;
+            // Falls back to DatabaseDirectory (e.g. the picked folder matched the current one, so
+            // nothing was actually staged) so the row keeps showing the real current path instead of
+            // going blank -- see PendingDatabaseDirectory's own doc comment.
+            PendingDatabaseDirectory = pending ?? DatabaseDirectory;
             // This stage just succeeded -- refresh the baseline so a general Save that follows
             // (including RestartNowAsync's own SaveCoreAsync call right before restarting) doesn't
             // treat this same, already-just-staged value as a fresh target to re-apply.
@@ -3289,13 +3314,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     private async Task ShowPostSaveWarningsAsync()
     {
         // See RestartRequiredWarningRequested's own doc comment -- genuinely restart-required
-        // with no live-apply, unlike everything else this dialog saves. PendingDatabaseDirectory
-        // (not IsConfirmingDatabaseRestart) so a relocation staged in an earlier dialog session,
-        // then left pending, still warns here even if the user never revisits that row this
-        // time. HamlibLibraryPath is NOT part of this condition anymore (restart-required-settings
-        // backlog item 5, 2026-08-28) -- it applies live now, see
+        // with no live-apply, unlike everything else this dialog saves. _hasPendingDatabaseRelocation
+        // (not IsConfirmingDatabaseRestart, and no longer PendingDatabaseDirectory is not null now that
+        // it always holds a real path for display -- see that field's own doc comment) so a relocation
+        // staged in an earlier dialog session, then left pending, still warns here even if the user
+        // never revisits that row this time. HamlibLibraryPath is NOT part of this condition anymore
+        // (restart-required-settings backlog item 5, 2026-08-28) -- it applies live now, see
         // HamlibLibraryReloadFailedWarningRequested below for its own (different-shaped) notice.
-        var needsRestartWarning = PendingDatabaseDirectory is not null;
+        var needsRestartWarning = _hasPendingDatabaseRelocation;
         if (needsRestartWarning && RestartRequiredWarningRequested is not null)
         {
             await RestartRequiredWarningRequested.Invoke();
@@ -3477,7 +3503,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             {
                 await ApplyImagesDirectoryAsync();
                 await ApplyAudioDirectoryAsync();
-                if (!string.IsNullOrWhiteSpace(ConfigDirectoryInput))
+
+                // Gated on the value having actually changed (user-reported 2026-09-18: this row's
+                // TextBox is now pre-filled with the current path, not blank, so a plain non-blank
+                // check would re-apply it on every unrelated Save). Same shape as Database's own gate
+                // below.
+                if (!string.IsNullOrWhiteSpace(ConfigDirectoryInput) &&
+                    !string.Equals(ConfigDirectoryInput, ConfigDirectory, StringComparison.Ordinal))
                 {
                     await ApplyConfigDirectoryAsync();
                 }
