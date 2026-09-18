@@ -1218,6 +1218,29 @@
         <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryHealthyTintText}" />
     </Style>
 
+    <!-- User-requested (2026-09-18): a real-time "Decoding" indicator, distinct from the steady
+         green "Receiving" (listening) look above — must be obvious even from the Transmit/
+         Gallery/Logbook tab, so it lives on this always-visible header chip (and the status-bar
+         chip below), not anywhere per-tab. .decodingIdle/.decoding are declared AFTER :checked
+         (same declaration-order-wins precedent :checked itself already relies on against
+         :pointerover above) so an active decode always overrides the plain green look: the
+         NEUTRAL "blink off" phase applies .decodingIdle alone (reusing the same rest-state token
+         trio as the unchecked style, just forced on top of :checked's green), and the AMBER
+         "blink on" phase layers .decoding on top of that. RadioStatusViewModel.IsDecodingBlinkOn
+         drives which single one of the two classes is set at any moment (never neither, while
+         IsDecodingImage is true) — see that property's own doc comment. IsChecked/IsReceiving is
+         completely unaffected; this is a pure color override, never touches the real RX toggle. -->
+    <Style Selector="ToggleButton.IndustryBtnRxStatus.decodingIdle /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryDisabledFace}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryControlBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryStatusText}" />
+    </Style>
+    <Style Selector="ToggleButton.IndustryBtnRxStatus.decoding /template/ ContentPresenter">
+        <Setter Property="Background" Value="{DynamicResource IndustryAttentionTint}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource IndustryAttentionTintBorder}" />
+        <Setter Property="TextBlock.Foreground" Value="{DynamicResource IndustryAttentionTintText}" />
+    </Style>
+
     <!-- Bug fix (found via an automated silent-failure sweep, not a real click): ToggleButton is a
          separate type from Button (same "confirmed by this codebase's own Cards.axaml" reasoning as
          ToggleButton.Industry.IndustryBtn26's own comment above), so the Button-typed

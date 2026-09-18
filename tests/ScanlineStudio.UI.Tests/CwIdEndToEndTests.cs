@@ -73,7 +73,8 @@ public sealed class CwIdEndToEndTests
             Settings = new AppSettings()
                 .WithSection(AudioDeviceSettings.SectionKey, new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = SampleRate }, AudioSettingsJsonContext.Default.AudioDeviceSettings)
                 // Auditor code-review finding: StartReceivingAsync unconditionally overwrites
-                // ISstvDecoder.StationIdDecodeEnabled from FskIdRxEnabled (defaulting to false),
+                // ISstvDecoder.StationIdDecodeEnabled from FskIdRxEnabled (explicitly set here so
+                // the test doesn't depend on whatever StationIdSettings' own default happens to be),
                 // clobbering the decoder-level flag this test sets directly below -- without this,
                 // StationIdDecoded never fires and OverrideCallsign is silently satisfied by the CW
                 // path instead of FSK, defeating this test's whole "assert both rows" point.

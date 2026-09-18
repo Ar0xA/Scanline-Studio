@@ -1857,11 +1857,21 @@
                 <StackPanel Orientation="Horizontal" Spacing="3">
                     <!-- LED+lozenge (spec §6): the app's only real "receiving" indicator plays the
                          primary-RX-banner role despite being a small status-bar chip, so it keeps
-                         the green tint (user decision, 2026-08-14) with an LED added. -->
-                    <Border Classes="Industry IndustryStatus" Classes.healthyTint="{Binding RadioStatus.IsReceiving}">
+                         the green tint (user decision, 2026-08-14) with an LED added.
+                         User-requested (2026-09-18): blinks amber and reads "Decoding" while an
+                         image is actively decoding, super obvious from any tab — same
+                         RadioStatusViewModel.IsReceivingIdle/IsDecodingBlinkOn pair the header's
+                         own Receiving toggle uses (RadioHeaderView.axaml), so both indicators stay
+                         in lockstep off one shared poll. Neither .healthyTint nor .attentionTint
+                         set (both false, mid blink-off while decoding) falls back to this Border's
+                         own neutral rest style — no third class needed here, unlike the header
+                         toggle (that one needs an explicit .decodingIdle override since its green
+                         comes from ToggleButton's own :checked pseudo-class, which Classes cannot
+                         un-set). -->
+                    <Border Classes="Industry IndustryStatus" Classes.healthyTint="{Binding RadioStatus.IsReceivingIdle}" Classes.attentionTint="{Binding RadioStatus.IsDecodingBlinkOn}">
                         <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RadioStatus.IsReceiving}" VerticalAlignment="Center" />
-                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.Rx}" VerticalAlignment="Center" />
+                            <Rectangle Classes="Industry IndustryLed" Classes.active="{Binding RadioStatus.IsReceivingIdle}" Classes.attention="{Binding RadioStatus.IsDecodingBlinkOn}" VerticalAlignment="Center" />
+                            <TextBlock Text="{Binding RadioStatus.RxStatusBarText}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
                     <!-- ui_transition_plan.md step 12, Step 4: real, varying LED — lit only while a

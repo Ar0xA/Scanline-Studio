@@ -11,6 +11,18 @@ public sealed record AppearanceSettings
     public AppTheme? Theme { get; init; }
 
     public AppFontScale? FontScale { get; init; }
+
+    /// <summary>User-requested (2026-09-18): lets the "Decoding" indicator's blink (see
+    /// <c>RadioStatusViewModel.IsDecodingBlinkOn</c>) be turned off -- default on. Nullable, NOT a
+    /// plain <c>bool</c> property initializer -- a real, empirically-verified System.Text.Json
+    /// source-gen trap silently ignores a non-null initializer for an absent JSON key (see
+    /// <see cref="ScanlineStudio.Core.Audio.AudioDeviceSettings.CaptureThreadPriority"/>'s own doc
+    /// comment for the first confirmed case, and
+    /// <c>ScanlineStudio.Core.Sstv.StationIdSettings.FskIdRxEnabled</c>'s doc comment for the most
+    /// recent one). <see langword="null"/> means "apply <see cref="DefaultDecodingIndicatorBlinks"/>."</summary>
+    public bool? DecodingIndicatorBlinks { get; init; }
+
+    public const bool DefaultDecodingIndicatorBlinks = true;
 }
 
 /// <summary><see cref="AppTheme.System"/> maps to Avalonia's <c>ThemeVariant.Default</c> ("inherit

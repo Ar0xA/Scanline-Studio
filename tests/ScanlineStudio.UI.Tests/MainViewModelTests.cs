@@ -119,6 +119,7 @@ public sealed class MainViewModelTests
             new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
             settingsStore,
             urlLauncher,
+            new FakeAppearanceSettingsService(),
             new FakeServiceProvider(),
             NullLogger<MainViewModel>.Instance,
             NullLogger<RadioStatusViewModel>.Instance);

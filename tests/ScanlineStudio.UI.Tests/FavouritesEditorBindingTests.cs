@@ -76,6 +76,7 @@ public sealed class FavouritesEditorBindingTests
             radioSession,
             new FakeSstvSessionService(),
             new FakeLocalizationService(),
+            new FakeAppearanceSettingsService(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<RadioStatusViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         var row = Assert.Single(vm.EditorRows);
@@ -108,6 +109,7 @@ public sealed class FavouritesEditorBindingTests
             radioSession,
             new FakeSstvSessionService(),
             new FakeLocalizationService(),
+            new FakeAppearanceSettingsService(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<RadioStatusViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         var row = Assert.Single(vm.EditorRows);

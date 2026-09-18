@@ -1114,24 +1114,6 @@ Distinct from QRZ.com's online lookup, which already exists. **Blocked on H3 bel
 `cty.dat` API key), but the feature itself is real planned work, not just its blocker.
 Spec: `spec/08-logging.md`.
 
-### R5. Station-ID decode defaults — turn both on
-
-`FskIdRxEnabled` and `CwIdRxEnabled` both default to `false`
-(`src/ScanlineStudio.Core.Sstv/StationIdSettings.cs:80` and `:88`). Plan:
-`~/.claude/plans/default-config-changes.md`. Two things to settle **before** flipping:
-
-1. **The FSK half is a deliberate divergence from legacy.** Legacy ships `RXFSKID=0`. Turning it on
-   is a product decision, not a port correction, so that field's doc comment must stop citing the
-   legacy default as its reason and say plainly that we diverge, and why. **This half is not blocked.**
-2. **The CW half is gated on H1 below.** Its doc comment cites `fsk_cwid.md` §12: not default-on
-   before the classical decoder has been exercised on the legacy fixture. Either do H1 first, or
-   record that the gate was consciously lifted. Do **not** silently flip past it.
-
-Verification: a fresh-install settings load yields both true, an existing `settings.json` holding an
-explicit `false` still loads as false, `dotnet test tests/ScanlineStudio.Application.Tests`, and
-`node docs/help/check-help.mjs`. Also update `docs/help/index.html` wherever it states these are off
-by default.
-
 ### R6. Decide whether 1.1 stays a single-item milestone
 
 `spec/19-path-to-1.1.md`'s one confirmed target (the TX Template Editor redesign) is implemented.
@@ -1143,7 +1125,12 @@ Whether 1.1 picks up further targets is undecided. A user call, not an agent gue
 
 ### H1. B-P4 — FSK-ID/CW-ID legacy golden-vector fixture
 
-The one open item in `fsk_cwid.md`, which is otherwise fully closed. **It gates the CW half of R5.**
+The one open item in `fsk_cwid.md`, which is otherwise fully closed. It used to gate `CwIdRxEnabled`'s
+default — that gate was consciously lifted by direct user request 2026-09-18 (§9's "Station-ID decode
+defaults" entry), not silently bypassed. This fixture is still real, still needed work — it verifies
+`ClassicalCwDecoder` against actual legacy behavior, which the decoder's own 17 synthetic/round-trip
+unit tests (`tests/ScanlineStudio.Core.Cw.Tests/ClassicalCwDecoderTests.cs`) cannot — just no longer a
+blocker for anything else.
 
 Needs a manual one-time capture from the real legacy YONIQ binary (Windows or a VM). Two `.wav`
 captures via `File → Rec`:
@@ -1269,6 +1256,7 @@ Each of these was listed as open somewhere and is not.
 | **TT1-15 / PA-6** — `MiniAudioDeviceMuteQuery` dispose race | **Done 2026-09-10, and the fear behind it was wrong.** This file previously predicted "likely a real defect, not just a test", because `IsDeviceMutedAsync` checks `_disposed` under `_gate` and then runs the native call OUTSIDE that lock while `Dispose` releases the context outside it too. That managed-only reading is incomplete. **The native shim closes it:** `scanline_audio_get_device_mute` holds `g_context_mutex` across its entire body and re-checks `g_context_initialized`, and `scanline_audio_context_uninit` takes that same mutex — so an orphan call either completes before teardown or returns -1, which surfaces as a null. The Windows (`scanline_wasapi_with_endpoint_volume`) and macOS (`scanline_coreaudio_get_device_mute`) paths never touch the shared context at all. Verified by reading `native/scanline_audio.c`, not inferred. The new test passes against unmodified code and is mutation-gated on the double-dispose guard. **No source change was needed or made.** |
 | **PA-Dispose** — dispose `SqliteCommand` | **Done 2026-09-10.** All 20 bare sites now use `using`. (The earlier "5 already using" count in this file was wrong — it was 8, because `SqliteReceiveHistoryStore.Deletion.cs` was already fully correct and served as the pattern.) |
 | **Legacy `.mtm`/`.mti` template import** — listed above (§8) as rejected 2026-08-29 | **Reversed and shipped 2026-09-12**, by direct user request. `ITemplateStore.ImportLegacyMtmAsync` — `LegacyMtmReader`/`LegacyMtmImportAdapter` (`docs/mtm-binary-format.md` is the from-scratch field-layout spec, reverse-engineered from `Draw.cpp` and validated against every real local `.mtm` sample), plus a companion-picture lookup (`TxStock{N}.bmp`/`.jpg`, `Current.bmp`) for numbered stock-slot templates. 3 `yoniq-auditor` plan-review rounds + 1 `yoniq-principal` verification (the `m_LineStyle` signedness question) before implementation, 3 code-review rounds after (2 on the core importer, 1 on the companion-picture addition) — each round found and fixed a real bug, including one confirmed against a real shipped sample (`t1.mtm`'s `%v` token would have silently transmitted `"%%"` before the fix). `docs/removed-features.md`'s entry is superseded, not deleted, per that document's own convention. |
+| **R5 — Station-ID decode defaults** — was §6 "turn both on", plan `~/.claude/plans/default-config-changes.md` | **Shipped 2026-09-18**, by direct user request. `StationIdSettings.FskIdRxEnabled`/`CwIdRxEnabled` (`StationIdSettings.cs:81`/`:88`) now both default `true`. FSK half's doc comment now states plainly this diverges from legacy's `RXFSKID=0` default and cites CLAUDE.md §0a (off-air RX-decode default, not wire-observable behavior) as why that's allowed. CW half's doc comment records the fsk_cwid.md §12 gate as consciously lifted, not silently bypassed — H1/B-P4 above still stands as real, still-needed verification work, just no longer a blocker. 3 tests fixed to stop asserting the old `false` default (`SstvSessionServiceStationIdTests.cs`, `SstvSessionServiceCwIdTests.cs`, `OptionsWindowViewModelTests.cs`); `dotnet test` green across `Application.Tests` (590), `UI.Tests` (1722), `Core.Cw.Tests` (97); `docs/help/index.html`'s "both off by default" troubleshooting line corrected; `node docs/help/check-help.mjs` passes. |
 
 **Two plan files in `~/.claude/plans/` belong to other projects, not this one:**
 `how-do-i-start-quirky-simon.md` (a wxPython launcher) and `iterative-tinkering-stearns.md` (an
