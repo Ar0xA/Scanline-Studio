@@ -942,6 +942,10 @@ internal static partial class Program
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
         services.AddSingleton<IClipboardImageService, ClipboardImageService>();
+        // Singleton, not transient: OptionsWindowViewModel (writer) and RadioStatusViewModel
+        // (reader) must share the SAME instance for DecodingIndicatorBlinksChanged to actually
+        // reach an already-open RadioStatusViewModel live.
+        services.AddSingleton<IAppearanceSettingsService, AppearanceSettingsService>();
 
         // Options > General's Config/Database/Log storage-location rows (see AppLocationOverrides'
         // own doc comment). IApplicationRestarter backs the Config/Database "Restart Now" action --

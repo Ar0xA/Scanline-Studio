@@ -22,7 +22,7 @@ public sealed class AstraOptionsRegressionTests
             new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settings,
             radio ?? new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(),
             sstv ?? new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(),
-            new FakeAppLocationsService(), new FakeApplicationRestarter(), NullLogger<OptionsWindowViewModel>.Instance);
+            new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         return vm;
     }

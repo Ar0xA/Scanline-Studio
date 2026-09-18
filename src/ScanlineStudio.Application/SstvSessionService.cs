@@ -2013,12 +2013,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
             ?? new StationIdSettings();
-        _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled;
+        _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled ?? StationIdSettings.DefaultFskIdRxEnabled;
 
         // fsk_cwid.md §8.2: same "re-read the persisted section, cache into a field" pattern as
         // FskIdRxEnabled immediately above -- see SstvSessionService.CwId.cs's own _cwIdRxEnabled
         // field doc comment for why this mirrors that setting's shape rather than SetAutoSaveAudioEnabled's.
-        _cwIdRxEnabled = stationIdSettings.CwIdRxEnabled;
+        _cwIdRxEnabled = stationIdSettings.CwIdRxEnabled ?? StationIdSettings.DefaultCwIdRxEnabled;
         _cwIdRxWindowSeconds = stationIdSettings.CwIdRxWindowSeconds ?? StationIdSettings.DefaultCwIdRxWindowSeconds;
 
         await _audioEngine.StartCaptureAsync(

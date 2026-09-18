@@ -75,17 +75,38 @@ public sealed record StationIdSettings
     /// check, the footer-tone branch depends on THIS flag alone.</summary>
     public bool FskIdTxEnabled { get; init; }
 
-    /// <summary><c>m_fskdecode</c> (<c>sstv.h:708</c>, <c>.ini</c> key <c>RXFSKID</c>, default
-    /// 0/false) -- plain non-nullable, no STJ trap. Consumed by
+    /// <summary><c>m_fskdecode</c> (<c>sstv.h:708</c>, <c>.ini</c> key <c>RXFSKID</c>, legacy default
+    /// 0/false).</summary>
+    public const bool DefaultFskIdRxEnabled = true;
+
+    /// <summary>User-directed override (2026-09-18): defaults to
+    /// <see cref="DefaultFskIdRxEnabled"/> (<see langword="true"/>) in this app, NOT legacy's own
+    /// 0/false -- a local RX-decode default is off-air behavior (nothing transmitted changes), not
+    /// the wire-observable protocol CLAUDE.md §0/§0a's "never deviate from legacy" rule covers, so
+    /// this needed only the user's own decision, not interop justification. Nullable per this
+    /// record's own doc comment -- an empirically-verified real STJ trap (a non-null <c>bool</c>
+    /// property initializer is silently ignored for an absent JSON key; confirmed with a standalone
+    /// repro against this exact source-gen shape before relying on it, not assumed) -- <see
+    /// langword="null"/> means "apply <see cref="DefaultFskIdRxEnabled"/>." Consumed by
     /// <see cref="ScanlineStudio.Core.Sstv.AnalogFmSstvDecoder.StationIdDecodeEnabled"/>.</summary>
-    public bool FskIdRxEnabled { get; init; }
+    public bool? FskIdRxEnabled { get; init; }
 
     /// <summary>fsk_cwid.md §8.3: new capability, no legacy equivalent (YONIQ never decoded CW on
-    /// receive). Default false, matching <see cref="FskIdRxEnabled"/>'s own off-by-default posture
-    /// and fsk_cwid.md §12's explicit "not default-on before the classical decoder has been
-    /// exercised on the legacy fixture" rule. Plain non-nullable, no STJ trap. Consumed by
+    /// receive).</summary>
+    public const bool DefaultCwIdRxEnabled = true;
+
+    /// <summary>User-directed override (2026-09-18): defaults to <see cref="DefaultCwIdRxEnabled"/>
+    /// (<see langword="true"/>), explicitly AHEAD of fsk_cwid.md §12's own "not default-on before the
+    /// classical decoder has been exercised on the legacy fixture" rule -- BACKLOG.md item B-P4 (a
+    /// real capture from the legacy Windows binary, needed to build a golden-vector test for
+    /// <see cref="ScanlineStudio.Core.Cw.ClassicalCwDecoder"/>) is still open as of this change, so
+    /// this decoder now runs by default on real off-air audio with only round-trip (self) tests
+    /// behind it, not a verified-against-a-known-real-answer test -- flagged to the user before this
+    /// override, decision stands regardless. Nullable for the same real, verified STJ-trap reason
+    /// <see cref="FskIdRxEnabled"/>'s own doc comment explains -- <see langword="null"/> means "apply
+    /// <see cref="DefaultCwIdRxEnabled"/>." Consumed by
     /// <see cref="ScanlineStudio.Application.SstvSessionService"/>'s CW-ID capture arm.</summary>
-    public bool CwIdRxEnabled { get; init; }
+    public bool? CwIdRxEnabled { get; init; }
 
     /// <summary>fsk_cwid.md §8.2: how many seconds of post-image audio the CW-ID capture window
     /// spans. Nullable per this record's own doc comment -- <see langword="null"/> means "apply

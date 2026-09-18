@@ -8,8 +8,8 @@ namespace ScanlineStudio.UI.Tests;
 
 public sealed class RadioStatusViewModelTests
 {
-    private static RadioStatusViewModel CreateViewModel(FakeRadioSessionService? radioSession = null, FakeSstvSessionService? sstvSession = null)
-        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), NullLogger<RadioStatusViewModel>.Instance);
+    private static RadioStatusViewModel CreateViewModel(FakeRadioSessionService? radioSession = null, FakeSstvSessionService? sstvSession = null, FakeAppearanceSettingsService? appearanceSettings = null)
+        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), appearanceSettings ?? new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
 
     [AvaloniaFact]
     public void Constructor_LoadsPersistedPresetsAndTxState()
@@ -850,6 +850,146 @@ public sealed class RadioStatusViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(expectedInGoodRange, vm.RxLevelInGoodRange);
+    }
+
+    // User-requested (2026-09-18): a real-time "Decoding" indicator, distinct from the steady
+    // "Receiving" state, obvious even from a non-Receive tab. Reads IReceivedImageBuffer.Progress
+    // via the same tick the constructor now runs synchronously once up front (see
+    // RadioStatusViewModel.OnRxAudioLevelTick's own doc comment), so these are all
+    // construction-time assertions -- no real 250ms timer wait needed, same testability shape
+    // RxAudioPeakLevel's own tests above already rely on.
+
+    [AvaloniaTheory]
+    [InlineData(null, false)] // idle -- no active decode
+    [InlineData(0.0, true)]   // just started (ModeDetected)
+    [InlineData(0.5, true)]   // mid-decode
+    [InlineData(1.0, false)]  // exactly complete -- not an ongoing decode anymore
+    public void IsDecodingImage_ReflectsReceivedImageProgress(double? progress, bool expectedIsDecoding)
+    {
+        var sstvSession = new FakeSstvSessionService();
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = progress;
+
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(expectedIsDecoding, vm.IsDecodingImage);
+    }
+
+    [AvaloniaFact]
+    public void WhileDecoding_ReceivingButtonLabelAndStatusBarText_BothSayDecoding()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        // FakeLocalizationService.GetString echoes the raw key (see its own doc comment) --
+        // asserting the key itself is what proves the correct string was requested, same
+        // convention TuneButtonLabel/ReceivingButtonLabel's own existing tests never needed until
+        // now because they only ever asserted the underlying bool, not the label text itself.
+        Assert.Equal("RadioStatus.Decoding", vm.ReceivingButtonLabel);
+        Assert.Equal("MainWindow.StatusBar.Decoding", vm.RxStatusBarText);
+    }
+
+    [AvaloniaFact]
+    public void WhileDecoding_IsReceivingIdle_IsFalse_EvenThoughIsReceivingIsTrue()
+    {
+        // The green "Receiving" look and the amber "Decoding" look must be mutually exclusive by
+        // construction (both AXAML call sites bind their green classes to this, not to IsReceiving
+        // directly) -- not left to style declaration order to arbitrate a simultaneous true/true.
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsReceiving);
+        Assert.False(vm.IsReceivingIdle);
+    }
+
+    [AvaloniaFact]
+    public void WhileJustListening_NotDecoding_ReceivingButtonLabelAndStatusBarText_SayReceiving()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = null;
+
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsDecodingImage);
+        Assert.True(vm.IsReceivingIdle);
+        Assert.Equal("RadioStatus.Receiving", vm.ReceivingButtonLabel);
+        Assert.Equal("MainWindow.StatusBar.Rx", vm.RxStatusBarText);
+    }
+
+    [AvaloniaFact]
+    public void WhileIdle_NotDecoding_IsDecodingBlinkOnIsFalse()
+    {
+        var vm = CreateViewModel();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsDecodingBlinkOn);
+    }
+
+    // User-requested (2026-09-18): the blink can be turned off in Options > Appearance, default on.
+    // Disabled means steady amber for the whole decode, not "never light up" -- IsDecodingImage
+    // itself is unaffected, only IsDecodingBlinkOn's own on/off cycling is.
+
+    [AvaloniaFact]
+    public void WhileDecoding_BlinkDisabledInAppearanceSettings_IsDecodingBlinkOnIsSteadyTrue()
+    {
+        var appearanceSettings = new FakeAppearanceSettingsService { DecodingIndicatorBlinks = false };
+        var sstvSession = new FakeSstvSessionService();
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+
+        var vm = CreateViewModel(sstvSession: sstvSession, appearanceSettings: appearanceSettings);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsDecodingImage);
+        Assert.True(vm.IsDecodingBlinkOn);
+    }
+
+    [AvaloniaFact]
+    public void WhileDecoding_BlinkEnabledByDefault_MatchesAppearanceSettingsDefault()
+    {
+        // No FakeAppearanceSettingsService override -- proves the wiring reads the SAME default
+        // AppearanceSettings.DefaultDecodingIndicatorBlinks itself declares, not a second
+        // independently-hardcoded "true" this ViewModel could silently drift from.
+        var appearanceSettings = new FakeAppearanceSettingsService();
+        Assert.Equal(ScanlineStudio.UI.Settings.AppearanceSettings.DefaultDecodingIndicatorBlinks, appearanceSettings.DecodingIndicatorBlinks);
+        var sstvSession = new FakeSstvSessionService();
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+
+        var vm = CreateViewModel(sstvSession: sstvSession, appearanceSettings: appearanceSettings);
+        Dispatcher.UIThread.RunJobs();
+
+        // Two OnRxAudioLevelTick() calls land before RunJobs() returns: the constructor's own
+        // synchronous initial tick (counter -> 1, "off" phase), then
+        // LoadDecodingIndicatorBlinksPreferenceSafeAsync's post-load re-tick (counter -> 2, "on"
+        // phase) -- see that method's own doc comment for why the re-tick exists. 2 % 2 == 0 is
+        // true, so this settles on-phase deterministically once RunJobs() drains both.
+        Assert.True(vm.IsDecodingBlinkOn);
+    }
+
+    [AvaloniaFact]
+    public void LiveAppearanceChange_WhileAlreadyDecoding_TakesEffectImmediately_NotOnTheNextPoll()
+    {
+        // Auditor-class startup/live-update-ordering finding, applied proactively: proves
+        // DecodingIndicatorBlinksChanged's own handler re-evaluates the blink state SYNCHRONOUSLY
+        // (via a direct OnRxAudioLevelTick() re-run) rather than waiting for the next real 250ms
+        // timer tick, which this test has no way to force forward.
+        var appearanceSettings = new FakeAppearanceSettingsService();
+        var sstvSession = new FakeSstvSessionService();
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+        var vm = CreateViewModel(sstvSession: sstvSession, appearanceSettings: appearanceSettings);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsDecodingImage);
+
+        appearanceSettings.NotifyDecodingIndicatorBlinksChanged(false);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsDecodingBlinkOn);
     }
 
     [AvaloniaFact]
