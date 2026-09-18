@@ -1723,6 +1723,21 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         try
         {
             await _radioSession.SetModeAsync(value).ConfigureAwait(false);
+            // User-reported bug (2026-09-19): this is the ONE caller of SelectedRadioMode's own
+            // change hook (the mode picker AND OnSsbAsPktChanged's mode-conversion both funnel here
+            // via SelectedRadioMode), and it was sending a bare mode-set with no follow-up bandwidth
+            // -- exactly the RadioModeFamilies landmine its own doc comment describes: a mode set
+            // asks the rig for its own default passband (Hamlib's RIG_PASSBAND_NORMAL), which on
+            // some rigs resolves to a destructively narrow width (reported: 500 Hz, which then
+            // desyncs the rig badly enough to visibly fall back to its prior mode on the next poll).
+            // ApplyPresetAsync already avoids this exact landmine with this exact follow-up call --
+            // mirrored here instead of inventing a second mechanism. Gated on CanSetBandwidth for the
+            // same reason ApplyPresetAsync is: flrig/OmniRig THROW here rather than no-op when
+            // bandwidth isn't settable, which would otherwise fail an already-successful mode change.
+            if (CanSetBandwidth && RadioModeFamilies.FallbackFor(value) is { } hz)
+            {
+                await _radioSession.SetBandwidthAsync(hz).ConfigureAwait(false);
+            }
         }
         catch (Exception ex)
         {
