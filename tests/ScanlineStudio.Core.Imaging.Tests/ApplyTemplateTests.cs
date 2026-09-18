@@ -2453,4 +2453,102 @@ public sealed class ApplyTemplateTests
         await image.SaveAsPngAsync(path);
         return path;
     }
+
+    [Fact]
+    public async Task ApplyTemplate_TextOnFractionalPixelBounds_NoSeamAlongBottomOrRightEdge()
+    {
+        // User-reported 2026-09-18: a faint but real hairline running along the BOTTOM and RIGHT
+        // edges of a text element's box in the mode-exact PREVIEW panel (a plain, non-GrowToFillEnabled
+        // "Text" placeholder -- distinct from ApplyTemplate_GrowToFillEnabled_RendersInsideBoundsWithoutThrowing
+        // above, which covers a different bug in the same method). Root-caused to DrawTemplateText's
+        // two RectangularPolygon clips being built straight from the element's raw FLOAT bounds
+        // (never rounded, unlike the fit-search's own integer copy) -- ImageSharp's Clip(path, action)
+        // anti-aliases a clip edge that lands on a fractional pixel, and empirically (confirmed by
+        // reverting the fix locally against this exact scenario) that partial-coverage blend pulls in
+        // stale content from elsewhere in the clipped render pass rather than leaving the background
+        // untouched, visible here as a color-gradient background one row/column earlier or later than
+        // it should be. A background with a genuinely UNIQUE color at every pixel (not a flat fill,
+        // which this bug's own blend could pass through undetected) makes ANY such deviation an exact,
+        // byte-level mismatch rather than a maybe-visible cosmetic smudge. Bounds deliberately land on
+        // a fractional pixel on EVERY edge (10.23, 10.57, right=50.34, bottom=50.44 on this 100x100
+        // canvas) -- the exact condition the fix's floor/ceiling snap targets. The single-character "."
+        // glyph sits at the box's own center, over 15px from every edge sampled below, so nothing here
+        // can be legitimate glyph ink.
+        var path = await WriteFixturePngAsync(100, 100, (x, y) => new ImageSharpRgb24((byte)(x * 2), (byte)(y * 2), 128));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 100, 100);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var font = new FontSpec("DejaVu Sans Mono", 0.05);
+            var bounds = new NormalizedRect(0.1023, 0.1057, 0.4011, 0.3987);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, ".", font, new Rgb24(255, 0, 0)),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Bottom edge (fractional at y=50.44): every sampled column along the row just inside it.
+            for (var x = 20; x <= 48; x += 4)
+            {
+                AssertPixel(result, x, 50, (byte)(x * 2), 100, 128);
+            }
+
+            // Right edge (fractional at x=50.34): every sampled row along the column just inside it.
+            for (var y = 20; y <= 48; y += 4)
+            {
+                AssertPixel(result, 50, y, 100, (byte)(y * 2), 128);
+            }
+
+            // The corner where both fractional edges meet -- the exact spot the user's own
+            // marked-up screenshot (bug2.png) pointed at.
+            AssertPixel(result, 50, 50, 100, 100, 128);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_RotatedTextOnFractionalPixelBounds_NoSeamAlongBottomOrRightEdge()
+    {
+        // yoniq-auditor finding, 2026-09-18 (reviewing the sibling unrotated test above): the
+        // rotated path's own boundsClip (DrawTemplateText's rotation branch) goes through the exact
+        // same BuildPixelSnappedClip call, so it carries the identical fractional-edge seam bug --
+        // but every existing rotated test uses integer-aligned bounds, so that call site had zero
+        // regression coverage. Same technique as the unrotated sibling: unique-per-pixel gradient
+        // background, fractional bounds on every edge, a single "." glyph far from every sampled
+        // edge pixel (rotation moves a period's own tiny ink negligibly).
+        var path = await WriteFixturePngAsync(100, 100, (x, y) => new ImageSharpRgb24((byte)(x * 2), (byte)(y * 2), 128));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(path, 100, 100);
+            var preparer = new TransmitImagePreparer(FontPath);
+            var font = new FontSpec("DejaVu Sans Mono", 0.05);
+            var bounds = new NormalizedRect(0.1023, 0.1057, 0.4011, 0.3987);
+            var document = new TemplateDocument(null, [
+                new TemplateTextElement(bounds, Z: 0, ".", font, new Rgb24(255, 0, 0), RotationDegrees: 45),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Bottom edge (fractional at y=50.44): every sampled column along the row just inside it.
+            for (var x = 20; x <= 48; x += 4)
+            {
+                AssertPixel(result, x, 50, (byte)(x * 2), 100, 128);
+            }
+
+            // Right edge (fractional at x=50.34): every sampled row along the column just inside it.
+            for (var y = 20; y <= 48; y += 4)
+            {
+                AssertPixel(result, 50, y, 100, (byte)(y * 2), 128);
+            }
+
+            AssertPixel(result, 50, 50, 100, 100, 128);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
