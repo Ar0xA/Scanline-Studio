@@ -95,6 +95,57 @@ public sealed class TxControlsTransmitProgressTests
         await WaitUntilNotTransmittingAsync(vm);
     }
 
+    /// <summary>2026-09-19 user request ("TX should be more obvious"): the TX image editor's own
+    /// context bar now shows this same IsTransmitting/TransmitProgress/TransmitProgressText, pushed
+    /// via TxImageEditorPaneViewModel.NotifyTransmitProgressChanged() at every one of
+    /// TransmitCoreAsync's own toggle points. Asserts the PropertyChanged notifications themselves,
+    /// not just the resulting values -- a bound ProgressBar/TextBlock never refreshes without them.</summary>
+    [AvaloniaFact]
+    public async Task TransmitProgress_PushesToTheOpenEditorsHeaderBar_AndRaisesPropertyChanged()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode], BlockUntilCancelled = true };
+        var vm = CreateViewModel(sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += e => opened = e;
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var editor = opened!;
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(editor.IsTransmitting);
+        Assert.Null(editor.TransmitProgress);
+
+        var changedProperties = new List<string>();
+        editor.PropertyChanged += (_, e) => changedProperties.Add(e.PropertyName!);
+
+        var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(editor.IsTransmitting);
+        Assert.Equal(0.0, editor.TransmitProgress);
+        Assert.Contains(nameof(TxImageEditorPaneViewModel.IsTransmitting), changedProperties);
+        Assert.Contains(nameof(TxImageEditorPaneViewModel.TransmitProgress), changedProperties);
+        Assert.Contains(nameof(TxImageEditorPaneViewModel.TransmitProgressText), changedProperties);
+
+        changedProperties.Clear();
+        sstvSession.RaiseTransmitProgress(new TransmitProgressInfo(0.5, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2)));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0.5, editor.TransmitProgress);
+        Assert.False(string.IsNullOrEmpty(editor.TransmitProgressText));
+        Assert.Contains(nameof(TxImageEditorPaneViewModel.TransmitProgress), changedProperties);
+
+        vm.StopTransmitCommand.Execute(null);
+        await transmitTask;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(editor.IsTransmitting);
+        Assert.Null(editor.TransmitProgress);
+    }
+
     [AvaloniaFact]
     public async Task TransmitProgressChanged_UpdatesFractionAndText_WhileTransmitting()
     {
