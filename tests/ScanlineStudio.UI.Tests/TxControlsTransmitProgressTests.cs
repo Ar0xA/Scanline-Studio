@@ -36,15 +36,27 @@ public sealed class TxControlsTransmitProgressTests
             NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
             new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
+    /// <summary>2026-09-19: Apply no longer closes the editor, so a SECOND call reuses whatever
+    /// editor is already open instead of trying to open a new one via SelectImageCommand, which is
+    /// now correctly refused while real content is live.</summary>
     private static async Task StartBlockingTransmitAsync(TxControlsPaneViewModel vm)
     {
-        TxImageEditorPaneViewModel? capturedEditor = null;
-        vm.EditorOpened += e => capturedEditor = e;
-
-        await vm.SelectImageCommand.ExecuteAsync(null);
-        Dispatcher.UIThread.RunJobs();
-        Assert.NotNull(capturedEditor);
-        capturedEditor!.ApplyCommand.Execute(null);
+        var existingEditor = ExtractCurrentEditor(vm);
+        TxImageEditorPaneViewModel capturedEditor;
+        if (existingEditor is not null)
+        {
+            capturedEditor = existingEditor;
+        }
+        else
+        {
+            TxImageEditorPaneViewModel? opened = null;
+            vm.EditorOpened += e => opened = e;
+            await vm.SelectImageCommand.ExecuteAsync(null);
+            Dispatcher.UIThread.RunJobs();
+            Assert.NotNull(opened);
+            capturedEditor = opened!;
+        }
+        capturedEditor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
         Assert.True(vm.TransmitCommand.CanExecute(null));
@@ -52,6 +64,10 @@ public sealed class TxControlsTransmitProgressTests
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.IsTransmitting);
     }
+
+    private static TxImageEditorPaneViewModel? ExtractCurrentEditor(TxControlsPaneViewModel vm)
+        => typeof(TxControlsPaneViewModel).GetField("_currentEditor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(vm) as TxImageEditorPaneViewModel;
 
     private static async Task WaitUntilNotTransmittingAsync(TxControlsPaneViewModel vm)
     {

@@ -373,15 +373,6 @@
                        Stretch="Uniform"
                        MaxHeight="160"
                        IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
-                <!-- spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply. Only
-                     shown once something has actually been applied (PreviewImage not null).
-                     Enabled state itself is driven by EditCurrentImageCommand's own CanExecute
-                     (_editState is not null and !IsEditorOpen), no separate IsEnabled binding
-                     needed. -->
-                <Button Classes="Industry IndustryBtn IndustryBtn25 IndustryBtnSecondary" Content="{loc:Translate Panes.TxControls.EditImage}"
-                        Command="{Binding EditCurrentImageCommand}"
-                        IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}"
-                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" />
             </StackPanel>
         </HeaderedContentControl>
 
@@ -398,7 +389,8 @@
              Transceiver card's "Stop TX" button (RadioHeaderView.axaml, always visible regardless of
              tab) is now bound straight to this VM's own StopTransmitCommand (RadioStatusViewModel.TxControls),
              so a second copy here was redundant. TransmitCommand itself is still reachable from
-             OnEditorAppliedAndTransmit/ResendSentFrame (TxControlsPaneViewModel.cs), and
+             OnEditorAppliedAndTransmit (TxControlsPaneViewModel.cs, ResendSentFrameAsync transmits
+             via a shared TransmitCoreAsync instead, not this command), and
              StopTransmitCommand is unchanged/still owned by this VM — only this row's own local
              button is gone. -->
 

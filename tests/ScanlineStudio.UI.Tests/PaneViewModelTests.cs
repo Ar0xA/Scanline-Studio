@@ -3889,200 +3889,6 @@ public sealed class PaneViewModelTests
         Assert.Equal("DE {his_call}", element.ResolvedText);
     }
 
-    /// <summary>Ready Rack direct-fire plan (2026-09-01), auditor code-review round 2's finding:
-    /// the plan's FIRST draft would have reversed <see cref="TxControlsPaneViewModel_OpenEditorForExternalFileAsync_NullContactVariables_LeavesTokenUnresolved_EvenWithARxContactWired"/>'s
-    /// own decision by passing a live contact provider unconditionally at every construction call
-    /// site -- this proves the fix: a direct-fire on a Gallery-sourced editor (no linked QSO) still
-    /// does not leak the live RX contact, same as an ordinary load already didn't.
-    ///
-    /// Code-review round 3 finding: fires TWICE, not once -- a first draft asserted only the
-    /// post-fire-#1 state, which cannot distinguish "the reopen correctly inherited null" from "the
-    /// reopen unconditionally re-armed a live provider, and it just happens fire #1's own template
-    /// text never got re-baked with it." Firing again on the REOPENED editor and asserting it STILL
-    /// doesn't leak is what actually proves the inheritance (not just the construction-site
-    /// threading) holds across the whole pileup-fire chain, not just its first link.</summary>
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_DirectFire_DoesNotLeakLiveContactEvenWithRxContactWired()
-    {
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var templateStore = new FakeTemplateStore();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
-        {
-            CurrentContactRequested = () => ("W1AW", "FN31pr"),
-        };
-        TxImageEditorPaneViewModel? opened = null;
-        vm.EditorOpened += e => opened = e;
-
-        await vm.OpenEditorForExternalFileAsync("/tmp/gallery-frame.png", null);
-        Dispatcher.UIThread.RunJobs();
-        var editor = opened!;
-        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
-        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
-            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
-        ]));
-        await editor.ReadyRack.RefreshAsync();
-        var row = Assert.Single(editor.ReadyRack.AllTemplates);
-        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
-
-        editor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #1 -- no unsaved edits yet, one press
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-
-        var reopenedAfterFirst = opened!; // EditorOpened fires again for the post-fire reopen
-        Assert.NotSame(editor, reopenedAfterFirst);
-        var firstElement = (OverlayElementViewModel)reopenedAfterFirst.OverlayElements[0];
-        Assert.Equal("DE {his_call}", firstElement.ResolvedText); // unresolved -- W1AW never leaked in
-
-        reopenedAfterFirst.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #2 -- still one press (no unsaved edits)
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-
-        var reopenedAfterSecond = opened!;
-        Assert.NotSame(reopenedAfterFirst, reopenedAfterSecond);
-        var secondElement = (OverlayElementViewModel)reopenedAfterSecond.OverlayElements[0];
-        Assert.Equal("DE {his_call}", secondElement.ResolvedText); // STILL unresolved -- inheritance holds, not just fire #1
-    }
-
-    /// <summary>Ready Rack direct-fire plan (2026-09-01): the actual pileup loop this whole feature
-    /// exists for -- confirmed auditor round-1 BLOCKER (the ordinary "close and leave empty"
-    /// behavior would strand the rack after exactly one fire) and its fix (reopen via
-    /// EditCurrentImageAsync's own real-photo-preserving path, not OpenBlankEditorCommand's
-    /// placeholder). Proves the reopened editor: (1) carries the REAL photo forward, not a blank
-    /// placeholder (round-1 blocker's own failure mode); (2) has no unsaved edits, so a SECOND
-    /// direct-fire succeeds on one press with no re-arm needed; (3) genuinely RE-SEEDS from the LIVE
-    /// contact on that second fire, not just the constructor's own one-shot value carried through --
-    /// code-review finding on an earlier draft of this test: it left CurrentContactRequested
-    /// returning the SAME callsign for both fires, so it could not distinguish a live re-seed from
-    /// EditorInitialState simply carrying the original constructor-seeded value forward unchanged.
-    /// This version switches the live contact to a DIFFERENT station between fire #1 and fire #2 and
-    /// asserts the NEW one, which only a genuine live re-seed on the reopened editor's own fire can
-    /// produce.</summary>
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_DirectFire_CancelledEditorCannotTransmitAfterLoad()
-    {
-        var session = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var store = new FakeTemplateStore();
-        var vm = new TxControlsPaneViewModel(session,
-            new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) },
-            new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(),
-            new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(),
-            new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance,
-            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(),
-            new FakeReceiveHistoryStore(), store, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        var initial = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        initial.ApplyCommand.Execute(null);
-        var editor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
-        const string id = "cancel-direct-fire";
-        var document = new PersistedTemplateDocument([
-            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "CQ", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
-        ]);
-        await store.SaveAsync(id, id, document);
-        await editor.ReadyRack.RefreshAsync();
-        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(Assert.Single(editor.ReadyRack.AllTemplates));
-        var gate = new TaskCompletionSource<PersistedTemplateDocument>();
-        store.LoadGates[id] = gate;
-        editor.ReadyRack.DirectFireSlotCommand.Execute(1);
-        editor.CancelCommand.Execute(null);
-        Assert.False(vm.IsEditorOpen);
-        gate.SetResult(document);
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Assert.Empty(session.TransmitCalls);
-        Assert.False(vm.IsEditorOpen);
-    }
-
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_DirectFire_ReopensWithRealPhoto_SecondFireSucceedsImmediatelyWithFreshContact()
-    {
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var templateStore = new FakeTemplateStore();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance)
-        {
-            CurrentContactRequested = () => ("W1AW", "FN31pr"),
-        };
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        var originalPhoto = firstEditor.CurrentSource;
-        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
-        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
-            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
-        ]));
-        await firstEditor.ReadyRack.RefreshAsync();
-        var row = Assert.Single(firstEditor.ReadyRack.AllTemplates);
-        await firstEditor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
-
-        TxImageEditorPaneViewModel? reopened = null;
-        vm.EditorOpened += e => reopened = e;
-        firstEditor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #1
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.NotNull(reopened);
-        Assert.NotSame(firstEditor, reopened);
-        Assert.Same(originalPhoto, reopened!.CurrentSource); // the real photo, NOT a blank placeholder
-        Assert.False(reopened.HasUnsavedEdits); // ready for a one-press fire, no re-arm needed
-        Assert.Equal("W1AW", reopened.TemplateVariables["his_call"]); // carried forward from fire #1
-
-        vm.CurrentContactRequested = () => ("K1ABC", "FN20xx"); // a NEW station is now being worked
-        // Captured BEFORE firing -- vm.EditorOpened's subscription above reassigns `reopened` to a
-        // THIRD editor instance the moment fire #2 itself triggers ITS OWN reopen, so this local is
-        // what still refers to the editor that actually did fire #2's own re-seed.
-        var secondEditor = reopened;
-        var secondFired = false;
-        secondEditor.DirectFireRequested += _ => secondFired = true;
-        secondEditor.ReadyRack.DirectFireSlotCommand.Execute(1); // fire #2 -- SAME slot, still pinned (rack state persists)
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(secondFired); // one press, not two -- proves HasUnsavedEdits stayed false
-        Assert.Equal("K1ABC", secondEditor.TemplateVariables["his_call"]); // fresh live re-seed, not W1AW carried forward
-    }
-
-    /// <summary>Ready Rack direct-fire plan (2026-09-01), code-review round 3's own most significant
-    /// finding: the FIRST fix for the caller-intent leak derived live-tracking intent from whether
-    /// <c>BuildCurrentContactVariables()</c> happened to be non-null AT CONSTRUCTION time
-    /// (<c>currentContactVariables is not null ? BuildCurrentContactVariables : null</c>) -- that
-    /// value is null whenever no station has been decoded YET, the common cold-start case for
-    /// Browse/Stock/Blank/Copy-to-TX, so it would have left this feature's whole re-seed capability
-    /// silently dead for any editor opened before the first contact of a session. Mutation-verified:
-    /// reverting to that exact conditional does NOT make
-    /// <see cref="TxControlsPaneViewModel_DirectFire_ReopensWithRealPhoto_SecondFireSucceedsImmediatelyWithFreshContact"/>
-    /// fail, because that test already has a contact wired before opening -- THIS test is the one
-    /// that actually covers the cold-start case: no contact wired at open time, a real one wired
-    /// only afterward, before the first fire.</summary>
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_DirectFire_NoContactAtOpenTime_StillReSeedsOnFirstFire()
-    {
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var templateStore = new FakeTemplateStore();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        // CurrentContactRequested is deliberately left UNWIRED here -- the cold-start case: opening
-        // the editor before any station has been decoded this session.
-        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        var templateId = templateStore.CreateTemplateId("DirectFireTarget");
-        await templateStore.SaveAsync(templateId, "DirectFireTarget", new PersistedTemplateDocument([
-            new PersistedTextElement(0.5, 0.5, 0.3, 0.1, 0, false, "DE {his_call}", 0.1, new Rgb24(255, 255, 255), "", null, 0.02),
-        ]));
-        await editor.ReadyRack.RefreshAsync();
-        var row = Assert.Single(editor.ReadyRack.AllTemplates);
-        await editor.ReadyRack.TogglePinCommand.ExecuteAsync(row);
-
-        // A real station is now being worked -- wired AFTER the editor already exists.
-        vm.CurrentContactRequested = () => ("K1ABC", "FN20xx");
-        editor.ReadyRack.DirectFireSlotCommand.Execute(1); // no unsaved edits yet -- fires on one press
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal("K1ABC", editor.TemplateVariables["his_call"]);
-    }
-
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_OpenEditorForExternalFileAsync_ClaimRefused_ReturnsFalse_DoesNotRequestTransmitTabFocus()
     {
@@ -4211,11 +4017,12 @@ public sealed class PaneViewModelTests
         Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
     }
 
-    // TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX history") -- went
-    // through 2 rounds of plan-review (4 blockers round 1, 1 more round 2: ResendSentFrame must also
-    // gate on IsEditorOpen, not just the busy check). These tests target exactly what those rounds
-    // found, not exhaustive coverage of every CanExecute predicate already well-tested elsewhere in
-    // this file.
+    // TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX history"). Resend
+    // was reworked 2026-09-19 (user request: "leave the current TX editor image alone") to route
+    // through a shared TransmitCoreAsync that never reads SelectedMode/_editState/_loadedImage at
+    // all, replacing the original IsEditorOpen-based refusal. These tests target exactly what the
+    // review rounds for both designs found, not exhaustive coverage of every CanExecute predicate
+    // already well-tested elsewhere in this file.
 
     private static (TxControlsPaneViewModel Vm, FakeSstvSessionService SstvSession, FakeFilePickerService FilePicker, FakeImageSourceWriter ImageSourceWriter) CreateTxHistoryTestSetup()
     {
@@ -4226,9 +4033,12 @@ public sealed class PaneViewModelTests
         return (vm, sstvSession, filePicker, imageSourceWriter);
     }
 
+    /// <summary>2026-09-19: Apply no longer closes the editor, so a SECOND call reuses whatever
+    /// editor is already open (real content and all) instead of trying to open a new one via
+    /// SelectImageCommand, which is now correctly refused while real content is live.</summary>
     private static async Task TransmitOnceAsync(TxControlsPaneViewModel vm)
     {
-        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var editor = ExtractCurrentEditor(vm) ?? await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
         editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
         await vm.TransmitCommand.ExecuteAsync(null);
@@ -4320,21 +4130,15 @@ public sealed class PaneViewModelTests
         Assert.Equal(expectedNewestFirst, vm.SentFrames.Select(e => e.Mode));
     }
 
-    /// <summary>2-round plan-review finding, blockers 1+2: a naive ResendSentFrame either rebakes
-    /// from a stale _editState (sending the WRONG image) or fails to update SelectedMode (sending a
-    /// wrong-sized image or silently no-op-ing). This proves the actual mechanism reaches
-    /// TransmitAsync with the resent entry's own image and mode, unmodified.</summary>
+    /// <summary>TransmitCoreAsync split (2026-09-19): Resend must transmit the exact recorded
+    /// image/mode untouched, and must NOT rebake against the live editor's current state (the
+    /// opposite of ordinary Transmit, which always refreshes macros). Mirrors
+    /// TxControlsPaneViewModel_Transmit_FrequencyMacroChangedSinceApply_RebakesWithFreshValue's own
+    /// {freq}-overlay/radio-state-change recipe specifically to prove a resend does NOT rebake from
+    /// it, and does not touch SelectedMode either.</summary>
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_ResendSentFrame_TransmitsTheExactRecordedImageAndMode()
     {
-        // NOT the plain CreateTxHistoryTestSetup fixture -- with no overlay/macro content at all,
-        // RefreshTransmitImageIfMacrosChangedAsync's own "changed" check never finds anything to
-        // rebake regardless of _editState's nullness (its loop is over edit.Document.Elements,
-        // empty here), so a version of ResendSentFrame that forgot to null _editState would pass
-        // this test for the wrong reason. Mirrors
-        // TxControlsPaneViewModel_Transmit_FrequencyMacroChangedSinceApply_RebakesWithFreshValue's
-        // own {freq}-overlay/radio-state-change recipe specifically to give a stale _editState
-        // something real to rebake from.
         var otherMode = new SstvModeDefinition(
             Id: "other", DisplayName: "Other", VisCode: 1, ImageWidth: 2, ImageHeight: 2,
             ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
@@ -4356,46 +4160,53 @@ public sealed class PaneViewModelTests
         await vm.TransmitCommand.ExecuteAsync(null);
         var entry = vm.SentFrames[0];
 
-        // Changed AFTER the first send, before resend -- a stale _editState would rebake against
-        // THIS new frequency at TestMode's dimensions before the mode change below, producing an
-        // image that is neither entry.Image nor anything this test controls, but definitely not
-        // reference-equal to entry.Image.
+        // Changed AFTER the first send, before resend -- must NOT cause a rebake, since a resend
+        // never reads the live editor's _editState at all.
         radioSession.LastKnownState = radioSession.LastKnownState.Value with { FrequencyHz = 7_045_000 };
         vm.SelectedMode = otherMode;
 
-        vm.ResendSentFrameCommand.Execute(entry);
+        await vm.ResendSentFrameCommand.ExecuteAsync(entry);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(2, sstvSession.TransmitCalls.Count);
-        Assert.Equal(TestMode, sstvSession.TransmitCalls[1].Mode);
-        Assert.Same(entry.Image, sstvSession.TransmitCalls[1].Image);
-        Assert.Equal(TestMode, vm.SelectedMode);
+        Assert.Equal(TestMode, sstvSession.TransmitCalls[1].Mode); // the entry's own recorded mode
+        Assert.Same(entry.Image, sstvSession.TransmitCalls[1].Image); // exact recorded image, not rebaked
+        Assert.Equal(otherMode, vm.SelectedMode); // untouched by the resend
     }
 
-    /// <summary>Round-2 plan-review finding: ResendSentFrame changes SelectedMode, so it needs the
-    /// SAME "!IsEditorOpen || IsCurrentEditorBlankAndUntouched()" re-check QuickSelectMode already
-    /// uses (CanTransmit's own doc comment: "_loadedImage's dimensions can never diverge from
-    /// SelectedMode's while an editor is open" is load-bearing). A real, non-blank editor open at a
-    /// DIFFERENT mode than the resent entry must refuse, not silently freeze that invariant.</summary>
+    /// <summary>2026-09-19 user request ("leave the current TX editor image alone"): a resend must
+    /// succeed even with a real, non-blank editor open at a DIFFERENT mode than the resent entry,
+    /// and must not touch that editor's SelectedMode/CurrentSource/OverlayElements at all -- the
+    /// opposite of this test's own pre-TransmitCoreAsync-split behavior, which used to refuse
+    /// outright to protect an invariant that a shared TransmitCoreAsync now makes structurally
+    /// impossible to violate instead.</summary>
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ResendSentFrame_RealEditorOpenAtDifferentMode_Refuses()
+    public async Task TxControlsPaneViewModel_ResendSentFrame_RealEditorOpenAtDifferentMode_DoesNotDisturbTheLiveEditor()
     {
         var otherMode = new SstvModeDefinition(
             Id: "other", DisplayName: "Other", VisCode: 1, ImageWidth: 2, ImageHeight: 2,
             ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
         var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
         sstvSession.AvailableModes = [TestMode, otherMode];
-        await TransmitOnceAsync(vm);
+        await TransmitOnceAsync(vm); // records the entry at TestMode, leaves the SAME editor open
         var entry = vm.SentFrames[0];
-        vm.SelectedMode = otherMode;
-        await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
 
-        Assert.False(vm.ResendSentFrameCommand.CanExecute(entry));
-        vm.ResendSentFrameCommand.Execute(entry);
+        vm.SelectedMode = otherMode; // reflows the still-open editor via ReplaceEditorForModeSwitch
+        var editor = ExtractCurrentEditor(vm)!;
+        var originalSource = editor.CurrentSource;
+        var originalElementCount = editor.OverlayElements.Count;
+
+        Assert.True(vm.ResendSentFrameCommand.CanExecute(entry));
+        await vm.ResendSentFrameCommand.ExecuteAsync(entry);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Single(sstvSession.TransmitCalls);
-        Assert.Equal(otherMode, vm.SelectedMode);
+        Assert.Equal(2, sstvSession.TransmitCalls.Count);
+        Assert.Equal(TestMode, sstvSession.TransmitCalls[1].Mode);
+        Assert.Equal(otherMode, vm.SelectedMode); // untouched
+        Assert.Same(originalSource, editor.CurrentSource); // untouched -- no second ReplaceEditorForModeSwitch
+        Assert.Equal(originalElementCount, editor.OverlayElements.Count);
+        Assert.True(vm.IsEditorOpen);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
     }
 
     [AvaloniaFact]
@@ -4404,10 +4215,14 @@ public sealed class PaneViewModelTests
         var (vm, sstvSession, _, _) = CreateTxHistoryTestSetup();
         await TransmitOnceAsync(vm);
         var entry = vm.SentFrames[0];
-        await vm.OpenBlankEditorCommand.ExecuteAsync(null);
+        var appliedEditor = ExtractCurrentEditor(vm)!;
+        appliedEditor.ConfirmRequested = _ => Task.FromResult(true);
+        await appliedEditor.CancelCommand.ExecuteAsync(null); // "New Template" -- fresh blank editor
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsEditorOpen);
 
         Assert.True(vm.ResendSentFrameCommand.CanExecute(entry));
-        vm.ResendSentFrameCommand.Execute(entry);
+        await vm.ResendSentFrameCommand.ExecuteAsync(entry);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(2, sstvSession.TransmitCalls.Count);
@@ -4671,9 +4486,10 @@ public sealed class PaneViewModelTests
 
     /// <summary>ui_transition_plan.md step 2 (T1-2): one click applies AND starts the transmit --
     /// the whole point of the SEND row's new primary action is that the operator doesn't have to
-    /// separately find and click Transmit in the sidebar afterward.</summary>
+    /// separately find and click Transmit in the sidebar afterward. 2026-09-19 user request: Apply
+    /// (plain or with Transmit) no longer closes the editor -- the canvas stays exactly as it was.</summary>
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ApplyAndTransmitCommand_OnTheOpenEditor_ClosesEditorAndStartsTransmit()
+    public async Task TxControlsPaneViewModel_ApplyAndTransmitCommand_OnTheOpenEditor_KeepsEditorOpenAndStartsTransmit()
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
@@ -4687,15 +4503,18 @@ public sealed class PaneViewModelTests
         editor.ApplyAndTransmitCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.False(vm.IsEditorOpen);
+        Assert.True(vm.IsEditorOpen);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
         Assert.Single(sstvSession.TransmitCalls);
         Assert.Equal(TestMode, sstvSession.TransmitCalls[0].Mode);
     }
 
-    /// <summary>Companion to the test above: while an editor is already open and the SIDEBAR
-    /// Transmit button starts transmitting a PREVIOUSLY applied image (a re-edit-in-progress
-    /// scenario), the open editor's own Apply &amp; Transmit button must live-disable -- otherwise
-    /// clicking it would try to start a second, overlapping transmission.</summary>
+    /// <summary>Companion to the test above: while the SIDEBAR Transmit button is running (a resend
+    /// of the same applied image), the still-open editor's own Apply &amp; Transmit button must
+    /// live-disable -- otherwise clicking it would try to start a second, overlapping transmission.
+    /// 2026-09-19: opening a SECOND editor is no longer reachable once Apply keeps the first one
+    /// open with real content, so this now exercises the SAME editor instance throughout, which is
+    /// the only shape this scenario can take anymore.</summary>
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_ApplyAndTransmitCommand_DisablesWhileSidebarTransmitIsRunning()
     {
@@ -4704,25 +4523,24 @@ public sealed class PaneViewModelTests
         var filePicker = new FakeFilePickerService();
         var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        firstEditor.ApplyCommand.Execute(null);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.TransmitCommand.CanExecute(null));
+        Assert.True(editor.ApplyAndTransmitCommand.CanExecute(null));
 
         sstvSession.BlockUntilCancelled = true;
         var transmitTask = vm.TransmitCommand.ExecuteAsync(null);
 
-        // A second editor open (e.g. re-editing while the first transmission is still running) --
-        // its Apply & Transmit must reflect the PARENT's live IsTransmitting, not just its own
-        // freshly-constructed state.
-        var secondEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        Assert.False(secondEditor.ApplyAndTransmitCommand.CanExecute(null));
+        // The SAME still-open editor's Apply & Transmit must reflect the PARENT's live
+        // IsTransmitting, not just its own freshly-constructed state.
+        Assert.False(editor.ApplyAndTransmitCommand.CanExecute(null));
 
         vm.StopTransmitCommand.Execute(null);
         await transmitTask;
         Dispatcher.UIThread.RunJobs();
 
-        Assert.True(secondEditor.ApplyAndTransmitCommand.CanExecute(null));
+        Assert.True(editor.ApplyAndTransmitCommand.CanExecute(null));
     }
 
     [AvaloniaFact]
@@ -4951,27 +4769,6 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_CancellingReEditOfAnAlreadyAppliedImage_DoesNotReopenBlankEditor()
-    {
-        // Must NOT auto-reopen blank here -- SelectedFileName is set (something was already
-        // applied), so an auto-reopen would silently discard the applied state the operator is
-        // still meant to see/transmit.
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        firstEditor.ApplyCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
-
-        reopenedEditor.CancelCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.False(vm.IsEditorOpen);
-    }
-
-    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_CancellingEditor_DisposesTheDiscardedEditor()
     {
         // Tier-0 audit follow-up (production_audit.md): TxImageEditorPaneViewModel.Dispose() is now
@@ -4995,12 +4792,11 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ApplyingEditor_DisposesTheAppliedEditor()
+    public async Task TxControlsPaneViewModel_ApplyingEditor_KeepsTheAppliedEditorOpenAndAlive()
     {
-        // Same Dispose()-wiring follow-up as the Cancel test above, for the OnEditorApplied discard
-        // site -- the more common real-world path (Apply, not Cancel). PreviewImage (also derived
-        // from _loadedImage's own ToBitmap conversion, NOT from the pool) stays valid after Apply --
-        // only the discarded EDITOR's own WorkingCopyBitmap must be gone.
+        // 2026-09-19 user request: Apply no longer closes/disposes the editor -- the operator's
+        // canvas stays exactly as it was. Same WorkingCopyBitmap-liveness proxy the old Dispose()-
+        // wiring test used, now asserting the OPPOSITE outcome.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
@@ -5012,8 +4808,9 @@ public sealed class PaneViewModelTests
         editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)appliedEditorBitmap!).Lock());
-        Assert.False(vm.IsEditorOpen);
+        ((WriteableBitmap)appliedEditorBitmap!).Lock().Dispose(); // does not throw -- still alive
+        Assert.True(vm.IsEditorOpen);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
     }
 
     [AvaloniaFact]
@@ -5390,13 +5187,14 @@ public sealed class PaneViewModelTests
         // Tier B audit finding (blocker): OnSelectedModeChanged's blank-editor branch used to
         // `return` right after reopening the blank editor, which ALSO skipped the reflow below --
         // but a blank/untouched editor being open says nothing about whether _editState is null.
-        // Real, UI-reachable sequence: Apply an image (sets _editState/_loadedImage at modeA's
-        // dimensions), THEN click "Open blank editor" directly (OpenBlankEditorCommand is gated on
-        // CanChangeSourceOrMode = !IsEditorOpen, true again once Apply closed the editor -- nothing
-        // about that gate requires _editState to be null). _editState survives untouched. Changing
-        // mode with the blank editor now open used to leave _loadedImage stale at modeA's pixel
-        // dimensions while SelectedMode moved to modeB -- a mismatch AnalogFmSstvEncoder throws on,
-        // surfacing only as a context-free "Transmit failed".
+        // Real, UI-reachable sequence (2026-09-19: reached via "New Template" now that Apply no
+        // longer closes the editor by itself): Apply an image (sets _editState/_loadedImage at
+        // modeA's dimensions, editor stays open with real content), THEN click "New Template"
+        // (CancelCommand -- the only remaining editor-closing action, and OnEditorCancelled always
+        // auto-reopens a fresh blank editor). _editState survives untouched (Cancel doesn't clear a
+        // prior Apply's state). Changing mode with the blank editor now open used to leave
+        // _loadedImage stale at modeA's pixel dimensions while SelectedMode moved to modeB -- a
+        // mismatch AnalogFmSstvEncoder throws on, surfacing only as a context-free "Transmit failed".
         var modeA = TestMode;
         var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
         var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
@@ -5410,7 +5208,8 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.Equal((modeA.ImageWidth, modeA.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
 
-        await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        editor.ConfirmRequested = _ => Task.FromResult(true);
+        await OpenEditorAsync(vm, () => editor.CancelCommand.ExecuteAsync(null));
         Assert.True(vm.IsEditorOpen);
 
         vm.SelectedMode = modeB;
@@ -5476,8 +5275,8 @@ public sealed class PaneViewModelTests
     public async Task TxControlsPaneViewModel_SelectImageCommand_PickerThrows_SetsErrorMessage()
     {
         // Tier B audit finding: every sibling failure path (OpenEditorForSourceAsync,
-        // OpenEditorWithLoadedSourceAsync, EditCurrentImageAsync) sets ErrorMessage on failure --
-        // this one didn't, so a picker failure was indistinguishable from the user pressing Cancel.
+        // OpenEditorWithLoadedSourceAsync) sets ErrorMessage on failure -- this one didn't, so a
+        // picker failure was indistinguishable from the user pressing Cancel.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var filePicker = new FakeFilePickerService { ThrowOnPickImageFile = new InvalidOperationException("picker unavailable") };
         var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
@@ -5489,26 +5288,32 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_CancellingTheEditor_LeavesAnyPreviouslyAppliedImageUntouched()
+    public async Task TxControlsPaneViewModel_DecliningNewTemplateConfirm_LeavesThePreviouslyAppliedImageUntouched()
     {
+        // 2026-09-19: opening a SECOND editor after Apply is no longer reachable (Apply keeps the
+        // first one open with real content) -- the still-relevant scenario this test now covers is
+        // declining "New Template"'s own confirm dialog, which must leave the applied state exactly
+        // as it was, same editor instance and all.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
         var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
         var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        firstEditor.ApplyCommand.Execute(null);
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.TransmitCommand.CanExecute(null));
-        var loadedAfterFirstApply = ExtractLoadedImage(vm);
+        var loadedAfterApply = ExtractLoadedImage(vm);
 
-        filePicker.PathToReturn = "/tmp/b.png";
-        var secondEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        secondEditor.CancelCommand.Execute(null);
+        editor.AddOverlayElementCommand.Execute(null); // a real unsaved edit, so Cancel must confirm
+        editor.ConfirmRequested = _ => Task.FromResult(false); // operator declines "New Template"
+        await editor.CancelCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
+        Assert.True(vm.IsEditorOpen);
+        Assert.Same(editor, ExtractCurrentEditor(vm));
         Assert.True(vm.TransmitCommand.CanExecute(null));
-        Assert.Same(loadedAfterFirstApply, ExtractLoadedImage(vm));
+        Assert.Same(loadedAfterApply, ExtractLoadedImage(vm));
         Assert.Equal("a.png", vm.SelectedFileName);
     }
 
@@ -5594,107 +5399,6 @@ public sealed class PaneViewModelTests
         var adjustments = preparer.Adjustments[^1];
         Assert.Equal(33, adjustments.Brightness);
         Assert.Equal(77, adjustments.Sharpen);
-    }
-
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_EditCurrentImage_CanExecuteOnlyAfterAnAppliedEdit_AndNotWhileAnEditorIsOpen()
-    {
-        // spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply.
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-
-        Assert.False(vm.EditCurrentImageCommand.CanExecute(null));
-
-        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        Assert.False(vm.EditCurrentImageCommand.CanExecute(null), "Must stay disabled while the FIRST editor is still open.");
-
-        // Round-1 plan-review blocker: _editState is a plain field, not observable, so nothing
-        // re-evaluates CanExecute unless something explicitly calls NotifyCanExecuteChanged() --
-        // calling CanExecute(null) directly (as above) re-evaluates the predicate fresh regardless
-        // of that wiring, so it CANNOT catch a missing NotifyCanExecuteChanged() call; only
-        // asserting the CanExecuteChanged EVENT actually fires (the real, observable effect a
-        // bound Button's own IsEnabled relies on) can.
-        var canExecuteChangedFireCount = 0;
-        vm.EditCurrentImageCommand.CanExecuteChanged += (_, _) => canExecuteChangedFireCount++;
-
-        editor.ApplyCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.True(canExecuteChangedFireCount > 0, "EditCurrentImageCommand.CanExecuteChanged must fire after Apply, or a bound Button would never actually enable.");
-        Assert.True(vm.EditCurrentImageCommand.CanExecute(null));
-    }
-
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_EditCurrentImage_ReopensWithTheRetainedCropPreserveAspectAndAdjustments()
-    {
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        firstEditor.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
-        firstEditor.PreserveAspect = false;
-        firstEditor.Brightness = 42;
-        firstEditor.ApplyCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
-
-        Assert.Equal(new NormalizedRect(0.1, 0.2, 0.3, 0.4), reopenedEditor.CropRect);
-        Assert.False(reopenedEditor.PreserveAspect);
-        Assert.Equal(42, reopenedEditor.Brightness);
-    }
-
-    [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_EditCurrentImage_RestoresOverlayTextWithItsRawMacroTemplate_NotResolvedOrProjected()
-    {
-        // Round-1 plan-review blocker: an earlier draft of this feature deferred overlay
-        // restoration entirely, which turned out to be a SILENT DESTRUCTIVE-EDIT bug -- Edit then
-        // Apply again would have permanently discarded any overlay text the user had added. Fixed
-        // by retaining a RAW (photo-anchored, un-macro-resolved) snapshot in EditState, separate
-        // from the crop-projected/macro-resolved ImageOverlay OnSelectedModeChanged's own reflow
-        // needs. This test pins that the raw TEMPLATE survives a round trip, not the resolved text.
-        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
-        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
-        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
-        var preparer = new FakeTransmitImagePreparer();
-        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), preparer, filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
-        var firstEditor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
-        // Code-review finding: the CAPTURE side of this round trip (TxImageEditorPaneViewModel.
-        // RawOverlayElements, read at Apply time) had zero coverage -- only the CONSTRUCTOR's own
-        // consume side was pinned elsewhere. A non-identity crop makes the distinction observable:
-        // if the raw snapshot leaked the CROP-PROJECTED coordinates instead (the exact bug this
-        // mechanism exists to avoid), X/Y would read back near 0.5 (the crop-projected value for
-        // this particular crop+element), not the real 0.25/0.75 set below.
-        firstEditor.CropRect = new NormalizedRect(0.1, 0.2, 0.3, 0.4);
-        firstEditor.AddOverlayElementCommand.Execute(null);
-        var firstElement = (OverlayElementViewModel)firstEditor.OverlayElements[0];
-        firstElement.Text = "DE %m";
-        firstElement.X = 0.25;
-        firstElement.Y = 0.75;
-        firstElement.FontSizeRelative = 0.15;
-        firstElement.Color = new Rgb24(10, 20, 30);
-        firstEditor.ApplyCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-
-        var reopenedEditor = await OpenEditorAsync(vm, () => vm.EditCurrentImageCommand.ExecuteAsync(null));
-
-        var element = (OverlayElementViewModel)Assert.Single(reopenedEditor.OverlayElements);
-        Assert.Equal("DE %m", element.Text);
-        Assert.Equal(0.25, element.X);
-        Assert.Equal(0.75, element.Y);
-        Assert.Equal(0.15, element.FontSizeRelative);
-        Assert.Equal(new Rgb24(10, 20, 30), element.Color);
-
-        // Re-applying with no further edits must NOT destroy the restored overlay text -- the
-        // exact regression the deferred-restoration draft would have introduced.
-        reopenedEditor.ApplyCommand.Execute(null);
-        Dispatcher.UIThread.RunJobs();
-        Assert.Single(preparer.TemplateDocuments[^1].Elements);
     }
 
     [AvaloniaFact]
@@ -5901,11 +5605,22 @@ public sealed class PaneViewModelTests
         Assert.Equal(modeA.Id, vm.SelectedMode?.Id);
     }
 
+    /// <summary>2026-09-19: this used to block auto-follow entirely whenever the editor was open,
+    /// as a blunt guard against the stale-mode crash (see this file's own historical incident notes)
+    /// from before <c>ReplaceEditorForModeSwitch</c> existed. That mechanism (built and audited
+    /// earlier this session specifically to make an editor-open mode switch safe) is the real fix
+    /// now, and legacy's own <c>TrackTxMode</c> (<c>Main.cpp:4907-4914</c>) has no editor/window-open
+    /// check at all -- it follows RX mode regardless of what's on the TX side, gated only on
+    /// Fixed-TX-Mode/TX-active/width-match. Rewritten to prove the real fix: auto-follow now goes
+    /// through even with a real, non-blank editor open, and the editor reflows safely instead of
+    /// crashing or going stale.</summary>
     [AvaloniaFact]
-    public async Task TxControlsPaneViewModel_ModeDetected_WhileEditorOpen_DoesNotChangeSelectedMode()
+    public async Task TxControlsPaneViewModel_ModeDetected_WhileEditorOpen_FollowsAndSafelyReflowsTheEditor()
     {
         var modeA = TestMode;
-        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        // Same width as modeA -- auto-follow's own width-match guard (ported from legacy's
+        // TrackTxMode) requires this; a different HEIGHT is enough to still prove a genuine reflow.
+        var modeB = TestMode with { Id = "other", ImageWidth = 1, ImageHeight = 3 };
         var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
         var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
         var settingsStore = new FakeSettingsStore
@@ -5919,17 +5634,22 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
         vm.SelectedMode = modeA;
 
-        await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        var editor = await OpenEditorAsync(vm, () => vm.SelectImageCommand.ExecuteAsync(null));
+        editor.ApplyCommand.Execute(null); // populates _editState/_loadedImage -- Apply no longer closes the editor
+        Dispatcher.UIThread.RunJobs();
         Assert.True(vm.IsEditorOpen);
-        Assert.True(vm.AutoFollowRxMode); // otherwise this test would pass vacuously through the
-                                           // guard's OTHER half even if the IsEditorOpen check were deleted
+        Assert.True(vm.AutoFollowRxMode);
 
-        // An RX-driven auto-follow firing while the TX editor is open is a real, easy-to-hit repro
-        // of the stale-mode crash -- no manual mode-change interaction needed at all.
         sstvSession.RaiseModeDetected(modeB);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Equal("test", vm.SelectedMode?.Id);
+        Assert.Equal("other", vm.SelectedMode?.Id);
+        Assert.True(vm.IsEditorOpen);
+        var reflowedEditor = ExtractCurrentEditor(vm)!;
+        Assert.NotSame(editor, reflowedEditor); // TargetModeHeightPx is init-only -- a new instance
+        // CurrentSource stays the ORIGINAL, un-resized photo (the editor carries the same picture
+        // forward, it doesn't pre-resize it) -- the actual TX-ready pipeline output is _loadedImage.
+        Assert.Equal((modeB.ImageWidth, modeB.ImageHeight), (ExtractLoadedImage(vm)!.Width, ExtractLoadedImage(vm)!.Height));
     }
 
     /// <summary>Covers <see cref="TxControlsPaneViewModel.IsEditorOpen"/>'s own open/close lifecycle
@@ -5937,9 +5657,9 @@ public sealed class PaneViewModelTests
     /// ComboBox in <c>TxControlsPaneView.axaml</c> (code-review nit; still not exercised by any
     /// automated test here). That binding sits directly under this view's own root
     /// <c>x:DataType="vm:TxControlsPaneViewModel"</c>, so Avalonia compiles and type-checks it at
-    /// build time -- a path typo would be a build error, not a silent runtime failure. Real-window
-    /// verified: the mode ComboBox visibly greys out the moment the TX editor opens (Browse -&gt;
-    /// pick an image) and re-enables on Cancel.</summary>
+    /// build time -- a path typo would be a build error, not a silent runtime failure.
+    /// 2026-09-19: Apply no longer closes the editor -- only "New Template" (CancelCommand) does,
+    /// so that is what this test now exercises for the close half of the lifecycle.</summary>
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_IsEditorOpen_TracksTheEditorOpenCloseLifecycle()
     {
@@ -5955,8 +5675,13 @@ public sealed class PaneViewModelTests
 
         editor.ApplyCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.IsEditorOpen, "Apply must keep the editor open.");
 
-        Assert.False(vm.IsEditorOpen);
+        editor.ConfirmRequested = _ => Task.FromResult(true);
+        await editor.CancelCommand.ExecuteAsync(null); // "New Template" -- the only remaining close path
+
+        Assert.True(vm.IsEditorOpen); // auto-reopened blank, per OnEditorCancelled's own contract
+        Assert.NotSame(editor, ExtractCurrentEditor(vm));
     }
 
     [AvaloniaFact]

@@ -111,18 +111,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// that just hasn't been edited yet (both start with an empty undo stack); only the blank
     /// placeholder is safe to silently swap out on a mode switch, a manually-picked real photo never
     /// is, edited or not. Set alongside every <c>IsEditorOpen = true</c> assignment (this class's own
-    /// existing 3-writer convention: <see cref="OpenEditorForSourceAsync"/>/
-    /// <see cref="OpenBlankEditorAsync"/>/<see cref="EditCurrentImageAsync"/>).</summary>
+    /// existing 2-writer convention: <see cref="OpenEditorForSourceAsync"/>/
+    /// <see cref="OpenBlankEditorAsync"/>).</summary>
     private bool _currentEditorIsBlank;
 
     /// <summary>Mode-switch-mid-edit feature: the filename to close over for whichever editor is
     /// CURRENTLY open, for <see cref="ReplaceEditorForModeSwitch"/>'s own
-    /// Applied/AppliedAndTransmitRequested/DirectFireRequested wiring. <see cref="SelectedFileName"/>
-    /// can't serve this purpose -- it's only ever set by <see cref="OnEditorApplied"/>/
-    /// <see cref="ResendSentFrame"/>, so it's <see langword="null"/> for a blank or
-    /// just-opened-but-not-yet-applied editor, exactly the population a mid-edit mode switch targets.
-    /// Set alongside every editor construction (<see cref="OpenEditorWithLoadedSourceAsync"/>,
-    /// <see cref="ReopenEditorFromCurrentStateAsync"/>), cleared alongside every
+    /// Applied/AppliedAndTransmitRequested wiring. <see cref="SelectedFileName"/> can't serve this
+    /// purpose -- it's only ever set by <see cref="OnEditorApplied"/>, so it's
+    /// <see langword="null"/> for a blank or just-opened-but-not-yet-applied editor, exactly the
+    /// population a mid-edit mode switch targets. Set alongside every editor construction
+    /// (<see cref="OpenEditorWithLoadedSourceAsync"/>), cleared alongside every
     /// <c>_currentEditor = null</c>.</summary>
     private string? _currentEditorFileName;
 
@@ -806,23 +805,18 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="SelectedMode"/>, same pattern as <c>RadioStatusViewModel.OnStateChanged</c>.</summary>
     private void OnModeDetected(SstvModeDefinition mode)
     {
-        // IsEditorOpen AND AutoFollowRxMode are both re-checked INSIDE the posted lambda, not before
-        // Post -- this method runs on the audio drain thread (this method's own doc comment above)
-        // but both are only ever written on the UI thread, so a bare pre-Post read here has no
-        // guaranteed visibility of a UI-thread write that raced it (code-review finding on
-        // spec/18-path-to-1.0.md High item 2: a stale "not open yet" read could let this slip
-        // through right as the editor opens, reintroducing the exact crash this whole fix targets --
-        // AutoFollowRxMode is the same class of read, Tier B audit finding: it was left outside the
-        // Post when IsEditorOpen was moved in for this exact reason, risking a stale-true read right
-        // after the operator un-ticked auto-follow performing an unwanted mode change). Checking
-        // again once already marshalled onto the UI thread is race-free. IsTransmitting/_loadedImage
-        // are the same class of UI-thread-only-written state (set from TransmitAsync/
-        // OnSelectedModeChanged, both RelayCommand/partial-property-changed methods that only ever
-        // run on the UI thread) -- checked inside the Post lambda for the identical reason.
+        // AutoFollowRxMode is re-checked INSIDE the posted lambda, not before Post -- this method
+        // runs on the audio drain thread (this method's own doc comment above) but is only ever
+        // written on the UI thread, so a bare pre-Post read here has no guaranteed visibility of a
+        // UI-thread write that raced it (Tier B audit finding: a stale-true read right after the
+        // operator un-ticked auto-follow could perform an unwanted mode change). Checking again once
+        // already marshalled onto the UI thread is race-free. IsTransmitting/IsRunningLoopbackSelfTest/
+        // _loadedImage are the same class of UI-thread-only-written state (set from TransmitAsync/
+        // RunLoopbackSelfTestAsync/OnSelectedModeChanged, all RelayCommand/partial-property-changed
+        // methods that only ever run on the UI thread) -- checked inside the Post lambda for the
+        // identical reason.
         //
-        // Two legacy guards added here (`TrackTxMode`, `Main.cpp:4907-4915`) that this method
-        // previously lacked (spec/18-path-to-1.0.md gap, flagged 2026-08-25 during the SBAuto
-        // RX-pause work):
+        // Two legacy guards ported here (`TrackTxMode`, `Main.cpp:4907-4915`):
         //
         // `!SBTX->Down` -- don't switch TX mode while actively transmitting. This port's
         // TransmitAsync captures SelectedMode/_loadedImage into locals at its own start, so an
@@ -832,28 +826,39 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // sending an unrelated one, and would corrupt whatever gets queued for the NEXT transmit.
         //
         // `m_RXW == pBitmapTX->Width` -- only follow when the detected RX mode's own image width
-        // matches the currently loaded TX image's width. Load-bearing given this port's own
-        // architecture, not just a literal port for its own sake: OnSelectedModeChanged
-        // unconditionally crops/resizes/reflows _loadedImage to whatever mode is newly selected
-        // (see that method's own doc comment) -- without this guard, auto-follow detecting a
-        // different-width mode would silently re-crop an already-framed TX image the operator
-        // deliberately prepared. No width check at all when nothing is loaded yet (_loadedImage is
-        // null): there is nothing to protect. This IS a deliberate deviation from legacy, not a
-        // literal-equivalence claim -- legacy's own pBitmapTX always exists (allocated at
-        // construction, Main.cpp:968) and is always sized to the current TX mode, so legacy's width
-        // check is always live even against a blank TX bitmap; this port's own _loadedImage
-        // genuinely can be null (nothing picked for TX yet), and OnSelectedModeChanged's own
-        // `value is null || _editState is null` branch makes a reflow attempt there a real no-op
-        // regardless, so skipping the check in that case changes no IMAGE state -- SelectedMode
-        // itself (and the mode dropdown/"Auto picks" row it drives) still follows, unlike legacy.
+        // matches the CURRENT TX mode's width. Legacy's own pBitmapTX always exists (allocated at
+        // construction, Main.cpp:968) and is unconditionally resized to whatever the TX mode is
+        // (ChangeTxMode, Main.cpp:13077-13078) -- so its width check is always live, blank bitmap or
+        // not. This port's real analogue of "the current TX mode's width" is SelectedMode.ImageWidth,
+        // not _loadedImage's width (_loadedImage is null until something is actually Applied, so
+        // comparing against it would skip the check entirely for a real, unapplied photo sitting in
+        // an open editor -- see the 2026-09-19 code-review finding below).
+        //
+        // 2026-09-19 user-directed fix: dropped this port's own IsEditorOpen guard, which legacy has
+        // no equivalent of at all -- `TrackTxMode` checks only Fixed-TX-Mode/TX-active/width-match,
+        // nothing about window state (legacy doesn't even have a separate TX editing window; it's a
+        // tab on the main form). That extra guard made sense while Apply closed the editor
+        // (IsEditorOpen then meant "actively mid-edit, unapplied"), but now that Apply leaves the
+        // editor open permanently, it silently disabled auto-follow for the rest of every session
+        // after the first Apply -- confirmed a real regression, not a design choice worth keeping.
+        //
+        // Code-review finding (yoniq-auditor, same day): the first draft of this fix compared against
+        // _loadedImage's width, which is null until the first Apply -- so a real, unapplied photo
+        // (loaded via Browse/Stock but not yet Applied) sitting in an open editor got NO width check
+        // at all, letting an RX detect of any width silently rebuild that editor via
+        // ReplaceEditorForModeSwitch below, discarding its undo stack with no operator action. Fixed
+        // by skipping the width check only when it's genuinely safe to replace the editor -- no
+        // editor open at all, or the open one is blank/untouched (same "safe to disrupt" predicate
+        // CanChangeSourceOrMode already uses) -- and comparing SelectedMode's own width otherwise.
         Dispatcher.UIThread.Post(() =>
         {
-            if (!AutoFollowRxMode || IsEditorOpen || IsTransmitting)
+            if (!AutoFollowRxMode || IsTransmitting || IsRunningLoopbackSelfTest)
             {
                 return;
             }
 
-            if (_loadedImage is { } loaded && loaded.Width != mode.ImageWidth)
+            var safeToReplaceEditor = !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
+            if (!safeToReplaceEditor && SelectedMode is { } current && current.ImageWidth != mode.ImageWidth)
             {
                 return;
             }
@@ -1044,16 +1049,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>Keeps the quick-mode-grid buttons' enabled state in sync with
     /// <see cref="IsEditorOpen"/> -- <see cref="CanQuickSelectMode"/> alone only re-evaluates when
-    /// something explicitly requests it. <see cref="EditCurrentImageCommand"/> piggybacks on this
-    /// same hook (round-1 plan-review finding) -- <see cref="_editState"/> is a plain field, not
-    /// observable, so nothing else would ever re-evaluate its own CanExecute; this fires after BOTH
-    /// <see cref="OnEditorApplied"/> (which just set <see cref="_editState"/>) and
-    /// <see cref="OnEditorCancelled"/>, since both set <see cref="IsEditorOpen"/> =
-    /// <see langword="false"/>.</summary>
+    /// something explicitly requests it. Fires on both "New Template" (<see cref="OnEditorCancelled"/>)
+    /// and every editor open, which are now the only two things that toggle
+    /// <see cref="IsEditorOpen"/> (2026-09-19: Apply/Apply &amp; Transmit no longer do -- see
+    /// <see cref="OnEditorApplied"/>'s own doc comment for why it re-notifies these same two
+    /// members directly instead).</summary>
     partial void OnIsEditorOpenChanged(bool value)
     {
         QuickSelectModeCommand.NotifyCanExecuteChanged();
-        EditCurrentImageCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(CanChangeSourceOrMode));
     }
 
@@ -1111,9 +1114,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             // Tier B audit finding: every sibling failure path here (OpenEditorForSourceAsync,
-            // OpenEditorWithLoadedSourceAsync, EditCurrentImageAsync) sets ErrorMessage on failure --
-            // this one didn't, so a picker failure (platform picker unavailable, revoked filesystem
-            // access) was indistinguishable from the user simply pressing Cancel.
+            // OpenEditorWithLoadedSourceAsync) sets ErrorMessage on failure -- this one didn't, so a
+            // picker failure (platform picker unavailable, revoked filesystem access) was
+            // indistinguishable from the user simply pressing Cancel.
             Log.PickImageFileFailed(_logger, ex);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             return;
@@ -1501,7 +1504,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 currentContactProvider: seedLiveContact ? BuildCurrentContactVariables : null);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
-            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1535,6 +1537,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>User-requested (2026-09-19): "when TX keyed, don't remove the edit picture, just
+    /// keep it as is" -- Apply (and Apply &amp; Transmit, via <see cref="OnEditorAppliedAndTransmit"/>)
+    /// used to close/dispose the editor immediately after every apply, matching the "New Template"
+    /// button (<see cref="OnEditorCancelled"/>) as the ONLY thing that closes it now. Still captures
+    /// every state field a later mode-switch/Resend/TX-history read needs
+    /// (<see cref="_editState"/>/<see cref="_loadedImage"/>/<see cref="PreviewImage"/>/
+    /// <see cref="SelectedFileName"/>) -- only the close/dispose/<see cref="EditorClosed"/>-fire steps
+    /// are gone. <see cref="_currentEditorIsBlank"/> is still set <see langword="false"/> here (an
+    /// applied editor is no longer the untouched blank placeholder) and <see cref="_currentEditorFileName"/>
+    /// is deliberately left untouched (already correctly set moments earlier in this same method, and
+    /// <see cref="_currentEditor"/> is never nulled anymore so there is nothing to keep it in sync
+    /// with). 3-round `yoniq-auditor` finding: with <see cref="IsEditorOpen"/> no longer toggling,
+    /// <see cref="OnIsEditorOpenChanged"/>'s own notifications never fire for this transition anymore
+    /// -- <see cref="QuickSelectModeCommand"/> and <see cref="CanChangeSourceOrMode"/>/
+    /// <see cref="CanLoadBackground"/> must be re-notified directly here, or Browse/Stock/Copy-to-TX/
+    /// the mode ComboBox would stay visibly enabled while silently refusing underneath (the same
+    /// "enabled but inert" regression class this codebase has hit and fixed before, see
+    /// <see cref="CanChangeSourceOrMode"/>'s own doc comment).</summary>
     private void OnEditorApplied(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
         if (!ReferenceEquals(editor, _currentEditor)) return;
@@ -1551,23 +1571,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
         ErrorMessage = null;
-        IsEditorOpen = false;
-        _currentEditor?.Dispose();
-        _currentEditor = null;
         _currentEditorIsBlank = false;
-        _currentEditorFileName = null;
         TransmitCommand.NotifyCanExecuteChanged();
-        EditorClosed?.Invoke();
+        QuickSelectModeCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(CanChangeSourceOrMode));
+        OnPropertyChanged(nameof(CanLoadBackground));
     }
 
     /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's "Apply &amp; Transmit" chain --
-    /// closes the editor exactly like a plain Apply (<see cref="OnEditorApplied"/>), then starts
-    /// the transmission itself. Re-checks <see cref="CanTransmit"/> rather than trusting the
-    /// editor's own (necessarily slightly stale) gate: OnEditorApplied above already ran by the
-    /// time this checks, so _loadedImage is guaranteed non-null here, but IsTransmitting/
-    /// IsRunningLoopbackSelfTest could in principle have flipped true between the button click and
-    /// this handler running (both are UI-thread-only today, so not reachable in practice, but the
-    /// guard costs nothing and avoids depending on that staying true).</summary>
+    /// applies exactly like a plain Apply (<see cref="OnEditorApplied"/>, which no longer closes the
+    /// editor, 2026-09-19), then starts the transmission itself. Re-checks <see cref="CanTransmit"/>
+    /// rather than trusting the editor's own (necessarily slightly stale) gate: OnEditorApplied above
+    /// already ran by the time this checks, so _loadedImage is guaranteed non-null here, but
+    /// IsTransmitting/IsRunningLoopbackSelfTest could in principle have flipped true between the
+    /// button click and this handler running (both are UI-thread-only today, so not reachable in
+    /// practice, but the guard costs nothing and avoids depending on that staying true).</summary>
     private void OnEditorAppliedAndTransmit(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
     {
         if (!ReferenceEquals(editor, _currentEditor)) return;
@@ -1576,35 +1594,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         {
             TransmitCommand.Execute(null);
         }
-    }
-
-    /// <summary>Ready Rack direct-fire plan (2026-09-01): the SAME close+transmit steps
-    /// <see cref="OnEditorAppliedAndTransmit"/> does, PLUS an immediate reopen afterward -- the
-    /// editor (and the Ready Rack living inside it) closing with nothing reopening it would end the
-    /// pileup loop this whole feature exists for after exactly one fire (round-1 plan-review
-    /// blocker). The reopen goes through the SAME <see cref="ReopenEditorFromCurrentStateAsync"/>
-    /// path <see cref="EditCurrentImageAsync"/> uses (real photo + just-fired overlay both carry
-    /// forward -- a template load only ever replaces the OVERLAY, never the photo, so the NEXT
-    /// Ctrl+N correctly swaps only the overlay).
-    ///
-    /// Code-review finding: the reopen INHERITS <paramref name="editor"/>'s own
-    /// <see cref="TxImageEditorPaneViewModel.CurrentContactProvider"/> -- it does NOT unconditionally
-    /// pass <see cref="BuildCurrentContactVariables"/>. A Gallery-sourced editor (opened with a
-    /// <see langword="null"/> provider specifically so the live RX contact never leaks onto a source
-    /// with no linked QSO) must stay unseeded through every subsequent reopen in its own pileup-fire
-    /// chain, not just its first fire -- unconditionally re-arming a live provider on reopen would
-    /// reintroduce that exact leak, just delayed by one fire. An editor opened via Browse/Stock/
-    /// Blank/Copy-to-TX (which DO carry a live provider from construction, see
-    /// <see cref="OpenEditorWithLoadedSourceAsync"/>'s own doc comment) correctly keeps live-tracking
-    /// across every reopen too, by the same inheritance. A parallel sibling to the ordinary
-    /// Apply&amp;Transmit path, not a modification to it -- that path's own "close and leave empty"
-    /// behavior is completely unchanged.</summary>
-    private async void OnEditorDirectFire(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
-    {
-        if (!ReferenceEquals(editor, _currentEditor)) return;
-        var contactProvider = editor.CurrentContactProvider;
-        OnEditorAppliedAndTransmit(fileName, editor, final);
-        await ReopenEditorFromCurrentStateAsync(contactProvider);
     }
 
     /// <summary>Auditor-found regression (2026-08-17, usability-gap review): with the editor now
@@ -1637,6 +1626,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         EditorClosed?.Invoke();
     }
 
+    /// <summary>"New Template" (<c>CancelCommand</c>, relabeled 2026-09-15 -- see
+    /// <c>TxImageEditorPaneViewModel.CancelAsync</c>'s own doc comment) -- user-requested (2026-09-19):
+    /// this is now the ONLY action that closes/discards the current editor; Apply/Apply &amp; Transmit
+    /// no longer do (see <see cref="OnEditorApplied"/>'s own doc comment). Always reopens a fresh blank
+    /// editor afterward, unconditionally -- simplified from an earlier version that only did this when
+    /// nothing had ever been applied yet, a check that existed solely to protect the now-removed
+    /// "Edit current image" re-edit-then-cancel flow from losing its already-applied state. With that
+    /// flow gone, "New Template" always promising a fresh blank canvas afterward is simpler and
+    /// correct.</summary>
     private void OnEditorCancelled()
     {
         IsEditorOpen = false;
@@ -1645,20 +1643,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditorIsBlank = false;
         _currentEditorFileName = null;
         EditorClosed?.Invoke();
-
-        // Backlog item (user request, 2026-08-17): "should ALWAYS open the editor by default" --
-        // backing out via Cancel would otherwise leave the center column empty again, reintroducing
-        // the exact friction this whole item was about. Re-open blank immediately, but ONLY when
-        // nothing has ever been applied yet -- this must NOT fire after cancelling a re-edit of an
-        // ALREADY applied image (EditCurrentImageCommand), which would silently discard the applied
-        // state the operator is still meant to see/transmit. SelectedFileName is set by
-        // OnEditorApplied AND by ResendSentFrame (TX history plan, 2026-09-01) -- both cases still
-        // correctly represent "something is currently loaded," so this check is unaffected by the
-        // second writer.
-        if (SelectedFileName is null)
-        {
-            _ = OpenBlankEditorAsync();
-        }
+        _ = OpenBlankEditorAsync();
     }
 
     /// <summary>Re-evaluates <see cref="QuickSelectModeCommand"/>'s
@@ -1690,125 +1675,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private bool CanEditCurrentImage() => _editState is not null && !IsEditorOpen;
-
-    /// <summary>spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply -- no
-    /// fresh <see cref="IImageFileLoader"/>/<see cref="IStockImageLibrary"/> I/O needed, unlike
-    /// <see cref="OpenEditorForSourceAsync"/> (round-1 plan-review confirmed: <see cref="_editState"/>'s
-    /// own <c>Original</c> is already fully in memory, reflecting every prior Rotate too -- see
-    /// <see cref="OnEditorApplied"/>'s own doc comment on why it's captured from
-    /// <c>editor.CurrentSource</c>). Still async (operator-settings reload) and still wrapped in
-    /// the same construction try/catch <see cref="OpenEditorForSourceAsync"/> uses -- round-1
-    /// finding: <c>BuildWorkingCopy</c>/<c>ToBitmap</c> inside the editor's own constructor can
-    /// still throw, and an uncaught throw here would leave <see cref="IsEditorOpen"/> stuck
-    /// <see langword="true"/> forever with no editor to Cancel, permanently freezing
-    /// <see cref="SelectedMode"/>/quick-grid/RX auto-follow (see
-    /// <see cref="IsEditorOpen"/>'s own doc comment).</summary>
-    [RelayCommand(CanExecute = nameof(CanEditCurrentImage))]
-    private async Task EditCurrentImageAsync() =>
-        // Ready Rack direct-fire plan (2026-09-01): thin wrapper -- passes no contact provider, same
-        // exact behavior as before this feature existed. See ReopenEditorFromCurrentStateAsync's own
-        // doc comment for why the ordinary manual "Edit Image" click must never leak the live RX
-        // contact into an unrelated re-edit.
-        await ReopenEditorFromCurrentStateAsync(currentContactProvider: null);
-
-    /// <summary>spec/18-path-to-1.0.md Medium item: re-open/re-edit an image after Apply -- no
-    /// fresh <see cref="IImageFileLoader"/>/<see cref="IStockImageLibrary"/> I/O needed, unlike
-    /// <see cref="OpenEditorForSourceAsync"/> (round-1 plan-review confirmed: <see cref="_editState"/>'s
-    /// own <c>Original</c> is already fully in memory, reflecting every prior Rotate too -- see
-    /// <see cref="OnEditorApplied"/>'s own doc comment on why it's captured from
-    /// <c>editor.CurrentSource</c>). Still async (operator-settings reload) and still wrapped in
-    /// the same construction try/catch <see cref="OpenEditorForSourceAsync"/> uses -- round-1
-    /// finding: <c>BuildWorkingCopy</c>/<c>ToBitmap</c> inside the editor's own constructor can
-    /// still throw, and an uncaught throw here would leave <see cref="IsEditorOpen"/> stuck
-    /// <see langword="true"/> forever with no editor to Cancel, permanently freezing
-    /// <see cref="SelectedMode"/>/quick-grid/RX auto-follow (see
-    /// <see cref="IsEditorOpen"/>'s own doc comment).
-    ///
-    /// Ready Rack direct-fire plan (2026-09-01): extracted from <see cref="EditCurrentImageAsync"/>'s
-    /// own former body (now a thin wrapper passing <see langword="null"/>) so
-    /// <see cref="OnEditorDirectFire"/>'s own post-fire reopen can reuse this EXACT construction
-    /// logic while ALSO passing a live <paramref name="currentContactProvider"/> -- the ordinary
-    /// manual "Edit Image" click keeps its precise prior behavior (no live-contact leak introduced by
-    /// this feature), only a direct-fire-triggered reopen gets the freshness capability.</summary>
-    private async Task ReopenEditorFromCurrentStateAsync(Func<IReadOnlyDictionary<string, string>?>? currentContactProvider)
-    {
-        // CanExecute alone isn't a hard gate -- CommunityToolkit's IAsyncRelayCommand.ExecuteAsync
-        // doesn't consult it, only Avalonia's Button.OnClick does (code-review finding, same
-        // doctrine QuickSelectMode already follows above). This body-level
-        // IsEditorOpen check is the real backstop -- without it, a direct ExecuteAsync call while
-        // an editor is already open would construct a SECOND editor and orphan the first (the
-        // first's own Applied/Cancelled handlers would still fire into a now-stale closure).
-        if (_editState is not { } edit || SelectedMode is not { } mode || IsEditorOpen)
-        {
-            Log.EditCurrentImageWithNoEditState(_logger);
-            return;
-        }
-
-        IsEditorOpen = true;
-        _currentEditorIsBlank = false;
-        ErrorMessage = null; // stale error from a prior failed pick/edit must not linger through this one
-        try
-        {
-            var operatorSettings = (await _settingsStore.LoadAsync())
-                .GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)
-                ?? new OperatorSettings();
-
-            var editor = new TxImageEditorPaneViewModel(
-                edit.Original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
-                _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
-                _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
-                new TxImageEditorPaneViewModel.EditorInitialState(edit.CropRect, edit.PreserveAspect, edit.Adjustments, edit.RawOverlay, edit.TemplateVariables),
-                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
-                macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
-                currentContactProvider: currentContactProvider);
-            // SelectedFileName! is safe here: OnEditorApplied always writes it in the same
-            // assignment that sets _editState. ResendSentFrame (TX history plan, 2026-09-01) is the
-            // only other writer, and it always nulls _editState in that same assignment too -- so
-            // _editState being non-null at this point (the guard above) still guarantees
-            // SelectedFileName was set by an OnEditorApplied, never left stale by a resend.
-            var fileName = SelectedFileName!;
-            editor.Applied += final => OnEditorApplied(fileName, editor, final);
-            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
-            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
-            editor.Cancelled += OnEditorCancelled;
-            editor.PropertyChanged += OnCurrentEditorPropertyChanged;
-            _currentEditor = editor;
-            _currentEditorFileName = fileName;
-            // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
-            // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
-            // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
-            // -- always false at that instant, regardless of whether this editor turns out to be
-            // blank). Nothing else re-notifies once _currentEditor actually gets attached, so
-            // QuickSelectMode's CanExecute and CanChangeSourceOrMode's own
-            // bindable value would silently stay stuck at their pre-open (disabled) reading forever
-            // -- confirmed live: the mode ComboBox stayed visibly greyed out after Cancel
-            // auto-reopened a fresh blank editor, even though the underlying state was correct.
-            QuickSelectModeCommand.NotifyCanExecuteChanged();
-            OnPropertyChanged(nameof(CanChangeSourceOrMode));
-            EditorOpened?.Invoke(editor);
-            _ = editor.ReadyRack.RefreshAsync();
-        }
-        catch (Exception ex)
-        {
-            // Tier B audit finding: see OpenEditorForSourceAsync's own load-failure catch for why --
-            // same fix here.
-            Log.OpenTxEditorFailed(_logger, SelectedFileName ?? "(re-edit)", ex);
-            IsEditorOpen = false;
-            _currentEditor?.Dispose();
-            _currentEditor = null;
-            _currentEditorIsBlank = false;
-            _currentEditorFileName = null;
-            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
-            EditorClosed?.Invoke();
-        }
-    }
-
     /// <summary>Mode-switch-mid-edit feature -- the populated-editor counterpart to
     /// <see cref="CloseBlankEditorForReplacement"/>+<see cref="OpenBlankEditorAsync"/> (that pair
-    /// only ever handles a BLANK/untouched editor). Modeled directly on
-    /// <see cref="ReopenEditorFromCurrentStateAsync"/>'s construct-new/discard-old shape, but kept
-    /// fully SYNCHRONOUS -- <see cref="TxImageEditorPaneViewModel.OperatorSettings"/> lets this reuse
+    /// only ever handles a BLANK/untouched editor). Same construct-new/discard-old shape as every
+    /// other editor-replace path in this class, but kept fully SYNCHRONOUS --
+    /// <see cref="TxImageEditorPaneViewModel.OperatorSettings"/> lets this reuse
     /// the OLD instance's already-loaded settings instead of an async reload, which would otherwise
     /// reopen a real re-entrancy window (two fast mode changes racing to construct two editors,
     /// orphaning one). Every field captured from <paramref name="oldEditor"/>/<c>this</c> before
@@ -1842,8 +1713,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         var wasBlank = _currentEditorIsBlank;
         // Non-null forgiveness is safe: every path that leaves _currentEditor non-null also sets
         // _currentEditorFileName (OpenEditorWithLoadedSourceAsync's own fileName parameter is
-        // non-nullable; ReopenEditorFromCurrentStateAsync sets it from SelectedFileName!), and this
-        // method's own guard above already confirmed _currentEditor is non-null.
+        // non-nullable), and this method's own guard above already confirmed _currentEditor is
+        // non-null.
         var fileName = _currentEditorFileName!;
         var oldModeId = oldEditor.TargetModeId;
 
@@ -1863,7 +1734,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 carriedOverUnsavedEdits: hadUnsavedEdits);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
-            editor.DirectFireRequested += final => OnEditorDirectFire(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1879,8 +1749,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            // Mirrors OpenEditorWithLoadedSourceAsync's/ReopenEditorFromCurrentStateAsync's own
-            // construction-failure catches -- but the OLD editor is ALREADY disposed by this point
+            // Mirrors OpenEditorWithLoadedSourceAsync's own construction-failure catch -- but the
+            // OLD editor is ALREADY disposed by this point
             // (no "leave the old one in place" fallback exists here), so close down fully, same as
             // any other construction failure.
             Log.ModeSwitchReconstructionFailed(_logger, newMode.Id, ex);
@@ -1904,14 +1774,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// maintained by EAGER RE-DERIVATION on every <see cref="SelectedMode"/> change
     /// (<see cref="OnSelectedModeChanged"/>'s tail runs unconditionally, in all three cases: blank
     /// editor reopened, populated editor replaced, or no editor open) rather than by freezing --
-    /// still load-bearing, just enforced differently. <see cref="TransmitAsync"/> also has a direct
-    /// dimension-mismatch check as a backstop, since the structural guarantee freezing used to
-    /// provide is gone.</para>
-    /// <para><see cref="ResendSentFrame"/> (TX history plan, 2026-09-01) is the one other writer of
-    /// <see cref="SelectedMode"/> besides the mode picker/quick-grid, and its own
-    /// <see cref="CanResendSentFrame"/> gate re-checks <see cref="IsEditorOpen"/> (2-round
-    /// plan-review finding: the first draft omitted it, which broke this exact invariant the moment
-    /// a real, non-blank editor was open targeting a different mode than the resent entry).</para></summary>
+    /// still load-bearing, just enforced differently. <see cref="TransmitCoreAsync"/> also has a
+    /// direct dimension-mismatch check as a backstop, since the structural guarantee freezing used
+    /// to provide is gone.</para>
+    /// <para>2026-09-19: <see cref="ResendSentFrameAsync"/> USED to be the one other writer of
+    /// <see cref="SelectedMode"/> besides the mode picker/quick-grid, protected by its own
+    /// <see cref="CanResendSentFrame"/> re-checking <see cref="IsEditorOpen"/> -- 3-round
+    /// `yoniq-auditor` + `yoniq-principal` review found that gate insufficient once the editor stays
+    /// open across Apply (a cross-mode resend could leave the editor's own `_targetMode` silently
+    /// diverged from <see cref="SelectedMode"/>, invisible to this dimension check for same-pixel-
+    /// dimension modes). Fixed structurally instead: <see cref="ResendSentFrameAsync"/> no longer
+    /// touches <see cref="SelectedMode"/>/<see cref="_editState"/>/<see cref="_loadedImage"/> at all
+    /// -- it calls <see cref="TransmitCoreAsync"/> directly with its own explicit `(image, mode)`
+    /// pair, so there is nothing left to diverge.</para></summary>
     // Code-review round-1 finding: must also check !IsRunningLoopbackSelfTest -- a self-test's
     // encode+decode is real CPU work competing with a live PTT-keyed playback pump, and its own
     // result dialog is MODAL, so letting a transmit start while one is running risked a dialog
@@ -1923,6 +1798,38 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private async Task TransmitAsync()
     {
         if (_loadedImage is not { } image || SelectedMode is not { } mode)
+        {
+            return;
+        }
+
+        await TransmitCoreAsync(image, mode, SelectedFileName, refreshMacros: true);
+    }
+
+    /// <summary>The actual encode-and-send logic, shared by the ordinary "TRANSMIT" button
+    /// (<see cref="TransmitAsync"/>, which reads its `(image, mode, sourceFileName)` from this pane's
+    /// own live <see cref="_loadedImage"/>/<see cref="SelectedMode"/>/<see cref="SelectedFileName"/>)
+    /// and <see cref="ResendSentFrameAsync"/> (which passes a HISTORICAL entry's own values directly,
+    /// touching none of those three live fields). Extracted 2026-09-19 (3-round `yoniq-auditor` +
+    /// `yoniq-principal` review) specifically so Resend cannot leave the live editor's own target
+    /// mode diverged from whatever it just transmitted -- see <see cref="CanTransmit"/>'s own doc
+    /// comment for the incident this replaced.
+    /// <para><paramref name="refreshMacros"/> distinguishes the two callers' real semantics, not just
+    /// their code paths: the ordinary button re-resolves `%T`/`{freq}`-style macros fresh at the
+    /// moment of transmission (<see langword="true"/>); a resend must reproduce the ORIGINAL frame
+    /// exactly, macros already baked in at the time it first went out (<see langword="false"/>) --
+    /// this is mandatory, not an optional skip: <see cref="RefreshTransmitImageIfMacrosChangedAsync"/>'s
+    /// own unguarded `return final;` path composes from THIS pane's live <see cref="_editState"/>
+    /// (still populated from the editor's last Apply, unlike before this refactor), not from
+    /// <paramref name="image"/> -- calling it unconditionally on a resend would silently transmit the
+    /// live editor's own canvas composed at the resent mode instead of the actual historical
+    /// pixels.</para>
+    /// <para>Own busy backstop below is the REAL gate for the Resend path, not defense-in-depth: the
+    /// Resend button's code-behind calls its command directly with no <c>CanExecute</c> re-check, and
+    /// nothing calls <see cref="ResendSentFrameCommand"/>'s own <c>NotifyCanExecuteChanged</c>, so
+    /// <see cref="CanResendSentFrame"/> is never actually consulted at runtime.</para></summary>
+    private async Task TransmitCoreAsync(IImageSource image, SstvModeDefinition mode, string? sourceFileName, bool refreshMacros)
+    {
+        if (IsTransmitting || IsRunningLoopbackSelfTest)
         {
             return;
         }
@@ -1951,7 +1858,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // these in finally would record whatever an Apply mid-transmit or the rig's post-transmit
         // frequency happened to be, not what was actually true when THIS transmission started.
         var sentFrameOutcome = TxHistoryOutcome.Completed;
-        var sentFrameSourceFileName = SelectedFileName;
+        var sentFrameSourceFileName = sourceFileName;
         var sentFrameFrequencyHz = RadioStatus?.CurrentFrequencyHz;
         // Local, not UTC -- code-review finding: the AXAML renders this with a bare HH:mm:ss (no
         // "Z"/UTC marker), same as RxImagePaneViewModel.PreviousFrames' own local-time stamp this
@@ -1966,12 +1873,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         try
         {
             // Mode-switch-mid-edit feature: real backstop for the invariant CanTransmit's own doc
-            // comment describes ("_loadedImage's dimensions can never diverge from SelectedMode's
-            // while an editor is open") -- that invariant is now maintained by eager re-derivation
-            // on every SelectedMode change (OnSelectedModeChanged's tail) rather than by freezing
-            // SelectedMode outright, so it is worth a cheap direct check rather than trusting it
-            // silently. Should never trigger; if it ever does, this converts a latent invariant
-            // violation into a diagnosable error via the catch below instead of a raw
+            // comment describes. Should never trigger; if it ever does, this converts a latent
+            // invariant violation into a diagnosable error via the catch below instead of a raw
             // ArgumentException surfacing out of AnalogFmSstvEncoder (spec/18-path-to-1.0.md High
             // item 2's original failure mode).
             if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
@@ -1980,12 +1883,17 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                     $"Loaded image ({image.Width}x{image.Height}) does not match SelectedMode {mode.Id} ({mode.ImageWidth}x{mode.ImageHeight}).");
             }
 
-            // RX/TX pipeline fix plan (2026-09-01), item 2 -- re-resolve time/frequency macros fresh
-            // at the moment of transmission, not the moment of Apply. See the helper's own doc
-            // comment for the compare-then-conditionally-rebake gate and its fallback contract; it
-            // never throws out of this call (its own try/catch always returns an image), so it's
-            // safe to await inside this try without a separate handler for it.
-            image = await RefreshTransmitImageIfMacrosChangedAsync(image, mode);
+            if (refreshMacros)
+            {
+                // RX/TX pipeline fix plan (2026-09-01), item 2 -- re-resolve time/frequency macros
+                // fresh at the moment of transmission, not the moment of Apply. See the helper's own
+                // doc comment for the compare-then-conditionally-rebake gate and its fallback
+                // contract; it never throws out of this call (its own try/catch always returns an
+                // image), so it's safe to await inside this try without a separate handler for it.
+                // MUST be skipped for a resend -- see this method's own doc comment on why.
+                image = await RefreshTransmitImageIfMacrosChangedAsync(image, mode);
+            }
+
             _transmitCts.Token.ThrowIfCancellationRequested();
 
             await _sstvSession.TransmitAsync(mode, image, _transmitCts.Token);
@@ -2028,7 +1936,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             _currentEditor?.NotifyTransmitAvailabilityChanged();
 
-            // TX history plan: recording is best-effort and must never affect TransmitAsync's own
+            // TX history plan: recording is best-effort and must never affect this method's own
             // completion -- plan-review finding. ImageSourceBitmapConverter.ToBitmap allocates a
             // WriteableBitmap and can throw (OOM/graphics-backend failure); an uncaught throw here
             // would escape into AsyncRelayCommand and crash right after every transmission that hits
@@ -2076,65 +1984,33 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Plan-review finding: same "not just CanTransmit" gate <see cref="CanTransmit"/>'s
-    /// own doc comment documents. <see cref="ResendSentFrame"/> changes <see cref="SelectedMode"/>
-    /// to <paramref name="entry"/>'s own mode, so it needs the identical re-check
-    /// <see cref="QuickSelectMode"/> already uses, not just the busy check.
-    /// <para>Mode-switch-mid-edit feature: still refuses while a genuinely populated editor is
-    /// open, unlike <see cref="QuickSelectMode"/>/the mode ComboBox -- resending a HISTORICAL frame
-    /// is a stronger action than switching the LIVE canvas's mode, and this method has no
-    /// <see cref="ReplaceEditorForModeSwitch"/>-equivalent reflow path, so it keeps refusing rather
-    /// than silently discarding in-progress edits. <see cref="SelectedMode"/> is no longer frozen
-    /// for an open editor's whole lifetime (see <see cref="CanTransmit"/>'s own doc comment) --
-    /// this method's OWN gate is what keeps it safe now, not that structural guarantee.</para></summary>
-    private bool CanResendSentFrame() => (!IsEditorOpen || IsCurrentEditorBlankAndUntouched()) && !IsTransmitting && !IsRunningLoopbackSelfTest;
+    /// <summary>2026-09-19: relaxed to drop its old editor-state clause -- see <see cref="CanTransmit"/>'s
+    /// own doc comment for why. <see cref="ResendSentFrameAsync"/> no longer touches
+    /// <see cref="SelectedMode"/>/the editor at all, so there is nothing left for an editor-state
+    /// check to protect here; only the busy check still matters (and even that is effectively
+    /// decorative -- see <see cref="TransmitCoreAsync"/>'s own doc comment on why its OWN busy
+    /// backstop is the real gate for this path, since the Resend button bypasses
+    /// <c>CanExecute</c>).</summary>
+    private bool CanResendSentFrame() => !IsTransmitting && !IsRunningLoopbackSelfTest;
 
     /// <summary>TX history plan (2026-09-01): re-transmits a <see cref="SentFrames"/> entry exactly
-    /// as it went out originally.
-    /// <para><b>Order is load-bearing</b> (2-round plan-review finding): <see cref="_editState"/> is
-    /// cleared BEFORE <see cref="SelectedMode"/> changes, not after -- <see cref="OnSelectedModeChanged"/>
-    /// runs synchronously off the <see cref="SelectedMode"/> setter, and with <see cref="_editState"/>
-    /// still set it would reflow <see cref="_loadedImage"/>/<see cref="PreviewImage"/> from the STALE
-    /// edit state (a real, expensive Crop/Resize/Adjust/Template chain run only to be thrown away) at
-    /// <paramref name="entry"/>'s own mode's dimensions, and any throw inside that chain would abort
-    /// this method before the correct values below are set. Clearing <see cref="_editState"/> first
-    /// makes that setter take its cheap null-editState branch instead.</para>
-    /// <para>Nulling <see cref="_editState"/> also disables <see cref="EditCurrentImageCommand"/>
-    /// until the next Apply, and discards whatever the operator had prepared-but-not-yet-sent --
-    /// deliberate, not an oversight: this is the SAME "loading a different source replaces whatever
-    /// was applied, no confirm prompt" behavior Browse/Stock/Blank/Copy-to-TX already have. Resend is
-    /// one more way to load a different source, not a special case that needs its own undo/confirm
-    /// machinery.</para>
-    /// <para>Skips <see cref="RefreshTransmitImageIfMacrosChangedAsync"/>'s rebake entirely (a null
-    /// <see cref="_editState"/> is that method's own no-op branch) -- a resent card carries whatever
-    /// <c>%T</c>/<c>{freq}</c> macro values were baked in at the ORIGINAL send, not refreshed ones.
-    /// Intentional: "re-send this exact frame" means exactly that, not "re-run it with today's
-    /// clock/frequency."</para></summary>
+    /// as it went out originally. Rewritten 2026-09-19 (3-round `yoniq-auditor` + `yoniq-principal`
+    /// review, see <see cref="CanTransmit"/>'s own doc comment for the incident) to call
+    /// <see cref="TransmitCoreAsync"/> directly with <paramref name="entry"/>'s own `(Image, Mode,
+    /// SourceFileName)` -- this method no longer sets <see cref="SelectedMode"/>, nulls
+    /// <see cref="_editState"/>, or touches <see cref="_loadedImage"/>/<see cref="PreviewImage"/>/
+    /// <see cref="SelectedFileName"/> at all, so the live editor (and whatever the operator is still
+    /// working on in it) is genuinely untouched by a resend, per direct user request ("resend should
+    /// just send the picture selected to be resend, and leave the current TX editor image alone").
+    /// `refreshMacros: false` reproduces the ORIGINAL frame exactly (macros already baked in at the
+    /// time it first went out), not a re-run with today's clock/frequency -- same intent the old
+    /// `_editState = null`-before-`SelectedMode` ordering trick used to achieve as a side effect, now
+    /// achieved directly since there is no shared state left to order around.</summary>
     [RelayCommand(CanExecute = nameof(CanResendSentFrame))]
-    private void ResendSentFrame(TransmittedFrameViewModel entry)
+    private async Task ResendSentFrameAsync(TransmittedFrameViewModel entry)
     {
-        if (IsEditorOpen && !IsCurrentEditorBlankAndUntouched())
-        {
-            return;
-        }
-
-        if (IsTransmitting || IsRunningLoopbackSelfTest)
-        {
-            return;
-        }
-
         Log.ResendSentFrameInvoked(_logger, entry.Mode.Id);
-        _editState = null;
-        SelectedMode = entry.Mode;
-        _loadedImage = entry.Image;
-        PreviewImage = ImageSourceBitmapConverter.ToBitmap(entry.Image);
-        SelectedFileName = entry.SourceFileName;
-        TransmitCommand.NotifyCanExecuteChanged();
-        EditCurrentImageCommand.NotifyCanExecuteChanged();
-        if (TransmitCommand.CanExecute(null))
-        {
-            TransmitCommand.Execute(null);
-        }
+        await TransmitCoreAsync(entry.Image, entry.Mode, entry.SourceFileName, refreshMacros: false);
     }
 
     /// <summary>TX history plan (2026-09-01): saves a <see cref="SentFrames"/> entry's exact
@@ -2507,9 +2383,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Opening the TX image editor failed: {FileName}")]
         public static partial void OpenTxEditorFailed(ILogger logger, string fileName, Exception ex);
-
-        [LoggerMessage(Level = LogLevel.Debug, Message = "EditCurrentImage invoked with no retained edit state or selected mode -- no-op")]
-        public static partial void EditCurrentImageWithNoEditState(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Transmit invoked: mode={ModeId}")]
         public static partial void TransmitInvoked(ILogger logger, string modeId);
