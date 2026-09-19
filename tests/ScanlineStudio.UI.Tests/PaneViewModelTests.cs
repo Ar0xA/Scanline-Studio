@@ -6404,6 +6404,215 @@ public sealed class PaneViewModelTests
         Assert.True(historyStore.EntriesToReturn[0].IsFlagged);
     }
 
+    /// <summary>Gallery right-click "Flag"/"Unflag" (2026-09-19 user request). Unlike the details
+    /// panel's own CheckBox (which the test above drives via SelectedEntryIsFlagged directly), this
+    /// command is the code-behind's own entry point -- exercises the SAME persistence path with no
+    /// prior read of the current value from the test itself, proving the command's own
+    /// !SelectedEntryIsFlagged toggle reads the freshly-selected entry's REAL current state, not a
+    /// stale default.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_ToggleSelectedEntryFlagCommand_TogglesAndPersists()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.SelectedEntryIsFlagged);
+
+        vm.ToggleSelectedEntryFlagCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.SelectedEntryIsFlagged);
+        Assert.True(historyStore.EntriesToReturn[0].IsFlagged);
+    }
+
+    /// <summary>Gallery right-click "Add note..." (2026-09-19 user request). Confirms three things at
+    /// once: the dialog is prefilled with the entry's CURRENT note (not blank), the write persists
+    /// IMMEDIATELY with no debounce wait (unlike continuous typing in the details panel's own
+    /// TextBox), and SelectedEntryNote reflects it right away for the still-visible panel.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AddNoteToSelectedEntryCommand_PrefillsAndPersistsImmediately()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "old note")],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        string? prefilledText = null;
+        vm.TextPromptRequested = promptVm =>
+        {
+            prefilledText = promptVm.Text;
+            return Task.FromResult<string?>("new note from dialog");
+        };
+
+        await vm.AddNoteToSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("old note", prefilledText);
+        Assert.Equal("new note from dialog", vm.SelectedEntryNote);
+        Assert.Equal("new note from dialog", historyStore.EntriesToReturn[0].Note);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AddNoteToSelectedEntryCommand_CancelledDialog_LeavesNoteUnchanged()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "keep me")],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TextPromptRequested = _ => Task.FromResult<string?>(null); // Cancel
+
+        await vm.AddNoteToSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("keep me", vm.SelectedEntryNote);
+        Assert.Equal("keep me", historyStore.EntriesToReturn[0].Note);
+    }
+
+    /// <summary>Code-review-class finding, pinned proactively: the dialog await is a genuine,
+    /// potentially long gap during which a background Recorded-triggered RefreshAsync could reassign
+    /// SelectedEntry to a DIFFERENT entry before OK is clicked -- same race class
+    /// DeleteSelectedEntryAsync/ExportFrameAsync's own doc comments already guard against for their
+    /// own awaits. The note must land on the entry the user actually right-clicked (captured before
+    /// the dialog), never on whatever SelectedEntry has since become.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AddNoteToSelectedEntryCommand_SelectionChangesDuringDialog_StillTargetsTheOriginalEntry()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn =
+            [
+                new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed),
+                new ReceiveHistoryEntry("2", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
+            ],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var originalEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        vm.SelectedEntry = originalEntry;
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TextPromptRequested = promptVm =>
+        {
+            // Simulates a background refresh reassigning SelectedEntry WHILE the dialog is open.
+            vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
+            Dispatcher.UIThread.RunJobs();
+            return Task.FromResult<string?>("note for entry 1");
+        };
+
+        await vm.AddNoteToSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("note for entry 1", historyStore.EntriesToReturn[0].Note);
+        Assert.Null(historyStore.EntriesToReturn[1].Note);
+        // The now-current selection's own note field must NOT have been overwritten either.
+        Assert.NotEqual("note for entry 1", vm.SelectedEntryNote);
+    }
+
+    /// <summary>yoniq-auditor code-review blocker (2026-09-19): the first draft's "still selected"
+    /// re-check used <c>ReferenceEquals(SelectedEntry, entry)</c>, which reads FALSE even when the
+    /// SAME logical entry is still selected, because RefreshAsync reselects by Id with a freshly
+    /// constructed RxHistoryEntryViewModel (its own doc comment: "every item above is a
+    /// freshly-constructed record"). That left the visible SelectedEntryNote TextBox showing the
+    /// stale pre-dialog note after a refresh landed mid-dialog on the SAME entry -- this test drives
+    /// a real RefreshCommand (not a hand-swapped reference) to prove the fix (Id comparison) actually
+    /// refreshes the display, which the sibling "different entry" test above cannot exercise.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AddNoteToSelectedEntryCommand_RefreshLandsOnTheSameEntryDuringDialog_StillUpdatesTheVisibleNoteAfterward()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "old note")],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var originalEntry = vm.Entries.Single(e => e.Entry.Id == "1");
+        vm.SelectedEntry = originalEntry;
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TextPromptRequested = async promptVm =>
+        {
+            // A real RefreshAsync (e.g. IReceiveHistoryStore.Recorded firing for an unrelated new
+            // frame) landing WHILE the dialog is open, reselecting entry "1" by Id with a brand-new
+            // RxHistoryEntryViewModel instance -- NOT the same reference as originalEntry.
+            await vm.RefreshCommand.ExecuteAsync(null);
+            Dispatcher.UIThread.RunJobs();
+            var reselected = vm.SelectedEntry;
+            Assert.NotNull(reselected);
+            Assert.Equal("1", reselected!.Entry.Id);
+            Assert.NotSame(originalEntry, reselected); // confirms this is genuinely a NEW instance
+            return "new note from dialog";
+        };
+
+        await vm.AddNoteToSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("new note from dialog", historyStore.EntriesToReturn[0].Note);
+        Assert.Equal("new note from dialog", vm.SelectedEntryNote); // must NOT still show the stale pre-dialog note
+    }
+
+    /// <summary>yoniq-auditor code-review finding (2026-09-19): typing in the Selected-frame panel's
+    /// own TextBox arms a 600ms debounce (OnSelectedEntryNoteChanged); if the operator then opens and
+    /// OKs the Add-note dialog for the SAME entry within that window, the debounce's OLD captured
+    /// text would otherwise fire afterward and chain onto _noteWrites AFTER the dialog's write,
+    /// silently clobbering it -- a last-writer-wins loss with no error. AddNoteToSelectedEntryAsync
+    /// must cancel that pending debounce before persisting its own write.</summary>
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_AddNoteToSelectedEntryCommand_CancelsAPendingPanelDebounce_SoItCannotClobberTheDialogsWrite()
+    {
+        var historyStore = new FakeReceiveHistoryStore
+        {
+            EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
+            ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
+        };
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedEntry = vm.Entries[0];
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedEntryNote = "stale typed text"; // arms a 600ms debounce, not yet persisted
+        Dispatcher.UIThread.RunJobs();
+        Assert.Null(historyStore.EntriesToReturn[0].Note);
+
+        vm.TextPromptRequested = _ => Task.FromResult<string?>("note from dialog");
+        await vm.AddNoteToSelectedEntryCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("note from dialog", historyStore.EntriesToReturn[0].Note);
+
+        // The pending debounce from before must be CANCELLED, not just outrun by timing -- wait past
+        // its own 600ms window and confirm the dialog's write survives instead of being overwritten.
+        await Task.Delay(700);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("note from dialog", historyStore.EntriesToReturn[0].Note);
+    }
+
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_SwitchingSelection_LoadsTheNewEntrysNoteNotThePreviousOnes()
     {
