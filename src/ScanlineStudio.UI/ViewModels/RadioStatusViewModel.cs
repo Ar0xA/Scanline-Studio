@@ -186,6 +186,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             if (value)
             {
+                // User-reported bug (2026-09-19): must claim operator ownership of SsbAsPkt (see
+                // _ssbAsPktOperatorOwned's own doc comment) BEFORE reading it here -- this click is
+                // ABOUT to interpret SsbAsPkt's CURRENT value to decide which mode to command, and if
+                // a same-poll-tick SyncSsbAsPktFromPolledMode assignment is still free to overwrite it
+                // afterward, a click landing right after a poll could still read a value the operator
+                // never actually chose.
+                _ssbAsPktOperatorOwned = true;
                 SelectedRadioMode = SsbAsPkt ? RadioMode.Data : RadioMode.Usb;
             }
         }
@@ -198,6 +205,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             if (value)
             {
+                _ssbAsPktOperatorOwned = true;
                 SelectedRadioMode = SsbAsPkt ? RadioMode.DataR : RadioMode.Lsb;
             }
         }
@@ -238,6 +246,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             return;
         }
 
+        _ssbAsPktOperatorOwned = true;
+
         SelectedRadioMode = (value, SelectedRadioMode) switch
         {
             (true, RadioMode.Usb) => RadioMode.Data,
@@ -271,6 +281,26 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// either way, but not deterministic on the very first frame, which is exactly the "at
     /// connect/startup" moment the user reported).</summary>
     private bool _ssbAsPktCameFromRig;
+
+    /// <summary>User-reported regression (2026-09-19), root-caused by yoniq-auditor + yoniq-principal:
+    /// commit 37ea13d turned <see cref="SyncSsbAsPktFromPolledMode"/> into an UNCONDITIONAL per-poll
+    /// (~250ms) mirror of the rig's current mode -- correct for the "seed the checkbox from a rig
+    /// already sitting in PKTUSB/PKTLSB at connect" case that commit fixed, but wrong the instant the
+    /// operator has an opinion of their own: <see cref="SsbAsPkt"/> is a PREFERENCE about how a future
+    /// click should be interpreted (see <see cref="IsSidebandUsb"/>/<see cref="IsSidebandLsb"/>'s own
+    /// setters, which read it to choose which mode to command), not a pure readback like
+    /// <see cref="SelectedRadioMode"/> itself -- unlike that 3-way segment, forcing it back to match
+    /// whatever the rig currently reports fights the operator until the rig's own mode has fully
+    /// caught up (which for some rigs/CAT links, never happens for a given target mode). Set true the
+    /// first time the operator interacts with anything that reads <see cref="SsbAsPkt"/> at
+    /// click-time (<see cref="OnSsbAsPktChanged"/>'s own non-suppressed branch,
+    /// <see cref="IsSidebandUsb"/>/<see cref="IsSidebandLsb"/>'s setters) -- never reset, same
+    /// permanent-latch shape as <see cref="_ssbAsPktCameFromRig"/> above (this app has no "give
+    /// control back to the rig" gesture for either flag). <see cref="SyncSsbAsPktFromPolledMode"/>
+    /// early-returns once this is true, so a rig that never adopts the commanded mode leaves the
+    /// checkbox showing the operator's own last choice instead of rubber-banding back to the rig's
+    /// stale mode every poll.</summary>
+    private bool _ssbAsPktOperatorOwned;
 
     /// <summary>Called once from the constructor -- restores the persisted checkbox state before the
     /// operator ever touches it, same "constructor-time restore" shape as
@@ -309,12 +339,14 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Keeps <see cref="SsbAsPkt"/> live from every poll, mirroring how
+    /// <summary>Keeps <see cref="SsbAsPkt"/> live from every poll ONLY UNTIL the operator has an
+    /// opinion of their own -- see <see cref="_ssbAsPktOperatorOwned"/>'s own doc comment for the
+    /// 2026-09-19 regression this early-return fixes. Before that ownership handoff, mirrors how
     /// <see cref="SelectedRadioMode"/> itself is refreshed in <see cref="OnStateChanged"/>.
-    /// User-reported gap: CAT-linked startup already populated frequency, bandwidth and
-    /// <see cref="SelectedRadioMode"/> from the rig, but left this checkbox at its last manual/
-    /// persisted value -- a rig sitting in PKTUSB/PKTLSB at connect time then showed neither the
-    /// USB nor the LSB segment button selected (see <see cref="IsSidebandUsb"/>/
+    /// User-reported gap this was originally built for: CAT-linked startup already populated
+    /// frequency, bandwidth and <see cref="SelectedRadioMode"/> from the rig, but left this checkbox
+    /// at its last manual/persisted value -- a rig sitting in PKTUSB/PKTLSB at connect time then
+    /// showed neither the USB nor the LSB segment button selected (see <see cref="IsSidebandUsb"/>/
     /// <see cref="IsSidebandLsb"/>, both gated on <see cref="SsbAsPkt"/>). Guarded with
     /// <see cref="_suppressSsbAsPktPersist"/>, same as <see cref="LoadSsbAsPktPreferenceSafeAsync"/>'s
     /// own restore-time set: a poll-driven change must not re-trigger <see cref="OnSsbAsPktChanged"/>'s
@@ -325,6 +357,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// scope (USB/LSB only, not FM).</summary>
     private void SyncSsbAsPktFromPolledMode(RadioMode mode)
     {
+        if (_ssbAsPktOperatorOwned)
+        {
+            return;
+        }
+
         bool? derived = mode switch
         {
             RadioMode.Data or RadioMode.DataR => true,
@@ -1720,6 +1757,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // one didn't, so a stale "No radio connected" from an earlier failed action could survive a
         // later, genuinely successful mode change with nothing to clear it.
         ErrorMessage = null;
+        // Captured before the first await (auditor + principal finding, 2026-09-19), matching
+        // ApplyPresetAsync/SetFrequencyAsync's own established convention: this method uses
+        // ConfigureAwait(false), so a read after the first await could run off the UI thread, and
+        // CanSetBandwidth is only ever written on the UI thread.
+        var canSetBandwidth = CanSetBandwidth;
         try
         {
             await _radioSession.SetModeAsync(value).ConfigureAwait(false);
@@ -1734,10 +1776,27 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             // mirrored here instead of inventing a second mechanism. Gated on CanSetBandwidth for the
             // same reason ApplyPresetAsync is: flrig/OmniRig THROW here rather than no-op when
             // bandwidth isn't settable, which would otherwise fail an already-successful mode change.
-            if (CanSetBandwidth && RadioModeFamilies.FallbackFor(value) is { } hz)
+            if (canSetBandwidth && RadioModeFamilies.FallbackFor(value) is { } hz)
             {
                 await _radioSession.SetBandwidthAsync(hz).ConfigureAwait(false);
             }
+        }
+        // Auditor + principal finding (2026-09-19): a bare `catch (Exception)` flattened every
+        // failure to "No radio connected" -- including a genuine rig rejection (RadioProtocolException,
+        // whose message already carries the literal rigctld "RPRT -<n>" text) and an unsupported mode
+        // (ArgumentOutOfRangeException, e.g. RadioMode.Unknown or a mode this backend has no wire-format
+        // equivalent for -- see SetModeAsync's own doc comment on every backend). Splitting this out is
+        // what makes a genuine rig-side rejection diagnosable instead of indistinguishable from a
+        // dropped CAT link.
+        catch (ArgumentOutOfRangeException ex)
+        {
+            Log.SetModeFailed(_logger, value, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.ModeNotSupported"));
+        }
+        catch (RadioProtocolException ex)
+        {
+            Log.SetModeFailed(_logger, value, ex);
+            Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.ModeRejected", ex.Message));
         }
         catch (Exception ex)
         {
