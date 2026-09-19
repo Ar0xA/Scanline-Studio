@@ -207,7 +207,10 @@ public sealed partial class AtomsFontScaleTests
         ["TextPromptWindowView.axaml"] = 3,
         ["ToneGeneratorWindowView.axaml"] = 4,
         ["TxControlsPaneView.axaml"] = 6,
-        ["TxImageEditorPaneView.axaml"] = 109,
+        // 2026-09-19: +1 for the new TX header progress bar's MinWidth="80" (TxImageEditorPaneView.axaml)
+        // -- a fixed space-reservation literal for the ProgressBar track, same class as this file's
+        // own pre-existing StackPanel MinWidth="180"/"120" literals, not a font-size-coupled site.
+        ["TxImageEditorPaneView.axaml"] = 110,
         ["Atoms.axaml"] = 30,
     };
 

@@ -426,6 +426,7 @@
   "Panes.TxImageEditor.CardHeaderFormat": "EDITOR — OUTGOING FRAME · {0}×{1} · {2}",
   "Panes.TxImageEditor.DimensionsChipFormat": "{0}×{1}",
   "Panes.TxImageEditor.ContextBarTitle": "TX IMAGE EDITOR",
+  "Panes.TxImageEditor.SendingChip": "SENDING",
   "Panes.TxImageEditor.FrameReadoutFormat": "OUTGOING FRAME {0}×{1} · {2} · {3:0.0} s",
   "Panes.TxImageEditor.UnsavedEditsChip": "UNSAVED EDITS",
   "Panes.TxImageEditor.Revert": "REVERT",

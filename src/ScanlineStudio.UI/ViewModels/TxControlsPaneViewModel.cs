@@ -766,6 +766,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _transmitElapsed = info.Elapsed;
             TransmitProgress = info.Fraction;
             _anyProgressReported = true;
+            _currentEditor?.NotifyTransmitProgressChanged();
         });
     }
 
@@ -1491,6 +1492,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText),
                 currentContactVariables: currentContactVariables,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
                 // Ready Rack direct-fire plan (2026-09-01), code-review finding: thread the CALLER's
@@ -1731,7 +1733,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 initialState,
                 canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
-                carriedOverUnsavedEdits: hadUnsavedEdits);
+                carriedOverUnsavedEdits: hadUnsavedEdits,
+                transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText));
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;
@@ -1851,6 +1854,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         StopTransmitCommand.NotifyCanExecuteChanged();
         RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         _currentEditor?.NotifyTransmitAvailabilityChanged();
+        _currentEditor?.NotifyTransmitProgressChanged();
 
         // TX history plan: snapshotted HERE, before the try, not read from SelectedFileName/
         // RadioStatus inside finally -- plan-review finding. The editor stays usable and the rig
@@ -1935,6 +1939,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             StopTransmitCommand.NotifyCanExecuteChanged();
             RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             _currentEditor?.NotifyTransmitAvailabilityChanged();
+            _currentEditor?.NotifyTransmitProgressChanged();
 
             // TX history plan: recording is best-effort and must never affect this method's own
             // completion -- plan-review finding. ImageSourceBitmapConverter.ToBitmap allocates a
