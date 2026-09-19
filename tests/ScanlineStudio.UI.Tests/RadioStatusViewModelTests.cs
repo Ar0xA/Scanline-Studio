@@ -114,6 +114,89 @@ public sealed class RadioStatusViewModelTests
     }
 
     [AvaloniaFact]
+    public void SsbAsPktUnchecked_RigStillReportsDataOnLaterPoll_StaysUncheckedNotPinnedByPoll()
+    {
+        // User-reported regression (2026-09-19), root-caused by yoniq-auditor + yoniq-principal:
+        // commit 37ea13d made SyncSsbAsPktFromPolledMode an UNCONDITIONAL per-poll mirror of the
+        // rig's mode, so unchecking this box (or clicking LSB/USB) while the rig hadn't yet adopted
+        // the commanded mode got silently snapped back on the very next poll -- indistinguishable
+        // from the checkbox "doing nothing." Once the operator has interacted, a poll that still
+        // reports the OLD mode must leave the operator's own choice alone.
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Data, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(vm.SsbAsPkt);
+
+        vm.SsbAsPkt = false;
+        Assert.False(vm.SsbAsPkt);
+
+        // Simulates the rig never actually adopting Usb (rejected command, or just not caught up
+        // yet) -- the poll keeps reporting the OLD mode.
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Data, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.SsbAsPkt);
+    }
+
+    [AvaloniaFact]
+    public void IsSidebandLsbClicked_RigStillReportsUsbOnLaterPoll_StaysOperatorChoiceNotPinnedByPoll()
+    {
+        // Same regression, reached via the OTHER caller that reads SsbAsPkt at click-time
+        // (IsSidebandLsb's own setter chooses DataR vs Lsb based on it).
+        var radioSession = new FakeRadioSessionService();
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+        vm.SsbAsPkt = true;
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        vm.IsSidebandLsb = true;
+        Assert.Equal(RadioMode.DataR, vm.SelectedRadioMode);
+
+        radioSession.Push(new RadioState(14_230_000, RadioMode.Usb, IsTransmitting: false, SignalStrengthDb: null, ObservedAt: DateTimeOffset.UtcNow));
+        Dispatcher.UIThread.RunJobs();
+
+        // The poll's own SelectedRadioMode write-back (pre-existing, unrelated to this fix) still
+        // reflects the rig's real state -- what must NOT happen is SsbAsPkt itself getting pinned
+        // back to false by SyncSsbAsPktFromPolledMode, which would make the NEXT click on USB/LSB
+        // misinterpret the operator's own still-checked preference.
+        Assert.True(vm.SsbAsPkt);
+    }
+
+    [AvaloniaFact]
+    public void SetModeSafeAsync_RigRejectsMode_ShowsModeRejectedErrorNotGenericNoRadioConnected()
+    {
+        // Auditor + principal finding (2026-09-19): a bare catch(Exception) flattened a genuine rig
+        // rejection (RadioProtocolException, whose message carries the real rigctld "RPRT -<n>"
+        // text) to the same generic "No radio connected" a dropped CAT link produces -- destroying
+        // the one signal that would tell an operator (or the next debugging session) what actually
+        // happened.
+        var radioSession = new FakeRadioSessionService { SetModeExceptionToThrow = new RadioProtocolException("rigctld command 'M PKTLSB 0' failed: RPRT -9") };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedRadioMode = RadioMode.DataR;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("RadioStatus.Error.ModeRejected", vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void SetModeSafeAsync_UnsupportedMode_ShowsModeNotSupportedErrorNotGenericNoRadioConnected()
+    {
+        var radioSession = new FakeRadioSessionService { SetModeExceptionToThrow = new ArgumentOutOfRangeException("mode") };
+        var vm = CreateViewModel(radioSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.SelectedRadioMode = RadioMode.Fm;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("RadioStatus.Error.ModeNotSupported", vm.ErrorMessage);
+    }
+
+    [AvaloniaFact]
     public void SelectedRadioMode_ManualChangeToSsbFamilyMode_SendsFallbackBandwidthAfterMode()
     {
         // User-reported bug (2026-09-19): a manual mode pick (ComboBox/segment buttons) sent a bare
