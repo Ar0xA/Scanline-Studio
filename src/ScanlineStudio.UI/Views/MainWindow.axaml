@@ -1903,18 +1903,16 @@
                             <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxError}" VerticalAlignment="Center" />
                         </StackPanel>
                     </Border>
-                    <!-- spec/18-path-to-1.0.md High item 10: live PTT/keyed readback from the
-                         connected rig (RadioStatus.IsKeyed: RadioState.IsTransmitting, cleared
-                         on CAT loss, see that property's own doc comment). Red "Transmitting" row
-                         (mockups/colors/SSTV-Color-Scheme.md), distinct from the amber TX-ERROR
-                         chip just above (.dangerTint/.alert, not .attentionTint/.attention). -->
-                    <Border Classes="Industry IndustryStatus" Classes.dangerTint="{Binding RadioStatus.IsKeyed}"
-                            ToolTip.Tip="{loc:Translate MainWindow.StatusBar.TxKeyed.Help}">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Rectangle Classes="Industry IndustryLed" Classes.alert="{Binding RadioStatus.IsKeyed}" VerticalAlignment="Center" />
-                            <TextBlock Text="{loc:Translate MainWindow.StatusBar.TxKeyed}" VerticalAlignment="Center" />
-                        </StackPanel>
-                    </Border>
+                    <!-- User-requested (2026-09-19): removed — the RX chip above (bound to
+                         RadioStatus.RxStatusBarText) now reads "Transmitting" for the same window
+                         this chip used to cover, via RadioStatus.IsTransmittingDisplay (an app-side
+                         signal covering a real Transmit AND a Tune tone, regardless of whether RX
+                         capture happened to be running when it started — see that property's own doc
+                         comment for the code-review finding that made the OR'd second half necessary),
+                         unlike this chip's own RadioStatus.IsKeyed, which needed rig PTT-readback
+                         support this app cannot assume every connected rig has. RadioStatus.IsKeyed/
+                         VfoKickerDisplay themselves are unchanged and still used elsewhere (the VFO
+                         card's "RX"/"TX" kicker). -->
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RadioStatus.FrequencyDisplay}" />
                     </Border>

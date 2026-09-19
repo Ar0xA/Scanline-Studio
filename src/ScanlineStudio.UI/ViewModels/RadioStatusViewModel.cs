@@ -440,6 +440,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private void OnRxAudioLevelTick()
     {
         RxAudioPeakLevel = _sstvSession.SignalPeakLevel;
+        IsSstvTransmitting = _sstvSession.IsTransmitting;
 
         IsDecodingImage = _sstvSession.ReceivedImage.Progress is { } progress && progress < 1.0;
 
@@ -615,16 +616,52 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// bool-driven-label pattern as <see cref="TuneButtonLabel"/>. <see cref="IsDecodingImage"/>
     /// takes priority over both other states (2026-09-18) -- a decode in progress necessarily
     /// means <see cref="IsReceiving"/> is also true, so checking it first is both correct and
-    /// sufficient, no three-way ambiguity.</summary>
-    public string ReceivingButtonLabel => _localization.GetString(IsDecodingImage ? "RadioStatus.Decoding" : IsReceiving ? "RadioStatus.Receiving" : "RadioStatus.ReceivingMuted");
+    /// sufficient, no three-way ambiguity.
+    /// <para>User-requested (2026-09-19): "Transmitting" now takes priority over ALL other states,
+    /// checked via <see cref="IsTransmittingDisplay"/> -- see that property's own doc comment for why
+    /// it is NOT just <see cref="IsCapturePausedForTx"/> alone.</para></summary>
+    public string ReceivingButtonLabel => _localization.GetString(
+        IsTransmittingDisplay ? "RadioStatus.Transmitting"
+        : IsDecodingImage ? "RadioStatus.Decoding"
+        : IsReceiving ? "RadioStatus.Receiving"
+        : "RadioStatus.ReceivingMuted");
 
     /// <summary>The status-bar RX chip's own label (2026-09-18) -- separate from
     /// <see cref="ReceivingButtonLabel"/> because that chip's rest/receiving states use a
     /// DIFFERENT loc key ("MainWindow.StatusBar.Rx") than the Transceiver toggle's own
     /// ("RadioStatus.Receiving") despite showing the same word today; keeping them as two
     /// independently-keyed strings preserves that separation instead of silently coupling the two
-    /// surfaces' text.</summary>
-    public string RxStatusBarText => _localization.GetString(IsDecodingImage ? "MainWindow.StatusBar.Decoding" : "MainWindow.StatusBar.Rx");
+    /// surfaces' text. Same 2026-09-19 "Transmitting" addition as <see cref="ReceivingButtonLabel"/>,
+    /// for the same reason -- see that property's own doc comment.</summary>
+    public string RxStatusBarText => _localization.GetString(
+        IsTransmittingDisplay ? "MainWindow.StatusBar.Transmitting"
+        : IsDecodingImage ? "MainWindow.StatusBar.Decoding"
+        : "MainWindow.StatusBar.Rx");
+
+    /// <summary>Code-review finding (yoniq-auditor, 2026-09-19, same day as the "Transmitting" label
+    /// addition): <see cref="IsCapturePausedForTx"/> ALONE misses a real, reachable case -- it only
+    /// fires when a genuinely RUNNING capture got paused (see its own event's doc comment), so
+    /// starting a Transmit/Tune while <see cref="IsReceiving"/> is already off (RX Muted) never
+    /// raises it at all, and <see cref="ReceivingButtonLabel"/>/<see cref="RxStatusBarText"/> would
+    /// silently stay stuck on "RX Muted" for the entire transmission -- the exact case the removed
+    /// TX KEYED chip used to still cover (on rigs with PTT readback). OR'd with
+    /// <see cref="IsSstvTransmitting"/> (a polled fallback covering that gap unconditionally) closes
+    /// it: <see cref="IsCapturePausedForTx"/> gives a near-instant, event-driven update for the common
+    /// case (RX running), and <see cref="IsSstvTransmitting"/> guarantees correctness (within one
+    /// ~250ms poll tick) for the RX-halted case neither this property nor the old chip depended on
+    /// each other to cover alone.</summary>
+    public bool IsTransmittingDisplay => IsCapturePausedForTx || IsSstvTransmitting;
+
+    /// <summary>Polled fallback for <see cref="IsTransmittingDisplay"/> -- see that property's own
+    /// doc comment for why <see cref="IsCapturePausedForTx"/> alone isn't enough. Mirrors
+    /// <see cref="ISstvSessionService.IsTransmitting"/> ("genuinely in flight right now ... regardless
+    /// of prior RX state," that property's own doc comment), polled on the same
+    /// <see cref="_rxAudioLevelTimer"/> tick as <see cref="RxAudioPeakLevel"/>/<see cref="IsDecodingImage"/>
+    /// rather than a dedicated event -- the underlying property is a plain, thread-safe read with no
+    /// matching changed-event to subscribe to instead.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel), nameof(RxStatusBarText), nameof(IsTransmittingDisplay))]
+    private bool _isSstvTransmitting;
 
     /// <summary>True exactly when the plain green "Receiving" look applies -- <see cref="IsReceiving"/>
     /// with an active decode NOT already claiming the amber "Decoding" look instead. Both AXAML
@@ -690,8 +727,13 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// the fix is exactly the surgical scope the user asked for, not a redefinition of what
     /// "Receiving" means or does. Mirrors <see cref="ISstvSessionService.CapturePausedForTransmitChanged"/>
     /// exactly -- see that event's own doc comment for why it only fires for a TX-caused pause, not
-    /// a manual Halt click.</summary>
+    /// a manual Halt click.
+    /// <para>User-requested (2026-09-19): also drives <see cref="ReceivingButtonLabel"/>/
+    /// <see cref="RxStatusBarText"/>'s "Transmitting" text now (via <see cref="IsTransmittingDisplay"/>),
+    /// not just the Opacity dim -- see that property's own doc comment for why this signal alone
+    /// isn't sufficient by itself.</para></summary>
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel), nameof(RxStatusBarText), nameof(IsTransmittingDisplay))]
     private bool _isCapturePausedForTx;
 
     /// <summary>Auditor usability review follow-up (2026-08-18): the VFO card's "rig meters" pill
