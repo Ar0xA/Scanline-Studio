@@ -216,9 +216,51 @@ public sealed class TxControlsAutoFollowAndQuickModeGridTests
         Assert.Equal("martin-m1", vm.SelectedMode?.Id);
     }
 
+    /// <summary>Code-review finding (yoniq-auditor, 2026-09-19): the first draft of the
+    /// IsEditorOpen-removal fix compared the RX detect's width against `_loadedImage`, which stays
+    /// null until the FIRST Apply -- so a real, unapplied photo (Browse'd but not yet Applied) sitting
+    /// in an open editor got no width check at all, letting a mismatched-width RX detect silently
+    /// rebuild that editor via ReplaceEditorForModeSwitch, discarding its undo stack with no operator
+    /// action. Must refuse here, same as the applied case above, but via SelectedMode's own width
+    /// (the real analogue of legacy's always-live pBitmapTX-&gt;Width) since _loadedImage is null.</summary>
+    [AvaloniaFact]
+    public async Task ModeDetected_WithRealUnappliedPhotoAtMismatchedWidth_DoesNotChangeSelectedMode()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [ModeA, ModeWiderWidth] };
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                TxPaneUiSettings.SectionKey,
+                new TxPaneUiSettings { AutoFollowRxMode = true },
+                TxPaneUiSettingsJsonContext.Default.TxPaneUiSettings),
+        };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), settingsStore, new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        vm.SelectedMode = ModeA;
+
+        TxImageEditorPaneViewModel? opened = null;
+        vm.EditorOpened += editor => opened = editor;
+        await vm.SelectImageCommand.ExecuteAsync(null); // real photo loaded, NOT Applied yet
+        Dispatcher.UIThread.RunJobs();
+        Assert.NotNull(opened);
+        Assert.Null(ExtractLoadedImage(vm)); // confirms _loadedImage is genuinely null here
+
+        var editorBeforeDetect = ExtractCurrentEditor(vm);
+        sstvSession.RaiseModeDetected(ModeWiderWidth); // width 2, mismatched against ModeA's width 1
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("robot36", vm.SelectedMode?.Id);
+        Assert.Same(editorBeforeDetect, ExtractCurrentEditor(vm)); // editor untouched, not rebuilt
+    }
+
     private static IImageSource? ExtractLoadedImage(TxControlsPaneViewModel vm)
         => typeof(TxControlsPaneViewModel).GetField("_loadedImage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
             .GetValue(vm) as IImageSource;
+
+    private static TxImageEditorPaneViewModel? ExtractCurrentEditor(TxControlsPaneViewModel vm)
+        => typeof(TxControlsPaneViewModel).GetField("_currentEditor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .GetValue(vm) as TxImageEditorPaneViewModel;
 
     [AvaloniaFact]
     public void TogglingAutoFollowRxMode_LeavesAnUnrelatedSiblingSectionUntouched()
