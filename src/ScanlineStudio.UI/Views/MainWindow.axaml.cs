@@ -783,6 +783,16 @@ public partial class MainWindow : Window
                     return await confirmView.ShowDialog<bool>(this);
                 };
 
+                // Gallery right-click "Add note..." (2026-09-19) -- same delegate-property shape as
+                // vm.RxHistory.ConfirmRequested above, and the same construction shape
+                // ConfigurationsManagerWindowViewModel.TextPromptRequested's own wiring uses further
+                // below.
+                vm.RxHistory.TextPromptRequested = async promptVm =>
+                {
+                    var promptView = new TextPromptWindowView { DataContext = promptVm };
+                    return await promptView.ShowDialog<string?>(this);
+                };
+
                 // ui_transition_plan.md step 15 -- same shape as vm.RxHistory.ConfirmRequested above.
                 vm.Logbook.ConfirmRequested = async confirmVm =>
                 {
@@ -1177,6 +1187,66 @@ public partial class MainWindow : Window
         if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
         {
             vm.RxHistory.OpenImageViewerCommand.Execute(entry);
+        }
+    }
+
+    /// <summary>User-requested (2026-09-19) Gallery right-click menu -- fires BEFORE the ContextMenu
+    /// popup opens (not a Click), so <see cref="RxHistoryPaneViewModel.SelectedEntry"/> is already
+    /// the right-clicked photo by the time any of its menu items run, matching the same
+    /// SelectedEntry-only contract every other per-entry command in that class already has.</summary>
+    private void OnGalleryThumbnailContextRequested(object? sender, Avalonia.Controls.ContextRequestedEventArgs e)
+    {
+        if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.SelectedEntry = entry;
+        }
+    }
+
+    private void OnGalleryContextMenuOpenInLogClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.OpenInLogCommand.Execute(null);
+        }
+    }
+
+    private void OnGalleryContextMenuExportClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.ExportFrameCommand.Execute(null);
+        }
+    }
+
+    private void OnGalleryContextMenuSendToTxClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.SendSelectedEntryToTxCommand.Execute(null);
+        }
+    }
+
+    private void OnGalleryContextMenuToggleFlagClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.ToggleSelectedEntryFlagCommand.Execute(null);
+        }
+    }
+
+    private void OnGalleryContextMenuAddNoteClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.AddNoteToSelectedEntryCommand.Execute(null);
+        }
+    }
+
+    private void OnGalleryContextMenuDeleteClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is MainViewModel vm)
+        {
+            vm.RxHistory.DeleteSelectedEntryCommand.Execute(null);
         }
     }
 

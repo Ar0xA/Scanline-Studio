@@ -214,11 +214,10 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
         }
 
         var promptVm = new TextPromptWindowViewModel(
-            _presetStore,
-            _localization,
             _localization.GetString("Configurations.ClonePrompt.Title"),
             _localization.GetString("Configurations.ClonePrompt.Message"),
-            prefillText: row.Name + " " + _localization.GetString("Configurations.CloneSuffix"));
+            prefillText: row.Name + " " + _localization.GetString("Configurations.CloneSuffix"),
+            validate: ValidatePresetName);
         var name = await RequestTextPromptAsync(promptVm);
         if (name is null)
         {
@@ -257,11 +256,10 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
 
         var oldName = row.Name;
         var promptVm = new TextPromptWindowViewModel(
-            _presetStore,
-            _localization,
             _localization.GetString("Configurations.RenamePrompt.Title"),
             _localization.GetString("Configurations.RenamePrompt.Message"),
-            prefillText: oldName);
+            prefillText: oldName,
+            validate: ValidatePresetName);
         var newName = await RequestTextPromptAsync(promptVm);
         if (newName is null)
         {
@@ -293,6 +291,19 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
 
         await Dispatcher.UIThread.InvokeAsync(() => ErrorMessage = null);
         await RefreshAsync();
+    }
+
+    /// <summary>Wraps <see cref="IConfigurationPresetStore.TryValidatePresetName"/> for
+    /// <see cref="TextPromptWindowViewModel"/>'s own generalized <c>validate</c> delegate (2026-09-19)
+    /// -- SAME rule the store itself enforces, not a hand-copied second blocklist, preserved exactly
+    /// as it was before that generalization. The store's own out-value says "Preset name..." (its own
+    /// internal vocabulary) -- deliberately NOT passed through verbatim, this feature's own "always
+    /// say 'Configuration', never 'Preset'" rule (plan point 1) means the shown text has to be this
+    /// class's own locale string instead.</summary>
+    private (bool IsValid, string? ErrorMessage) ValidatePresetName(string name)
+    {
+        var isValid = _presetStore.TryValidatePresetName(name, out _);
+        return (isValid, isValid ? null : _localization.GetString("TextPrompt.InvalidNameError"));
     }
 
     /// <summary>Phase 4b: guards on <see cref="ConfigurationPresetRowViewModel.CanDelete"/> (neither
