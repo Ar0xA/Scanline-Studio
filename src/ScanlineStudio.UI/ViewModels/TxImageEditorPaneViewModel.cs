@@ -3517,14 +3517,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private bool CanSaveTemplate() => !string.IsNullOrWhiteSpace(NewTemplateName) && !IsSavingTemplate;
 
     /// <summary>Canvas right-click "Save Template" entry point (called from
-    /// <c>OnSaveTemplateContextMenuClick</c>) -- user-reported gap (2026-09-15): the old behavior
-    /// just focused an empty name field instead of saving, requiring the operator to type something
-    /// first before the shortcut did anything. Now auto-fills the next free "tmp{N}" name (N starting
-    /// at 1, case-insensitive against every existing template's real <see cref="ITemplateStore.ListAsync"/>
-    /// name -- same source of truth and same case-insensitive match <see cref="SaveTemplateAsync"/>
-    /// itself already uses for its overwrite-by-matching-name check) and saves immediately with that
-    /// name. If a name was already typed, this is identical to the ordinary Save button -- the typed
-    /// name always wins, auto-naming only fills a genuinely empty field.</summary>
+    /// <c>OnSaveTemplateContextMenuClick</c>, both the canvas's own empty-area menu AND -- 2026-09-19,
+    /// user-reported gap -- an image/background element's own menu, since that element's Border stays
+    /// unconditionally hit-testable and makes the canvas's own menu unreachable once one exists) --
+    /// user-reported gap (2026-09-15): the old behavior just focused an empty name field instead of
+    /// saving, requiring the operator to type something first before the shortcut did anything. Now
+    /// auto-fills the next free "tmp{N}" name (N starting at 0, user-requested 2026-09-19, case-
+    /// insensitive against every existing template's real <see cref="ITemplateStore.ListAsync"/> name
+    /// -- same source of truth and same case-insensitive match <see cref="SaveTemplateAsync"/> itself
+    /// already uses for its overwrite-by-matching-name check) and saves immediately with that name. If
+    /// a name was already typed, this is identical to the ordinary Save button -- the typed name
+    /// always wins, auto-naming only fills a genuinely empty field.</summary>
     public async Task SaveTemplateWithAutoNameAsync()
     {
         if (string.IsNullOrWhiteSpace(NewTemplateName))
@@ -3532,7 +3535,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             try
             {
                 var existingNames = (await _templateStore.ListAsync()).Select(t => t.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                var n = 1;
+                var n = 0;
                 while (existingNames.Contains($"tmp{n}"))
                 {
                     n++;

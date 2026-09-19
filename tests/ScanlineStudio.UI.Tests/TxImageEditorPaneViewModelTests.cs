@@ -8339,8 +8339,9 @@ public sealed class TxImageEditorPaneViewModelTests
     // focus an empty name field instead of saving. Now auto-fills the next free "tmp{N}" name.
 
     [AvaloniaFact]
-    public async Task SaveTemplateWithAutoNameAsync_NameEmpty_UsesTmp1()
+    public async Task SaveTemplateWithAutoNameAsync_NameEmpty_UsesTmp0()
     {
+        // User-requested (2026-09-19): numbering starts at 0, not 1.
         var templateStore = new FakeTemplateStore();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
         vm.AddOverlayElementCommand.Execute(null);
@@ -8349,22 +8350,22 @@ public sealed class TxImageEditorPaneViewModelTests
         await vm.SaveTemplateWithAutoNameAsync();
 
         var saved = Assert.Single(await templateStore.ListAsync());
-        Assert.Equal("tmp1", saved.Name);
+        Assert.Equal("tmp0", saved.Name);
     }
 
     [AvaloniaFact]
-    public async Task SaveTemplateWithAutoNameAsync_Tmp1AlreadyTaken_UsesNextFreeNumber()
+    public async Task SaveTemplateWithAutoNameAsync_Tmp0AlreadyTaken_UsesNextFreeNumber()
     {
         var templateStore = new FakeTemplateStore();
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter());
         vm.AddOverlayElementCommand.Execute(null);
-        await vm.SaveTemplateWithAutoNameAsync(); // "tmp1"
+        await vm.SaveTemplateWithAutoNameAsync(); // "tmp0"
 
         vm.AddOverlayElementCommand.Execute(null);
         await vm.SaveTemplateWithAutoNameAsync();
 
         var names = (await templateStore.ListAsync()).Select(t => t.Name).OrderBy(n => n).ToList();
-        Assert.Equal(["tmp1", "tmp2"], names);
+        Assert.Equal(["tmp0", "tmp1"], names);
     }
 
     [AvaloniaFact]
