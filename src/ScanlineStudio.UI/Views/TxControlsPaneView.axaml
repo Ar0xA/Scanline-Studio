@@ -219,13 +219,18 @@
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.OutputDeviceLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding OutputDeviceNameDisplay}" />
                     </Grid></Border>
+                    <!-- User-requested (2026-09-19): "power and alc meter in Output card should show
+                         numbers, not bars" — the fill-bar meters below this row (IndustryMeter atom)
+                         are REMOVED; these numeric rows are now the only Power/ALC display. No watts
+                         telemetry exists anywhere in the radio layer (RadioState has no such field,
+                         confirmed by direct grep) — "%" is the real, available unit, not literal watts. -->
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowPowerMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Power}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LivePowerPercent}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LivePowerPercent, StringFormat={}{0:0}%}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowAlcMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Alc}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveAlcPercentDisplay}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding LiveAlcPercentDisplay, StringFormat={}{0:0}%}" />
                     </Grid></Border>
                     <Border Classes="IndustryRow" IsVisible="{Binding ShowSwrMeter}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.Swr}" />
@@ -239,8 +244,7 @@
                      no tappable TX audio signal; Occupied BW was researched and deliberately
                      deferred, not just not yet done, see ~/.claude/plans/wandering-glowing-otter.md.
                      ALC/Power/SWR values themselves are NOT duplicated here as text; the real
-                     conditional rows above already cover that (the fill-bar meters below DO reuse
-                     Power/ALC, as meters, which is a different presentation, not a duplicate). -->
+                     conditional rows above already cover that. -->
                 <StackPanel Classes="Industry IndustryRows">
                     <!-- design-fidelity-agent-caught addition — mock2 has this row, the port
                          previously dropped it; real binding since un-stub-TX-tab piece 1. -->
@@ -257,33 +261,6 @@
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding TxClockText}" />
                     </Grid></Border>
                 </StackPanel>
-                <TextBlock Classes="Industry IndustryKicker" Margin="0,2,0,0" Text="{loc:Translate Panes.TxControls.Telemetry.MeterCaption}"
-                           IsVisible="{Binding ShowAnyMeter}" />
-                <!-- Fill-bar meters (Atoms.axaml's IndustryMeter atom, same technique
-                     RadioHeaderView.axaml's RX level meter uses) over the already-real, capability-
-                     gated LivePowerPercent/LiveAlcPercentDisplay — no new audio-engine data, this
-                     replaces the previously-empty hatch-pattern placeholder box. Power and ALC gate
-                     independently (a rig can report one without the other). -->
-                <Grid Classes="IndustryMeter" Margin="0,2,0,0" VerticalAlignment="Center" IsVisible="{Binding ShowPowerMeter}">
-                    <Border Classes="IndustryMeterTrack" Height="8" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="{Binding PowerMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
-                            <ColumnDefinition Width="{Binding PowerMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
-                    </Grid>
-                </Grid>
-                <Grid Classes="IndustryMeter" Margin="0,2,0,0" VerticalAlignment="Center" IsVisible="{Binding ShowAlcMeter}">
-                    <Border Classes="IndustryMeterTrack" Height="8" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="{Binding AlcMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}}" />
-                            <ColumnDefinition Width="{Binding AlcMeterFillPercent, Converter={x:Static conv:DoubleToStarGridLengthConverter.Instance}, ConverterParameter=Remainder}" />
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Classes="IndustryMeterFill" Height="8" HorizontalAlignment="Stretch" />
-                    </Grid>
-                </Grid>
             </StackPanel>
         </HeaderedContentControl>
 
@@ -367,12 +344,16 @@
                      stay on the view model — MainViewModel's own startup auto-open
                      (OpenBlankEditorSafelyAsync) and OnEditorCancelled/OnSelectedModeChanged's own
                      auto-reopen still call it directly, only this button is gone. -->
+                <!-- User-requested (2026-09-19): "the background card 'blank'-text and preview image
+                     should be removed" — both now gated on ShowBackgroundPreview, not a bare
+                     SelectedFileName/PreviewImage null-check, so neither shows the internal "Blank"
+                     placeholder name/gray-card preview once a blank-canvas edit gets Applied. -->
                 <TextBlock Classes="IndustryRowLabel" Text="{Binding SelectedFileName}"
-                           IsVisible="{Binding SelectedFileName, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                           IsVisible="{Binding ShowBackgroundPreview}" />
                 <Image Source="{Binding PreviewImage}"
                        Stretch="Uniform"
                        MaxHeight="160"
-                       IsVisible="{Binding PreviewImage, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                       IsVisible="{Binding ShowBackgroundPreview}" />
             </StackPanel>
         </HeaderedContentControl>
 
@@ -405,15 +386,18 @@
              session-only, capped at TxControlsPaneViewModel.SentFramesCapacity, direct sibling of the
              Receive tab's own PreviousFrames strip. Single-column (not RX's own UniformGrid
              Columns="2") — this sidebar column is only ~258px wide (see the progress-row comment
-             above) and each entry needs room for a Resend/Save button row a plain thumbnail chip
-             doesn't. Enlarge is a plain Button.Flyout (Avalonia built-in, zero new code-behind) over
+             above), too narrow for a two-up thumbnail grid at a size still worth right-clicking.
+             Enlarge is a plain Button.Flyout (Avalonia built-in, zero new code-behind) over
              the SAME full-res Thumbnail bitmap already held for the strip — deliberately NOT the RX
              Gallery's ImageViewerWindowViewModel (user decision: avoid new coupling for a "simple
              enlarge"). Resend/Save are code-behind Click handlers (OnSentFrameResendClicked/
              OnSentFrameSaveClicked in TxControlsPaneView.axaml.cs), NOT a XAML ancestor-cast
              Command binding back to TxControlsPaneViewModel — see StockEntryViewModel's own doc
              comment at the bottom of TxControlsPaneViewModel.cs for why that pattern crashes at
-             runtime inside a deferred ItemsControl template on this app's non-compiled bindings. -->
+             runtime inside a deferred ItemsControl template on this app's non-compiled bindings.
+             User-requested (2026-09-19): "buttons below it are too small" — Resend/Save moved from a
+             per-row Button strip into a right-click ContextMenu on the row's own Border (below), same
+             code-behind handlers reused unchanged. -->
         <HeaderedContentControl Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" ClipToBounds="False">
             <HeaderedContentControl.Header>
                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxControls.SentFrames.Header}" />
@@ -426,7 +410,25 @@
                     <ItemsControl ItemsSource="{Binding SentFrames}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:TransmittedFrameViewModel">
+                                <!-- User-requested (2026-09-19): "Send frame right buttons below it
+                                     are too small. Remove the buttons and make it right click for
+                                     'Resend', 'Save'" — the per-row Resend/Save Buttons are replaced
+                                     with a right-click ContextMenu on the row's own Border. Reuses the
+                                     SAME OnSentFrameResendClicked/OnSentFrameSaveClicked code-behind
+                                     handlers unchanged (this file's own top comment explains why
+                                     those are code-behind Click handlers, not XAML Command bindings):
+                                     a MenuItem is a Control too, and its DataContext still inherits
+                                     from this Border (the ContextMenu's own attachment point), so
+                                     `sender.DataContext` in those handlers resolves to this row's
+                                     TransmittedFrameViewModel exactly as it did from the removed
+                                     Buttons. -->
                                 <Border Classes="IndustryThumbnail" Margin="0,0,0,6">
+                                    <Border.ContextMenu>
+                                        <ContextMenu Classes="Industry">
+                                            <MenuItem Header="{loc:Translate Panes.TxControls.SentFrames.Resend}" Click="OnSentFrameResendClicked" />
+                                            <MenuItem Header="{loc:Translate Panes.TxControls.SentFrames.Save}" Click="OnSentFrameSaveClicked" />
+                                        </ContextMenu>
+                                    </Border.ContextMenu>
                                     <DockPanel LastChildFill="True">
                                         <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
                                             <Grid ColumnDefinitions="Auto,*,Auto">
@@ -434,17 +436,6 @@
                                                 <TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" Text="{Binding TransmittedAt, StringFormat=HH:mm:ss}" />
                                             </Grid>
                                         </Border>
-                                        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal"
-                                                    Spacing="{StaticResource IndustrySpacingHairline}" Margin="0,3,0,0">
-                                            <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
-                                                    Content="{loc:Translate Panes.TxControls.SentFrames.Resend}"
-                                                    ToolTip.Tip="{loc:Translate Panes.TxControls.SentFrames.Resend}"
-                                                    Click="OnSentFrameResendClicked" />
-                                            <Button Classes="Industry IndustryBtn IndustryBtn21 IndustryBtnSecondary"
-                                                    Content="{loc:Translate Panes.TxControls.SentFrames.Save}"
-                                                    ToolTip.Tip="{loc:Translate Panes.TxControls.SentFrames.Save}"
-                                                    Click="OnSentFrameSaveClicked" />
-                                        </StackPanel>
                                         <Panel>
                                             <Button Background="Transparent" BorderThickness="0" Padding="0"
                                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">

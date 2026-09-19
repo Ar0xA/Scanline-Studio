@@ -77,8 +77,13 @@
                      IndustrySelectTintBorder directly (same tokens the segmented-control :checked
                      state already uses for "this is currently true," which is exactly the semantic
                      an unsaved-edits flag needs) rather than Border.IndustryMini.active's own
-                     green/healthy tint, which means something else entirely (receiving status). -->
-                <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding HasUnsavedEdits}"
+                     green/healthy tint, which means something else entirely (receiving status).
+                     User-requested (2026-09-19): bound to IsDirtySinceLastCheckpoint, not
+                     HasUnsavedEdits — the chip now clears right after a template save OR load,
+                     reappearing only once a real edit happens afterward, instead of staying lit for
+                     the rest of the editor's life the instant anything (including a load) first
+                     touched the undo stack. See that property's own doc comment. -->
+                <Border Grid.Column="3" Classes="Industry IndustryMini" Margin="10,0,0,0" IsVisible="{Binding IsDirtySinceLastCheckpoint}"
                         Background="{DynamicResource IndustrySelectTint}" BorderBrush="{DynamicResource IndustrySelectTintBorder}">
                     <StackPanel Orientation="Horizontal" Spacing="4">
                         <Border Width="6" Height="6" Background="{DynamicResource IndustryAccent}" />
