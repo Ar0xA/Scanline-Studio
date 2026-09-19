@@ -164,13 +164,10 @@ public sealed class MainViewModelTests
         viewModel.SaveOrApplyCommand.Execute(null);
 
         Assert.True(applyInvoked);
-        // Doubles as the "editor close -> ActiveEditor cleared" assertion (plan-review finding):
-        // Apply's own production logic (OnEditorApplied) sets IsEditorOpen = false and nulls
-        // _currentEditor with no reopen path, unlike Cancel -- code-review confirmed ActiveEditor
-        // genuinely goes null (not just "a different instance"). A separate
-        // Cancel-driven close test would be WRONG: Cancel auto-reopens a fresh blank editor when
-        // nothing was ever loaded (always true here), so ActiveEditor would end up non-null again.
-        Assert.Null(viewModel.ActiveEditor);
+        // 2026-09-19 user request: Apply no longer closes the editor -- OnEditorApplied doesn't set
+        // IsEditorOpen = false or null _currentEditor anymore, so ActiveEditor stays pointed at the
+        // SAME still-open editor instance.
+        Assert.Same(editor, viewModel.ActiveEditor);
     }
 
     [AvaloniaFact]
